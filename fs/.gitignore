@@ -1,0 +1,10 @@
+target/
+dist/
+build/
+*.log
+*.tmp
+*.bak
+*.swp
+.DS_Store
+.idea/
+node_modules/
