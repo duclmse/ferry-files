@@ -1,0 +1,63 @@
+[package]
+name    = "rar2zip"
+version = "0.1.0"
+edition = "2021"
+
+[[bin]]
+name = "rar2zip"
+path = "src/main.rs"
+
+[dependencies]
+# Workspace shared
+tokio              = { workspace = true }
+tokio-util         = { workspace = true }
+serde              = { workspace = true }
+serde_json         = { workspace = true }
+toml               = { workspace = true }
+tracing            = { workspace = true }
+tracing-subscriber = { workspace = true }
+tracing-appender   = { workspace = true }
+thiserror          = { workspace = true }
+anyhow             = { workspace = true }
+chrono             = { workspace = true }
+uuid               = { workspace = true }
+glob               = { workspace = true }
+bytes              = { workspace = true }
+clap               = { workspace = true }
+rusqlite           = { workspace = true }
+r2d2               = { workspace = true }
+r2d2_sqlite        = { workspace = true }
+common             = { path = "../common" }
+# ssh2 + openssl are added in Phase 4 (transfer.rs). Building openssl with
+# the vendored feature requires Strawberry Perl on Windows; defer the dep
+# until it is actually needed so that cargo check passes in Phase 1.
+
+# Filesystem watching
+notify                = "6"
+notify-debouncer-full = "0.3"
+
+# Archive formats
+unrar       = "0.5"
+sevenz-rust = "0.6"
+tar         = "0.4"
+flate2      = "1"
+bzip2       = "0.4"
+zip         = { version = "2", default-features = false, features = ["deflate"] }
+
+# Hashing
+sha2 = "0.10"
+hex  = "0.4"
+
+# HTTP (metrics + dashboard)
+tiny_http = "0.12"
+
+# Alerting
+ureq   = "2"
+lettre = { version = "0.11", features = ["smtp-transport", "tokio1-native-tls", "builder"] }
+
+# Windows Service
+windows-service = "0.6"
+
+[dev-dependencies]
+tempfile   = "3"
+tokio-test = "0.4"
