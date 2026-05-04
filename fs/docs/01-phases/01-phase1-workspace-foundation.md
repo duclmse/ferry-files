@@ -134,23 +134,23 @@ pub fn init(log_dir: &Path) -> Result<(), CommonError> {
 
 ### `crates/filesearch/`
 
-| File | Content |
-|------|---------|
-| `Cargo.toml` | Member crate; deps via `{ workspace = true }`; crate-specific deps (tantivy, axum, tonic, nucleo, etc.) at latest stable |
-| `VERSIONS.md` | Template with columns: Crate, Spec version, Resolved version, API deviations |
-| `src/error.rs` | `AppError` enum: Io, Config, Index, Query, Database, Tantivy, Grpc, Ipc, Content; `From<CommonError>` impl |
+| File            | Content                                                                                                                                                     |
+| --------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `Cargo.toml`    | Member crate; deps via `{ workspace = true }`; crate-specific deps (tantivy, axum, tonic, nucleo, etc.) at latest stable                                    |
+| `VERSIONS.md`   | Template with columns: Crate, Spec version, Resolved version, API deviations                                                                                |
+| `src/error.rs`  | `AppError` enum: Io, Config, Index, Query, Database, Tantivy, Grpc, Ipc, Content; `From<CommonError>` impl                                                  |
 | `src/config.rs` | `Config`, `ExclusionConfig`, `ContentConfig`, `ApiConfig`, `SearchConfig`, `IndexerConfig`, `MacroConfig` structs; `load()`, `validate()`, `watch_config()` |
-| `src/main.rs` | Stub: parse CLI args, print version, exit 0 |
+| `src/main.rs`   | Stub: parse CLI args, print version, exit 0                                                                                                                 |
 
 ### `crates/rar2zip/`
 
-| File | Content |
-|------|---------|
-| `Cargo.toml` | Member crate; deps via `{ workspace = true }`; crate-specific deps (unrar, sevenz-rust, zip, windows-service, etc.) at latest stable |
-| `VERSIONS.md` | Same template as filesearch |
-| `src/error.rs` | `AppError` enum: Io, Config, Conversion, Transfer, Database, Ssh, Alert; `From<CommonError>` impl |
+| File            | Content                                                                                                                                                                                               |
+| --------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `Cargo.toml`    | Member crate; deps via `{ workspace = true }`; crate-specific deps (unrar, sevenz-rust, zip, windows-service, etc.) at latest stable                                                                  |
+| `VERSIONS.md`   | Same template as filesearch                                                                                                                                                                           |
+| `src/error.rs`  | `AppError` enum: Io, Config, Conversion, Transfer, Database, Ssh, Alert; `From<CommonError>` impl                                                                                                     |
 | `src/config.rs` | `Config`, `ConversionConfig`, `Destination`, `TransferConfig`, `ObservabilityConfig`, `SmtpConfig` structs + `IndexerConfig` with `multipart_timeout_hours`; `load()`, `validate()`, `watch_config()` |
-| `src/main.rs` | Stub CLI with all subcommands via clap |
+| `src/main.rs`   | Stub CLI with all subcommands via clap                                                                                                                                                                |
 
 > **No `logger.rs` in either crate.** Both call `common::logger::init(log_dir)`
 > from their entry point (main or service_main).
@@ -166,16 +166,16 @@ Create at `crates/filesearch/VERSIONS.md` and `crates/rar2zip/VERSIONS.md`:
 
 Generated at implementation time. Update whenever a dep is added or changed.
 
-| Crate | Spec version | Resolved version | API deviations |
-|-------|-------------|-----------------|----------------|
-| tokio | 1 | x.y.z | none |
-| tantivy | 0.22 | x.y.z | list any breaking changes |
-| ... | | | |
+| Crate   | Spec version | Resolved version | API deviations            |
+| ------- | ------------ | ---------------- | ------------------------- |
+| tokio   | 1            | x.y.z            | none                      |
+| tantivy | 0.22         | x.y.z            | list any breaking changes |
+| ...     |              |                  |                           |
 
 ## Notes
 
-- Any entry in the "API deviations" column must have a corresponding
-  comment in the affected source file: `// VERSIONS: <crate> <note>`
+- Any entry in the "API deviations" column must have a corresponding comment in
+  the affected source file: `// VERSIONS: <crate> <note>`
 ```
 
 ---
@@ -201,6 +201,7 @@ This allows `?` to propagate logger and config init errors through `AppError`.
 ## 1.6 Config Validation Rules
 
 ### filesearch config validation
+
 - All `watch_paths` must be absolute paths that exist and are directories.
 - `data_dir` is created if absent; must be writable.
 - `rest_port != grpc_port`.
@@ -208,6 +209,7 @@ This allows `?` to propagate logger and config init errors through `AppError`.
 - `crawl_threads > 0` and `content_threads > 0`.
 
 ### rar2zip config validation
+
 - `watch_folder` must exist and be a directory.
 - All `ssh_key_path` files must exist.
 - `failed_folder` is created if absent.
@@ -220,6 +222,7 @@ This allows `?` to propagate logger and config init errors through `AppError`.
 ## 1.7 Config Hot-Reload (both crates)
 
 Both `watch_config()` functions follow the same pattern:
+
 1. Set up a `notify` watcher on the config file path.
 2. On `Modify` event: re-parse and re-validate the file.
 3. If valid: `*config.write() = new_config;` — atomically swap.
@@ -240,6 +243,7 @@ pub struct IndexerConfig {
 ```
 
 Add to `config.toml` example:
+
 ```toml
 [indexer]
 multipart_timeout_hours = 24
@@ -250,6 +254,7 @@ multipart_timeout_hours = 24
 ## 1.9 Tests — Phase 1
 
 ### `crates/filesearch/src/config.rs` tests
+
 ```
 - load valid config.toml → Ok(Config)
 - missing watch_paths field → AppError::Config
@@ -259,6 +264,7 @@ multipart_timeout_hours = 24
 ```
 
 ### `crates/rar2zip/src/config.rs` tests
+
 ```
 - load valid config.toml → Ok(Config)
 - missing watch_folder → AppError::Config
@@ -278,15 +284,15 @@ multipart_timeout_hours = 24
 - [x] `cargo check` (workspace root) passes, no warnings.
 - [x] `cargo test -p filesearch config` passes.
 - [x] `cargo test -p rar2zip config` passes.
-- [x] `filesearch validate-config` and `rar2zip validate-config`
-      subcommands call `validate()` and print results.
+- [x] `filesearch validate-config` and `rar2zip validate-config` subcommands
+      call `validate()` and print results.
 - [x] `VERSIONS.md` exists in both `crates/filesearch/` and `crates/rar2zip/`.
 - [x] No `unwrap()` in any config, error, or logger code.
 - [x] No `logger.rs` in either crate (only in `common`).
 
 ---
 
-## 1.11 Implementation Notes *(added during Phase 1 implementation)*
+## 1.11 Implementation Notes _(added during Phase 1 implementation)_
 
 ### A. `common::logger::init` returns `WorkerGuard`
 
@@ -320,8 +326,8 @@ Note: `tokio-util 0.7` does **not** have a `"sync"` feature flag —
 
 ### C. `multipart_timeout_hours` lives in `ConversionConfig`, not a separate `IndexerConfig`
 
-The phase 1 spec draft described an `IndexerConfig` struct for rar2zip that
-held only `multipart_timeout_hours`. The reference doc (`03-ref-rar2zip-modules.md`)
+The phase 1 spec draft described an `IndexerConfig` struct for rar2zip that held
+only `multipart_timeout_hours`. The reference doc (`03-ref-rar2zip-modules.md`)
 places this field — plus `stream_to_transfer_threshold_mb` and
 `archive_password` — inside `ConversionConfig`, which is the authoritative
 layout. No `IndexerConfig` struct exists in `rar2zip`.
@@ -343,9 +349,9 @@ pub mod config;
 pub mod error;
 ```
 
-`main.rs` imports via `use filesearch::config;` / `use rar2zip::config;`.
-This eliminates dead-code warnings for `pub` items that are not yet wired up,
-and enables proper unit-test isolation in later phases (tests link against the
+`main.rs` imports via `use filesearch::config;` / `use rar2zip::config;`. This
+eliminates dead-code warnings for `pub` items that are not yet wired up, and
+enables proper unit-test isolation in later phases (tests link against the
 library, not the binary).
 
 ### F. `ssh2` / `openssl` deferred to Phase 4
@@ -384,6 +390,6 @@ VERSIONS.md updated accordingly.
 
 ### I. `[profile.release]` moved to workspace root
 
-Cargo ignores `[profile.*]` sections in non-root member `Cargo.toml` files.
-The release profile (`opt-level = 3`, `strip = true`) from the rar2zip spec is
+Cargo ignores `[profile.*]` sections in non-root member `Cargo.toml` files. The
+release profile (`opt-level = 3`, `strip = true`) from the rar2zip spec is
 declared at the workspace root instead.

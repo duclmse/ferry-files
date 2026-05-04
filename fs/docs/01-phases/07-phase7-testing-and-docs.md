@@ -1,7 +1,7 @@
 # Phase 7 — Final Testing, Docs & Release
 
-**Goal:** Full integration testing, benchmark verification, README writing,
-and release build validation for both projects. After this phase both projects
+**Goal:** Full integration testing, benchmark verification, README writing, and
+release build validation for both projects. After this phase both projects
 satisfy their respective Definitions of Done from the specs.
 
 **Estimated scope:** ~600 lines of Rust (integration tests) + 2 READMEs.
@@ -12,7 +12,8 @@ satisfy their respective Definitions of Done from the specs.
 
 ### filesearch Integration Tests
 
-Located in `crates/filesearch/tests/integration.rs` (gated with default feature flag).
+Located in `crates/filesearch/tests/integration.rs` (gated with default feature
+flag).
 
 ```rust
 #[tokio::test]
@@ -63,7 +64,8 @@ async fn test_everything_query_acceptance() {
 
 ### rar2zip Integration Tests
 
-Located in `crates/rar2zip/tests/integration.rs` (gated with `cfg(feature = "integration")`).
+Located in `crates/rar2zip/tests/integration.rs` (gated with
+`cfg(feature = "integration")`).
 
 ```rust
 // Requires: test SFTP server available at env TEST_SFTP_HOST
@@ -89,19 +91,20 @@ async fn test_end_to_end_transfer() {
 Verify performance targets using `criterion` benchmarks in
 `crates/filesearch/benches/`:
 
-| Benchmark | Target | How to verify |
-|-----------|--------|--------------|
-| Exact search, 1M files | < 10ms | `criterion` bench |
-| `fuzzy:` search, 1M files | < 50ms | `criterion` bench — nucleo SIMD scorer |
-| Regex search, 1M files | < 200ms | `criterion` bench |
-| Content search | < 100ms | `criterion` bench |
+| Benchmark                 | Target  | How to verify                          |
+| ------------------------- | ------- | -------------------------------------- |
+| Exact search, 1M files    | < 10ms  | `criterion` bench                      |
+| `fuzzy:` search, 1M files | < 50ms  | `criterion` bench — nucleo SIMD scorer |
+| Regex search, 1M files    | < 200ms | `criterion` bench                      |
+| Content search            | < 100ms | `criterion` bench                      |
 
-Benchmark setup: populate SQLite with 1M synthetic file records before
-running each bench case.
+Benchmark setup: populate SQLite with 1M synthetic file records before running
+each bench case.
 
 ### rar2zip
 
 Manual verification (no automated bench):
+
 - Convert a 100MB `.rar` (Disk strategy) → measure wall-clock time.
 - Transfer 100MB via Stream strategy → verify no zip created locally.
 - Transfer 100MB file at 10 MB/s → verify bandwidth throttle holds.
@@ -118,10 +121,13 @@ Covers all 10 sections from spec section 25:
    - macOS: no per-file watch limit
    - Windows: Named Pipes, no `unrar.dll` required
 3. **Build** — `cargo build --release`
-4. **Configuration** — full table of every `config.toml` field with type, default, description.
-5. **Running the Daemon** — `filesearch daemon`, background/service setup per OS.
+4. **Configuration** — full table of every `config.toml` field with type,
+   default, description.
+5. **Running the Daemon** — `filesearch daemon`, background/service setup per
+   OS.
 6. **Searching** — all CLI examples, full query syntax reference table.
-7. **APIs** — REST endpoint reference, gRPC with `grpcurl` examples, IPC protocol.
+7. **APIs** — REST endpoint reference, gRPC with `grpcurl` examples, IPC
+   protocol.
 8. **TUI** — keybindings reference.
 9. **Performance Tuning** — inotify limits, crawl threads, commit interval.
 10. **Troubleshooting** — common errors:
@@ -157,8 +163,8 @@ Covers all 8 sections from spec section 18:
 
 ## 7.5 Example Config Files
 
-Both `crates/filesearch/config.toml` and `crates/rar2zip/config.toml` are written
-with every field documented inline, including `multipart_timeout_hours`.
+Both `crates/filesearch/config.toml` and `crates/rar2zip/config.toml` are
+written with every field documented inline, including `multipart_timeout_hours`.
 They serve as the primary reference for users.
 
 ---
@@ -188,7 +194,8 @@ They serve as the primary reference for users.
 - [ ] `POST /open` on inner entry extracts to temp and opens.
 - [ ] `filesearch validate-config` exits 0 on valid config, 1 on invalid.
 - [ ] README covers all 10 sections + ZIP inner-file section.
-- [ ] `VERSIONS.md` populated with all resolved crate versions (incl. `zip`, `tempfile`).
+- [ ] `VERSIONS.md` populated with all resolved crate versions (incl. `zip`,
+      `tempfile`).
 - [ ] Builds on Windows, Linux, and macOS.
 
 ### rar2zip
@@ -206,5 +213,5 @@ They serve as the primary reference for users.
 
 ## 7.7 Definition of Done
 
-This phase is done when both projects satisfy every checkbox in their
-respective spec Definitions of Done (spec sections 20 and 24).
+This phase is done when both projects satisfy every checkbox in their respective
+spec Definitions of Done (spec sections 20 and 24).

@@ -1,9 +1,9 @@
 # Phase 5 — Query Engine (Everything-Compatible)
 
-**Goal:** Implement the full voidtools Everything-compatible query language
-for `filesearch`. This is the heart of the product — the parser, AST, evaluator,
-and all supporting sub-parsers. After this phase, every query in the acceptance
-test list (spec section 13) parses and executes correctly.
+**Goal:** Implement the full voidtools Everything-compatible query language for
+`filesearch`. This is the heart of the product — the parser, AST, evaluator, and
+all supporting sub-parsers. After this phase, every query in the acceptance test
+list (spec section 13) parses and executes correctly.
 
 **Estimated scope:** ~2 000 lines of Rust (the largest phase).
 
@@ -67,8 +67,8 @@ pub struct Modifiers {
 ```
 
 Full `Function` enum covers: date functions, size, name/path functions,
-attributes, content, folder stats, duplicates, result control (count),
-and `ArchiveOf(String)` (ZIP inner streaming).
+attributes, content, folder stats, duplicates, result control (count), and
+`ArchiveOf(String)` (ZIP inner streaming).
 
 Full `DateConstant` enum covers: Today, Yesterday, ThisWeek, LastWeek,
 ThisMonth, LastMonth, ThisYear, LastYear, LastNDays, LastNHours, LastNMinutes,
@@ -115,6 +115,7 @@ So `A|B C` = `A OR (B AND C)` — **right-to-left** for OR.
 ### Modifier Resolution
 
 When a word followed by `:` is encountered:
+
 1. Known **modifier** keyword → set flag on next term's `Modifiers`.
 2. Known **function** keyword → parse as `Function` with value.
 3. Known **type macro** → `TypeMacro` variant.
@@ -132,12 +133,15 @@ pub fn parse_size_value(s: &str) -> Result<RangeExpr<u64>, QueryError>
 ```
 
 Handles:
+
 - Comparison prefix: `<`, `<=`, `>`, `>=`, `=`.
 - Range: `1mb..10mb` or `1mb-10mb`.
 - Unit suffix: `kb`, `mb`, `gb` (case-insensitive).
-- Named constants: `empty`, `tiny`, `small`, `medium`, `large`, `huge`, `gigantic`.
+- Named constants: `empty`, `tiny`, `small`, `medium`, `large`, `huge`,
+  `gigantic`.
 
 Named constant expansions:
+
 ```
 empty    → Eq(0)
 tiny     → Between(1, 10*1024)
@@ -156,6 +160,7 @@ pub fn resolve_date_constant(c: &DateConstant, now: NaiveDateTime) -> (i64, i64)
 ```
 
 Date constant resolution examples:
+
 - `Today` → midnight..23:59:59 of current local day.
 - `Yesterday` → previous day.
 - `ThisWeek` → Monday 00:00..Sunday 23:59 of current week.
@@ -163,8 +168,8 @@ Date constant resolution examples:
 - Month names → first..last day of that month (current year).
 - Weekday names → most recent occurrence (00:00..23:59).
 
-> **Important:** date constants are resolved at **query-execution time**,
-> not parse time, so `dm:today` always means the current calendar day.
+> **Important:** date constants are resolved at **query-execution time**, not
+> parse time, so `dm:today` always means the current calendar day.
 
 Absolute date formats supported: `YYYY`, `YYYY-MM`, `YYYY-MM-DD`,
 `YYYY-MM-DDThh:mm:ss`, `YYYYMMDD`, locale-dependent formats (configurable).
@@ -176,6 +181,7 @@ pub fn glob_to_sqlite(pattern: &str, whole_filename: bool) -> String
 ```
 
 Everything wildcards map directly to SQLite `GLOB`:
+
 - `*` → `*` (zero or more chars)
 - `?` → `?` (one char)
 
@@ -219,45 +225,46 @@ pub fn plan(expr: &Expr, default_modifiers: &Modifiers) -> Result<QueryPlan, Que
 
 Key dispatch rules:
 
-| Predicate | Maps to |
-|-----------|--------|
-| Plain term (no wildcards) | `NameLike("%term%")` |
-| Term with `*`/`?` | `NameGlob(glob_to_sqlite(term))` |
-| `path:` modifier | `PathLike` instead of `NameLike` |
-| `regex:` modifier | compile regex → `PostFilter::Regex` |
-| `file:` modifier | `IsDir(false)` |
-| `folder:` modifier | `IsDir(true)` |
-| `dm:`, `dc:`, `da:` | resolve `DateExpr` → `MtimeRange`/`CtimeRange` |
-| `size:` | `SizeRange` or `SizeOp` |
-| `ext:list` | `ExtIn(list)` |
-| `parent:path` | `ParentPath(path)` |
-| `content:text` | set `tantivy_query`, strategy = `TantivyThenSqlite` |
-| `fuzzy:term` | fetch SQL candidates, strategy = `FuzzyFilter(term)` |
-| `dupe:` | strategy = `DupeSearch(Name)` |
-| `count:n` | set `plan.limit = n` |
-| `len:` | `NameLen(op, val)` |
-| `depth:` | `Depth(op, val)` |
-| `attrib:` | `PostFilter::Attrib(flags)` |
-| `child:` | `PostFilter::Child(name)` |
-| `startwith:` | `PostFilter::StartWith(text)` |
-| `endwith:` | `PostFilter::EndWith(text)` |
-| TypeMacro | expand → `ExtIn` |
-| `archive:` modifier | `IsArchiveEntry(true)` — `archive_path IS NOT NULL` |
-| `noarchive:` modifier | `IsArchiveEntry(false)` — `archive_path IS NULL` |
-| `archiveof:path` | `ArchiveOf(path)` — `archive_path = ?` or GLOB |
+| Predicate                 | Maps to                                              |
+| ------------------------- | ---------------------------------------------------- |
+| Plain term (no wildcards) | `NameLike("%term%")`                                 |
+| Term with `*`/`?`         | `NameGlob(glob_to_sqlite(term))`                     |
+| `path:` modifier          | `PathLike` instead of `NameLike`                     |
+| `regex:` modifier         | compile regex → `PostFilter::Regex`                  |
+| `file:` modifier          | `IsDir(false)`                                       |
+| `folder:` modifier        | `IsDir(true)`                                        |
+| `dm:`, `dc:`, `da:`       | resolve `DateExpr` → `MtimeRange`/`CtimeRange`       |
+| `size:`                   | `SizeRange` or `SizeOp`                              |
+| `ext:list`                | `ExtIn(list)`                                        |
+| `parent:path`             | `ParentPath(path)`                                   |
+| `content:text`            | set `tantivy_query`, strategy = `TantivyThenSqlite`  |
+| `fuzzy:term`              | fetch SQL candidates, strategy = `FuzzyFilter(term)` |
+| `dupe:`                   | strategy = `DupeSearch(Name)`                        |
+| `count:n`                 | set `plan.limit = n`                                 |
+| `len:`                    | `NameLen(op, val)`                                   |
+| `depth:`                  | `Depth(op, val)`                                     |
+| `attrib:`                 | `PostFilter::Attrib(flags)`                          |
+| `child:`                  | `PostFilter::Child(name)`                            |
+| `startwith:`              | `PostFilter::StartWith(text)`                        |
+| `endwith:`                | `PostFilter::EndWith(text)`                          |
+| TypeMacro                 | expand → `ExtIn`                                     |
+| `archive:` modifier       | `IsArchiveEntry(true)` — `archive_path IS NOT NULL`  |
+| `noarchive:` modifier     | `IsArchiveEntry(false)` — `archive_path IS NULL`     |
+| `archiveof:path`          | `ArchiveOf(path)` — `archive_path = ?` or GLOB       |
 
 ### Execution Strategies
 
-| Strategy | When | How |
-|----------|------|-----|
-| `SqliteOnly` | No `content:`, no `fuzzy:` | Build SQL from conditions, query SQLite |
-| `TantivyThenSqlite` | `content:` present | Query Tantivy → get path list → filter via SQLite metadata |
-| `DupeSearch(kind)` | `dupe:` / `sizedupe:` etc. | Two-pass: GROUP BY → IN |
-| `FuzzyFilter(term)` | `fuzzy:` present | Fetch SQL candidates → score with nucleo in rayon par_iter |
+| Strategy            | When                       | How                                                        |
+| ------------------- | -------------------------- | ---------------------------------------------------------- |
+| `SqliteOnly`        | No `content:`, no `fuzzy:` | Build SQL from conditions, query SQLite                    |
+| `TantivyThenSqlite` | `content:` present         | Query Tantivy → get path list → filter via SQLite metadata |
+| `DupeSearch(kind)`  | `dupe:` / `sizedupe:` etc. | Two-pass: GROUP BY → IN                                    |
+| `FuzzyFilter(term)` | `fuzzy:` present           | Fetch SQL candidates → score with nucleo in rayon par_iter |
 
 ### Post-filter Application
 
 After fetching `Vec<FileRecord>` from SQLite:
+
 ```rust
 pub fn apply_post_filters(
     records: Vec<FileRecord>,
@@ -286,6 +293,7 @@ pub fn find_dupes(
 ```
 
 Two-pass query:
+
 ```sql
 -- Pass 1: find duplicated values
 SELECT <column>, COUNT(*) as c
@@ -302,6 +310,7 @@ LIMIT ?;
 ```
 
 `DupeKind` variants and their GROUP BY column:
+
 - `Name` → `name`
 - `NamePart` → `REPLACE(name, extension, '')`
 - `Size` → `size_bytes`
@@ -324,6 +333,7 @@ pub async fn execute(
 ```
 
 Internal flow:
+
 1. Expand user macros from `config.macros`.
 2. Expand character escape macros.
 3. Expand type macros.
@@ -343,6 +353,7 @@ Internal flow:
 **not** exist in voidtools Everything.
 
 **Behaviour:**
+
 1. Fetch candidate `FileRecord`s from SQLite matching all other `SqlCondition`s
    already in the plan (no name condition is added to SQL for the fuzzy term).
 2. Score all candidates against `<term>` using `nucleo::Matcher` in a
@@ -352,6 +363,7 @@ Internal flow:
 5. Apply `limit` / `offset`.
 
 **Compatible with all other query functions:**
+
 - `fuzzy:config ext:toml` — only `.toml` files, fuzzy-matched against "config"
 - `fuzzy:readm size:<100kb` — small files, fuzzy-matched against "readm"
 
@@ -367,17 +379,19 @@ pub enum EvalStrategy {
 }
 ```
 
-> **Note:** `query/exact.rs`, `query/fuzzy.rs`, and `query/regex_search.rs`
-> do **not** exist. All logic lives in `evaluator.rs`. The `~` prefix and `/`
-> prefix from the base spec are **not supported** — use `fuzzy:` and
-> `regex:` modifiers instead.
+> **Note:** `query/exact.rs`, `query/fuzzy.rs`, and `query/regex_search.rs` do
+> **not** exist. All logic lives in `evaluator.rs`. The `~` prefix and `/`
+> prefix from the base spec are **not supported** — use `fuzzy:` and `regex:`
+> modifiers instead.
 
 ---
 
 ## 5.9 Tests — Phase 5
 
 ### parser.rs
+
 All test cases from spec section 3.7, including:
+
 ```
 "main rs"               → And(Term("main"), Term("rs"))
 "*.mp3|*.flac"          → Or(Wildcard, Wildcard)
@@ -399,9 +413,11 @@ All test cases from spec section 3.7, including:
 ```
 
 ### evaluator.rs
+
 All test cases from spec section 4.7.
 
 ### size.rs
+
 ```
 "large" → Between(1048577, 16777216)
 ">1mb"  → Gt(1048576)
@@ -410,6 +426,7 @@ All test cases from spec section 4.7.
 ```
 
 ### date.rs
+
 ```
 "today" → (today_midnight, today_end)
 "thisweek" → (monday_midnight, sunday_end)
@@ -418,6 +435,7 @@ All test cases from spec section 4.7.
 ```
 
 ### glob.rs
+
 ```
 "*.rs" whole=true → "*.rs" GLOB pattern
 "config" whole=false → "*config*"
@@ -441,6 +459,7 @@ case-insensitive: LOWER(name) GLOB LOWER(?)
 - [ ] `noarchive: *.log` returns no inner-archive entries.
 - [ ] `archiveof:project.zip` returns all inner files of that archive.
 - [ ] `archive: content:TODO` finds TODO comments inside ZIP source files.
-- [ ] `query/exact.rs`, `query/fuzzy.rs`, `query/regex_search.rs` do **not** exist.
+- [ ] `query/exact.rs`, `query/fuzzy.rs`, `query/regex_search.rs` do **not**
+      exist.
 - [ ] `cargo clippy -- -D warnings` clean on `query/`.
 - [ ] No `unwrap()` in query engine.

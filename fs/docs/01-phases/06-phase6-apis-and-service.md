@@ -1,7 +1,7 @@
 # Phase 6 — APIs, Service Layer & Orchestration
 
-**Goal:** Wire up all the APIs for `filesearch` (REST, gRPC, IPC) and finish
-the `rar2zip-transfer` service layer (app.rs, service.rs, main.rs). After this
+**Goal:** Wire up all the APIs for `filesearch` (REST, gRPC, IPC) and finish the
+`rar2zip-transfer` service layer (app.rs, service.rs, main.rs). After this
 phase, both programs are fully functional end-to-end.
 
 **Estimated scope:** ~1 400 lines of Rust + proto + PowerShell.
@@ -14,14 +14,14 @@ Built with `axum 0.7` + `tower-http` for CORS and tracing.
 
 ### Routes
 
-| Method | Path | Handler |
-|--------|------|---------|
-| `GET` | `/search?q=&limit=&offset=` | `search_handler` |
-| `GET` | `/stats` | `stats_handler` |
+| Method | Path                              | Handler           |
+| ------ | --------------------------------- | ----------------- |
+| `GET`  | `/search?q=&limit=&offset=`       | `search_handler`  |
+| `GET`  | `/stats`                          | `stats_handler`   |
 | `POST` | `/reindex` body: `{"full": bool}` | `reindex_handler` |
-| `GET` | `/health` | `health_handler` |
-| `GET` | `/file?path=` | `file_handler` |
-| `POST` | `/open` body: `{"path": "..."}` | `open_handler` |
+| `GET`  | `/health`                         | `health_handler`  |
+| `GET`  | `/file?path=`                     | `file_handler`    |
+| `POST` | `/open` body: `{"path": "..."}`   | `open_handler`    |
 
 ### AppState
 
@@ -39,16 +39,13 @@ pub struct AppState {
 
 ```json
 {
-  "hits": [
+  "result": [
     {
       "path": "/home/user/projects/main.rs",
       "name": "main.rs",
-      "extension": "rs",
       "size_bytes": 4096,
-      "size_human": "4.0 KB",
       "mtime": 1712345678,
-      "mtime_human": "2024-04-05 12:34:38",
-      "is_dir": false,
+      "type": "file",
       "score": 0.92,
       "snippet": "fn <mark>main</mark>() {"
     }
@@ -59,13 +56,17 @@ pub struct AppState {
 }
 ```
 
-Errors: `400` on invalid query (body: `{"error": "..."}`), `500` on internal error.
+Errors: `400` on invalid query (body: `{"error": "..."}`), `500` on internal
+error.
 
 Response `SearchHit` includes two new optional fields for inner archive entries:
+
 - `"archive_path"` — real outer ZIP path (`null` for filesystem files).
-- `"archive_entry"` — entry name within the archive (`null` for filesystem files).
+- `"archive_entry"` — entry name within the archive (`null` for filesystem
+  files).
 
 `/stats` response includes:
+
 - `"archive_entries_indexed"` — count of inner ZIP file records.
 - `"archives_crawled"` — count of ZIP files processed.
 
@@ -86,8 +87,8 @@ Response `SearchHit` includes two new optional fields for inner archive entries:
 // Returns {"opened": true, "temp_path": "/tmp/main.rs"}
 ```
 
-Returns `400` if path not found in index, outer ZIP missing, or entry not
-found in the ZIP (archive changed since indexing).
+Returns `400` if path not found in index, outer ZIP missing, or entry not found
+in the ZIP (archive changed since indexing).
 
 ---
 
@@ -96,12 +97,12 @@ found in the ZIP (archive changed since indexing).
 Implements the `FileSearch` service from `proto/filesearch.proto` using `tonic`
 (latest stable; record resolved version in `VERSIONS.md`).
 
-| RPC | Implementation |
-|-----|---------------|
-| `Search` | `query::execute()` → map to `SearchResponse` |
-| `SearchStream` | Execute query, stream results one by one |
-| `GetStats` | Read from `Arc<IndexMetrics>` |
-| `Reindex` | Send on `reindex_tx` watch channel |
+| RPC            | Implementation                               |
+| -------------- | -------------------------------------------- |
+| `Search`       | `query::execute()` → map to `SearchResponse` |
+| `SearchStream` | Execute query, stream results one by one     |
+| `GetStats`     | Read from `Arc<IndexMetrics>`                |
+| `Reindex`      | Send on `reindex_tx` watch channel           |
 
 Enable `tonic_reflection` for gRPC reflection (compatible with `grpcurl`).
 
@@ -137,11 +138,13 @@ fn main() {
 Newline-delimited JSON protocol over Unix socket / Windows Named Pipe.
 
 **Request format:**
+
 ```json
-{"id": "uuid", "method": "search", "params": {"q": "main.rs", "limit": 50}}
+{ "id": "uuid", "method": "search", "params": { "q": "main.rs", "limit": 50 } }
 ```
 
 **Response format:**
+
 ```json
 {"id": "uuid", "result": {...}}
 {"id": "uuid", "error": "query parse error: ..."}
@@ -197,6 +200,7 @@ pub async fn run(config: Arc<RwLock<Config>>, shutdown: CancellationToken) -> Re
 ### Graceful Shutdown
 
 On `CancellationToken` cancel:
+
 1. Stop watcher.
 2. Stop accepting new API requests (drain in-flight, max 10s).
 3. Drain indexer event queue (max 10s).
@@ -253,18 +257,18 @@ Built with `ratatui 0.26` + `crossterm 0.27`.
 └─────────────────────────────────────────────────────┘
 ```
 
-Inner archive entries show a dim `[zip]` tag (basename of outer archive).
-The status line shows the count of indexed ZIP inner entries (`4k zip`).
+Inner archive entries show a dim `[zip]` tag (basename of outer archive). The
+status line shows the count of indexed ZIP inner entries (`4k zip`).
 
 Keybindings:
-| Key | Action |
-|-----|--------|
-| Type | Update query (debounced 100ms → IPC search) |
-| ↑/↓ | Navigate results |
-| Enter | Open file via `/open` API (extracts to temp for inner entries) |
-| Tab | Cycle mode: exact → `fuzzy:` → `regex:` → `content:` → `archive:` → [clear] |
-| Ctrl+C / Esc | Exit TUI |
-| F5 | Force re-index |
+
+| Key          | Action                                                                      |
+| ------------ | --------------------------------------------------------------------------- | --- | ----- | -------------------------------------------------------------- |
+| Type         | Update query (debounced 100ms → IPC search)                                 |
+| ↑/↓          | Navigate results                                                            |     | Enter | Open file via `/open` API (extracts to temp for inner entries) |
+| Tab          | Cycle mode: exact → `fuzzy:` → `regex:` → `content:` → `archive:` → [clear] |
+| Ctrl+C / Esc | Exit TUI                                                                    |
+| F5           | Force re-index                                                              |
 
 ---
 
@@ -277,9 +281,9 @@ pub async fn run(config: Arc<RwLock<Config>>, shutdown: CancellationToken) -> Re
 ```
 
 1. `JobQueue::new()` — open/migrate SQLite.
-2. Re-enqueue stale jobs (`queue.get_stale_jobs()`).
-2b. If `multipart_timeout_hours > 0`: call `queue.get_expired_groups()`,
-    move each expired group's parts to `failed/`, call `queue.clear_parts()`.
+2. Re-enqueue stale jobs (`queue.get_stale_jobs()`). 2b. If
+   `multipart_timeout_hours > 0`: call `queue.get_expired_groups()`, move each
+   expired group's parts to `failed/`, call `queue.clear_parts()`.
 3. Start config hot-reload watcher.
 4. Start metrics + dashboard HTTP server.
 5. Start folder watcher.
@@ -295,6 +299,7 @@ watcher sends PathBuf
 ```
 
 `process_job(job)`:
+
 1. Match on `job.strategy`:
 
    **Strategy::Disk:**
@@ -306,7 +311,8 @@ watcher sends PathBuf
    - `transfer::transfer_all(zip_path, job, cfg, metrics, semaphore, shutdown)`
    - On success:
      - Delete zip_path
-     - If multi-part: `queue.get_parts()` → delete each part → `queue.clear_parts()`
+     - If multi-part: `queue.get_parts()` → delete each part →
+       `queue.clear_parts()`
      - Delete original source archive
      - `queue.set_status(id, Done)`; increment success metrics
    - On failure (all retries exhausted):
@@ -317,7 +323,8 @@ watcher sends PathBuf
    - `queue.set_status(id, Transferring)` ← no Converting step
    - `transfer::stream_all(src_path, job, cfg, metrics, semaphore, shutdown)`
    - On success:
-     - If multi-part: `queue.get_parts()` → delete each part → `queue.clear_parts()`
+     - If multi-part: `queue.get_parts()` → delete each part →
+       `queue.clear_parts()`
      - Source archive already deleted inside `stream_convert_and_transfer()`
        after checksum pass
      - `queue.set_status(id, Done)`; increment success metrics
@@ -328,6 +335,7 @@ watcher sends PathBuf
 ### Graceful Shutdown
 
 On `CancellationToken` cancel:
+
 - Stop accepting new watcher events.
 - Wait for all in-flight `process_job` tasks (timeout: 30s).
 - Flush logs.
@@ -376,6 +384,7 @@ if ($Uninstall) {
 ## 6.8 rar2zip — Main CLI (`main.rs`)
 
 All four subcommands:
+
 - `run [--service] [--config]` → service mode or direct mode.
 - `status [--config]` → print `queue_depth()` table.
 - `retry-failed [--config]` → `queue.reset_failed()`.
@@ -388,17 +397,22 @@ All four subcommands:
 ## 6.9 Definition of Done
 
 ### filesearch
+
 - [ ] `filesearch daemon` starts and all three APIs respond.
 - [ ] `curl localhost:7700/search?q=main.rs` returns JSON results.
-- [ ] `curl "localhost:7700/search?q=archive:%20*.rs"` returns inner-archive entries.
+- [ ] `curl "localhost:7700/search?q=archive:%20*.rs"` returns inner-archive
+      entries.
 - [ ] `grpcurl localhost:7701 filesearch.FileSearch/Search` returns results.
-- [ ] IPC: `filesearch search "*.rs"` returns results including inner-archive entries.
+- [ ] IPC: `filesearch search "*.rs"` returns results including inner-archive
+      entries.
 - [ ] `POST /open` on an inner-archive entry extracts to temp and opens.
 - [ ] `/stats` includes `archive_entries_indexed` and `archives_crawled`.
-- [ ] `filesearch tui` launches interactive TUI with `[zip]` tags on inner entries.
+- [ ] `filesearch tui` launches interactive TUI with `[zip]` tags on inner
+      entries.
 - [ ] Graceful shutdown: `Ctrl+C` exits cleanly without data loss.
 
 ### rar2zip
+
 - [ ] `run` (non-service mode) starts, watches folder, processes an archive.
 - [ ] `status` prints queue depth table.
 - [ ] `retry-failed` resets failed jobs.
@@ -408,5 +422,6 @@ All four subcommands:
 - [ ] Strategy::Stream: large archive transferred with no zip created on disk.
 
 ### Both
+
 - [ ] `cargo clippy -- -D warnings` clean on all new files.
 - [ ] No `unwrap()` in service or API code.

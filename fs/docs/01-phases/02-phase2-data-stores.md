@@ -1,9 +1,9 @@
 # Phase 2 — Data Stores
 
 **Goal:** Implement both persistent storage backends used by `filesearch`
-(SQLite metadata store + Tantivy full-text store) and the SQLite job queue
-used by `rar2zip-transfer`. All store code is tested in isolation before any
-business logic touches it.
+(SQLite metadata store + Tantivy full-text store) and the SQLite job queue used
+by `rar2zip-transfer`. All store code is tested in isolation before any business
+logic touches it.
 
 **Estimated scope:** ~900 lines of Rust.
 
@@ -32,14 +32,14 @@ CREATE TABLE IF NOT EXISTS files (
     content_indexed INTEGER NOT NULL DEFAULT 0,
     tantivy_id      TEXT,
     indexed_at      INTEGER NOT NULL,
-    attrib_bitmask  INTEGER NOT NULL DEFAULT 0,  -- query addendum
-    archive_path    TEXT    DEFAULT NULL          -- ZIP inner streaming; NULL = real file
+    attrib_bitmask  INTEGER NOT NULL DEFAULT 0, -- query addendum
+    archive_path    TEXT    DEFAULT NULL        -- ZIP inner streaming; NULL = real file
 );
 
 CREATE INDEX IF NOT EXISTS idx_files_name      ON files(name);
 CREATE INDEX IF NOT EXISTS idx_files_extension ON files(extension);
 CREATE INDEX IF NOT EXISTS idx_files_mtime     ON files(mtime);
-CREATE INDEX IF NOT EXISTS idx_files_size      ON files(size_bytes));
+CREATE INDEX IF NOT EXISTS idx_files_size      ON files(size_bytes);
 CREATE INDEX IF NOT EXISTS idx_files_parent    ON files(path);
 CREATE INDEX IF NOT EXISTS idx_files_attrib    ON files(attrib_bitmask);
 CREATE INDEX IF NOT EXISTS idx_files_archive   ON files(archive_path)
@@ -51,26 +51,26 @@ CREATE TABLE IF NOT EXISTS index_meta (
 );
 ```
 
-> **Note:** `attrib_bitmask` from the query addendum is included from the
-> start to avoid a schema migration later.
+> **Note:** `attrib_bitmask` from the query addendum is included from the start
+> to avoid a schema migration later.
 
 ### Key Methods
 
-| Method | SQL |
-|--------|-----|
-| `upsert_file(record)` | `INSERT OR REPLACE INTO files ...` |
-| `remove_file(path)` | `DELETE FROM files WHERE path = ?` |
-| `remove_directory(path)` | `DELETE FROM files WHERE path LIKE ? || '/%'` |
-| `get_by_path(path)` | `SELECT * FROM files WHERE path = ?` |
-| `search_name(name, filters, limit)` | `SELECT * FROM files WHERE name LIKE ? [+ filters]` |
-| `search_meta(filters, limit)` | Dynamic WHERE from MetaFilters |
-| `paths_under(dir)` | `SELECT path FROM files WHERE path LIKE ? || '/%'` |
-| `has_child(parent, pattern)` | Check for direct children matching pattern |
-| `find_dupes(kind, conditions, limit)` | Two-pass GROUP BY + IN query |
-| `total_files()` | `SELECT COUNT(*) FROM files WHERE archive_path IS NULL` |
-| `total_archive_entries()` | `SELECT COUNT(*) FROM files WHERE archive_path IS NOT NULL` |
-| `remove_archive_entries(archive_path)` | Delete all inner records for a given ZIP path |
-| `paths_in_archive(archive_path)` | Return all virtual paths belonging to a ZIP |
+| Method                                 | SQL                                                         |
+| -------------------------------------- | ----------------------------------------------------------- | --- | ----- |
+| `upsert_file(record)`                  | `INSERT OR REPLACE INTO files ...`                          |
+| `remove_file(path)`                    | `DELETE FROM files WHERE path = ?`                          |
+| `remove_directory(path)`               | `DELETE FROM files WHERE path LIKE ?                        |     | '/%'` |
+| `get_by_path(path)`                    | `SELECT * FROM files WHERE path = ?`                        |
+| `search_name(name, filters, limit)`    | `SELECT * FROM files WHERE name LIKE ? [+ filters]`         |
+| `search_meta(filters, limit)`          | Dynamic WHERE from MetaFilters                              |
+| `paths_under(dir)`                     | `SELECT path FROM files WHERE path LIKE ?                   |     | '/%'` |
+| `has_child(parent, pattern)`           | Check for direct children matching pattern                  |
+| `find_dupes(kind, conditions, limit)`  | Two-pass GROUP BY + IN query                                |
+| `total_files()`                        | `SELECT COUNT(*) FROM files WHERE archive_path IS NULL`     |
+| `total_archive_entries()`              | `SELECT COUNT(*) FROM files WHERE archive_path IS NOT NULL` |
+| `remove_archive_entries(archive_path)` | Delete all inner records for a given ZIP path               |
+| `paths_in_archive(archive_path)`       | Return all virtual paths belonging to a ZIP                 |
 
 ### MetaFilters → WHERE clauses
 
@@ -103,18 +103,19 @@ Sparse=256, ReadOnly=512, System=1024, Temporary=2048
 
 ### Schema Fields
 
-| Field | Type | Stored | Indexed | Notes |
-|-------|------|--------|---------|-------|
-| `path` | Text | Yes | Yes | Used for dedup and retrieval |
-| `name` | Text | Yes | Yes | Tokenised filename |
-| `content` | Text | No | Yes | Too large to store; fetch from disk on hit |
-| `extension` | Text | Yes | Yes | |
-| `mtime` | U64 | Yes | Fast | For sorting |
-| `size_bytes` | U64 | Yes | Fast | For filtering |
+| Field        | Type | Stored | Indexed | Notes                                      |
+| ------------ | ---- | ------ | ------- | ------------------------------------------ |
+| `path`       | Text | Yes    | Yes     | Used for dedup and retrieval               |
+| `name`       | Text | Yes    | Yes     | Tokenised filename                         |
+| `content`    | Text | No     | Yes     | Too large to store; fetch from disk on hit |
+| `extension`  | Text | Yes    | Yes     |                                            |
+| `mtime`      | U64  | Yes    | Fast    | For sorting                                |
+| `size_bytes` | U64  | Yes    | Fast    | For filtering                              |
 
 ### Upsert Pattern
 
 Since Tantivy has no native upsert:
+
 1. Delete existing document(s) matching `path` term.
 2. Add new document.
 3. Do NOT commit immediately — batch commits via background task.
@@ -135,8 +136,8 @@ Also commit after bulk crawl completion.
 
 ### Snippet Generation
 
-Use `tantivy::SnippetGenerator` on the `content` field to generate
-highlighted excerpts (wrap matches in `<mark>...</mark>`).
+Use `tantivy::SnippetGenerator` on the `content` field to generate highlighted
+excerpts (wrap matches in `<mark>...</mark>`).
 
 ---
 
@@ -175,21 +176,21 @@ CREATE INDEX IF NOT EXISTS idx_jobs_hash   ON jobs(file_hash);
 
 ### Key Methods
 
-| Method | Purpose |
-|--------|---------|
-| `enqueue(path, hash, strategy, dests)` | Insert new `pending` job, return id |
-| `set_status(id, status, error)` | Update status + optional error text |
-| `increment_retry(id)` | `retry_count += 1` |
-| `get_stale_jobs()` | All jobs with status `converting` or `transferring` |
-| `get_failed_jobs()` | All jobs with status `failed` |
-| `reset_failed()` | Set all `failed` → `pending`, zero retries, return count |
-| `is_duplicate(hash)` | True if any `done` job with this hash exists |
-| `queue_depth()` | `HashMap<status, count>` |
-| `recent_jobs(limit)` | Last N done/failed jobs by `updated_at DESC` |
-| `add_part(group, path)` | Insert multipart_groups row |
-| `get_parts(group)` | Return all paths for a group |
-| `clear_parts(group)` | Delete all rows for a group |
-| `get_expired_groups(timeout_hours)` | Return group_ids where oldest part arrived > timeout_hours ago and no active job exists for the group |
+| Method                                 | Purpose                                                                                               |
+| -------------------------------------- | ----------------------------------------------------------------------------------------------------- |
+| `enqueue(path, hash, strategy, dests)` | Insert new `pending` job, return id                                                                   |
+| `set_status(id, status, error)`        | Update status + optional error text                                                                   |
+| `increment_retry(id)`                  | `retry_count += 1`                                                                                    |
+| `get_stale_jobs()`                     | All jobs with status `converting` or `transferring`                                                   |
+| `get_failed_jobs()`                    | All jobs with status `failed`                                                                         |
+| `reset_failed()`                       | Set all `failed` → `pending`, zero retries, return count                                              |
+| `is_duplicate(hash)`                   | True if any `done` job with this hash exists                                                          |
+| `queue_depth()`                        | `HashMap<status, count>`                                                                              |
+| `recent_jobs(limit)`                   | Last N done/failed jobs by `updated_at DESC`                                                          |
+| `add_part(group, path)`                | Insert multipart_groups row                                                                           |
+| `get_parts(group)`                     | Return all paths for a group                                                                          |
+| `clear_parts(group)`                   | Delete all rows for a group                                                                           |
+| `get_expired_groups(timeout_hours)`    | Return group_ids where oldest part arrived > timeout_hours ago and no active job exists for the group |
 
 ---
 
@@ -217,6 +218,7 @@ let pool = r2d2::Pool::builder()
 ## 2.5 Tests — Phase 2
 
 ### filesearch SqliteStore tests
+
 ```
 - upsert_file + get_by_path → same record returned
 - remove_file → get_by_path returns None
@@ -234,6 +236,7 @@ let pool = r2d2::Pool::builder()
 ```
 
 ### filesearch TantivyStore tests
+
 ```
 - upsert + commit + search_fulltext → document found
 - remove → no longer returned
@@ -242,6 +245,7 @@ let pool = r2d2::Pool::builder()
 ```
 
 ### rar2zip JobQueue tests
+
 ```
 - enqueue → status=pending; set_status(converting) → get_stale_jobs returns it
 - is_duplicate: enqueue, set_status(done), is_duplicate returns true
@@ -258,8 +262,58 @@ let pool = r2d2::Pool::builder()
 
 ## 2.6 Definition of Done
 
-- [ ] `cargo test -p filesearch store` passes.
-- [ ] `cargo test -p rar2zip queue` passes.
-- [ ] `cargo clippy -- -D warnings` clean on new files.
-- [ ] Schema migrations are idempotent (re-running `new()` on existing DB is safe).
-- [ ] No `unwrap()` in store code.
+- [x] `cargo test -p filesearch store` passes.
+- [x] `cargo test -p rar2zip queue` passes.
+- [x] `cargo clippy -- -D warnings` clean on new files.
+- [x] Schema migrations are idempotent (re-running `new()` on existing DB is
+      safe).
+- [x] No `unwrap()` in store code.
+
+---
+
+## 2.7 Implementation Notes *(added during Phase 2 implementation)*
+
+### A. SQL typo in phase 2 spec — use ref doc schema
+
+The phase 2 spec (§2.1) has `idx_files_size ON files(size_bytes))` — one extra
+closing parenthesis. The ref doc (`01-ref-filesearch-modules.md §6.1`) is
+correct. The implementation uses the ref doc version.
+
+### B. `SqlCondition` defined with all Phase 5 variants
+
+`store/mod.rs` defines the full set of `SqlCondition` variants upfront (including
+`NameGlob`, `DepthOp`, `NameLenOp`, `AttribAll`, `AttribAny`, etc.) rather than
+just the ones needed for Phase 2. This prevents breaking changes to the store's
+public API when the Phase 5 query evaluator is wired up.
+
+### C. `:memory:` SQLite is connection-private — use real temp files for concurrent tests
+
+`SqliteConnectionManager::file(":memory:")` creates a separate in-memory
+database per connection. With an r2d2 pool of 16 connections, threads picking up
+different connections see empty databases. Both concurrent tests
+(`concurrent_upserts_all_succeed` in `sqlite_store.rs` and
+`concurrent_enqueue_all_succeed` in `queue.rs`) were updated to use
+`tempfile::NamedTempFile` so all pool connections share the same real file.
+This is also the realistic scenario in production.
+
+### D. `tantivy::schema::Value` trait must be in scope
+
+Methods like `as_str()` and `as_u64()` on `OwnedValue` are provided by the
+`tantivy::schema::Value` trait, not inherent methods. Import
+`use tantivy::schema::Value;` is required wherever field values are read from a
+retrieved document.
+
+### E. `MmapDirectory::open` error type is `OpenDirectoryError`, not `TantivyError`
+
+`tantivy::directory::MmapDirectory::open(path)` returns
+`Result<MmapDirectory, OpenDirectoryError>`. Since `AppError` has
+`#[from] tantivy::TantivyError` (not `#[from] OpenDirectoryError`), the
+conversion requires `.map_err(|e| AppError::Tantivy(e.into()))` — the extra
+`.into()` converts `OpenDirectoryError` to `TantivyError` via its blanket impl.
+
+### F. `store/mod.rs` module layout
+
+Shared types (`FileRecord`, `SearchHit`, `MetaFilters`, `DupeKind`,
+`SqlCondition`, `CmpOp`, bitmask constants) live in `store/mod.rs`. Both
+`sqlite_store` and `tantivy_store` import from `super::*`. `lib.rs` exposes
+`pub mod store;` — the two sub-modules are re-exported through it.

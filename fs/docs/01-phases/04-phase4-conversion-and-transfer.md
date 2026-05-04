@@ -1,8 +1,8 @@
 # Phase 4 — Archive Conversion & Transfer (rar2zip)
 
 **Goal:** Implement the streaming archive conversion pipeline and the SFTP
-transfer engine for `rar2zip`. After this phase, the core function of
-the service works end-to-end: watch → intake → convert/stream → transfer.
+transfer engine for `rar2zip`. After this phase, the core function of the
+service works end-to-end: watch → intake → convert/stream → transfer.
 
 **Estimated scope:** ~900 lines of Rust.
 
@@ -16,20 +16,21 @@ the service works end-to-end: watch → intake → convert/stream → transfer.
 pub async fn convert(job: &Job, config: &ConversionConfig) -> Result<PathBuf>
 ```
 
-Returns the path of the produced `.zip` file (same directory as source,
-`.zip` extension). Dispatches by extension:
+Returns the path of the produced `.zip` file (same directory as source, `.zip`
+extension). Dispatches by extension:
 
-| Extension(s) | Function |
-|-------------|---------|
-| `.rar`, `.part1.rar` | `convert_rar()` |
-| `.7z` | `convert_7z()` |
-| `.tar` | `convert_tar(None)` |
-| `.tar.gz`, `.tgz` | `convert_tar(Some(Gzip))` |
-| `.tar.bz2` | `convert_tar(Some(Bzip2))` |
+| Extension(s)         | Function                   |
+| -------------------- | -------------------------- |
+| `.rar`, `.part1.rar` | `convert_rar()`            |
+| `.7z`                | `convert_7z()`             |
+| `.tar`               | `convert_tar(None)`        |
+| `.tar.gz`, `.tgz`    | `convert_tar(Some(Gzip))`  |
+| `.tar.bz2`           | `convert_tar(Some(Bzip2))` |
 
 ### Pre-conversion Integrity Check
 
 Before conversion, verify the source archive:
+
 - **RAR:** call `unrar`'s test/verify mode.
 - **7Z:** `sevenz_rust` verify method.
 - **TAR:** attempt to iterate all entries; any error → abort.
@@ -55,8 +56,8 @@ If verification fails → `AppError::Conversion("integrity check failed: ...")`.
 
 ### Streaming 7Z → ZIP (`convert_7z`)
 
-Same structure using `sevenz_rust::Archive` reader.
-Each entry streamed into `ZipWriter` in 64 KB chunks.
+Same structure using `sevenz_rust::Archive` reader. Each entry streamed into
+`ZipWriter` in 64 KB chunks.
 
 ### Streaming TAR → ZIP (`convert_tar`)
 
@@ -64,18 +65,21 @@ Each entry streamed into `ZipWriter` in 64 KB chunks.
 fn convert_tar<R: Read>(reader: R, dst: &Path, cfg: &ConversionConfig) -> Result<()>
 ```
 
-Wrap reader in `GzDecoder` or `BzDecoder` before passing to `tar::Archive::new()`.
+Wrap reader in `GzDecoder` or `BzDecoder` before passing to
+`tar::Archive::new()`.
 
 ### Multi-part RAR
 
 When `job.file_path` is `archive.part1.rar`:
-- Pass base path to `unrar` — it auto-discovers subsequent parts in the same folder.
+
+- Pass base path to `unrar` — it auto-discovers subsequent parts in the same
+  folder.
 - Caller (`app.rs`) deletes all parts after confirmed success.
 
 ### Cleanup Contract
 
-`convert()` does **not** delete any source files.
-The caller (`app.rs`) handles deletion after the downstream step succeeds.
+`convert()` does **not** delete any source files. The caller (`app.rs`) handles
+deletion after the downstream step succeeds.
 
 ---
 
@@ -94,12 +98,13 @@ pub async fn transfer_all(
 ) -> Result<()>
 ```
 
-Returns `Ok(())` only if **all** destinations succeeded.
-Each destination is retried independently.
+Returns `Ok(())` only if **all** destinations succeeded. Each destination is
+retried independently.
 
 ### Per-Destination Transfer
 
 Steps:
+
 1. Acquire semaphore permit (global concurrency limit across all transfers).
 2. TCP connect to `dest.host:dest.port`.
 3. `ssh2::Session::handshake()`, then `userauth_pubkey_file()`.
@@ -152,10 +157,10 @@ Before each retry (except first): delete partial remote file.
 
 ## 4.3 Stream Strategy — `stream_convert_and_transfer()`
 
-When `job.strategy == Strategy::Stream`, `convert::convert()` is **not**
-called. Instead, `transfer::stream_convert_and_transfer()` runs the entire
-pipeline: source archive → in-memory pipe → SFTP. **No zip file exists on
-disk at any point.**
+When `job.strategy == Strategy::Stream`, `convert::convert()` is **not** called.
+Instead, `transfer::stream_convert_and_transfer()` runs the entire pipeline:
+source archive → in-memory pipe → SFTP. **No zip file exists on disk at any
+point.**
 
 ```rust
 /// Stream-convert a source archive directly into an SFTP write stream.
@@ -179,23 +184,24 @@ async fn stream_convert_and_transfer(
 1. Open SSH session + SFTP channel.
 2. Open SFTP remote file for write.
 3. Create in-memory pipe: `tokio::io::duplex(256 * 1024)`.
-4. **Task A** (spawn_blocking): stream-decompress `src_path` → write
-   zip-format bytes into the pipe write end. Same streaming logic as
-   `convert_rar()` / `convert_7z()` / `convert_tar()` but targeting a
-   `Write` impl backed by the pipe sender rather than a file.
-5. **Task B** (spawn_blocking): read from pipe read end → write to SFTP
-   remote file, applying bandwidth throttle if configured.
-6. Await both tasks. If either fails: cancel the other, delete partial
-   remote file, return `Err`.
+4. **Task A** (spawn_blocking): stream-decompress `src_path` → write zip-format
+   bytes into the pipe write end. Same streaming logic as `convert_rar()` /
+   `convert_7z()` / `convert_tar()` but targeting a `Write` impl backed by the
+   pipe sender rather than a file.
+5. **Task B** (spawn_blocking): read from pipe read end → write to SFTP remote
+   file, applying bandwidth throttle if configured.
+6. Await both tasks. If either fails: cancel the other, delete partial remote
+   file, return `Err`.
 7. After both complete: run `verify_remote_checksum()`.
 8. On checksum pass: delete source archive. On mismatch: retry.
 
 ### Retry Behaviour for Strategy::Stream
 
 On any failure (task error or checksum mismatch):
+
 1. Call `delete_remote_file()` to remove the partial upload.
-2. Re-run `stream_convert_and_transfer()` from step 1.
-   The source archive is still present — no intermediate state to restore.
+2. Re-run `stream_convert_and_transfer()` from step 1. The source archive is
+   still present — no intermediate state to restore.
 3. Apply exponential backoff between retries.
 4. After `max_retries` exhausted: move **source archive** (not a zip) to
    `failed/` folder, update job status to `Failed`.
@@ -215,8 +221,8 @@ pub async fn stream_all(
 ) -> Result<()>
 ```
 
-Each destination is an independent `stream_convert_and_transfer()` call
-behind the semaphore, retried independently.
+Each destination is an independent `stream_convert_and_transfer()` call behind
+the semaphore, retried independently.
 
 ---
 
@@ -234,6 +240,7 @@ pub struct Metrics {
 HTTP server uses `tiny_http` in `tokio::task::spawn_blocking`.
 
 Routes:
+
 - `GET /metrics` → Prometheus text format.
 - `GET /health` → `{"status":"ok","queue_depth":N}`.
 - `GET /ui` → delegate to `dashboard::render()`.
@@ -268,14 +275,17 @@ rar2zip_queue_depth N
 Self-contained HTML page as an inline Rust string literal. No external files.
 
 Sections:
-1. Queue Stats table (pending / converting / transferring / done / failed counts).
-2. Recent Jobs table (last 20: id truncated, filename, status, retries, updated_at,
-   error truncated to 80 chars).
+
+1. Queue Stats table (pending / converting / transferring / done / failed
+   counts).
+2. Recent Jobs table (last 20: id truncated, filename, status, retries,
+   updated_at, error truncated to 80 chars).
 3. Transfer Stats (bytes transferred, files processed, failure counts).
 
 Auto-refresh: `setTimeout(() => location.reload(), 5000)`.
 
-Status badge colours: green=done, red=failed, yellow=converting/transferring, grey=pending.
+Status badge colours: green=done, red=failed, yellow=converting/transferring,
+grey=pending.
 
 ---
 
@@ -298,6 +308,7 @@ Non-blocking — errors are logged but not propagated.
 with From/To/Subject/Body from config.
 
 **Alert triggers** (called from `app.rs`):
+
 - Job exhausts all retries → `AlertLevel::Error`.
 - Queue depth > `alert_queue_depth_threshold` → `AlertLevel::Warning`,
   rate-limited to once per 5 minutes.
@@ -307,6 +318,7 @@ with From/To/Subject/Body from config.
 ## 4.7 Tests — Phase 4
 
 ### convert.rs (unit + fixture tests)
+
 ```
 - convert known small .rar fixture → valid .zip (verify with zip crate)
 - corrupt .rar → returns Conversion error
@@ -316,6 +328,7 @@ with From/To/Subject/Body from config.
 ```
 
 ### transfer.rs (unit tests only — no mock SSH server)
+
 ```
 - bandwidth throttle: given limit_kbps=100 and 200KB sent in 0.5s →
   sleep duration ≈ 1.5s
@@ -334,10 +347,10 @@ with From/To/Subject/Body from config.
 - [ ] `cargo test -p rar2zip convert` passes with fixture archives.
 - [ ] `cargo test -p rar2zip transfer` passes all unit tests.
 - [ ] `cargo test -p rar2zip metrics` passes.
-- [ ] End-to-end smoke test (Disk): drop a `.rar` into `watch_folder` →
-      zip appears in `failed_folder` or on remote.
-- [ ] End-to-end smoke test (Stream): drop a large `.rar` → no zip created
-      on disk; source archive deleted after remote checksum passes.
+- [ ] End-to-end smoke test (Disk): drop a `.rar` into `watch_folder` → zip
+      appears in `failed_folder` or on remote.
+- [ ] End-to-end smoke test (Stream): drop a large `.rar` → no zip created on
+      disk; source archive deleted after remote checksum passes.
 - [ ] `GET /metrics` returns Prometheus text.
 - [ ] `GET /ui` returns HTML with auto-refresh.
 - [ ] No `unwrap()` in any conversion or transfer code.

@@ -5,8 +5,8 @@ extraction, parallel crawler) and the cross-platform filesystem watcher. After
 this phase, `filesearch daemon` can crawl a directory tree, populate both
 stores, and keep them up-to-date in real time.
 
-Also covers the `rar2zip` folder watcher and intake logic (dedup,
-multi-part detection, job enqueue).
+Also covers the `rar2zip` folder watcher and intake logic (dedup, multi-part
+detection, job enqueue).
 
 **Estimated scope:** ~1 400 lines of Rust (includes `archive.rs`).
 
@@ -27,6 +27,7 @@ impl ExclusionEngine {
 ```
 
 Exclusion pipeline (short-circuit on first match):
+
 1. If `exclude_hidden && is_hidden` → exclude.
 2. For each glob pattern: if `pattern.matches(path_str)` → exclude.
 3. Otherwise → include.
@@ -34,7 +35,9 @@ Exclusion pipeline (short-circuit on first match):
 ### Network Mount Detection
 
 Platform-specific `is_network_mount(path) -> bool`:
-- **Linux:** parse `/proc/mounts`, match `fstype` against `nfs`, `nfs4`, `cifs`, `smbfs`.
+
+- **Linux:** parse `/proc/mounts`, match `fstype` against `nfs`, `nfs4`, `cifs`,
+  `smbfs`.
 - **macOS:** `nix::sys::statfs::statfs(path)`, check `f_fstypename`.
 - **Windows:** `GetDriveTypeW` returning `DRIVE_REMOTE (4)`.
 
@@ -57,16 +60,16 @@ Scan first 8 KB. If > 0.1% of bytes are `\0` (null) → binary → return `None`
 
 ### Read Strategy
 
-| File size | Strategy |
-|-----------|---------|
-| ≤ 1 MB | `tokio::fs::read()` into a `Vec<u8>` |
-| > 1 MB | `memmap2::Mmap` (read-only) |
+| File size | Strategy                             |
+| --------- | ------------------------------------ |
+| ≤ 1 MB    | `tokio::fs::read()` into a `Vec<u8>` |
+| > 1 MB    | `memmap2::Mmap` (read-only)          |
 
 ### Encoding Detection
 
-Use `encoding_rs::Encoding::for_bom()` first (BOM detection).
-If no BOM: use `encoding_rs::UTF_8::decode()` with lossy fallback.
-Log encoding at `debug` level.
+Use `encoding_rs::Encoding::for_bom()` first (BOM detection). If no BOM: use
+`encoding_rs::UTF_8::decode()` with lossy fallback. Log encoding at `debug`
+level.
 
 ### Truncation
 
@@ -90,16 +93,16 @@ pub async fn full_crawl(
 ```
 
 Algorithm:
-1. For each `watch_path` in config:
-   a. Build `ignore::WalkBuilder` with `hidden(false)` and `git_ignore(false)`.
-   b. Walk with `rayon` parallel iterator.
-   c. For each entry:
-      - Apply `ExclusionEngine::should_exclude()`.
-      - Build `FileRecord` from `std::fs::Metadata`.
-      - Populate `attrib_bitmask` via platform-specific helper.
-      - Call `sqlite.upsert_file(record)`.
-      - If `content_limit(path, cfg).is_some()`: send to content channel.
-   d. After walk: final Tantivy commit.
+
+1. For each `watch_path` in config: a. Build `ignore::WalkBuilder` with
+   `hidden(false)` and `git_ignore(false)`. b. Walk with `rayon` parallel
+   iterator. c. For each entry:
+   - Apply `ExclusionEngine::should_exclude()`.
+   - Build `FileRecord` from `std::fs::Metadata`.
+   - Populate `attrib_bitmask` via platform-specific helper.
+   - Call `sqlite.upsert_file(record)`.
+   - If `content_limit(path, cfg).is_some()`: send to content channel. d. After
+     walk: final Tantivy commit.
 2. Reconcile: for each `watch_path`, call `sqlite.paths_under()`, compare
    against on-disk state, call `sqlite.remove_file()` for stale entries.
 3. Update `index_meta` with `last_crawl_time` and `total_files`.
@@ -116,11 +119,11 @@ pub async fn process_event(
 )
 ```
 
-| Event | Action |
-|-------|--------|
-| `Created(path)` | `sqlite.upsert_file()`, enqueue content if applicable |
-| `Modified(path)` | Same as Created |
-| `Deleted(path)` | `sqlite.remove_file()`, `tantivy.remove()` |
+| Event                  | Action                                                                                |
+| ---------------------- | ------------------------------------------------------------------------------------- |
+| `Created(path)`        | `sqlite.upsert_file()`, enqueue content if applicable                                 |
+| `Modified(path)`       | Same as Created                                                                       |
+| `Deleted(path)`        | `sqlite.remove_file()`, `tantivy.remove()`                                            |
 | `Renamed { from, to }` | Update path+name in SQLite; if directory, prefix-replace all children; update Tantivy |
 
 ### IndexMetrics
@@ -166,11 +169,12 @@ pub async fn run_watcher(
 ```
 
 Filter pipeline (applied in order for each `Create(File)` event):
+
 1. Extension in `include_extensions` (case-insensitive).
 2. Filename does not match any `exclude_patterns` glob.
 3. If `watch_subdirs` is set: parent dir matches one of the listed subdirs.
-4. File `mtime` is older than `min_file_age_secs`. If not yet old, schedule
-   a delayed re-check with `tokio::time::sleep`.
+4. File `mtime` is older than `min_file_age_secs`. If not yet old, schedule a
+   delayed re-check with `tokio::time::sleep`.
 
 ---
 
@@ -188,11 +192,13 @@ Filter pipeline (applied in order for each `Create(File)` event):
 ### Multi-part Detection
 
 **New style** (`archive.part1.rar`, `archive.part2.rar`, …):
+
 - Regex: `^(.+)\.part(\d+)\.rar$`
 - `group_id` = base name before `.partN.rar`.
 - Complete when: all `part1..partN` present and no `partN+1` on disk.
 
 **Old style** (`archive.rar`, `archive.r00`, `archive.r01`, …):
+
 - Regex: `^(.+)\.(rar|r\d{2})$`
 - `group_id` = base name.
 - Complete when: `.rar` + all `.r00`–`.rNN` present, no `.rNN+1`.
@@ -204,7 +210,9 @@ Filter pipeline (applied in order for each `Create(File)` event):
 Full specification in `zip-inner-streaming-spec.md` sections 4–5.
 
 Summary of responsibilities:
-- `ArchiveCrawler` streams all indexable entries from a ZIP using `zip::ZipArchive`.
+
+- `ArchiveCrawler` streams all indexable entries from a ZIP using
+  `zip::ZipArchive`.
 - Builds virtual paths: `<archive_path>!/<entry_name>`.
 - Applies `max_entries_per_archive` safety limit.
 - Attempts passwords for encrypted entries.
@@ -212,8 +220,8 @@ Summary of responsibilities:
 - **Never writes to disk.**
 
 In `full_crawl()`: after upserting a ZIP's own `FileRecord`, call
-`crawl_archive()` to stream and upsert all its inner entries. All inner
-upserts are wrapped in a single SQLite transaction per archive.
+`crawl_archive()` to stream and upsert all its inner entries. All inner upserts
+are wrapped in a single SQLite transaction per archive.
 
 In `process_event()`: `Modified(zip)` → `remove_archive_entries()` then
 `crawl_archive()`; `Deleted(zip)` → `remove_archive_entries()` only.
@@ -230,8 +238,8 @@ Content extraction for inner files delegates to the new
 pub async fn hash_file(path: &Path) -> Result<String>
 ```
 
-Stream-read with 64 KB buffer, feed `sha2::Sha256`, return hex string.
-Never load entire file into memory.
+Stream-read with 64 KB buffer, feed `sha2::Sha256`, return hex string. Never
+load entire file into memory.
 
 ### Strategy Selection
 
@@ -245,19 +253,20 @@ pub fn select_strategy(file_size_bytes: u64, threshold_mb: u64) -> Strategy {
 }
 ```
 
-> `Strategy::Stream`: no zip file is ever created. The source archive is
-> piped through the conversion stage directly into the SFTP write stream.
-> The source archive is the retry anchor and is deleted only after remote
-> checksum verification passes.
+> `Strategy::Stream`: no zip file is ever created. The source archive is piped
+> through the conversion stage directly into the SFTP write stream. The source
+> archive is the retry anchor and is deleted only after remote checksum
+> verification passes.
 >
-> `Strategy::Disk`: zip is the transfer artifact; deleted after checksum
-> passes. Source archive deleted after zip is confirmed complete.
+> `Strategy::Disk`: zip is the transfer artifact; deleted after checksum passes.
+> Source archive deleted after zip is confirmed complete.
 
 ---
 
 ## 3.7 Tests — Phase 3
 
 ### filesearch Exclusion Engine
+
 ```
 - path matching **/node_modules/** → excluded
 - hidden file, exclude_hidden=false → not excluded
@@ -266,6 +275,7 @@ pub fn select_strategy(file_size_bytes: u64, threshold_mb: u64) -> Strategy {
 ```
 
 ### filesearch Content Extractor
+
 ```
 - UTF-8 text → extracted correctly
 - Latin-1 encoded → transcoded to UTF-8
@@ -276,6 +286,7 @@ pub fn select_strategy(file_size_bytes: u64, threshold_mb: u64) -> Strategy {
 ```
 
 ### filesearch Crawler
+
 ```
 - crawl temp dir of 100 files → all records in SQLite
 - path matching exclusion pattern → not in SQLite
@@ -285,6 +296,7 @@ pub fn select_strategy(file_size_bytes: u64, threshold_mb: u64) -> Strategy {
 ```
 
 ### filesearch Archive Crawler (see zip-inner-streaming-spec.md §4.5)
+
 ```
 - crawl fixture ZIP with 5 text entries → 5 ArchiveEntry items, virtual paths correct
 - directory entries yield is_dir=true, content=None
@@ -299,6 +311,7 @@ pub fn select_strategy(file_size_bytes: u64, threshold_mb: u64) -> Strategy {
 ```
 
 ### rar2zip Intake
+
 ```
 - single .rar → enqueued immediately
 - part1.rar arrives → not enqueued; part2.rar arrives → enqueued
