@@ -272,6 +272,8 @@ mod tests {
     }
 
     fn minimal_config_toml(watch_dir: &Path) -> String {
+        // Forward slashes: TOML quoted strings treat \ as an escape character.
+        let watch = watch_dir.to_string_lossy().replace('\\', "/");
         format!(
             r#"
 watch_folder  = "{watch}"
@@ -280,8 +282,7 @@ destinations  = []
 
 [conversion]
 compression_level = 6
-"#,
-            watch = watch_dir.display()
+"#
         )
     }
 
@@ -308,10 +309,11 @@ compression_level = 6
     #[test]
     fn validate_compression_level_out_of_range() {
         let dir = tempfile::tempdir().unwrap();
+        // Use forward slashes — TOML quoted strings treat \ as an escape.
+        let d = dir.path().to_string_lossy().replace('\\', "/");
         let f = write_config(&format!(
             "watch_folder=\"{d}\"\nfailed_folder=\"{d}/f\"\ndestinations=[]\n\
-             [conversion]\ncompression_level=10",
-            d = dir.path().display()
+             [conversion]\ncompression_level=10"
         ));
         let cfg = load(f.path()).unwrap();
         let errs = validate(&cfg);
@@ -359,6 +361,10 @@ compression_level = 6
         tokio::time::sleep(Duration::from_millis(200)).await;
 
         {
+            // Write a complete replacement config — do NOT append to the
+            // existing one, as that would create a duplicate [conversion]
+            // section and fail TOML parsing.
+            let watch = dir.path().to_string_lossy().replace('\\', "/");
             let mut file = std::fs::OpenOptions::new()
                 .write(true)
                 .truncate(true)
@@ -366,8 +372,15 @@ compression_level = 6
                 .unwrap();
             write!(
                 file,
-                "{}\n[conversion]\ncompression_level=1\nmultipart_timeout_hours=48",
-                minimal_config_toml(dir.path())
+                r#"
+watch_folder  = "{watch}"
+failed_folder = "{watch}/failed"
+destinations  = []
+
+[conversion]
+compression_level        = 1
+multipart_timeout_hours  = 48
+"#
             )
             .unwrap();
         }

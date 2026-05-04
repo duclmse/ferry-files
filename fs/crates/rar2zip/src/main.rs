@@ -1,7 +1,5 @@
 use clap::{Parser, Subcommand};
-
-mod config;
-mod error;
+use rar2zip::config;
 
 #[derive(Parser)]
 #[command(

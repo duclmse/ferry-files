@@ -17,8 +17,9 @@ pub enum AppError {
     #[error("Database error: {0}")]
     Database(#[from] rusqlite::Error),
 
+    // Ssh variant added in Phase 4 alongside the ssh2 dep
     #[error("SSH error: {0}")]
-    Ssh(#[from] ssh2::Error),
+    Ssh(String),
 
     #[error("Alert error: {0}")]
     Alert(String),

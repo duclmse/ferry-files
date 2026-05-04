@@ -1,7 +1,5 @@
 use clap::{Parser, Subcommand};
-
-mod config;
-mod error;
+use filesearch::config;
 
 #[derive(Parser)]
 #[command(name = "filesearch", version, about = "Cross-platform file-search daemon")]

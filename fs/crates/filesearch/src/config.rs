@@ -336,13 +336,15 @@ mod tests {
     }
 
     fn minimal_config_toml(tmp_dir: &Path) -> String {
+        // Use forward slashes: TOML quoted strings treat \ as an escape
+        // character, so Windows backslash paths must be normalised.
+        let dir = tmp_dir.to_string_lossy().replace('\\', "/");
         format!(
             r#"
 watch_paths = ["{dir}"]
 data_dir    = "{dir}/data"
 log_dir     = "{dir}/logs"
-"#,
-            dir = tmp_dir.display()
+"#
         )
     }
 

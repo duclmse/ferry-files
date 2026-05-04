@@ -272,14 +272,118 @@ multipart_timeout_hours = 24
 
 ## 1.10 Definition of Done
 
-- [ ] `cargo check -p common` passes with zero errors.
-- [ ] `cargo check -p filesearch` passes with zero errors.
-- [ ] `cargo check -p rar2zip` passes with zero errors.
-- [ ] `cargo check` (workspace root) passes, no warnings.
-- [ ] `cargo test -p filesearch config` passes.
-- [ ] `cargo test -p rar2zip config` passes.
-- [ ] `filesearch validate-config` and `rar2zip validate-config`
+- [x] `cargo check -p common` passes with zero errors.
+- [x] `cargo check -p filesearch` passes with zero errors.
+- [x] `cargo check -p rar2zip` passes with zero errors.
+- [x] `cargo check` (workspace root) passes, no warnings.
+- [x] `cargo test -p filesearch config` passes.
+- [x] `cargo test -p rar2zip config` passes.
+- [x] `filesearch validate-config` and `rar2zip validate-config`
       subcommands call `validate()` and print results.
-- [ ] `VERSIONS.md` exists in both `crates/filesearch/` and `crates/rar2zip/`.
-- [ ] No `unwrap()` in any config, error, or logger code.
-- [ ] No `logger.rs` in either crate (only in `common`).
+- [x] `VERSIONS.md` exists in both `crates/filesearch/` and `crates/rar2zip/`.
+- [x] No `unwrap()` in any config, error, or logger code.
+- [x] No `logger.rs` in either crate (only in `common`).
+
+---
+
+## 1.11 Implementation Notes *(added during Phase 1 implementation)*
+
+### A. `common::logger::init` returns `WorkerGuard`
+
+The spec code showed `_guard` dropped at end of `init()`. The implementation
+changes the signature to:
+
+```rust
+pub fn init(log_dir: &Path) -> Result<WorkerGuard, CommonError>
+```
+
+Callers (`main()` / `service_main()`) must bind the guard:
+
+```rust
+let _guard = common::logger::init(&cfg.log_dir)?;
+```
+
+Dropping the guard before the process exits silently discards unflushed log
+lines. Store it in `main()`'s outermost scope.
+
+### B. `tokio-util` added to workspace dependencies
+
+`CancellationToken` (used in `watch_config` and all later phases) lives in
+`tokio_util::sync::CancellationToken`. The workspace `Cargo.toml` declares:
+
+```toml
+tokio-util = { version = "0.7" }
+```
+
+Note: `tokio-util 0.7` does **not** have a `"sync"` feature flag —
+`CancellationToken` is included in the default feature set.
+
+### C. `multipart_timeout_hours` lives in `ConversionConfig`, not a separate `IndexerConfig`
+
+The phase 1 spec draft described an `IndexerConfig` struct for rar2zip that
+held only `multipart_timeout_hours`. The reference doc (`03-ref-rar2zip-modules.md`)
+places this field — plus `stream_to_transfer_threshold_mb` and
+`archive_password` — inside `ConversionConfig`, which is the authoritative
+layout. No `IndexerConfig` struct exists in `rar2zip`.
+
+### D. `ArchiveIndexConfig` is a top-level section of `filesearch::Config`
+
+The reference doc adds `archive_index: ArchiveIndexConfig` as a first-class
+field on `Config` (not nested inside `IndexerConfig`). The struct tracks
+`enabled`, `formats`, `inner_extension_limits`, `max_entries_per_archive`,
+`max_nesting_depth`, and `passwords`. The only supported format is `"zip"`;
+`validate()` returns an error for any other value.
+
+### E. Both crates have a `lib.rs` + `main.rs` split
+
+Each crate (`filesearch`, `rar2zip`) exposes its modules through a `lib.rs`:
+
+```rust
+pub mod config;
+pub mod error;
+```
+
+`main.rs` imports via `use filesearch::config;` / `use rar2zip::config;`.
+This eliminates dead-code warnings for `pub` items that are not yet wired up,
+and enables proper unit-test isolation in later phases (tests link against the
+library, not the binary).
+
+### F. `ssh2` / `openssl` deferred to Phase 4
+
+Building `openssl` with `features = ["vendored"]` requires **Strawberry Perl**
+on Windows (Git's bundled Perl is missing `Locale::Maketext::Simple`). Since
+`ssh2` is only used in `transfer.rs` (Phase 4), both deps are declared in the
+workspace `Cargo.toml` but **not yet added to `rar2zip`'s `[dependencies]`**.
+
+`rar2zip/src/error.rs` therefore has `Ssh(String)` instead of
+`Ssh(#[from] ssh2::Error)`. In Phase 4, when `ssh2 = { workspace = true }` is
+added, update that variant to `Ssh(#[from] ssh2::Error)`.
+
+Install Strawberry Perl before Phase 4: <https://strawberryperl.com>
+
+### G. TOML path serialisation on Windows
+
+TOML quoted strings (`"..."`) treat `\` as an escape character. Windows paths
+written with `PathBuf::display()` use backslashes, which produce invalid TOML
+(e.g. `"C:\Users\"` → parse error on `\U`). All test helpers normalise paths
+with:
+
+```rust
+let s = path.to_string_lossy().replace('\\', "/");
+```
+
+Windows accepts forward-slash paths, so this is safe at runtime too. Config
+files written by users on Windows must also use forward slashes or raw TOML
+literals (`'C:\path'`).
+
+### H. `r2d2_sqlite` version bumped to `0.24`
+
+`r2d2_sqlite 0.23` requires `rusqlite ^0.30`, which conflicts with
+`rusqlite ^0.31` used elsewhere. Version `0.24` supports `rusqlite 0.31`.
+VERSIONS.md updated accordingly.
+
+### I. `[profile.release]` moved to workspace root
+
+Cargo ignores `[profile.*]` sections in non-root member `Cargo.toml` files.
+The release profile (`opt-level = 3`, `strip = true`) from the rar2zip spec is
+declared at the workspace root instead.
