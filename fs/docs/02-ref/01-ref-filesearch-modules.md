@@ -286,7 +286,8 @@ pub struct ApiConfig {
 pub struct SearchConfig {
     pub default_limit:    usize,  // default 100
     pub max_limit:        usize,  // default 10000
-    pub fuzzy_threshold:  f32,    // default 0.7; range 0.0–1.0
+    pub fuzzy_threshold:      f32,    // default 0.7; range 0.0–1.0
+    pub max_fuzzy_candidates: usize,  // default 50_000; 0 = no cap
 }
 
 #[derive(Debug, Clone, Deserialize)]
@@ -357,30 +358,39 @@ PRAGMA synchronous=NORMAL;
 PRAGMA cache_size=-65536;   -- 64MB page cache
 
 CREATE TABLE IF NOT EXISTS files (
-    id              INTEGER PRIMARY KEY AUTOINCREMENT,
-    path            TEXT NOT NULL UNIQUE,
-    name            TEXT NOT NULL,
-    extension       TEXT,                   -- lowercase, no dot
-    size_bytes      INTEGER NOT NULL,
-    mtime           INTEGER NOT NULL,       -- Unix timestamp
-    ctime           INTEGER NOT NULL,
-    is_dir          INTEGER NOT NULL,       -- 0 or 1
-    is_hidden       INTEGER NOT NULL,       -- 0 or 1
-    is_symlink      INTEGER NOT NULL,       -- 0 or 1
-    attrib_bitmask  INTEGER NOT NULL DEFAULT 0,
-    content_indexed INTEGER NOT NULL DEFAULT 0,
-    tantivy_id      TEXT,
-    indexed_at      INTEGER NOT NULL,
-    archive_path    TEXT DEFAULT NULL
+    id               INTEGER PRIMARY KEY AUTOINCREMENT,
+    path             TEXT NOT NULL UNIQUE,
+    name             TEXT NOT NULL,
+    extension        TEXT,                   -- lowercase, no dot
+    size_bytes       INTEGER NOT NULL,
+    mtime            INTEGER NOT NULL,       -- Unix timestamp
+    ctime            INTEGER NOT NULL,
+    is_dir           INTEGER NOT NULL,       -- 0 or 1
+    is_hidden        INTEGER NOT NULL,       -- 0 or 1
+    is_symlink       INTEGER NOT NULL,       -- 0 or 1
+    attrib_bitmask   INTEGER NOT NULL DEFAULT 0,
+    content_indexed  INTEGER NOT NULL DEFAULT 0,
+    tantivy_id       TEXT,
+    indexed_at       INTEGER NOT NULL,
+    archive_path     TEXT DEFAULT NULL,
     -- NULL = real filesystem file
     -- Non-NULL = virtual inner-archive entry; value is the outer ZIP path
+    parent           TEXT DEFAULT NULL,
+    -- Direct parent directory path, derived from `path` on upsert.
+    -- For /a/b/c.rs → /a/b. For /a.zip!/src/c.rs → /a.zip!/src.
+    -- Enables O(log n) direct-child queries via idx_files_parent.
+    watch_root       TEXT DEFAULT NULL,
+    -- Set by mark_seen() during full crawl. Used by stale-entry cleanup.
+    crawl_generation INTEGER DEFAULT NULL
+    -- Monotonically increasing counter set by mark_seen() each full crawl.
+    -- Rows with generation < current are stale and deleted in SQL.
 );
 
 CREATE INDEX IF NOT EXISTS idx_files_name      ON files(name);
 CREATE INDEX IF NOT EXISTS idx_files_extension ON files(extension);
 CREATE INDEX IF NOT EXISTS idx_files_mtime     ON files(mtime);
 CREATE INDEX IF NOT EXISTS idx_files_size      ON files(size_bytes);
-CREATE INDEX IF NOT EXISTS idx_files_parent    ON files(path);
+CREATE INDEX IF NOT EXISTS idx_files_parent    ON files(parent);
 CREATE INDEX IF NOT EXISTS idx_files_attrib    ON files(attrib_bitmask);
 CREATE INDEX IF NOT EXISTS idx_files_archive   ON files(archive_path)
     WHERE archive_path IS NOT NULL;
@@ -389,8 +399,13 @@ CREATE TABLE IF NOT EXISTS index_meta (
     key     TEXT PRIMARY KEY,
     value   TEXT NOT NULL
 );
--- Stores: last_crawl_time, schema_version, total_files
+-- Stores: last_crawl_time, crawl_generation, total_files
 ```
+
+> **Migration note:** `parent`, `watch_root`, and `crawl_generation` are added
+> via `ALTER TABLE ADD COLUMN` on existing databases during `SqliteStore::new()`.
+> The old `idx_files_parent ON files(path)` index is dropped and replaced with
+> `idx_files_parent ON files(parent)` in the same migration pass.
 
 `attrib_bitmask` encoding:
 ```
@@ -432,6 +447,7 @@ For inner ZIP entries: `is_hidden = false`, `is_symlink = false`, `attrib_bitmas
 impl SqliteStore {
     pub fn new(db_path: &Path) -> Result<Self>;
     pub fn upsert_file(&self, file: &FileRecord) -> Result<i64>;
+    // Computes and stores `parent` from file.path automatically.
     pub fn upsert_file_conn(&self, conn: &rusqlite::Connection,
                              file: &FileRecord) -> Result<i64>;
     pub fn remove_file(&self, path: &str) -> Result<()>;
@@ -446,11 +462,18 @@ impl SqliteStore {
     pub fn total_files(&self) -> Result<i64>;
     pub fn get_meta(&self, key: &str) -> Result<Option<String>>;
     pub fn set_meta(&self, key: &str, value: &str) -> Result<()>;
+    // Use only for small subtrees. Full-crawl stale detection uses generation methods.
     pub fn paths_under(&self, dir: &str) -> Result<Vec<String>>;
+    // Uses indexed `parent = ?` for O(log n) lookup.
     pub fn has_child(&self, parent_path: &str, name_pattern: &str) -> Result<bool>;
     pub fn find_dupes(&self, kind: DupeKind,
                       extra_conditions: &[SqlCondition],
                       limit: usize) -> Result<Vec<FileRecord>>;
+
+    // Crawl generation management (mark-and-sweep reconciliation)
+    pub fn begin_crawl_generation(&self) -> Result<i64>;
+    pub fn mark_seen(&self, path: &str, watch_root: &str, generation: i64) -> Result<()>;
+    pub fn remove_stale_for_root(&self, watch_root: &str, generation: i64) -> Result<usize>;
 
     // Archive inner-file methods
     pub fn remove_archive_entries(&self, archive_path: &str) -> Result<usize>;
@@ -595,13 +618,22 @@ impl<'cfg> ArchiveCrawler<'cfg> {
     pub fn new(config: &'cfg ArchiveIndexConfig,
                content_config: &'cfg ContentConfig) -> Self;
 
-    /// Stream all indexable entries from a ZIP file.
-    /// Never writes to disk.
+    /// Iterate ZIP entries one at a time. Never writes to disk; never
+    /// allocates a Vec proportional to the archive's entry count.
+    /// Returns `ArchiveEntryIter`, a named iterator struct that owns the
+    /// open archive and yields one entry per `next()` call.
     pub fn crawl(
         &self,
         archive_path: &Path,
         nesting_depth: u8,
-    ) -> Result<impl Iterator<Item = Result<ArchiveEntry>>>;
+    ) -> Result<ArchiveEntryIter>;
+}
+
+/// Named streaming iterator returned by `ArchiveCrawler::crawl`.
+/// Processes one ZIP entry at a time; safe to collect or break early.
+pub struct ArchiveEntryIter { /* ... */ }
+impl Iterator for ArchiveEntryIter {
+    type Item = Result<ArchiveEntry>;
 }
 
 pub struct ArchiveEntry {
@@ -635,15 +667,16 @@ pub async fn full_crawl(
 ```
 
 Algorithm:
-1. Build `ignore::WalkBuilder` with `hidden(false)`, `git_ignore(false)`.
-2. Walk in parallel with `rayon`.
-3. Apply `ExclusionEngine::should_exclude()`.
-4. Build `FileRecord` from metadata (populate `attrib_bitmask` via platform helper).
-5. `sqlite.upsert_file(record)`.
-6. If `content_limit(path, cfg).is_some()`: send to content channel.
-7. If entry is a ZIP and `archive_index.enabled`: call `crawl_archive()`.
-8. After walk: final Tantivy commit, update `index_meta.last_crawl_time`.
-9. Reconcile: call `sqlite.paths_under()` per watch_path, remove stale entries.
+1. Call `sqlite.begin_crawl_generation()` once at crawl start.
+2. For each `watch_path`: build `ignore::WalkBuilder` with `hidden(false)`, `git_ignore(false)`.
+3. Walk in parallel.
+4. Apply `ExclusionEngine::should_exclude()`.
+5. Build `FileRecord` from metadata (populate `attrib_bitmask` via platform helper).
+6. `sqlite.upsert_file(record)` then `sqlite.mark_seen(path, watch_root, generation)`.
+7. If `content_limit(path, cfg).is_some()`: extract content and call `tantivy.upsert()`.
+8. If entry is a ZIP and `archive_index.enabled`: call `crawl_archive()`.
+9. After each watch root finishes: `sqlite.remove_stale_for_root(watch_root, generation)` — deletes stale rows in SQL, no path list in Rust memory.
+10. Final Tantivy commit, update `index_meta.last_crawl_time`.
 
 ```rust
 async fn crawl_archive(
@@ -1097,9 +1130,10 @@ ipc_path          = "/tmp/filesearch.sock"
 rest_cors_origins = ["*"]
 
 [search]
-default_limit   = 100
-max_limit       = 10000
-fuzzy_threshold = 0.7
+default_limit        = 100
+max_limit            = 10000
+fuzzy_threshold      = 0.7
+max_fuzzy_candidates = 50000   # 0 = no cap
 
 [indexer]
 crawl_threads        = 4

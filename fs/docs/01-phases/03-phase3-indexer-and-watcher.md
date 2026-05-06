@@ -92,20 +92,26 @@ pub async fn full_crawl(
 ) -> Result<()>
 ```
 
-Algorithm:
+Algorithm (mark-and-sweep reconciliation — no full path list in Rust memory):
 
-1. For each `watch_path` in config: a. Build `ignore::WalkBuilder` with
-   `hidden(false)` and `git_ignore(false)`. b. Walk with `rayon` parallel
-   iterator. c. For each entry:
-   - Apply `ExclusionEngine::should_exclude()`.
-   - Build `FileRecord` from `std::fs::Metadata`.
-   - Populate `attrib_bitmask` via platform-specific helper.
-   - Call `sqlite.upsert_file(record)`.
-   - If `content_limit(path, cfg).is_some()`: send to content channel. d. After
-     walk: final Tantivy commit.
-2. Reconcile: for each `watch_path`, call `sqlite.paths_under()`, compare
-   against on-disk state, call `sqlite.remove_file()` for stale entries.
-3. Update `index_meta` with `last_crawl_time` and `total_files`.
+1. Call `sqlite.begin_crawl_generation()` once at crawl start to get a new
+   monotonically increasing generation counter.
+2. For each `watch_path`:
+   a. Build `ignore::WalkBuilder` with `hidden(false)` and `git_ignore(false)`.
+   b. Walk in parallel.
+   c. For each entry:
+      - Apply `ExclusionEngine::should_exclude()`.
+      - Build `FileRecord` from `std::fs::Metadata`.
+      - Populate `attrib_bitmask` via platform-specific helper.
+      - Derive and store `parent` from path via `upsert_file()`.
+      - Call `sqlite.mark_seen(path, watch_root, generation)` after upsert.
+      - If `content_limit(path, cfg).is_some()`: extract and index content.
+      - If entry is a ZIP and `archive_index.enabled`: call `crawl_archive()`.
+   d. After each watch root finishes:
+      `sqlite.remove_stale_for_root(watch_root, generation)` — deletes rows
+      with an older or null generation entirely in SQL; no Vec of paths loaded.
+3. Final Tantivy commit.
+4. Update `index_meta` with `last_crawl_time` and `total_files`.
 
 ### Incremental Update
 

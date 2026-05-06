@@ -157,6 +157,29 @@ Before each retry (except first): delete partial remote file.
 
 ## 4.3 Stream Strategy — `stream_convert_and_transfer()`
 
+### Strategy Selection
+
+```rust
+pub fn select_strategy(
+    file_size_bytes:   u64,
+    threshold_mb:      u64,
+    destination_count: usize,
+) -> Strategy
+```
+
+- If `destination_count > 1`: always returns `Strategy::Disk`.
+  Streaming is consumed exactly once, so multiple destinations would require
+  repeating the full decompress/recompress cycle per destination. Using
+  `Strategy::Disk` converts once and fans out the file to all destinations.
+- If `threshold_mb > 0` and `file_size_bytes > threshold_mb * 1024 * 1024`:
+  returns `Strategy::Stream` (single destination only, large file).
+- Otherwise: `Strategy::Disk`.
+
+`select_strategy` is called in `IntakeProcessor::enqueue_path()` after the
+destination list is known.
+
+### Stream Execution
+
 When `job.strategy == Strategy::Stream`, `convert::convert()` is **not** called.
 Instead, `transfer::stream_convert_and_transfer()` runs the entire pipeline:
 source archive → in-memory pipe → SFTP. **No zip file exists on disk at any
@@ -335,9 +358,10 @@ with From/To/Subject/Body from config.
 - exponential backoff: delays = [10, 20, 40, 80, 160, 300, 300] (capped)
 - checksum parse: "abc123  /remote/file\n" → extracts "abc123"
 - checksum mismatch → AppError::Transfer("checksum mismatch")
-- Strategy::Stream: select_strategy(600MB, 500MB) → Stream;
-  select_strategy(400MB, 500MB) → Disk;
-  select_strategy(600MB, 0) → Disk (threshold_mb=0 disables stream)
+- Strategy::Stream: select_strategy(600MB, 500MB, 1) → Stream;
+  select_strategy(400MB, 500MB, 1) → Disk;
+  select_strategy(600MB, 0, 1) → Disk (threshold_mb=0 disables stream)
+  select_strategy(600MB, 500MB, 2) → Disk (multi-destination always Disk)
 ```
 
 ---

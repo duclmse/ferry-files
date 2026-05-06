@@ -2,13 +2,30 @@
 
 ## What This Is
 
-Three crates in a single Cargo workspace:
+Three crates in a single Cargo workspace, plus a future archive service layer
+built inside `filesearch` (Phases 8–13):
 
 | Crate        | Purpose                                                   |
 | ------------ | --------------------------------------------------------- |
 | `common`     | Shared logger init and base error types                   |
 | `filesearch` | Cross-platform file-search daemon (Everything-compatible) |
 | `rar2zip`    | Windows service: watch → convert archives → SFTP transfer |
+
+The **archive service** (Phases 8–13) extends `filesearch` with a network-backed
+virtual filesystem over ZIP. It adds:
+
+- **`.zidx` binary index** — mmap-friendly inode tree built once per ZIP;
+  zero-cost directory listing and O(1) node lookup at request time.
+- **Archive Service API** — REST routes (`/archive/:id/dir`, `/file`, `/index`,
+  `/search`) served by the existing Axum server.
+- **Streaming ZIP core** — `ByteSource` / `StreamExtractor` traits decouple data
+  acquisition from inflate; clients receive chunked, backpressure-aware output.
+- **Deflate random access** — `.dzx` sidecar index captures 64 KB block
+  checkpoints, enabling HTTP `Range` requests without full re-inflate.
+- **Scheduler** — per-archive semaphores → per-client token buckets → two-level
+  Deficit Round Robin; prevents any single client or archive from monopolising CPU.
+- **SIMD inflate pipeline** — scalar Huffman decode + AVX2 match-copy engine;
+  criterion benchmark suite with per-stage timing.
 
 ---
 
@@ -83,6 +100,19 @@ zipfs/
   `multipart_timeout_hours` (default 24). Parts are moved to `failed/`.
 - **Windows Service:** registers with SCM via `windows-service` crate; also
   runnable directly from CLI for development.
+
+---
+
+## Archive Service Key Decisions
+
+| # | Decision |
+|---|----------|
+| AS1 | `.zidx` format: little-endian, flat node table + string pool; `kind` field distinguishes dirs from files (not `first_child == u32::MAX` heuristic) |
+| AS2 | Archive ID: blake3 hex (first 24 chars) of zip path — stable across restarts |
+| AS3 | Deflate random access: **Option B only** (snapshot-based sidecar); Option A requires re-compression and is not used on external archives |
+| AS4 | Scheduler rollout: semaphore → token bucket → DRR; each step independently toggled via config |
+| AS5 | SIMD: compile-time AVX2 dispatch (`target_feature`); runtime detection not required for known target hardware |
+| AS6 | Archive service routes mounted only when `archive_service.enabled = true` |
 
 ---
 

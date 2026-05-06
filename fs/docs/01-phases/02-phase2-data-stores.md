@@ -19,28 +19,31 @@ PRAGMA synchronous=NORMAL;
 PRAGMA cache_size=-65536;   -- 64 MB page cache
 
 CREATE TABLE IF NOT EXISTS files (
-    id              INTEGER PRIMARY KEY AUTOINCREMENT,
-    path            TEXT NOT NULL UNIQUE,
-    name            TEXT NOT NULL,
-    extension       TEXT,
-    size_bytes      INTEGER NOT NULL,
-    mtime           INTEGER NOT NULL,
-    ctime           INTEGER NOT NULL,
-    is_dir          INTEGER NOT NULL,
-    is_hidden       INTEGER NOT NULL,
-    is_symlink      INTEGER NOT NULL,
-    content_indexed INTEGER NOT NULL DEFAULT 0,
-    tantivy_id      TEXT,
-    indexed_at      INTEGER NOT NULL,
-    attrib_bitmask  INTEGER NOT NULL DEFAULT 0, -- query addendum
-    archive_path    TEXT    DEFAULT NULL        -- ZIP inner streaming; NULL = real file
+    id               INTEGER PRIMARY KEY AUTOINCREMENT,
+    path             TEXT NOT NULL UNIQUE,
+    name             TEXT NOT NULL,
+    extension        TEXT,
+    size_bytes       INTEGER NOT NULL,
+    mtime            INTEGER NOT NULL,
+    ctime            INTEGER NOT NULL,
+    is_dir           INTEGER NOT NULL,
+    is_hidden        INTEGER NOT NULL,
+    is_symlink       INTEGER NOT NULL,
+    content_indexed  INTEGER NOT NULL DEFAULT 0,
+    tantivy_id       TEXT,
+    indexed_at       INTEGER NOT NULL,
+    attrib_bitmask   INTEGER NOT NULL DEFAULT 0,
+    archive_path     TEXT    DEFAULT NULL,       -- ZIP inner streaming; NULL = real file
+    parent           TEXT    DEFAULT NULL,       -- direct parent dir; indexed for O(log n) child queries
+    watch_root       TEXT    DEFAULT NULL,       -- watch root this file belongs to (set by mark_seen)
+    crawl_generation INTEGER DEFAULT NULL        -- generation counter set by mark_seen; NULL = pre-generation
 );
 
 CREATE INDEX IF NOT EXISTS idx_files_name      ON files(name);
 CREATE INDEX IF NOT EXISTS idx_files_extension ON files(extension);
 CREATE INDEX IF NOT EXISTS idx_files_mtime     ON files(mtime);
 CREATE INDEX IF NOT EXISTS idx_files_size      ON files(size_bytes);
-CREATE INDEX IF NOT EXISTS idx_files_parent    ON files(path);
+CREATE INDEX IF NOT EXISTS idx_files_parent    ON files(parent);  -- NB: was ON files(path) — fixed
 CREATE INDEX IF NOT EXISTS idx_files_attrib    ON files(attrib_bitmask);
 CREATE INDEX IF NOT EXISTS idx_files_archive   ON files(archive_path)
     WHERE archive_path IS NOT NULL;
@@ -65,12 +68,15 @@ CREATE TABLE IF NOT EXISTS index_meta (
 | `search_name(name, filters, limit)`    | `SELECT * FROM files WHERE name LIKE ? [+ filters]`         |
 | `search_meta(filters, limit)`          | Dynamic WHERE from MetaFilters                              |
 | `paths_under(dir)`                     | `SELECT path FROM files WHERE path LIKE ?                   |     | '/%'` |
-| `has_child(parent, pattern)`           | Check for direct children matching pattern                  |
+| `has_child(parent, pattern)`           | `SELECT COUNT(*) FROM files WHERE parent = ? AND name LIKE ?` (indexed) |
 | `find_dupes(kind, conditions, limit)`  | Two-pass GROUP BY + IN query                                |
 | `total_files()`                        | `SELECT COUNT(*) FROM files WHERE archive_path IS NULL`     |
 | `total_archive_entries()`              | `SELECT COUNT(*) FROM files WHERE archive_path IS NOT NULL` |
 | `remove_archive_entries(archive_path)` | Delete all inner records for a given ZIP path               |
 | `paths_in_archive(archive_path)`       | Return all virtual paths belonging to a ZIP                 |
+| `begin_crawl_generation()`            | Increment and return `crawl_generation` counter in index_meta |
+| `mark_seen(path, watch_root, gen)`    | `UPDATE files SET watch_root=?, crawl_generation=? WHERE path=?` |
+| `remove_stale_for_root(root, gen)`    | `DELETE FROM files WHERE (watch_root=? OR path LIKE root||'/%') AND generation < ?` |
 
 ### MetaFilters → WHERE clauses
 
