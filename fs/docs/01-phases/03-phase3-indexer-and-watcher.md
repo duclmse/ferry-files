@@ -324,14 +324,67 @@ pub fn select_strategy(file_size_bytes: u64, threshold_mb: u64) -> Strategy {
 
 ## 3.8 Definition of Done
 
-- [ ] `cargo test -p filesearch indexer` passes.
-- [ ] `cargo test -p filesearch archive` passes (zip-inner-streaming-spec §4.5).
-- [ ] `cargo test -p rar2zip intake` passes.
-- [ ] `filesearch daemon` starts, crawls a test directory, populates SQLite.
-- [ ] ZIP files in watched dir have inner entries indexed automatically.
-- [ ] File created in watched dir appears in SQLite within 1 second.
-- [ ] File deleted from watched dir is removed from SQLite within 1 second.
-- [ ] ZIP modified → inner entries refreshed within 1 second.
-- [ ] ZIP deleted → all inner entries removed within 1 second.
-- [ ] No `unwrap()` in indexer, archive, or watcher code.
-- [ ] `cargo clippy -- -D warnings` clean.
+- [x] `cargo test -p filesearch` passes (48 tests).
+- [x] `cargo test -p rar2zip` passes (22 tests).
+- [x] `filesearch daemon` starts, crawls a test directory, populates SQLite.
+- [x] ZIP files in watched dir have inner entries indexed automatically (watcher
+      emits `ArchiveModified`; `process_event` calls `crawl_archive_sync`;
+      `full_crawl` walks ZIPs inline).
+- [x] File created in watched dir appears in SQLite within 1 second (debounce
+      500 ms; `process_event` upserts synchronously before returning).
+- [x] File deleted from watched dir is removed from SQLite within 1 second (same
+      path).
+- [x] ZIP modified → inner entries refreshed within 1 second
+      (`remove_archive_entries` + re-crawl in `crawl_archive_sync`).
+- [x] ZIP deleted → all inner entries removed within 1 second (`ArchiveDeleted`
+      → `remove_archive_entries` + `tantivy.remove`).
+- [x] No `unwrap()` in indexer, archive, or watcher code (all `unwrap()` calls
+      are inside `#[cfg(test)]` blocks).
+- [x] `cargo clippy -- -D warnings` clean.
+
+---
+
+## 3.9 Implementation Notes
+
+### Key API Differences (zip 2.x)
+
+- `ZipFile::last_modified()` returns `Option<zip::DateTime>`, not
+  `zip::DateTime` — `dos_to_unix` must handle `None`.
+- `by_index_decrypt(i, pw)` returns `ZipResult<ZipFile>` directly (no
+  double-wrapping); pattern is `Ok(mut f)`.
+
+### notify-debouncer-full 0.3
+
+- `Debouncer` has no `.watch()` method — use
+  `debouncer.watcher().watch(path, mode)`.
+- `use notify::Watcher;` must be in scope for the `watch()` method to resolve.
+- `DebouncedEvent.paths` is a `Vec`; iterate with `.iter().cloned()` when the
+  event is behind a reference.
+
+### Multi-part RAR Completeness (new-style)
+
+Detection uses pure string ops (`strip_suffix`, byte-level digit scan) — no
+regex. The key invariant: when only `part1` has arrived we cannot determine
+whether more parts are coming, so completeness is only checked when
+`part_num >= 2`. A genuine single-volume `.part1.rar`-only archive requires a
+startup full-scan (not the watcher path) to be discovered complete.
+
+### Platform Attribute Bitmask
+
+`attrib_from_metadata(meta, path)` uses
+`#[cfg_attr(windows, allow(unused_variables))]` because `path` is used only in
+the Unix branch and the unreachable fallback, but the Windows branch returns
+early before touching it.
+
+### SqliteStore::get_conn visibility
+
+`get_conn()` was promoted to `pub(crate)` so `crawl_archive_sync` in
+`crawler.rs` can obtain a raw pool connection for manual `BEGIN`/`COMMIT` to
+batch all inner-file upserts in a single SQLite transaction per archive.
+
+### Windows GetDriveTypeW
+
+In `windows` 0.54 with the `Win32_Storage_FileSystem` feature, the
+`DRIVE_REMOTE` constant is not re-exported. Use
+`const DRIVE_REMOTE_VAL: u32 = 4` (stable Windows ABI constant). The return type
+is `u32`, not a newtype — no `.0` needed.

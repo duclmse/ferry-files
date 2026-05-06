@@ -30,7 +30,7 @@ pub struct Config {
     pub macros:        MacroConfig,
 }
 
-#[derive(Debug, Clone, Deserialize)]
+#[derive(Debug, Clone, Deserialize, Default)]
 pub struct ExclusionConfig {
     #[serde(default)]
     pub path_patterns:          Vec<String>,
@@ -42,30 +42,11 @@ pub struct ExclusionConfig {
     pub skip_network_content:   bool,
 }
 
-impl Default for ExclusionConfig {
-    fn default() -> Self {
-        Self {
-            path_patterns:          Vec::new(),
-            exclude_hidden:         false,
-            max_content_size_bytes: 0,
-            skip_network_content:   false,
-        }
-    }
-}
-
-#[derive(Debug, Clone, Deserialize)]
+#[derive(Debug, Clone, Deserialize, Default)]
 pub struct ContentConfig {
     /// Extension → max bytes. `"*"` is the fallback for unlisted extensions.
     #[serde(default)]
     pub extension_limits: HashMap<String, u64>,
-}
-
-impl Default for ContentConfig {
-    fn default() -> Self {
-        Self {
-            extension_limits: HashMap::new(),
-        }
-    }
 }
 
 #[derive(Debug, Clone, Deserialize)]

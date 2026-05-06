@@ -75,7 +75,7 @@ impl SqliteStore {
         Ok(Self { pool })
     }
 
-    fn get_conn(&self) -> Result<r2d2::PooledConnection<SqliteConnectionManager>> {
+    pub(crate) fn get_conn(&self) -> Result<r2d2::PooledConnection<SqliteConnectionManager>> {
         self.pool.get().map_err(|e| AppError::Index(e.to_string()))
     }
 
@@ -223,8 +223,8 @@ impl SqliteStore {
     ) -> Result<Vec<FileRecord>> {
         let (filter_sql, filter_params) = filters.build_where();
         // Strip leading "AND " — base is "WHERE 1=1"
-        let where_extra = if filter_sql.starts_with("AND ") {
-            format!("AND {}", &filter_sql[4..])
+        let where_extra = if let Some(stripped) = filter_sql.strip_prefix("AND ") {
+            format!("AND {stripped}")
         } else {
             filter_sql
         };
