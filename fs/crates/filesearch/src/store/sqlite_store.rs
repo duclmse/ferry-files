@@ -371,7 +371,7 @@ impl SqliteStore {
 
         let group_col = match kind {
             DupeKind::Name         => "name",
-            DupeKind::NamePart     => "name",
+            DupeKind::NamePart     => "COALESCE(REPLACE(name, '.' || extension, ''), name)",
             DupeKind::Size         => "size_bytes",
             DupeKind::DateModified => "mtime",
             DupeKind::DateCreated  => "ctime",

@@ -97,8 +97,8 @@ pub fn parse_date_value(s: &str) -> Result<DateExpr> {
 /// `now` is passed in so callers can substitute a fixed time in tests.
 pub fn resolve_date_constant(c: &DateConstant, now: NaiveDateTime) -> (i64, i64) {
     let today   = now.date();
-    let day_s   = |d: NaiveDate| d.and_hms_opt(0, 0, 0).unwrap().and_utc().timestamp();
-    let day_e   = |d: NaiveDate| d.and_hms_opt(23, 59, 59).unwrap().and_utc().timestamp();
+    let day_s   = |d: NaiveDate| d.and_hms_opt(0, 0, 0).expect("infallible: 0,0,0 always valid").and_utc().timestamp();
+    let day_e   = |d: NaiveDate| d.and_hms_opt(23, 59, 59).expect("infallible: 23,59,59 always valid").and_utc().timestamp();
 
     match c {
         DateConstant::Today => (day_s(today), day_e(today)),
@@ -118,25 +118,25 @@ pub fn resolve_date_constant(c: &DateConstant, now: NaiveDateTime) -> (i64, i64)
             (day_s(last_mon), day_e(last_sun))
         }
         DateConstant::ThisMonth => {
-            let start = NaiveDate::from_ymd_opt(now.year(), now.month(), 1).unwrap();
+            let start = NaiveDate::from_ymd_opt(now.year(), now.month(), 1).expect("infallible: day 1 always valid");
             let end   = month_end(now.year(), now.month());
             (day_s(start), day_e(end))
         }
         DateConstant::LastMonth => {
             let (y, m) = prev_month(now.year(), now.month());
-            let start  = NaiveDate::from_ymd_opt(y, m, 1).unwrap();
+            let start  = NaiveDate::from_ymd_opt(y, m, 1).expect("infallible: day 1 always valid");
             let end    = month_end(y, m);
             (day_s(start), day_e(end))
         }
         DateConstant::ThisYear => {
-            let start = NaiveDate::from_ymd_opt(now.year(), 1, 1).unwrap();
-            let end   = NaiveDate::from_ymd_opt(now.year(), 12, 31).unwrap();
+            let start = NaiveDate::from_ymd_opt(now.year(), 1, 1).expect("infallible: Jan 1 always valid");
+            let end   = NaiveDate::from_ymd_opt(now.year(), 12, 31).expect("infallible: Dec 31 always valid");
             (day_s(start), day_e(end))
         }
         DateConstant::LastYear => {
             let y     = now.year() - 1;
-            let start = NaiveDate::from_ymd_opt(y, 1, 1).unwrap();
-            let end   = NaiveDate::from_ymd_opt(y, 12, 31).unwrap();
+            let start = NaiveDate::from_ymd_opt(y, 1, 1).expect("infallible: Jan 1 always valid");
+            let end   = NaiveDate::from_ymd_opt(y, 12, 31).expect("infallible: Dec 31 always valid");
             (day_s(start), day_e(end))
         }
         DateConstant::LastNDays(n) => {
@@ -160,7 +160,7 @@ pub fn resolve_date_constant(c: &DateConstant, now: NaiveDateTime) -> (i64, i64)
             (lo, now.and_utc().timestamp())
         }
         DateConstant::Month(m) => {
-            let start = NaiveDate::from_ymd_opt(now.year(), *m, 1).unwrap();
+            let start = NaiveDate::from_ymd_opt(now.year(), *m, 1).expect("infallible: day 1 always valid");
             let end   = month_end(now.year(), *m);
             (day_s(start), day_e(end))
         }
@@ -182,7 +182,7 @@ pub fn resolve_date_constant(c: &DateConstant, now: NaiveDateTime) -> (i64, i64)
 
 fn month_end(year: i32, month: u32) -> NaiveDate {
     let (ny, nm) = if month == 12 { (year + 1, 1) } else { (year, month + 1) };
-    NaiveDate::from_ymd_opt(ny, nm, 1).unwrap() - Duration::days(1)
+    NaiveDate::from_ymd_opt(ny, nm, 1).expect("infallible: first of next month always valid") - Duration::days(1)
 }
 
 fn prev_month(year: i32, month: u32) -> (i32, u32) {
@@ -197,20 +197,20 @@ fn parse_absolute_date(s: &str) -> Result<i64> {
     // YYYY-MM-DD or YYYYMMDD
     for fmt in &["%Y-%m-%d", "%Y%m%d"] {
         if let Ok(d) = NaiveDate::parse_from_str(s, fmt) {
-            return Ok(d.and_hms_opt(0, 0, 0).unwrap().and_utc().timestamp());
+            return Ok(d.and_hms_opt(0, 0, 0).expect("infallible: 0,0,0 always valid").and_utc().timestamp());
         }
     }
     // YYYY-MM → first day of that month
     if s.len() == 7 && s.as_bytes().get(4) == Some(&b'-') {
         if let Ok(d) = NaiveDate::parse_from_str(&format!("{s}-01"), "%Y-%m-%d") {
-            return Ok(d.and_hms_opt(0, 0, 0).unwrap().and_utc().timestamp());
+            return Ok(d.and_hms_opt(0, 0, 0).expect("infallible: 0,0,0 always valid").and_utc().timestamp());
         }
     }
     // YYYY → first day of that year
     if s.len() == 4 {
         if let Ok(y) = s.parse::<i32>() {
             if let Some(d) = NaiveDate::from_ymd_opt(y, 1, 1) {
-                return Ok(d.and_hms_opt(0, 0, 0).unwrap().and_utc().timestamp());
+                return Ok(d.and_hms_opt(0, 0, 0).expect("infallible: 0,0,0 always valid").and_utc().timestamp());
             }
         }
     }
@@ -240,7 +240,7 @@ fn parse_absolute_date_range(s: &str) -> Result<(i64, i64)> {
                 let end_ts = NaiveDate::from_ymd_opt(y, m, 1)
                     .map(|_d| {
                         let last = month_end(y, m);
-                        last.and_hms_opt(23, 59, 59).unwrap().and_utc().timestamp()
+                        last.and_hms_opt(23, 59, 59).expect("infallible: 23,59,59 always valid").and_utc().timestamp()
                     })
                     .unwrap_or(lo + 86400 - 1);
                 return Ok((lo, end_ts));
@@ -251,7 +251,7 @@ fn parse_absolute_date_range(s: &str) -> Result<(i64, i64)> {
         // YYYY — whole year
         if let Ok(y) = s.parse::<i32>() {
             let hi = NaiveDate::from_ymd_opt(y, 12, 31)
-                .map(|d| d.and_hms_opt(23, 59, 59).unwrap().and_utc().timestamp())
+                .map(|d| d.and_hms_opt(23, 59, 59).expect("infallible: 23,59,59 always valid").and_utc().timestamp())
                 .unwrap_or(lo + 365 * 86400);
             return Ok((lo, hi));
         }

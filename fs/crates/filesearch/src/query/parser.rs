@@ -165,17 +165,25 @@ impl Parser {
 
             // Split on first colon
             if let Some(colon) = tok.find(':') {
-                let kw  = tok[..colon].to_ascii_lowercase();
-                let val = &tok[colon + 1..];
+                let kw      = tok[..colon].to_ascii_lowercase();
+                let raw_val = tok[colon + 1..].to_owned();
 
                 // Modifier keyword — accumulate and loop
-                if let Some(m) = modifier_from_kw(&kw, val) {
+                if let Some(m) = modifier_from_kw(&kw, &raw_val) {
                     apply_modifier(&mut mods, m);
                     continue;
                 }
 
+                // Comparison-capable functions may have the operator tokenised
+                // separately: "size:>1mb" → Word("size:") + RAngle + Word("1mb").
+                let val = if raw_val.is_empty() && is_comparison_kw(&kw) {
+                    absorb_cmp_op(self)
+                } else {
+                    raw_val
+                };
+
                 // Function or type macro — build expression and return
-                return build_predicate(&kw, val, mods);
+                return build_predicate(&kw, &val, mods);
             }
 
             // Plain word — Term predicate
@@ -229,6 +237,37 @@ fn apply_modifier(mods: &mut Modifiers, m: ModifierKind) {
         ModifierKind::WholeWord        => mods.whole_word          = Some(true),
         ModifierKind::ArchiveOnly(v)   => mods.archive_only       = Some(v),
     }
+}
+
+// ---------------------------------------------------------------------------
+// Comparison operator absorption helpers
+// ---------------------------------------------------------------------------
+
+fn is_comparison_kw(kw: &str) -> bool {
+    matches!(
+        kw,
+        "size" | "dm" | "datemodified" | "date"
+            | "dc" | "datecreated"
+            | "da" | "dateaccessed"
+            | "len" | "depth"
+    )
+}
+
+/// Consume a split comparison operator token (RAngle/LAngle) optionally
+/// followed by the rest of the value word. Returns the reconstructed string.
+fn absorb_cmp_op(parser: &mut Parser) -> String {
+    let op = match parser.peek().clone() {
+        Token::RAngle => { parser.advance(); '>' }
+        Token::LAngle => { parser.advance(); '<' }
+        _ => return String::new(),
+    };
+    let rest = if let Token::Word(w) = parser.peek().clone() {
+        parser.advance();
+        w
+    } else {
+        String::new()
+    };
+    format!("{op}{rest}")
 }
 
 // ---------------------------------------------------------------------------
@@ -581,5 +620,33 @@ mod tests {
             return;
         }
         panic!("expected Count(50)");
+    }
+
+    #[test]
+    fn size_gt_1mb() {
+        use crate::query::ast::RangeExpr;
+        let e = parse_ok("size:>1mb");
+        if let Expr::Predicate(p) = e {
+            if let PredicateKind::Function(Function::Size(RangeExpr::Gt(v))) = p.kind {
+                assert_eq!(v, 1_048_576);
+                return;
+            }
+        }
+        panic!("expected Size(Gt(1048576))");
+    }
+
+    #[test]
+    fn windows_drive_path_prefix() {
+        // "c:\users\" is a Windows path prefix — should produce a path: predicate
+        // with match_path=true.
+        let e = parse_ok(r"c:\users\");
+        if let Expr::Predicate(p) = e {
+            assert_eq!(p.modifiers.match_path, Some(true));
+            if let PredicateKind::Function(Function::Path(path)) = &p.kind {
+                assert!(path.contains("users") || path.starts_with("c:"));
+                return;
+            }
+        }
+        panic!("expected path predicate with match_path=true");
     }
 }

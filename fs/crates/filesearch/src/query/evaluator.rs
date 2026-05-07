@@ -574,15 +574,15 @@ fn filter_paths_by_conditions(
     let mut results = Vec::with_capacity(paths.len().min(limit));
     let (where_extra, extra_params) = build_conditions(conds);
     let conn = sqlite.get_conn()?;
+    let sql = format!(
+        "SELECT id, path, name, extension, size_bytes, mtime, ctime,
+                is_dir, is_hidden, is_symlink, attrib_bitmask,
+                content_indexed, tantivy_id, indexed_at, archive_path
+         FROM files WHERE path = ? {where_extra}"
+    );
+    let mut stmt = conn.prepare(&sql)?;
 
     for path in paths.iter().take(limit * 4) {
-        let sql = format!(
-            "SELECT id, path, name, extension, size_bytes, mtime, ctime,
-                    is_dir, is_hidden, is_symlink, attrib_bitmask,
-                    content_indexed, tantivy_id, indexed_at, archive_path
-             FROM files WHERE path = ? {where_extra}"
-        );
-        let mut stmt = conn.prepare(&sql)?;
         let mut params: Vec<rusqlite::types::Value> =
             vec![rusqlite::types::Value::Text(path.clone())];
         params.extend(extra_params.clone());
@@ -749,5 +749,18 @@ mod tests {
         // Disk strategy when threshold = 0 (disabled)
         let p = parse_plan("*.rs");
         assert!(matches!(p.strategy, EvalStrategy::SqliteOnly));
+    }
+
+    #[test]
+    fn dm_today_produces_mtime_range() {
+        let p = parse_plan("dm:today");
+        assert!(p.sql_conditions.iter().any(|c| matches!(c, SqlCondition::MtimeRange(_, _))));
+        assert!(matches!(p.strategy, EvalStrategy::SqliteOnly));
+    }
+
+    #[test]
+    fn size_gt_1mb_produces_size_op() {
+        let p = parse_plan("size:>1mb");
+        assert!(p.sql_conditions.iter().any(|c| matches!(c, SqlCondition::SizeOp(CmpOp::Gt, 1_048_576))));
     }
 }
