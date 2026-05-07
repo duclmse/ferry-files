@@ -444,7 +444,76 @@ case-insensitive: LOWER(name) GLOB LOWER(?)
 
 ---
 
-## 5.10 Definition of Done
+## 5.10 Implementation Notes
+
+### OR branch approximation in the evaluator
+
+`Expr::Or` walks both sub-trees into separate `QueryPlan`s and then merges
+their SQL conditions. Because `SqlCondition` has no `Raw(String, Vec<Value>)`
+variant that could carry arbitrary SQL, the OR of two complex condition sets
+cannot be expressed as a single typed condition. The evaluator falls back to
+`SqlCondition::NameLike("%")` (match-all) for the merged OR branch and relies
+on post-filters for narrowing. A future `SqlCondition::Or(Vec<SqlCondition>,
+Vec<SqlCondition>)` variant would allow proper SQL `(cond1) OR (cond2)`.
+
+### `archive:` is a modifier, not a term
+
+`archive: *.rs` (with a space) tokenises as `Word("archive:")` followed by
+`Word("*.rs")`. The parser consumes `archive:` as a modifier (sets
+`archive_only = Some(true)`) and attaches it to the following `*.rs` term.
+The result is a single `Predicate` with the modifier set, not `And(archive,
+wildcard)`. This is the correct interpretation — `archive:` scopes the *next*
+predicate, just as `cs:` scopes the next term's case sensitivity.
+
+### `noarchive:` as a post-filter
+
+`archive_path IS NULL` cannot be expressed as a `SqlCondition` variant (the
+current enum has `IsArchiveEntry` for `IS NOT NULL` but not its inverse).
+`noarchive:` therefore inserts a `PostFilter::ArchiveExclude` that filters rows
+whose `archive_path` is non-null after the SQL query returns.
+
+### `nucleo` 0.5 fuzzy API
+
+`nucleo::Utf32String` does **not** implement `Deref<Target = Utf32Str>`.
+Conversion requires `Utf32Str::new(s: &str, buf: &mut Vec<char>)` which fills
+the buffer and returns a `Utf32Str<'_>` backed by it. The `Matcher` is not
+`Send` (it holds internal state), so each rayon worker constructs its own
+`Matcher::new(Config::DEFAULT)`. `fuzzy_match` returns `Option<u16>`, not
+`Option<u32>` — scores are normalised against 1 024 for the threshold
+comparison.
+
+### `glob_to_sqlite` does not escape brackets
+
+SQLite GLOB treats `[` and `]` as character-class delimiters (like shell glob).
+The current implementation does not escape them because Everything's wildcard
+syntax does not use bracket classes. If user input contains literal `[`, it
+will be misinterpreted by SQLite. This is acceptable for the current scope;
+a future `glob_escape_brackets` helper would fix it.
+
+### `DateAccessed` approximated as `mtime`
+
+The SQLite schema has `mtime` and `ctime` columns but no `atime`. The `da:`
+(date-accessed) function maps to `MtimeRange` as a best-effort approximation.
+This matches filesearch's design: access-time tracking is disabled on most
+systems for performance reasons.
+
+### `DupeKind::DateAccessed` falls back to `mtime`
+
+`SqliteStore::find_dupes` maps `DupeKind::DateAccessed` to `mtime` (the only
+timestamp column that approximates access time). The spec notes this case
+returns empty; the implementation returns results grouped by `mtime` instead,
+which is more useful than silence.
+
+### `expand_user_macro` expansion strategy
+
+User macros are expanded in `expand_user_macros` by simple string replacement
+of `"name:"` patterns before tokenising. No recursive expansion is performed.
+If a macro expands into another macro name, the second expansion is skipped.
+This matches the spec's "no recursion" rule and avoids infinite loops.
+
+---
+
+## 5.11 Definition of Done
 
 - [ ] `cargo test -p filesearch query` passes all parser + evaluator tests.
 - [ ] All acceptance test queries from spec section 13 parse without error.

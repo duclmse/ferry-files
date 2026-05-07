@@ -1,0 +1,19 @@
+{
+  "permissions": {
+    "allow": [
+      "PowerShell(perl --version 2>&1)",
+      "Read(//c/Program Files/**)",
+      "PowerShell(Get-ChildItem \"C:\\\\Strawberry\" -ErrorAction SilentlyContinue | Select-Object -First 3; Get-ChildItem \"C:\\\\msys64\\\\usr\\\\bin\\\\perl.exe\" -ErrorAction SilentlyContinue; $env:PATH -split ';' | Where-Object { $_ -match 'perl|msys|strawberry' })",
+      "PowerShell(Get-Command git 2>&1 | Select-Object -First 1; \\(Get-Command git\\).Source 2>&1; Get-ChildItem \"C:\\\\Program Files\\\\Git\\\\usr\\\\bin\\\\perl.exe\" -ErrorAction SilentlyContinue)",
+      "PowerShell($env:PATH = \"C:\\\\Program Files\\\\Git\\\\usr\\\\bin;$env:PATH\"; cd \"e:\\\\projects\\\\rust\\\\zipfs\" && cargo check 2>&1 | Select-Object -Last 30)",
+      "Bash(cargo check *)",
+      "Bash(cargo test *)",
+      "Bash(Get-ChildItem -Path \"E:\\\\projects\\\\rust\\\\fs\" -Recurse -Directory)",
+      "Bash(Select-Object -ExpandProperty FullName)",
+      "WebFetch(domain:docs.rs)",
+      "WebFetch(domain:github.com)",
+      "WebFetch(domain:raw.githubusercontent.com)",
+      "Bash(cargo clippy *)"
+    ]
+  }
+}
