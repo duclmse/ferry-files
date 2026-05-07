@@ -366,7 +366,80 @@ with From/To/Subject/Body from config.
 
 ---
 
-## 4.8 Definition of Done
+## 4.8 Implementation Notes
+
+### SSH library: russh instead of ssh2
+
+The original plan used `ssh2` (libssh2 C bindings). On Windows, `libssh2-sys`
+requires OpenSSL to be available (vendored or system). Vendored build invokes
+`openssl-src`, which calls `perl ./Configure` — the MSYS2/Git-Bash Perl that
+ships with Git for Windows lacks `Locale::Maketext::Simple` and aborts.
+WinCNG (`features = ["wincng"]`) does not exist in libssh2-sys 0.3.x.
+
+**Resolution:** switch to `russh = "0.60"` (pure-Rust SSH client, no OpenSSL).
+Use `default-features = false, features = ["ring", "flate2", "rsa"]` to select
+the `ring` crypto backend and avoid `aws-lc-rs`, which requires NASM on Windows.
+
+russh 0.60 API differences from the plan:
+- The `Handler` trait uses `impl Future` (no `#[async_trait]` needed).
+- `check_server_key` takes `&russh::keys::PublicKey` (from the internal
+  `internal-russh-forked-ssh-key` crate re-exported by `russh::keys`).
+- `authenticate_publickey` takes `PrivateKeyWithHashAlg`, not an `Arc<KeyPair>`.
+- Private keys are loaded with `russh::keys::load_secret_key(path, None)`.
+- Call `session.best_supported_rsa_hash().await?.flatten()` to negotiate the RSA
+  hash algorithm before calling `authenticate_publickey`. Ignored for Ed25519.
+
+### Stream strategy: Cursor<Vec<u8>>, not a pipe
+
+`zip::ZipWriter<W>` requires `W: Write + Seek`. A true OS pipe or `tokio::io::duplex`
+does not implement `Seek`. The stream strategy therefore converts the entire
+source archive to a `Vec<u8>` in memory (`Cursor<Vec<u8>>` as the ZipWriter
+backing store), then uploads the bytes via SFTP. No zip file ever touches disk,
+but the full compressed zip must fit in RAM.
+
+A future upgrade to the `async_zip` crate would enable a genuinely bounded-memory
+pipe-based stream.
+
+### unrar 0.5 typestate API
+
+`unrar 0.5` uses a typestate pattern — `Archive<S>` does not exist; the correct
+types are:
+- `unrar::Archive` (non-generic, used only for construction)
+- `OpenArchive<Process, CursorBeforeHeader>` — returned by `open_for_processing()`
+- `OpenArchive<Process, CursorBeforeFile>` — returned by `read_header()` on success
+
+These types are not named in function signatures because naming them requires
+importing private type-state markers. The archive is opened inline and the loop
+variable is inferred by the compiler.
+
+Key API facts:
+- `header.entry()` returns `&FileHeader` which borrows from the header; extract
+  all needed fields before consuming the header with `skip()` or `read()`. NLL
+  ends the borrow at last use, so no explicit `drop()` is needed.
+- `header.read()` returns `(Vec<u8>, OpenArchive<Process, CursorBeforeHeader>)`,
+  **not** `Cursor<Vec<u8>>`.
+- `FileHeader::is_directory()` (not `is_dir()`), and the field is `method` (not
+  `compression_method`). RAR "stored" = method `0x30`.
+
+### sevenz-rust closure type inference
+
+`SevenZReader::for_each_entries` cannot infer the closure parameter types when
+the method chain is complex. Explicit annotations are required:
+```rust
+.for_each_entries(&mut |entry: &sevenz_rust::SevenZArchiveEntry,
+                         reader: &mut dyn std::io::Read| { ... })
+```
+
+### ureq::Error size
+
+`ureq::Error` is 272 bytes. Clippy's `result_large_err` lint fires on any
+`Result<_, ureq::Error>` returned from a closure (here, the `spawn_blocking`
+closure in `send_webhook`). Fixed by mapping the error to `Box<ureq::Error>`
+inside the closure: `.map_err(Box::new)`.
+
+---
+
+## 4.9 Definition of Done
 
 - [ ] `cargo test -p rar2zip convert` passes with fixture archives.
 - [ ] `cargo test -p rar2zip transfer` passes all unit tests.

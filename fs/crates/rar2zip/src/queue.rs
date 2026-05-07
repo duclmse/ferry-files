@@ -261,6 +261,16 @@ impl JobQueue {
         Ok(map)
     }
 
+    pub fn get_pending_jobs(&self, limit: usize) -> Result<Vec<Job>> {
+        let conn = self.get_conn()?;
+        let mut stmt = conn.prepare(
+            "SELECT id, file_path, file_hash, status, strategy, destinations,
+                    retry_count, created_at, updated_at, error
+             FROM jobs WHERE status = 'pending' ORDER BY created_at ASC LIMIT ?",
+        )?;
+        rows_to_jobs(&mut stmt, rusqlite::params![limit as i64])
+    }
+
     pub fn recent_jobs(&self, limit: usize) -> Result<Vec<Job>> {
         let conn = self.get_conn()?;
         let mut stmt = conn.prepare(

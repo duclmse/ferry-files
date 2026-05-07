@@ -85,23 +85,29 @@ impl Default for ApiConfig {
 #[derive(Debug, Clone, Deserialize)]
 pub struct SearchConfig {
     #[serde(default = "default_default_limit")]
-    pub default_limit:   usize,
+    pub default_limit:        usize,
     #[serde(default = "default_max_limit")]
-    pub max_limit:       usize,
+    pub max_limit:            usize,
     #[serde(default = "default_fuzzy_threshold")]
-    pub fuzzy_threshold: f32,
+    pub fuzzy_threshold:      f32,
+    /// Maximum number of candidate rows to score during a `fuzzy:` query.
+    /// Caps memory usage for broad fuzzy searches; 0 means no cap.
+    #[serde(default = "default_max_fuzzy_candidates")]
+    pub max_fuzzy_candidates: usize,
 }
 
 fn default_default_limit() -> usize { 100 }
 fn default_max_limit() -> usize { 10_000 }
 fn default_fuzzy_threshold() -> f32 { 0.7 }
+fn default_max_fuzzy_candidates() -> usize { 50_000 }
 
 impl Default for SearchConfig {
     fn default() -> Self {
         Self {
-            default_limit:   default_default_limit(),
-            max_limit:       default_max_limit(),
-            fuzzy_threshold: default_fuzzy_threshold(),
+            default_limit:        default_default_limit(),
+            max_limit:            default_max_limit(),
+            fuzzy_threshold:      default_fuzzy_threshold(),
+            max_fuzzy_candidates: default_max_fuzzy_candidates(),
         }
     }
 }

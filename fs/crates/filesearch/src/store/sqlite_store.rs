@@ -15,28 +15,31 @@ PRAGMA synchronous=NORMAL;
 PRAGMA cache_size=-65536;
 
 CREATE TABLE IF NOT EXISTS files (
-    id              INTEGER PRIMARY KEY AUTOINCREMENT,
-    path            TEXT NOT NULL UNIQUE,
-    name            TEXT NOT NULL,
-    extension       TEXT,
-    size_bytes      INTEGER NOT NULL,
-    mtime           INTEGER NOT NULL,
-    ctime           INTEGER NOT NULL,
-    is_dir          INTEGER NOT NULL,
-    is_hidden       INTEGER NOT NULL,
-    is_symlink      INTEGER NOT NULL,
-    attrib_bitmask  INTEGER NOT NULL DEFAULT 0,
-    content_indexed INTEGER NOT NULL DEFAULT 0,
-    tantivy_id      TEXT,
-    indexed_at      INTEGER NOT NULL,
-    archive_path    TEXT DEFAULT NULL
+    id               INTEGER PRIMARY KEY AUTOINCREMENT,
+    path             TEXT NOT NULL UNIQUE,
+    name             TEXT NOT NULL,
+    extension        TEXT,
+    size_bytes       INTEGER NOT NULL,
+    mtime            INTEGER NOT NULL,
+    ctime            INTEGER NOT NULL,
+    is_dir           INTEGER NOT NULL,
+    is_hidden        INTEGER NOT NULL,
+    is_symlink       INTEGER NOT NULL,
+    attrib_bitmask   INTEGER NOT NULL DEFAULT 0,
+    content_indexed  INTEGER NOT NULL DEFAULT 0,
+    tantivy_id       TEXT,
+    indexed_at       INTEGER NOT NULL,
+    archive_path     TEXT DEFAULT NULL,
+    parent           TEXT DEFAULT NULL,
+    watch_root       TEXT DEFAULT NULL,
+    crawl_generation INTEGER DEFAULT NULL
 );
 
 CREATE INDEX IF NOT EXISTS idx_files_name      ON files(name);
 CREATE INDEX IF NOT EXISTS idx_files_extension ON files(extension);
 CREATE INDEX IF NOT EXISTS idx_files_mtime     ON files(mtime);
 CREATE INDEX IF NOT EXISTS idx_files_size      ON files(size_bytes);
-CREATE INDEX IF NOT EXISTS idx_files_parent    ON files(path);
+CREATE INDEX IF NOT EXISTS idx_files_parent    ON files(parent);
 CREATE INDEX IF NOT EXISTS idx_files_attrib    ON files(attrib_bitmask);
 CREATE INDEX IF NOT EXISTS idx_files_archive   ON files(archive_path)
     WHERE archive_path IS NOT NULL;
@@ -46,6 +49,43 @@ CREATE TABLE IF NOT EXISTS index_meta (
     value TEXT NOT NULL
 );
 ";
+
+// Migration: add columns if this is an existing database that pre-dates them.
+// SQLite does not support ADD COLUMN IF NOT EXISTS before 3.37, so we catch the
+// "duplicate column name" error and ignore it.
+const MIGRATIONS: &[&str] = &[
+    "ALTER TABLE files ADD COLUMN parent           TEXT DEFAULT NULL",
+    "ALTER TABLE files ADD COLUMN watch_root       TEXT DEFAULT NULL",
+    "ALTER TABLE files ADD COLUMN crawl_generation INTEGER DEFAULT NULL",
+    // Re-point the parent index to the actual parent column.
+    "DROP INDEX IF EXISTS idx_files_parent",
+    "CREATE INDEX IF NOT EXISTS idx_files_parent ON files(parent)",
+];
+
+fn apply_migrations(conn: &rusqlite::Connection) -> rusqlite::Result<()> {
+    for sql in MIGRATIONS {
+        match conn.execute_batch(sql) {
+            Ok(_) => {}
+            Err(e) if e.to_string().contains("duplicate column name") => {}
+            Err(e) => return Err(e),
+        }
+    }
+    Ok(())
+}
+
+// ---------------------------------------------------------------------------
+// Helpers
+// ---------------------------------------------------------------------------
+
+/// Derive the parent directory path from a file path.
+/// Works for both real paths (`/a/b/c.rs` → `/a/b`) and virtual archive paths
+/// (`/a/arc.zip!/src/c.rs` → `/a/arc.zip!/src`).
+fn parent_of(path: &str) -> String {
+    match path.rfind('/') {
+        None | Some(0) => String::new(),
+        Some(i) => path[..i].to_owned(),
+    }
+}
 
 // ---------------------------------------------------------------------------
 
@@ -68,9 +108,9 @@ impl SqliteStore {
             .build(manager)
             .map_err(|e| AppError::Index(e.to_string()))?;
 
-        // Apply schema
         let conn = pool.get().map_err(|e| AppError::Index(e.to_string()))?;
         conn.execute_batch(SCHEMA)?;
+        apply_migrations(&conn)?;
 
         Ok(Self { pool })
     }
@@ -93,26 +133,28 @@ impl SqliteStore {
         conn: &rusqlite::Connection,
         file: &FileRecord,
     ) -> Result<i64> {
+        let parent = parent_of(&file.path);
         conn.execute(
             "INSERT INTO files (
                 path, name, extension, size_bytes, mtime, ctime,
                 is_dir, is_hidden, is_symlink, attrib_bitmask,
-                content_indexed, tantivy_id, indexed_at, archive_path
-             ) VALUES (?1,?2,?3,?4,?5,?6,?7,?8,?9,?10,?11,?12,?13,?14)
+                content_indexed, tantivy_id, indexed_at, archive_path, parent
+             ) VALUES (?1,?2,?3,?4,?5,?6,?7,?8,?9,?10,?11,?12,?13,?14,?15)
              ON CONFLICT(path) DO UPDATE SET
-                name            = excluded.name,
-                extension       = excluded.extension,
-                size_bytes      = excluded.size_bytes,
-                mtime           = excluded.mtime,
-                ctime           = excluded.ctime,
-                is_dir          = excluded.is_dir,
-                is_hidden       = excluded.is_hidden,
-                is_symlink      = excluded.is_symlink,
-                attrib_bitmask  = excluded.attrib_bitmask,
-                content_indexed = excluded.content_indexed,
-                tantivy_id      = excluded.tantivy_id,
-                indexed_at      = excluded.indexed_at,
-                archive_path    = excluded.archive_path",
+                name             = excluded.name,
+                extension        = excluded.extension,
+                size_bytes       = excluded.size_bytes,
+                mtime            = excluded.mtime,
+                ctime            = excluded.ctime,
+                is_dir           = excluded.is_dir,
+                is_hidden        = excluded.is_hidden,
+                is_symlink       = excluded.is_symlink,
+                attrib_bitmask   = excluded.attrib_bitmask,
+                content_indexed  = excluded.content_indexed,
+                tantivy_id       = excluded.tantivy_id,
+                indexed_at       = excluded.indexed_at,
+                archive_path     = excluded.archive_path,
+                parent           = excluded.parent",
             rusqlite::params![
                 &file.path,
                 &file.name,
@@ -128,6 +170,7 @@ impl SqliteStore {
                 &file.tantivy_id,
                 file.indexed_at,
                 &file.archive_path,
+                parent,
             ],
         )?;
         Ok(conn.last_insert_rowid())
@@ -144,6 +187,56 @@ impl SqliteStore {
         let n = conn.execute(
             "DELETE FROM files WHERE path LIKE ? || '/%'",
             [path],
+        )?;
+        Ok(n)
+    }
+
+    // -----------------------------------------------------------------------
+    // Crawl generation management (mark-and-sweep reconciliation)
+    // -----------------------------------------------------------------------
+
+    /// Atomically increment the generation counter and return the new value.
+    /// The counter is stored as `crawl_generation` in `index_meta`.
+    pub fn begin_crawl_generation(&self) -> Result<i64> {
+        let conn = self.get_conn()?;
+        conn.execute(
+            "INSERT INTO index_meta (key, value) VALUES ('crawl_generation', '1')
+             ON CONFLICT(key) DO UPDATE SET value = CAST(CAST(value AS INTEGER) + 1 AS TEXT)",
+            [],
+        )?;
+        let gen: i64 = conn.query_row(
+            "SELECT CAST(value AS INTEGER) FROM index_meta WHERE key = 'crawl_generation'",
+            [],
+            |row| row.get(0),
+        )?;
+        Ok(gen)
+    }
+
+    /// Mark a row as belonging to the current crawl generation.
+    /// Called for every file upserted during a full crawl.
+    pub fn mark_seen(&self, path: &str, watch_root: &str, generation: i64) -> Result<()> {
+        let conn = self.get_conn()?;
+        conn.execute(
+            "UPDATE files SET watch_root = ?1, crawl_generation = ?2 WHERE path = ?3",
+            rusqlite::params![watch_root, generation, path],
+        )?;
+        Ok(())
+    }
+
+    /// Delete all rows under `watch_root` whose `crawl_generation` is older than
+    /// `generation`. Uses a path-prefix predicate so rows that were present
+    /// before watch_root tracking was introduced are also cleaned up. No paths
+    /// are loaded into Rust memory.
+    pub fn remove_stale_for_root(&self, watch_root: &str, generation: i64) -> Result<usize> {
+        let conn = self.get_conn()?;
+        // Rows that are newly upserted in this crawl get watch_root set by
+        // mark_seen(). Rows never marked have watch_root = NULL, so we cover
+        // both cases with a path prefix OR watch_root predicate.
+        let n = conn.execute(
+            "DELETE FROM files
+             WHERE (watch_root = ?1 OR (watch_root IS NULL AND path LIKE ?1 || '/%'))
+               AND (crawl_generation IS NULL OR crawl_generation < ?2)",
+            rusqlite::params![watch_root, generation],
         )?;
         Ok(n)
     }
@@ -222,7 +315,6 @@ impl SqliteStore {
         limit: usize,
     ) -> Result<Vec<FileRecord>> {
         let (filter_sql, filter_params) = filters.build_where();
-        // Strip leading "AND " — base is "WHERE 1=1"
         let where_extra = if let Some(stripped) = filter_sql.strip_prefix("AND ") {
             format!("AND {stripped}")
         } else {
@@ -243,6 +335,8 @@ impl SqliteStore {
         query_records(&mut stmt, params)
     }
 
+    /// List all paths under `dir` (recursive). Only use for small subtrees or
+    /// non-crawl purposes; full-crawl stale detection should use generation methods.
     pub fn paths_under(&self, dir: &str) -> Result<Vec<String>> {
         let conn = self.get_conn()?;
         let mut stmt =
@@ -251,14 +345,13 @@ impl SqliteStore {
         rows.map(|r| r.map_err(AppError::Database)).collect()
     }
 
+    /// Return true if `parent_path` has a direct child matching `name_pattern`.
+    /// Uses the indexed `parent` column for O(log n) lookup.
     pub fn has_child(&self, parent_path: &str, name_pattern: &str) -> Result<bool> {
         let conn = self.get_conn()?;
         let count: i64 = conn.query_row(
-            "SELECT COUNT(*) FROM files
-             WHERE path LIKE ? || '/%'
-               AND name LIKE ?
-               AND path NOT LIKE ? || '/%/%'",
-            rusqlite::params![parent_path, name_pattern, parent_path],
+            "SELECT COUNT(*) FROM files WHERE parent = ? AND name LIKE ?",
+            rusqlite::params![parent_path, name_pattern],
             |row| row.get(0),
         )?;
         Ok(count > 0)
@@ -282,17 +375,15 @@ impl SqliteStore {
             DupeKind::Size         => "size_bytes",
             DupeKind::DateModified => "mtime",
             DupeKind::DateCreated  => "ctime",
-            DupeKind::DateAccessed => "mtime", // no atime in schema, fall back to mtime
+            DupeKind::DateAccessed => "mtime",
             DupeKind::Attrib       => "attrib_bitmask",
         };
 
-        // First pass: find values that appear more than once
         let pass1 = format!(
             "SELECT {group_col} FROM files
              WHERE archive_path IS NULL {extra_sql}
              GROUP BY {group_col} HAVING COUNT(*) > 1"
         );
-        // Second pass: fetch all rows that match those values
         let sql = format!(
             "SELECT id, path, name, extension, size_bytes, mtime, ctime,
                     is_dir, is_hidden, is_symlink, attrib_bitmask,
@@ -306,7 +397,6 @@ impl SqliteStore {
         let conn = self.get_conn()?;
         let mut stmt = conn.prepare(&sql)?;
 
-        // extra_params appear twice (once per pass)
         let mut params = extra_params.clone();
         params.extend(extra_params);
         params.push(rusqlite::types::Value::Integer(limit as i64));
@@ -534,8 +624,6 @@ mod tests {
 
     #[test]
     fn concurrent_upserts_all_succeed() {
-        // :memory: gives each pool connection its own private database.
-        // Use a real temp file so all connections share the same schema.
         let db_file = tempfile::NamedTempFile::new().unwrap();
         let store = Arc::new(SqliteStore::new(db_file.path()).unwrap());
         let mut handles = Vec::new();
@@ -553,11 +641,13 @@ mod tests {
     }
 
     #[test]
-    fn has_child_true_and_false() {
+    fn has_child_uses_parent_index() {
         let store = make_store();
         store.upsert_file(&sample_record("/proj/src/main.rs")).unwrap();
         assert!(store.has_child("/proj/src", "main.rs").unwrap());
         assert!(!store.has_child("/proj/src", "other.rs").unwrap());
+        // Grandchild must not appear as direct child of /proj
+        assert!(!store.has_child("/proj", "main.rs").unwrap());
     }
 
     #[test]
@@ -615,5 +705,50 @@ mod tests {
         inner.archive_path = Some("/z.zip".into());
         store.upsert_file(&inner).unwrap();
         assert_eq!(store.total_archive_entries().unwrap(), 1);
+    }
+
+    #[test]
+    fn crawl_generation_begin_increments() {
+        let store = make_store();
+        let g1 = store.begin_crawl_generation().unwrap();
+        let g2 = store.begin_crawl_generation().unwrap();
+        assert!(g2 > g1, "each call must return a strictly larger generation");
+    }
+
+    #[test]
+    fn mark_seen_and_remove_stale() {
+        let db_file = tempfile::NamedTempFile::new().unwrap();
+        let store = SqliteStore::new(db_file.path()).unwrap();
+
+        // Insert two files under /watch
+        store.upsert_file(&sample_record("/watch/keep.rs")).unwrap();
+        store.upsert_file(&sample_record("/watch/stale.rs")).unwrap();
+
+        let gen = store.begin_crawl_generation().unwrap();
+
+        // Only mark keep.rs as seen in this generation
+        store.mark_seen("/watch/keep.rs", "/watch", gen).unwrap();
+
+        // stale.rs was never marked — remove_stale_for_root should delete it
+        let removed = store.remove_stale_for_root("/watch", gen).unwrap();
+        assert_eq!(removed, 1, "one stale row expected");
+        assert!(store.get_by_path("/watch/keep.rs").unwrap().is_some());
+        assert!(store.get_by_path("/watch/stale.rs").unwrap().is_none());
+    }
+
+    #[test]
+    fn schema_includes_parent_column() {
+        let store = make_store();
+        // If parent column is missing this upsert+query would fail to store parent
+        store.upsert_file(&sample_record("/a/b/c.rs")).unwrap();
+        // Verify parent is stored by using has_child
+        assert!(store.has_child("/a/b", "c.rs").unwrap());
+    }
+
+    #[test]
+    fn parent_of_archive_entry() {
+        assert_eq!(parent_of("/a/arc.zip!/src/main.rs"), "/a/arc.zip!/src");
+        assert_eq!(parent_of("/a/b/c.rs"), "/a/b");
+        assert_eq!(parent_of("/root.rs"), "");
     }
 }

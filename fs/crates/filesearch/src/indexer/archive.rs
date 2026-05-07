@@ -26,21 +26,58 @@ pub struct ArchiveEntry {
     pub content:            Option<String>,
 }
 
+// ---------------------------------------------------------------------------
+// Streaming iterator — processes one ZIP entry at a time, never allocates a
+// full entry vector proportional to the archive size.
+// ---------------------------------------------------------------------------
+
+pub struct ArchiveEntryIter {
+    archive:      zip::ZipArchive<BufReader<std::fs::File>>,
+    current:      usize,
+    effective:    usize,
+    archive_str:  String,
+    passwords:    Vec<String>,
+    inner_limits: HashMap<String, u64>,
+    outer_limits: HashMap<String, u64>,
+}
+
+impl Iterator for ArchiveEntryIter {
+    type Item = Result<ArchiveEntry>;
+
+    fn next(&mut self) -> Option<Self::Item> {
+        if self.current >= self.effective {
+            return None;
+        }
+        let result = process_entry(
+            &mut self.archive,
+            self.current,
+            &self.archive_str,
+            &self.passwords,
+            &self.inner_limits,
+            &self.outer_limits,
+        );
+        self.current += 1;
+        Some(result)
+    }
+}
+
+// ---------------------------------------------------------------------------
+
 impl<'cfg> ArchiveCrawler<'cfg> {
     pub fn new(config: &'cfg ArchiveIndexConfig, content_config: &'cfg ContentConfig) -> Self {
         Self { config, content_config }
     }
 
-    /// Stream all indexable entries from a ZIP file. Never writes to disk.
-    /// Returns an iterator over results so the caller can handle errors per-entry.
+    /// Iterate all indexable entries from a ZIP file one at a time.
+    /// Never writes to disk; never allocates a vector of all entries.
     pub fn crawl(
         &self,
         archive_path: &Path,
-        nesting_depth: u8,
-    ) -> Result<impl Iterator<Item = Result<ArchiveEntry>>> {
+        _nesting_depth: u8,
+    ) -> Result<ArchiveEntryIter> {
         let file = std::fs::File::open(archive_path).map_err(AppError::Io)?;
         let reader = BufReader::with_capacity(65536, file);
-        let mut archive = zip::ZipArchive::new(reader).map_err(|e| {
+        let archive = zip::ZipArchive::new(reader).map_err(|e| {
             AppError::Content(format!("zip open {}: {}", archive_path.display(), e))
         })?;
 
@@ -60,25 +97,15 @@ impl<'cfg> ArchiveCrawler<'cfg> {
             );
         }
 
-        let archive_str = archive_path.to_string_lossy().into_owned();
-        let passwords    = self.config.passwords.clone();
-        let inner_limits = self.config.inner_extension_limits.clone();
-        let outer_limits = self.content_config.extension_limits.clone();
-        let _depth       = nesting_depth;
-
-        let mut entries: Vec<Result<ArchiveEntry>> = Vec::with_capacity(effective);
-        for i in 0..effective {
-            entries.push(process_entry(
-                &mut archive,
-                i,
-                &archive_str,
-                &passwords,
-                &inner_limits,
-                &outer_limits,
-            ));
-        }
-
-        Ok(entries.into_iter())
+        Ok(ArchiveEntryIter {
+            archive,
+            current:      0,
+            effective,
+            archive_str:  archive_path.to_string_lossy().into_owned(),
+            passwords:    self.config.passwords.clone(),
+            inner_limits: self.config.inner_extension_limits.clone(),
+            outer_limits: self.content_config.extension_limits.clone(),
+        })
     }
 }
 

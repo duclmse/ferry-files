@@ -259,6 +259,12 @@ pub async fn full_crawl(
     let archive_cfg = Arc::new(cfg.archive_index.clone());
     let watch_paths = cfg.watch_paths.clone();
 
+    // One generation per full crawl. Each upserted row is marked with the
+    // watch_root it was found under and this generation. After each root
+    // finishes, rows with an older generation are stale and deleted in SQL —
+    // no full path list is materialised in Rust memory.
+    let generation = sqlite.begin_crawl_generation()?;
+
     let sqlite_w    = Arc::clone(&sqlite);
     let tantivy_w   = Arc::clone(&tantivy);
     let metrics_w   = Arc::clone(&metrics);
@@ -273,6 +279,8 @@ pub async fn full_crawl(
                 break;
             }
 
+            let watch_root = watch_path.to_string_lossy().into_owned();
+
             let walker = WalkBuilder::new(watch_path)
                 .hidden(false)
                 .git_ignore(false)
@@ -284,14 +292,16 @@ pub async fn full_crawl(
             let excl    = Arc::clone(&excl_w);
             let arc_cfg = Arc::clone(&arc_cfg_w);
             let cnt_cfg = Arc::clone(&cnt_cfg_w);
+            let root_str = watch_root.clone();
 
             walker.run(|| {
-                let sqlite  = Arc::clone(&sqlite);
-                let tantivy = Arc::clone(&tantivy);
-                let metrics = Arc::clone(&metrics);
-                let excl    = Arc::clone(&excl);
-                let arc_cfg = Arc::clone(&arc_cfg);
-                let cnt_cfg = Arc::clone(&cnt_cfg);
+                let sqlite   = Arc::clone(&sqlite);
+                let tantivy  = Arc::clone(&tantivy);
+                let metrics  = Arc::clone(&metrics);
+                let excl     = Arc::clone(&excl);
+                let arc_cfg  = Arc::clone(&arc_cfg);
+                let cnt_cfg  = Arc::clone(&cnt_cfg);
+                let root_str = root_str.clone();
 
                 Box::new(move |result| {
                     let entry = match result {
@@ -318,9 +328,15 @@ pub async fn full_crawl(
 
                     let now    = unix_now();
                     let record = build_file_record(path, &meta, is_hidden, now);
+                    let path_str = record.path.clone();
 
                     match sqlite.upsert_file(&record) {
                         Ok(_) => {
+                            // Mark as seen in this generation so stale cleanup
+                            // can skip it.
+                            if let Err(e) = sqlite.mark_seen(&path_str, &root_str, generation) {
+                                tracing::warn!("mark_seen error for {path_str}: {e}");
+                            }
                             if record.is_dir {
                                 metrics.total_dirs.fetch_add(1, Ordering::Relaxed);
                             } else {
@@ -369,14 +385,17 @@ pub async fn full_crawl(
                     ignore::WalkState::Continue
                 })
             });
+
+            // Remove stale rows for this watch root in SQL — no Rust Vec of paths.
+            let removed = sqlite_w.remove_stale_for_root(&watch_root, generation)?;
+            if removed > 0 {
+                tracing::info!("reconcile: removed {removed} stale entries under {watch_root}");
+            }
         }
         Ok(())
     })
     .await
     .map_err(|e| AppError::Index(e.to_string()))??;
-
-    // Reconcile stale entries
-    reconcile(&config, &sqlite, &shutdown).await?;
 
     // Final commit
     if let Err(e) = tantivy.commit() {
@@ -392,29 +411,6 @@ pub async fn full_crawl(
     let total = sqlite.total_files().unwrap_or(0);
     let _ = sqlite.set_meta("total_files", &total.to_string());
 
-    Ok(())
-}
-
-async fn reconcile(
-    config:   &Arc<RwLock<Config>>,
-    sqlite:   &Arc<SqliteStore>,
-    shutdown: &CancellationToken,
-) -> Result<()> {
-    let cfg = config.read().await.clone();
-    for watch_path in &cfg.watch_paths {
-        if shutdown.is_cancelled() {
-            break;
-        }
-        let prefix = watch_path.to_string_lossy().into_owned();
-        let indexed_paths = sqlite.paths_under(&prefix)?;
-        for p in indexed_paths {
-            if !Path::new(&p).exists() {
-                if let Err(e) = sqlite.remove_file(&p) {
-                    tracing::warn!("reconcile remove error for {p}: {e}");
-                }
-            }
-        }
-    }
     Ok(())
 }
 

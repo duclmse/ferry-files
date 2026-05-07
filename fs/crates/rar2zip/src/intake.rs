@@ -123,7 +123,19 @@ pub async fn hash_file(path: &Path) -> Result<String> {
 // Strategy selection
 // ---------------------------------------------------------------------------
 
-pub fn select_strategy(file_size_bytes: u64, threshold_mb: u64) -> Strategy {
+/// Choose a transfer strategy for a single-file job.
+///
+/// `Strategy::Stream` avoids creating a local ZIP on disk but converts the
+/// archive exactly once, sending that byte stream to **one** destination.
+/// With multiple destinations the stream would be consumed per destination,
+/// causing repeated decompress/recompress cycles. Prefer `Strategy::Disk` in
+/// that case so the converted ZIP is written once and then sent to all
+/// destinations independently.
+pub fn select_strategy(file_size_bytes: u64, threshold_mb: u64, destination_count: usize) -> Strategy {
+    if destination_count > 1 {
+        // Avoid recompressing the source archive once per destination.
+        return Strategy::Disk;
+    }
     if threshold_mb > 0 && file_size_bytes > threshold_mb * 1024 * 1024 {
         Strategy::Stream
     } else {
@@ -231,9 +243,9 @@ impl IntakeProcessor {
             return Ok(());
         }
 
-        let size = std::fs::metadata(path).map(|m| m.len()).unwrap_or(0);
-        let strategy = select_strategy(size, cfg.conversion.stream_to_transfer_threshold_mb);
+        let size  = std::fs::metadata(path).map(|m| m.len()).unwrap_or(0);
         let dests: Vec<String> = cfg.destinations.iter().map(|d| d.host.clone()).collect();
+        let strategy = select_strategy(size, cfg.conversion.stream_to_transfer_threshold_mb, dests.len());
 
         let id = self.queue.enqueue(path, &hash, strategy.clone(), &dests)?;
         tracing::info!(
@@ -341,17 +353,25 @@ mod tests {
 
     #[test]
     fn strategy_disk_when_small() {
-        assert_eq!(select_strategy(100 * 1024 * 1024, 500), Strategy::Disk);
+        assert_eq!(select_strategy(100 * 1024 * 1024, 500, 1), Strategy::Disk);
     }
 
     #[test]
-    fn strategy_stream_when_large() {
-        assert_eq!(select_strategy(600 * 1024 * 1024, 500), Strategy::Stream);
+    fn strategy_stream_when_large_single_dest() {
+        assert_eq!(select_strategy(600 * 1024 * 1024, 500, 1), Strategy::Stream);
     }
 
     #[test]
     fn strategy_disk_when_threshold_zero() {
-        assert_eq!(select_strategy(u64::MAX, 0), Strategy::Disk);
+        assert_eq!(select_strategy(u64::MAX, 0, 1), Strategy::Disk);
+    }
+
+    #[test]
+    fn strategy_disk_when_multi_destination() {
+        // Even a large file must use Disk when there are multiple destinations
+        // to avoid recompressing the archive once per destination.
+        assert_eq!(select_strategy(600 * 1024 * 1024, 500, 2), Strategy::Disk);
+        assert_eq!(select_strategy(600 * 1024 * 1024, 500, 5), Strategy::Disk);
     }
 
     #[tokio::test]
