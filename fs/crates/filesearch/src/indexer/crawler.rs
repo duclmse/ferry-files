@@ -98,15 +98,14 @@ pub fn is_hidden_name(path: &Path) -> bool {
 /// Build platform-specific attribute bitmask from filesystem metadata.
 #[cfg_attr(windows, allow(unused_variables))]
 pub fn attrib_from_metadata(meta: &std::fs::Metadata, path: &Path) -> u32 {
-    use crate::store::{
-        ATTRIB_ARCHIVE, ATTRIB_COMPRESSED, ATTRIB_DIRECTORY, ATTRIB_ENCRYPTED,
-        ATTRIB_HIDDEN, ATTRIB_NORMAL, ATTRIB_OFFLINE, ATTRIB_READONLY,
-        ATTRIB_REPARSE_POINT, ATTRIB_SPARSE, ATTRIB_SYSTEM, ATTRIB_TEMPORARY,
-    };
-
     #[cfg(windows)]
     {
         use std::os::windows::fs::MetadataExt;
+        use crate::store::{
+            ATTRIB_ARCHIVE, ATTRIB_COMPRESSED, ATTRIB_DIRECTORY, ATTRIB_ENCRYPTED,
+            ATTRIB_HIDDEN, ATTRIB_NORMAL, ATTRIB_OFFLINE, ATTRIB_READONLY,
+            ATTRIB_REPARSE_POINT, ATTRIB_SPARSE, ATTRIB_SYSTEM, ATTRIB_TEMPORARY,
+        };
         let a = meta.file_attributes();
         let mut m: u32 = 0;
         if a & 0x0020 != 0 { m |= ATTRIB_ARCHIVE; }
@@ -127,6 +126,7 @@ pub fn attrib_from_metadata(meta: &std::fs::Metadata, path: &Path) -> u32 {
     #[cfg(unix)]
     {
         use std::os::unix::fs::MetadataExt;
+        use crate::store::{ATTRIB_HIDDEN, ATTRIB_READONLY};
         let mut m: u32 = 0;
         if path
             .file_name()
@@ -144,6 +144,7 @@ pub fn attrib_from_metadata(meta: &std::fs::Metadata, path: &Path) -> u32 {
 
     #[allow(unreachable_code)]
     {
+        use crate::store::{ATTRIB_HIDDEN, ATTRIB_READONLY};
         let _ = (meta, path, ATTRIB_HIDDEN, ATTRIB_READONLY);
         0
     }

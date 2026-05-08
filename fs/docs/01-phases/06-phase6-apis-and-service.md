@@ -425,3 +425,83 @@ All four subcommands:
 
 - [ ] `cargo clippy -- -D warnings` clean on all new files.
 - [ ] No `unwrap()` in service or API code.
+
+---
+
+## Implementation Notes (2026-05-08)
+
+### Files created
+
+**Proto + build:**
+- `proto/filesearch.proto` — `FileSearch` service with `Search`, `SearchStream`,
+  `GetStats`, `Reindex` RPCs; message definitions match section 14 of the ref
+  doc.
+- `build.rs` — `tonic_build::configure().compile(...)` via `tonic-build 0.11`.
+  Generates server stubs into `OUT_DIR`. Client stubs are not generated
+  (`build_client(false)`).
+
+**API layer:**
+- `src/api/rest.rs` — Axum 0.7 router. `AppState` holds `sqlite`, `tantivy`,
+  `config`, `metrics`, and `reindex_tx: watch::Sender<bool>`. Routes: `GET
+  /search`, `GET /stats`, `POST /reindex`, `GET /health`, `GET /file`, `POST
+  /open`. The `/open` handler distinguishes real paths (platform dispatch via
+  `xdg-open` / `open` / `cmd start`) from virtual archive paths (extracts the
+  ZIP entry to a `NamedTempFile`, opens it, schedules deletion after 30 s).
+- `src/api/grpc.rs` — Tonic `FileSearch` service. `SearchStream` fans out
+  result records through a bounded `mpsc` channel wrapped in
+  `ReceiverStream`. `Reindex` sends on `reindex_tx`. `GetStats` reads
+  `IndexMetrics` atomics.
+- `src/api/mod.rs` — updated to export `grpc`, `ipc_client`, `ipc_protocol`,
+  `ipc_server`, `rest`.
+
+**Daemon:**
+- `src/daemon.rs` — `pub async fn run(config_path: PathBuf) -> Result<(), AppError>`.
+  Startup sequence: validate config → init logging → write PID file (Unix) →
+  open stores → create `watch` channel for reindex signals → spawn Tantivy
+  commit loop (interval from `indexer.commit_interval_secs`) → spawn config
+  hot-reload watcher → spawn filesystem watcher → spawn IPC server → bind and
+  serve REST (Axum `serve` + graceful shutdown) → bind and serve gRPC (Tonic
+  `serve_with_shutdown`) → spawn initial full crawl → main select loop
+  (watcher events + reindex watch changes + shutdown).
+  Graceful shutdown: drains remaining watcher events (max 10 s), calls final
+  `tantivy.commit()`, removes PID file (Unix).
+
+**Frontend:**
+- `src/frontend/mod.rs` — re-exports `tui`.
+- `src/frontend/tui.rs` — `pub async fn run(ipc_path: &Path) -> anyhow::Result<()>`.
+  ratatui 0.26 + crossterm. Three-pane layout: search input (top, 3 rows),
+  scrollable results list (middle, fills remaining), status bar (bottom, 1 row).
+  Debounce: 100 ms after last keystroke before sending IPC `Search` request.
+  Mode cycling (Tab): Exact → Fuzzy → Regex → Content → Archive, each
+  prepending the matching query prefix. Archive entries rendered with a dim
+  `[zip]` tag. Enter triggers `IpcRequest::Open`. F5 sends `IpcRequest::Reindex
+  { full: true }`.
+
+**Wiring:**
+- `src/lib.rs` — added `pub mod daemon` and `pub mod frontend`.
+- `src/main.rs` — `Command::Daemon` delegates to `daemon::run()`; `Command::Tui`
+  calls `frontend::tui::run()`. All IPC-backed commands unchanged.
+
+**Dependency added:**
+- `tokio-stream = "0.1"` — required for `ReceiverStream` in the gRPC streaming
+  handler.
+
+### Design decisions
+
+- `reindex_tx` is a `watch::Sender<bool>` (value = `full`). REST and gRPC
+  `Reindex` handlers send on it; the daemon main loop fires a new `full_crawl`
+  task on each received change.
+- `axum::serve(...).with_graceful_shutdown(shutdown_c.cancelled())` is used for
+  REST; `tonic::Server::serve_with_shutdown` for gRPC — both respect the same
+  `CancellationToken`.
+- The TUI uses the existing `IpcClient` (postcard framing) rather than a
+  separate HTTP or direct-store path, keeping the CLI and TUI on the same
+  protocol.
+- `archive_entry` in REST/gRPC responses is the substring after `!/` in the
+  virtual path, or empty/`None` for real files.
+
+### Test results
+
+All 106 pre-existing tests still pass; `cargo clippy -p filesearch -- -D
+warnings` is clean. The gRPC and REST layers have no in-file unit tests — they
+are covered by integration testing against a running daemon (Phase 7).

@@ -1,0 +1,355 @@
+//! REST API server — Axum 0.7 + tower-http.
+//!
+//! Routes:
+//!   GET  /search?q=&limit=&offset=
+//!   GET  /stats
+//!   POST /reindex  { "full": bool }
+//!   GET  /health
+//!   GET  /file?path=
+//!   POST /open     { "path": "..." }
+
+use std::sync::{atomic::Ordering, Arc};
+
+use axum::{
+    extract::{Query, State},
+    http::StatusCode,
+    response::IntoResponse,
+    routing::{get, post},
+    Json, Router,
+};
+use serde::{Deserialize, Serialize};
+use tokio::sync::{watch, RwLock};
+use tower_http::cors::CorsLayer;
+
+use crate::config::Config;
+use crate::indexer::crawler::IndexMetrics;
+use crate::query::{evaluator, parser};
+use crate::store::{sqlite_store::SqliteStore, tantivy_store::TantivyStore, FileRecord};
+
+// ---------------------------------------------------------------------------
+// Shared state
+// ---------------------------------------------------------------------------
+
+#[derive(Clone)]
+pub struct AppState {
+    pub sqlite:     Arc<SqliteStore>,
+    pub tantivy:    Arc<TantivyStore>,
+    pub config:     Arc<RwLock<Config>>,
+    pub metrics:    Arc<IndexMetrics>,
+    pub reindex_tx: watch::Sender<bool>,
+}
+
+// ---------------------------------------------------------------------------
+// Response types
+// ---------------------------------------------------------------------------
+
+#[derive(Serialize)]
+pub struct SearchHit {
+    pub path:          String,
+    pub name:          String,
+    pub size_bytes:    u64,
+    pub mtime:         i64,
+    #[serde(rename = "type")]
+    pub kind:          &'static str,
+    pub score:         f32,
+    pub snippet:       Option<String>,
+    pub archive_path:  Option<String>,
+    pub archive_entry: Option<String>,
+}
+
+#[derive(Serialize)]
+pub struct SearchApiResponse {
+    pub result:  Vec<SearchHit>,
+    pub total:   usize,
+    pub took_ms: u64,
+    pub mode:    &'static str,
+}
+
+#[derive(Serialize)]
+pub struct StatsApiResponse {
+    pub total_files:             i64,
+    pub total_dirs:              u64,
+    pub content_indexed:         u64,
+    pub archive_entries_indexed: u64,
+    pub archives_crawled:        u64,
+    pub events_processed:        u64,
+    pub last_crawl_secs:         u64,
+}
+
+#[derive(Serialize)]
+pub struct ErrorResponse {
+    pub error: String,
+}
+
+fn api_error(status: StatusCode, msg: impl Into<String>) -> impl IntoResponse {
+    (status, Json(ErrorResponse { error: msg.into() }))
+}
+
+// ---------------------------------------------------------------------------
+// Router builder
+// ---------------------------------------------------------------------------
+
+pub fn router(state: AppState) -> Router {
+    Router::new()
+        .route("/search",  get(search_handler))
+        .route("/stats",   get(stats_handler))
+        .route("/reindex", post(reindex_handler))
+        .route("/health",  get(health_handler))
+        .route("/file",    get(file_handler))
+        .route("/open",    post(open_handler))
+        .layer(CorsLayer::permissive())
+        .with_state(state)
+}
+
+// ---------------------------------------------------------------------------
+// Handlers
+// ---------------------------------------------------------------------------
+
+#[derive(Deserialize)]
+pub struct SearchParams {
+    q:      Option<String>,
+    limit:  Option<usize>,
+    offset: Option<usize>,
+}
+
+async fn search_handler(
+    State(state): State<AppState>,
+    Query(params): Query<SearchParams>,
+) -> impl IntoResponse {
+    let q = match params.q {
+        Some(q) if !q.is_empty() => q,
+        _ => return api_error(StatusCode::BAD_REQUEST, "missing query parameter 'q'")
+            .into_response(),
+    };
+
+    let macros = state.config.read().await.macros.clone();
+    let expr = match parser::parse(&q, &macros) {
+        Ok(e) => e,
+        Err(e) => return api_error(StatusCode::BAD_REQUEST, e.to_string()).into_response(),
+    };
+
+    let mut plan = match evaluator::plan(&expr, &Default::default()) {
+        Ok(p) => p,
+        Err(e) => return api_error(StatusCode::BAD_REQUEST, e.to_string()).into_response(),
+    };
+
+    {
+        let cfg = state.config.read().await;
+        plan.limit  = Some(params.limit.unwrap_or(cfg.search.default_limit));
+        plan.offset = params.offset.unwrap_or(0);
+    }
+
+    let mode = eval_strategy_mode(&plan.strategy);
+
+    match evaluator::execute_plan(plan, state.sqlite, state.tantivy, state.config).await {
+        Ok(result) => {
+            let hits = result.hits.iter().map(file_record_to_hit).collect();
+            Json(SearchApiResponse {
+                result:  hits,
+                total:   result.total,
+                took_ms: result.took_ms,
+                mode,
+            })
+            .into_response()
+        }
+        Err(e) => api_error(StatusCode::INTERNAL_SERVER_ERROR, e.to_string()).into_response(),
+    }
+}
+
+async fn stats_handler(State(state): State<AppState>) -> impl IntoResponse {
+    let total_files = match state.sqlite.total_files() {
+        Ok(n) => n,
+        Err(e) => return api_error(StatusCode::INTERNAL_SERVER_ERROR, e.to_string())
+            .into_response(),
+    };
+    let m = &state.metrics;
+    Json(StatsApiResponse {
+        total_files,
+        total_dirs:              m.total_dirs.load(Ordering::Relaxed),
+        content_indexed:         m.content_indexed.load(Ordering::Relaxed),
+        archive_entries_indexed: m.archive_entries_indexed.load(Ordering::Relaxed),
+        archives_crawled:        m.archives_crawled.load(Ordering::Relaxed),
+        events_processed:        m.events_processed.load(Ordering::Relaxed),
+        last_crawl_secs:         m.last_crawl_secs.load(Ordering::Relaxed),
+    })
+    .into_response()
+}
+
+#[derive(Deserialize)]
+pub struct ReindexBody {
+    #[serde(default)]
+    full: bool,
+}
+
+async fn reindex_handler(
+    State(state): State<AppState>,
+    Json(body): Json<ReindexBody>,
+) -> impl IntoResponse {
+    let _ = state.reindex_tx.send(body.full);
+    Json(serde_json::json!({ "accepted": true }))
+}
+
+async fn health_handler() -> impl IntoResponse {
+    Json(serde_json::json!({ "status": "ok" }))
+}
+
+#[derive(Deserialize)]
+pub struct FileParams {
+    path: Option<String>,
+}
+
+async fn file_handler(
+    State(state): State<AppState>,
+    Query(params): Query<FileParams>,
+) -> impl IntoResponse {
+    let path = match params.path {
+        Some(p) if !p.is_empty() => p,
+        _ => return api_error(StatusCode::BAD_REQUEST, "missing 'path' parameter").into_response(),
+    };
+
+    match state.sqlite.get_by_path(&path) {
+        Ok(Some(r)) => Json(file_record_to_hit(&r)).into_response(),
+        Ok(None)    => api_error(StatusCode::NOT_FOUND, "path not in index").into_response(),
+        Err(e)      => api_error(StatusCode::INTERNAL_SERVER_ERROR, e.to_string()).into_response(),
+    }
+}
+
+#[derive(Deserialize)]
+pub struct OpenBody {
+    path: String,
+}
+
+#[derive(Serialize)]
+pub struct OpenResponse {
+    opened:    bool,
+    temp_path: Option<String>,
+}
+
+async fn open_handler(
+    State(state): State<AppState>,
+    Json(body): Json<OpenBody>,
+) -> impl IntoResponse {
+    // Verify path exists in index.
+    match state.sqlite.get_by_path(&body.path) {
+        Ok(None)    => return api_error(StatusCode::BAD_REQUEST, "path not in index").into_response(),
+        Err(e)      => return api_error(StatusCode::INTERNAL_SERVER_ERROR, e.to_string()).into_response(),
+        Ok(Some(_)) => {}
+    }
+
+    if body.path.contains("!/") {
+        // Virtual archive entry — extract to temp then open.
+        match extract_and_open(&body.path).await {
+            Ok(temp_path) => Json(OpenResponse { opened: true, temp_path: Some(temp_path) })
+                .into_response(),
+            Err(e) => api_error(StatusCode::BAD_REQUEST, e).into_response(),
+        }
+    } else {
+        // Real filesystem path.
+        match open_with_os(&body.path).await {
+            Ok(()) => Json(OpenResponse { opened: true, temp_path: None }).into_response(),
+            Err(e) => api_error(StatusCode::INTERNAL_SERVER_ERROR, e).into_response(),
+        }
+    }
+}
+
+// ---------------------------------------------------------------------------
+// Open helpers
+// ---------------------------------------------------------------------------
+
+async fn open_with_os(path: &str) -> Result<(), String> {
+    #[cfg(target_os = "macos")]
+    let cmd = ("open", vec![path.to_owned()]);
+    #[cfg(target_os = "linux")]
+    let cmd = ("xdg-open", vec![path.to_owned()]);
+    #[cfg(target_os = "windows")]
+    let cmd = ("cmd", vec!["/C".into(), "start".into(), "".into(), path.to_owned()]);
+    #[cfg(not(any(target_os = "macos", target_os = "linux", target_os = "windows")))]
+    return Err("open not supported on this platform".into());
+
+    #[allow(unreachable_code)]
+    tokio::process::Command::new(cmd.0)
+        .args(&cmd.1)
+        .spawn()
+        .map(|_| ())
+        .map_err(|e| e.to_string())
+}
+
+async fn extract_and_open(virtual_path: &str) -> Result<String, String> {
+    // Split at "!/" separator.
+    let sep = virtual_path
+        .find("!/")
+        .ok_or_else(|| "invalid virtual path".to_owned())?;
+    let archive_path = &virtual_path[..sep];
+    let entry_name   = &virtual_path[sep + 2..];
+
+    // Open and extract the ZIP entry.
+    let archive_path = archive_path.to_owned();
+    let entry_name   = entry_name.to_owned();
+
+    let temp_path = tokio::task::spawn_blocking(move || -> Result<String, String> {
+        let file = std::fs::File::open(&archive_path).map_err(|e| e.to_string())?;
+        let mut zip = zip::ZipArchive::new(file).map_err(|e| e.to_string())?;
+        let mut entry = zip.by_name(&entry_name).map_err(|_| "entry not found in archive".to_owned())?;
+
+        let basename = std::path::Path::new(&entry_name)
+            .file_name()
+            .and_then(|n| n.to_str())
+            .unwrap_or("extracted_file");
+
+        let mut tmp = tempfile::Builder::new()
+            .prefix("filesearch_")
+            .suffix(&format!("_{basename}"))
+            .tempfile()
+            .map_err(|e| e.to_string())?;
+
+        std::io::copy(&mut entry, &mut tmp).map_err(|e| e.to_string())?;
+        let (_, path) = tmp.keep().map_err(|e| e.to_string())?;
+        Ok(path.to_string_lossy().into_owned())
+    })
+    .await
+    .map_err(|e| e.to_string())??;
+
+    // Schedule cleanup after 30 seconds (best-effort).
+    let cleanup_path = temp_path.clone();
+    tokio::spawn(async move {
+        tokio::time::sleep(std::time::Duration::from_secs(30)).await;
+        let _ = tokio::fs::remove_file(&cleanup_path).await;
+    });
+
+    open_with_os(&temp_path).await?;
+    Ok(temp_path)
+}
+
+// ---------------------------------------------------------------------------
+// Mapping helpers
+// ---------------------------------------------------------------------------
+
+fn file_record_to_hit(r: &FileRecord) -> SearchHit {
+    let archive_entry = r.archive_path.as_ref().map(|_| {
+        r.path
+            .find("!/")
+            .map(|i| r.path[i + 2..].to_owned())
+            .unwrap_or_default()
+    });
+
+    SearchHit {
+        path:          r.path.clone(),
+        name:          r.name.clone(),
+        size_bytes:    r.size_bytes,
+        mtime:         r.mtime,
+        kind:          if r.is_dir { "dir" } else { "file" },
+        score:         0.0,
+        snippet:       None,
+        archive_path:  r.archive_path.clone(),
+        archive_entry,
+    }
+}
+
+fn eval_strategy_mode(strategy: &evaluator::EvalStrategy) -> &'static str {
+    match strategy {
+        evaluator::EvalStrategy::SqliteOnly       => "exact",
+        evaluator::EvalStrategy::TantivyThenSqlite => "content",
+        evaluator::EvalStrategy::DupeSearch(_)    => "dupes",
+        evaluator::EvalStrategy::FuzzyFilter(_)   => "fuzzy",
+    }
+}

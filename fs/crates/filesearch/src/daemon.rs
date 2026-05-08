@@ -1,0 +1,271 @@
+//! Daemon lifecycle — startup, API server orchestration, graceful shutdown.
+
+use std::path::PathBuf;
+use std::sync::Arc;
+use std::time::Duration;
+
+use tokio::sync::{mpsc, watch, RwLock};
+use tokio_util::sync::CancellationToken;
+use tracing_subscriber::{fmt, layer::SubscriberExt, util::SubscriberInitExt, EnvFilter};
+
+use crate::api::grpc::{self, FileSearchService};
+use crate::api::ipc_server::run_ipc_server;
+use crate::api::rest::AppState;
+use crate::config;
+use crate::error::AppError;
+use crate::indexer::crawler::{full_crawl, process_event, IndexEvent, IndexMetrics};
+use crate::store::{sqlite_store::SqliteStore, tantivy_store::TantivyStore};
+use crate::watcher;
+
+// ---------------------------------------------------------------------------
+// Public entry point
+// ---------------------------------------------------------------------------
+
+pub async fn run(config_path: PathBuf) -> Result<(), AppError> {
+    // ── 1. Load & validate config ──────────────────────────────────────────
+    let cfg = config::load(&config_path)?;
+    let errors = config::validate(&cfg);
+    if !errors.is_empty() {
+        for e in &errors {
+            eprintln!("Config error: {e}");
+        }
+        return Err(AppError::Config("invalid configuration".into()));
+    }
+
+    std::fs::create_dir_all(&cfg.data_dir).map_err(AppError::Io)?;
+    std::fs::create_dir_all(&cfg.log_dir).map_err(AppError::Io)?;
+
+    // ── 2. Logging ─────────────────────────────────────────────────────────
+    let file_appender = tracing_appender::rolling::daily(&cfg.log_dir, "filesearch.log");
+    let (non_blocking, _guard) = tracing_appender::non_blocking(file_appender);
+    tracing_subscriber::registry()
+        .with(EnvFilter::from_default_env().add_directive(tracing::Level::INFO.into()))
+        .with(fmt::layer().with_writer(std::io::stderr))
+        .with(fmt::layer().with_writer(non_blocking).with_ansi(false))
+        .init();
+
+    tracing::info!("filesearch daemon starting");
+
+    // ── 3. PID file (Unix only) ────────────────────────────────────────────
+    #[cfg(unix)]
+    let pid_path = cfg.data_dir.join("filesearch.pid");
+    #[cfg(unix)]
+    write_pid_file(&pid_path)?;
+
+    // ── 4-5. Stores ────────────────────────────────────────────────────────
+    let sqlite = Arc::new(
+        SqliteStore::new(&cfg.data_dir.join("index.db"))?,
+    );
+    let tantivy = Arc::new(
+        TantivyStore::new(&cfg.data_dir.join("tantivy"))?,
+    );
+    let metrics = IndexMetrics::new();
+
+    // ── 6. Shared config + cancellation ────────────────────────────────────
+    let shared_cfg = Arc::new(RwLock::new(cfg));
+    let shutdown   = CancellationToken::new();
+
+    // ── 7. Reindex watch channel ────────────────────────────────────────────
+    let (reindex_tx, mut reindex_rx) = watch::channel(false);
+
+    // ── 8. Ctrl+C → cancel token ────────────────────────────────────────────
+    {
+        let shutdown_c = shutdown.clone();
+        tokio::spawn(async move {
+            if tokio::signal::ctrl_c().await.is_ok() {
+                tracing::info!("ctrl-c received, shutting down");
+                shutdown_c.cancel();
+            }
+        });
+    }
+
+    // ── 9. Tantivy commit loop ──────────────────────────────────────────────
+    {
+        let tantivy_c  = Arc::clone(&tantivy);
+        let shutdown_c = shutdown.clone();
+        let cfg_c      = Arc::clone(&shared_cfg);
+        tokio::spawn(async move {
+            loop {
+                let interval_secs = cfg_c.read().await.indexer.commit_interval_secs;
+                tokio::select! {
+                    _ = shutdown_c.cancelled() => break,
+                    _ = tokio::time::sleep(Duration::from_secs(interval_secs)) => {
+                        if let Err(e) = tantivy_c.commit() {
+                            tracing::warn!("tantivy commit error: {e}");
+                        }
+                    }
+                }
+            }
+        });
+    }
+
+    // ── 10. Config hot-reload watcher ──────────────────────────────────────
+    {
+        let shutdown_c  = shutdown.clone();
+        let shared_cfg2 = Arc::clone(&shared_cfg);
+        tokio::spawn(config::watch_config(config_path, shared_cfg2, shutdown_c));
+    }
+
+    // ── 11. Filesystem watcher → IndexEvent channel ────────────────────────
+    let (ev_tx, mut ev_rx) = mpsc::channel::<IndexEvent>(1024);
+    {
+        let shutdown_c = shutdown.clone();
+        let cfg_c      = Arc::clone(&shared_cfg);
+        tokio::spawn(async move {
+            if let Err(e) = watcher::run_watcher(cfg_c, ev_tx, shutdown_c).await {
+                tracing::error!("watcher error: {e}");
+            }
+        });
+    }
+
+    // ── 12. IPC server ─────────────────────────────────────────────────────
+    {
+        let shutdown_c = shutdown.clone();
+        let cfg_c      = Arc::clone(&shared_cfg);
+        let sqlite_c   = Arc::clone(&sqlite);
+        let tantivy_c  = Arc::clone(&tantivy);
+        let metrics_c  = Arc::clone(&metrics);
+        tokio::spawn(async move {
+            run_ipc_server(cfg_c, sqlite_c, tantivy_c, metrics_c, shutdown_c).await;
+        });
+    }
+
+    // ── 13. REST server ────────────────────────────────────────────────────
+    let rest_port = shared_cfg.read().await.api.rest_port;
+    {
+        let app_state = AppState {
+            sqlite:     Arc::clone(&sqlite),
+            tantivy:    Arc::clone(&tantivy),
+            config:     Arc::clone(&shared_cfg),
+            metrics:    Arc::clone(&metrics),
+            reindex_tx: reindex_tx.clone(),
+        };
+        let shutdown_c = shutdown.clone();
+        tokio::spawn(async move {
+            let router = crate::api::rest::router(app_state);
+            let addr   = std::net::SocketAddr::from(([0, 0, 0, 0], rest_port));
+            tracing::info!("REST listening on {addr}");
+            let listener = match tokio::net::TcpListener::bind(addr).await {
+                Ok(l) => l,
+                Err(e) => { tracing::error!("REST bind error: {e}"); return; }
+            };
+            let server = axum::serve(listener, router)
+                .with_graceful_shutdown(async move { shutdown_c.cancelled().await });
+            if let Err(e) = server.await {
+                tracing::error!("REST server error: {e}");
+            }
+        });
+    }
+
+    // ── 14. gRPC server ────────────────────────────────────────────────────
+    let grpc_port = shared_cfg.read().await.api.grpc_port;
+    {
+        let svc = FileSearchService {
+            sqlite:     Arc::clone(&sqlite),
+            tantivy:    Arc::clone(&tantivy),
+            config:     Arc::clone(&shared_cfg),
+            metrics:    Arc::clone(&metrics),
+            reindex_tx: reindex_tx.clone(),
+        };
+        let shutdown_c = shutdown.clone();
+        tokio::spawn(async move {
+            let addr = std::net::SocketAddr::from(([0, 0, 0, 0], grpc_port));
+            tracing::info!("gRPC listening on {addr}");
+            if let Err(e) = tonic::transport::Server::builder()
+                .add_service(grpc::service(svc))
+                .serve_with_shutdown(addr, shutdown_c.cancelled())
+                .await
+            {
+                tracing::error!("gRPC server error: {e}");
+            }
+        });
+    }
+
+    // ── 15. Initial full crawl ─────────────────────────────────────────────
+    {
+        let sqlite_c   = Arc::clone(&sqlite);
+        let tantivy_c  = Arc::clone(&tantivy);
+        let metrics_c  = Arc::clone(&metrics);
+        let cfg_c      = Arc::clone(&shared_cfg);
+        let shutdown_c = shutdown.clone();
+        tokio::spawn(async move {
+            tracing::info!("starting full crawl");
+            if let Err(e) = full_crawl(cfg_c, sqlite_c, tantivy_c, metrics_c, shutdown_c).await {
+                tracing::error!("full_crawl error: {e}");
+            } else {
+                tracing::info!("full crawl complete");
+            }
+        });
+    }
+
+    // ── 16. Main event loop ────────────────────────────────────────────────
+    loop {
+        tokio::select! {
+            _ = shutdown.cancelled() => {
+                break;
+            }
+            Some(event) = ev_rx.recv() => {
+                let sqlite_e  = Arc::clone(&sqlite);
+                let tantivy_e = Arc::clone(&tantivy);
+                let metrics_e = Arc::clone(&metrics);
+                let cfg_e     = Arc::clone(&shared_cfg);
+                tokio::spawn(async move {
+                    process_event(event, cfg_e, sqlite_e, tantivy_e, metrics_e).await;
+                });
+            }
+            Ok(()) = reindex_rx.changed() => {
+                let full = *reindex_rx.borrow();
+                tracing::info!("reindex requested (full={})", full);
+                let sqlite_c   = Arc::clone(&sqlite);
+                let tantivy_c  = Arc::clone(&tantivy);
+                let metrics_c  = Arc::clone(&metrics);
+                let cfg_c      = Arc::clone(&shared_cfg);
+                let shutdown_c = shutdown.clone();
+                tokio::spawn(async move {
+                    if let Err(e) = full_crawl(cfg_c, sqlite_c, tantivy_c, metrics_c, shutdown_c).await {
+                        tracing::error!("reindex crawl error: {e}");
+                    }
+                });
+            }
+        }
+    }
+
+    // ── 17. Graceful shutdown ──────────────────────────────────────────────
+    tracing::info!("draining in-flight events (max 10s)…");
+    let drain_deadline = tokio::time::Instant::now() + Duration::from_secs(10);
+    while tokio::time::Instant::now() < drain_deadline {
+        match ev_rx.try_recv() {
+            Ok(event) => {
+                let sqlite_e  = Arc::clone(&sqlite);
+                let tantivy_e = Arc::clone(&tantivy);
+                let metrics_e = Arc::clone(&metrics);
+                let cfg_e     = Arc::clone(&shared_cfg);
+                process_event(event, cfg_e, sqlite_e, tantivy_e, metrics_e).await;
+            }
+            Err(_) => break,
+        }
+    }
+
+    tracing::info!("final tantivy commit…");
+    let _ = tantivy.commit();
+
+    #[cfg(unix)]
+    { let _ = std::fs::remove_file(&pid_path); }
+
+    tracing::info!("filesearch daemon stopped");
+    Ok(())
+}
+
+// ---------------------------------------------------------------------------
+// PID file helpers (Unix only)
+// ---------------------------------------------------------------------------
+
+#[cfg(unix)]
+fn write_pid_file(path: &std::path::Path) -> Result<(), AppError> {
+    use std::io::Write;
+    let pid = std::process::id();
+    let mut f = std::fs::File::create(path).map_err(AppError::Io)?;
+    writeln!(f, "{pid}").map_err(AppError::Io)?;
+    tracing::debug!("PID file written: {}", path.display());
+    Ok(())
+}

@@ -1,14 +1,9 @@
-use std::sync::Arc;
+use filesearch::api::ipc_client::IpcClient;
+use filesearch::api::ipc_protocol::{IpcRequest, IpcResponse};
+use filesearch::config;
+use filesearch::daemon;
 
 use clap::{Parser, Subcommand};
-use filesearch::config;
-use filesearch::indexer::crawler::{full_crawl, process_event, IndexMetrics};
-use filesearch::store::{sqlite_store::SqliteStore, tantivy_store::TantivyStore};
-use filesearch::watcher;
-use filesearch::indexer::crawler::IndexEvent;
-use tokio::sync::{mpsc, RwLock};
-use tokio_util::sync::CancellationToken;
-use tracing_subscriber::{fmt, layer::SubscriberExt, util::SubscriberInitExt, EnvFilter};
 
 #[derive(Parser)]
 #[command(name = "filesearch", version, about = "Cross-platform file-search daemon")]
@@ -30,7 +25,9 @@ enum Command {
     Search {
         query: String,
         #[arg(short, long, default_value = "100")]
-        limit: usize,
+        limit: u32,
+        #[arg(long, default_value = "0")]
+        offset: u32,
         #[arg(long)]
         json: bool,
     },
@@ -41,7 +38,7 @@ enum Command {
         #[arg(long)]
         full: bool,
     },
-    /// Open a file
+    /// Open a file via the daemon
     Open { path: String },
     /// Launch the interactive TUI
     Tui,
@@ -73,129 +70,145 @@ async fn main() {
             }
         }
         Command::Daemon => {
-            if let Err(e) = run_daemon(cli.config).await {
+            if let Err(e) = daemon::run(cli.config).await {
                 eprintln!("daemon error: {e}");
                 std::process::exit(1);
             }
         }
-        Command::Search { .. }
-        | Command::Stats
-        | Command::Reindex { .. }
-        | Command::Open { .. }
-        | Command::Tui => {
-            eprintln!("Not yet implemented — see Phase 4–6.");
-            std::process::exit(1);
+        Command::Search { query, limit, offset, json } => {
+            if let Err(e) = run_search(cli.config, query, limit, offset, json).await {
+                eprintln!("search error: {e}");
+                std::process::exit(1);
+            }
+        }
+        Command::Stats => {
+            if let Err(e) = run_stats(cli.config).await {
+                eprintln!("stats error: {e}");
+                std::process::exit(1);
+            }
+        }
+        Command::Reindex { full } => {
+            if let Err(e) = run_reindex(cli.config, full).await {
+                eprintln!("reindex error: {e}");
+                std::process::exit(1);
+            }
+        }
+        Command::Open { path } => {
+            if let Err(e) = run_open(cli.config, path).await {
+                eprintln!("open error: {e}");
+                std::process::exit(1);
+            }
+        }
+        Command::Tui => {
+            if let Err(e) = run_tui(cli.config).await {
+                eprintln!("tui error: {e}");
+                std::process::exit(1);
+            }
         }
     }
 }
 
-async fn run_daemon(config_path: std::path::PathBuf) -> anyhow::Result<()> {
-    // Load and validate config
+// ---------------------------------------------------------------------------
+// IPC client helpers
+// ---------------------------------------------------------------------------
+
+async fn ipc_client_for(
+    config_path: std::path::PathBuf,
+) -> anyhow::Result<IpcClient> {
     let cfg = config::load(&config_path)
         .map_err(|e| anyhow::anyhow!("config load error: {e}"))?;
-    let errors = config::validate(&cfg);
-    if !errors.is_empty() {
-        for e in &errors {
-            eprintln!("Config error: {e}");
-        }
-        anyhow::bail!("invalid configuration — fix errors above and restart");
-    }
+    IpcClient::connect(&cfg.api.ipc_path)
+        .await
+        .map_err(|e| anyhow::anyhow!("ipc connect: {e}"))
+}
 
-    // Create runtime directories
-    std::fs::create_dir_all(&cfg.data_dir)?;
-    std::fs::create_dir_all(&cfg.log_dir)?;
+async fn run_search(
+    config_path: std::path::PathBuf,
+    query:       String,
+    limit:       u32,
+    offset:      u32,
+    json:        bool,
+) -> anyhow::Result<()> {
+    let mut client = ipc_client_for(config_path).await?;
+    let resp = client
+        .request(IpcRequest::Search { query, limit, offset })
+        .await
+        .map_err(|e| anyhow::anyhow!("{e}"))?;
 
-    // Initialise tracing: stderr + rolling file
-    let file_appender = tracing_appender::rolling::daily(&cfg.log_dir, "filesearch.log");
-    let (non_blocking, _guard) = tracing_appender::non_blocking(file_appender);
-    tracing_subscriber::registry()
-        .with(EnvFilter::from_default_env().add_directive(tracing::Level::INFO.into()))
-        .with(fmt::layer().with_writer(std::io::stderr))
-        .with(fmt::layer().with_writer(non_blocking).with_ansi(false))
-        .init();
-
-    tracing::info!("filesearch daemon starting");
-
-    // Initialise stores
-    let sqlite = Arc::new(
-        SqliteStore::new(&cfg.data_dir.join("index.db"))
-            .map_err(|e| anyhow::anyhow!("sqlite init: {e}"))?,
-    );
-    let tantivy = Arc::new(
-        TantivyStore::new(&cfg.data_dir.join("tantivy"))
-            .map_err(|e| anyhow::anyhow!("tantivy init: {e}"))?,
-    );
-    let metrics = IndexMetrics::new();
-
-    // Shared config + cancellation
-    let shared_cfg = Arc::new(RwLock::new(cfg));
-    let shutdown   = CancellationToken::new();
-
-    // Ctrl+C → cancel the token
-    {
-        let shutdown_c = shutdown.clone();
-        tokio::spawn(async move {
-            if tokio::signal::ctrl_c().await.is_ok() {
-                tracing::info!("ctrl-c received, shutting down");
-                shutdown_c.cancel();
+    if let IpcResponse::Search(sr) = resp {
+        if json {
+            println!("{}", serde_json::to_string_pretty(&sr)?);
+        } else {
+            for hit in &sr.hits {
+                println!("{}", hit.path);
             }
-        });
-    }
-
-    // Config hot-reload watcher
-    {
-        let shutdown_c  = shutdown.clone();
-        let shared_cfg2 = Arc::clone(&shared_cfg);
-        tokio::spawn(config::watch_config(config_path, shared_cfg2, shutdown_c));
-    }
-
-    // Filesystem watcher → IndexEvent channel
-    let (ev_tx, mut ev_rx) = mpsc::channel::<IndexEvent>(1024);
-    {
-        let shutdown_c = shutdown.clone();
-        let cfg_c      = Arc::clone(&shared_cfg);
-        tokio::spawn(async move {
-            if let Err(e) = watcher::run_watcher(cfg_c, ev_tx, shutdown_c).await {
-                tracing::error!("watcher error: {e}");
-            }
-        });
-    }
-
-    // Initial full crawl (runs in background; watcher events processed in parallel)
-    {
-        let sqlite_c   = Arc::clone(&sqlite);
-        let tantivy_c  = Arc::clone(&tantivy);
-        let metrics_c  = Arc::clone(&metrics);
-        let cfg_c      = Arc::clone(&shared_cfg);
-        let shutdown_c = shutdown.clone();
-        tokio::spawn(async move {
-            tracing::info!("starting full crawl");
-            if let Err(e) = full_crawl(cfg_c, sqlite_c, tantivy_c, metrics_c, shutdown_c).await {
-                tracing::error!("full_crawl error: {e}");
-            } else {
-                tracing::info!("full crawl complete");
-            }
-        });
-    }
-
-    // Main event loop: dispatch watcher events to process_event
-    loop {
-        tokio::select! {
-            _ = shutdown.cancelled() => {
-                tracing::info!("filesearch daemon shut down");
-                break;
-            }
-            Some(event) = ev_rx.recv() => {
-                let sqlite_e  = Arc::clone(&sqlite);
-                let tantivy_e = Arc::clone(&tantivy);
-                let metrics_e = Arc::clone(&metrics);
-                let cfg_e     = Arc::clone(&shared_cfg);
-                tokio::spawn(async move {
-                    process_event(event, cfg_e, sqlite_e, tantivy_e, metrics_e).await;
-                });
-            }
+            eprintln!("{} hit(s) (total: {})", sr.hits.len(), sr.total_hits);
         }
     }
-
     Ok(())
+}
+
+async fn run_stats(config_path: std::path::PathBuf) -> anyhow::Result<()> {
+    let mut client = ipc_client_for(config_path).await?;
+    let resp = client
+        .request(IpcRequest::Stats)
+        .await
+        .map_err(|e| anyhow::anyhow!("{e}"))?;
+
+    if let IpcResponse::Stats(s) = resp {
+        println!("files:           {}", s.total_files);
+        println!("dirs:            {}", s.total_dirs);
+        println!("content indexed: {}", s.content_indexed);
+        println!("archive entries: {}", s.archive_entries_indexed);
+        println!("archives:        {}", s.archives_crawled);
+        println!("events:          {}", s.events_processed);
+        println!("last crawl:      {}s ago", s.last_crawl_secs);
+    }
+    Ok(())
+}
+
+async fn run_reindex(config_path: std::path::PathBuf, full: bool) -> anyhow::Result<()> {
+    let mut client = ipc_client_for(config_path).await?;
+    let resp = client
+        .request(IpcRequest::Reindex { full })
+        .await
+        .map_err(|e| anyhow::anyhow!("{e}"))?;
+
+    if let IpcResponse::Reindex { accepted } = resp {
+        if accepted {
+            println!("reindex accepted");
+        } else {
+            eprintln!("reindex rejected by daemon");
+            std::process::exit(1);
+        }
+    }
+    Ok(())
+}
+
+async fn run_open(config_path: std::path::PathBuf, path: String) -> anyhow::Result<()> {
+    let mut client = ipc_client_for(config_path).await?;
+    let resp = client
+        .request(IpcRequest::Open { path })
+        .await
+        .map_err(|e| anyhow::anyhow!("{e}"))?;
+
+    if let IpcResponse::Open { opened, temp_path } = resp {
+        if opened {
+            if let Some(p) = temp_path {
+                println!("opened: {p}");
+            } else {
+                println!("opened");
+            }
+        } else {
+            eprintln!("daemon could not open the file");
+            std::process::exit(1);
+        }
+    }
+    Ok(())
+}
+
+async fn run_tui(config_path: std::path::PathBuf) -> anyhow::Result<()> {
+    let cfg = config::load(&config_path)
+        .map_err(|e| anyhow::anyhow!("config load error: {e}"))?;
+    filesearch::frontend::tui::run(&cfg.api.ipc_path).await
 }

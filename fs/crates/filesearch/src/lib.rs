@@ -1,5 +1,8 @@
+pub mod api;
 pub mod config;
+pub mod daemon;
 pub mod error;
+pub mod frontend;
 pub mod indexer;
 pub mod query;
 pub mod store;
