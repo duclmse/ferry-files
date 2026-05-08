@@ -26,6 +26,8 @@ use crate::indexer::crawler::IndexMetrics;
 use crate::query::{evaluator, parser};
 use crate::store::{sqlite_store::SqliteStore, tantivy_store::TantivyStore, FileRecord};
 
+use super::dto::archive_entry_opt;
+
 // ---------------------------------------------------------------------------
 // Shared state
 // ---------------------------------------------------------------------------
@@ -67,13 +69,23 @@ pub struct SearchApiResponse {
 
 #[derive(Serialize)]
 pub struct StatsApiResponse {
-    pub total_files:             i64,
+    pub total_files:             u64,
     pub total_dirs:              u64,
     pub content_indexed:         u64,
     pub archive_entries_indexed: u64,
     pub archives_crawled:        u64,
     pub events_processed:        u64,
     pub last_crawl_secs:         u64,
+}
+
+#[derive(Serialize)]
+struct HealthResponse {
+    status: &'static str,
+}
+
+#[derive(Serialize)]
+struct ReindexAccepted {
+    accepted: bool,
 }
 
 #[derive(Serialize)]
@@ -122,7 +134,12 @@ async fn search_handler(
             .into_response(),
     };
 
-    let macros = state.config.read().await.macros.clone();
+    // Single config lock — reads both macros and search limits in one pass.
+    let (macros, default_limit) = {
+        let cfg = state.config.read().await;
+        (cfg.macros.clone(), cfg.search.default_limit)
+    };
+
     let expr = match parser::parse(&q, &macros) {
         Ok(e) => e,
         Err(e) => return api_error(StatusCode::BAD_REQUEST, e.to_string()).into_response(),
@@ -132,12 +149,8 @@ async fn search_handler(
         Ok(p) => p,
         Err(e) => return api_error(StatusCode::BAD_REQUEST, e.to_string()).into_response(),
     };
-
-    {
-        let cfg = state.config.read().await;
-        plan.limit  = Some(params.limit.unwrap_or(cfg.search.default_limit));
-        plan.offset = params.offset.unwrap_or(0);
-    }
+    plan.limit  = Some(params.limit.unwrap_or(default_limit));
+    plan.offset = params.offset.unwrap_or(0);
 
     let mode = eval_strategy_mode(&plan.strategy);
 
@@ -157,14 +170,10 @@ async fn search_handler(
 }
 
 async fn stats_handler(State(state): State<AppState>) -> impl IntoResponse {
-    let total_files = match state.sqlite.total_files() {
-        Ok(n) => n,
-        Err(e) => return api_error(StatusCode::INTERNAL_SERVER_ERROR, e.to_string())
-            .into_response(),
-    };
+    // All fields read from in-process atomics — no DB round-trip.
     let m = &state.metrics;
     Json(StatsApiResponse {
-        total_files,
+        total_files:             m.total_files.load(Ordering::Relaxed),
         total_dirs:              m.total_dirs.load(Ordering::Relaxed),
         content_indexed:         m.content_indexed.load(Ordering::Relaxed),
         archive_entries_indexed: m.archive_entries_indexed.load(Ordering::Relaxed),
@@ -186,11 +195,11 @@ async fn reindex_handler(
     Json(body): Json<ReindexBody>,
 ) -> impl IntoResponse {
     let _ = state.reindex_tx.send(body.full);
-    Json(serde_json::json!({ "accepted": true }))
+    Json(ReindexAccepted { accepted: true })
 }
 
 async fn health_handler() -> impl IntoResponse {
-    Json(serde_json::json!({ "status": "ok" }))
+    Json(HealthResponse { status: "ok" })
 }
 
 #[derive(Deserialize)]
@@ -237,14 +246,12 @@ async fn open_handler(
     }
 
     if body.path.contains("!/") {
-        // Virtual archive entry — extract to temp then open.
         match extract_and_open(&body.path).await {
             Ok(temp_path) => Json(OpenResponse { opened: true, temp_path: Some(temp_path) })
                 .into_response(),
             Err(e) => api_error(StatusCode::BAD_REQUEST, e).into_response(),
         }
     } else {
-        // Real filesystem path.
         match open_with_os(&body.path).await {
             Ok(()) => Json(OpenResponse { opened: true, temp_path: None }).into_response(),
             Err(e) => api_error(StatusCode::INTERNAL_SERVER_ERROR, e).into_response(),
@@ -258,38 +265,34 @@ async fn open_handler(
 
 async fn open_with_os(path: &str) -> Result<(), String> {
     #[cfg(target_os = "macos")]
-    let cmd = ("open", vec![path.to_owned()]);
+    let (prog, args): (&str, &[&str]) = ("open", &[path]);
     #[cfg(target_os = "linux")]
-    let cmd = ("xdg-open", vec![path.to_owned()]);
+    let (prog, args): (&str, &[&str]) = ("xdg-open", &[path]);
     #[cfg(target_os = "windows")]
-    let cmd = ("cmd", vec!["/C".into(), "start".into(), "".into(), path.to_owned()]);
+    let (prog, args): (&str, &[&str]) = ("cmd", &["/C", "start", "", path]);
     #[cfg(not(any(target_os = "macos", target_os = "linux", target_os = "windows")))]
     return Err("open not supported on this platform".into());
 
     #[allow(unreachable_code)]
-    tokio::process::Command::new(cmd.0)
-        .args(&cmd.1)
+    tokio::process::Command::new(prog)
+        .args(args)
         .spawn()
         .map(|_| ())
         .map_err(|e| e.to_string())
 }
 
 async fn extract_and_open(virtual_path: &str) -> Result<String, String> {
-    // Split at "!/" separator.
     let sep = virtual_path
         .find("!/")
         .ok_or_else(|| "invalid virtual path".to_owned())?;
-    let archive_path = &virtual_path[..sep];
-    let entry_name   = &virtual_path[sep + 2..];
-
-    // Open and extract the ZIP entry.
-    let archive_path = archive_path.to_owned();
-    let entry_name   = entry_name.to_owned();
+    let archive_path = virtual_path[..sep].to_owned();
+    let entry_name   = virtual_path[sep + 2..].to_owned();
 
     let temp_path = tokio::task::spawn_blocking(move || -> Result<String, String> {
-        let file = std::fs::File::open(&archive_path).map_err(|e| e.to_string())?;
-        let mut zip = zip::ZipArchive::new(file).map_err(|e| e.to_string())?;
-        let mut entry = zip.by_name(&entry_name).map_err(|_| "entry not found in archive".to_owned())?;
+        let file  = std::fs::File::open(&archive_path).map_err(|e| e.to_string())?;
+        let mut zip   = zip::ZipArchive::new(file).map_err(|e| e.to_string())?;
+        let mut entry = zip.by_name(&entry_name)
+            .map_err(|_| "entry not found in archive".to_owned())?;
 
         let basename = std::path::Path::new(&entry_name)
             .file_name()
@@ -309,7 +312,6 @@ async fn extract_and_open(virtual_path: &str) -> Result<String, String> {
     .await
     .map_err(|e| e.to_string())??;
 
-    // Schedule cleanup after 30 seconds (best-effort).
     let cleanup_path = temp_path.clone();
     tokio::spawn(async move {
         tokio::time::sleep(std::time::Duration::from_secs(30)).await;
@@ -325,13 +327,6 @@ async fn extract_and_open(virtual_path: &str) -> Result<String, String> {
 // ---------------------------------------------------------------------------
 
 fn file_record_to_hit(r: &FileRecord) -> SearchHit {
-    let archive_entry = r.archive_path.as_ref().map(|_| {
-        r.path
-            .find("!/")
-            .map(|i| r.path[i + 2..].to_owned())
-            .unwrap_or_default()
-    });
-
     SearchHit {
         path:          r.path.clone(),
         name:          r.name.clone(),
@@ -341,15 +336,15 @@ fn file_record_to_hit(r: &FileRecord) -> SearchHit {
         score:         0.0,
         snippet:       None,
         archive_path:  r.archive_path.clone(),
-        archive_entry,
+        archive_entry: archive_entry_opt(r),
     }
 }
 
 fn eval_strategy_mode(strategy: &evaluator::EvalStrategy) -> &'static str {
     match strategy {
-        evaluator::EvalStrategy::SqliteOnly       => "exact",
+        evaluator::EvalStrategy::SqliteOnly        => "exact",
         evaluator::EvalStrategy::TantivyThenSqlite => "content",
-        evaluator::EvalStrategy::DupeSearch(_)    => "dupes",
-        evaluator::EvalStrategy::FuzzyFilter(_)   => "fuzzy",
+        evaluator::EvalStrategy::DupeSearch(_)     => "dupes",
+        evaluator::EvalStrategy::FuzzyFilter(_)    => "fuzzy",
     }
 }

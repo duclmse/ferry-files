@@ -83,35 +83,54 @@ impl Mode {
 }
 
 // ---------------------------------------------------------------------------
+// Pre-computed row — built once when hits arrive, read many times per frame
+// ---------------------------------------------------------------------------
+
+struct HitRow {
+    path:       String,
+    // Pre-formatted "  1.2KB  rs" — avoids format! in every render frame.
+    meta:       String,
+    is_archive: bool,
+}
+
+// ---------------------------------------------------------------------------
 // TUI state
 // ---------------------------------------------------------------------------
 
 struct App {
-    input:        String,
-    mode:         Mode,
-    hits:         Vec<SearchHitDto>,
-    total_hits:   u64,
-    took_ms:      Option<u64>,
-    list_state:   ListState,
-    status_msg:   String,
-    last_key_at:  Option<Instant>,
+    input:          String,
+    mode:           Mode,
+    // Rendered representation of each hit — separate from the raw DTO so
+    // render only borrows strings without allocation.
+    rows:           Vec<HitRow>,
+    total_hits:     u64,
+    list_state:     ListState,
+    status_msg:     String,
+    last_key_at:    Option<Instant>,
     search_pending: bool,
-    limit:        u32,
+    limit:          u32,
+    // Cached title string; updated only when mode changes (not every frame).
+    mode_title:     String,
+    // Reused IPC connection; reconnected lazily on transport errors.
+    ipc_path:       std::path::PathBuf,
+    ipc:            Option<IpcClient>,
 }
 
 impl App {
-    fn new() -> Self {
+    fn new(ipc_path: &Path) -> Self {
         Self {
-            input:           String::new(),
-            mode:            Mode::Exact,
-            hits:            Vec::new(),
-            total_hits:      0,
-            took_ms:         None,
-            list_state:      ListState::default(),
-            status_msg:      String::new(),
-            last_key_at:     None,
-            search_pending:  false,
-            limit:           100,
+            input:          String::new(),
+            mode:           Mode::Exact,
+            rows:           Vec::new(),
+            total_hits:     0,
+            list_state:     ListState::default(),
+            status_msg:     String::new(),
+            last_key_at:    None,
+            search_pending: false,
+            limit:          100,
+            mode_title:     format!(" Search [{}] ", Mode::Exact.label()),
+            ipc_path:       ipc_path.to_path_buf(),
+            ipc:            None,
         }
     }
 
@@ -126,20 +145,76 @@ impl App {
         }
     }
 
+    fn cycle_mode(&mut self) {
+        self.mode       = self.mode.next();
+        // Update cache in one place so render never calls format!.
+        self.mode_title = format!(" Search [{}] ", self.mode.label());
+        self.search_pending = true;
+        self.last_key_at    = Some(Instant::now());
+    }
+
     fn select_next(&mut self) {
-        if self.hits.is_empty() { return; }
-        let i = self.list_state.selected().map(|i| (i + 1).min(self.hits.len() - 1)).unwrap_or(0);
+        if self.rows.is_empty() { return; }
+        let i = self.list_state.selected().map(|i| (i + 1).min(self.rows.len() - 1)).unwrap_or(0);
         self.list_state.select(Some(i));
     }
 
     fn select_prev(&mut self) {
-        if self.hits.is_empty() { return; }
+        if self.rows.is_empty() { return; }
         let i = self.list_state.selected().map(|i| i.saturating_sub(1)).unwrap_or(0);
         self.list_state.select(Some(i));
     }
 
-    fn selected_hit(&self) -> Option<&SearchHitDto> {
-        self.list_state.selected().and_then(|i| self.hits.get(i))
+    /// Returns the path of the currently selected row (borrows then copies) so
+    /// the caller can drop the shared borrow before taking `&mut App` again.
+    fn selected_path(&self) -> Option<String> {
+        self.list_state.selected()
+            .and_then(|i| self.rows.get(i))
+            .map(|r| r.path.clone())
+    }
+
+    /// Send a request over the persistent connection, reconnecting once on
+    /// transport-layer failures (socket closed, broken pipe, etc.).
+    async fn send(&mut self, req: IpcRequest) -> Result<IpcResponse, IpcClientError> {
+        // Lazily connect.
+        if self.ipc.is_none() {
+            self.ipc = Some(IpcClient::connect(&self.ipc_path).await?);
+        }
+        let client = self.ipc.as_mut().unwrap();
+        match client.request(req).await {
+            Err(e) if e.is_connection_error() => {
+                // Drop the stale connection; the next call will reconnect.
+                self.ipc = None;
+                Err(e)
+            }
+            other => other,
+        }
+    }
+
+    /// Load new hits, pre-computing per-row display strings.
+    fn load_hits(&mut self, hits: Vec<SearchHitDto>, total: u64) {
+        self.rows.clear();
+        self.rows.extend(hits.into_iter().map(|h| {
+            let ext  = h.extension.as_deref().unwrap_or("");
+            let meta = format!("  {}  {ext}", humanize_size(h.size_bytes));
+            HitRow { path: h.path, meta, is_archive: h.archive_path.is_some() }
+        }));
+        self.total_hits = total;
+        let n = self.rows.len();
+        self.status_msg = format!("{n} result(s) (total: {total})");
+        if !self.rows.is_empty() && self.list_state.selected().is_none() {
+            self.list_state.select(Some(0));
+        }
+        if self.rows.is_empty() {
+            self.list_state = ListState::default();
+        }
+    }
+
+    fn clear_hits(&mut self) {
+        self.rows.clear();
+        self.total_hits = 0;
+        self.list_state = ListState::default();
+        self.status_msg.clear();
     }
 }
 
@@ -167,14 +242,14 @@ pub async fn run(ipc_path: &Path) -> anyhow::Result<()> {
 // Event loop
 // ---------------------------------------------------------------------------
 
-const DEBOUNCE: Duration = Duration::from_millis(100);
+const DEBOUNCE:     Duration = Duration::from_millis(100);
 const POLL_TIMEOUT: Duration = Duration::from_millis(20);
 
 async fn event_loop(
     term:     &mut Terminal<CrosstermBackend<std::io::Stdout>>,
     ipc_path: &Path,
 ) -> anyhow::Result<()> {
-    let mut app = App::new();
+    let mut app = App::new(ipc_path);
 
     loop {
         term.draw(|f| render(f, &mut app))?;
@@ -186,13 +261,9 @@ async fn event_loop(
                 app.last_key_at    = None;
                 let q = app.full_query();
                 if !q.is_empty() {
-                    search(&mut app, ipc_path, q).await;
+                    search(&mut app, q).await;
                 } else {
-                    app.hits        = Vec::new();
-                    app.total_hits  = 0;
-                    app.took_ms     = None;
-                    app.list_state  = ListState::default();
-                    app.status_msg  = String::new();
+                    app.clear_hits();
                 }
             }
         }
@@ -203,7 +274,7 @@ async fn event_loop(
         }
 
         if let Event::Key(key) = event::read()? {
-            if handle_key(&mut app, key, ipc_path).await? {
+            if handle_key(&mut app, key).await? {
                 break; // exit requested
             }
         }
@@ -213,7 +284,7 @@ async fn event_loop(
 }
 
 /// Returns `true` when the user requested exit.
-async fn handle_key(app: &mut App, key: KeyEvent, ipc_path: &Path) -> anyhow::Result<bool> {
+async fn handle_key(app: &mut App, key: KeyEvent) -> anyhow::Result<bool> {
     match key.code {
         // Exit
         KeyCode::Esc => return Ok(true),
@@ -225,22 +296,18 @@ async fn handle_key(app: &mut App, key: KeyEvent, ipc_path: &Path) -> anyhow::Re
 
         // Open selected file
         KeyCode::Enter => {
-            if let Some(hit) = app.selected_hit() {
-                let path = hit.path.clone();
-                open_file(app, ipc_path, path).await;
+            // Clone path string to release the shared borrow before calling send().
+            if let Some(path) = app.selected_path() {
+                open_file(app, path).await;
             }
         }
 
         // Cycle mode
-        KeyCode::Tab => {
-            app.mode           = app.mode.next();
-            app.search_pending = true;
-            app.last_key_at    = Some(Instant::now());
-        }
+        KeyCode::Tab => app.cycle_mode(),
 
         // Force re-index
         KeyCode::F(5) => {
-            reindex(ipc_path).await;
+            reindex(app).await;
             app.status_msg = "re-index requested".into();
         }
 
@@ -262,60 +329,32 @@ async fn handle_key(app: &mut App, key: KeyEvent, ipc_path: &Path) -> anyhow::Re
 }
 
 // ---------------------------------------------------------------------------
-// IPC helpers
+// IPC helpers — all go through app.send() for connection reuse
 // ---------------------------------------------------------------------------
 
-async fn search(app: &mut App, ipc_path: &Path, query: String) {
-    match send_request(ipc_path, IpcRequest::Search { query, limit: app.limit, offset: 0 }).await {
-        Ok(IpcResponse::Search(sr)) => {
-            app.hits       = sr.hits;
-            app.total_hits = sr.total_hits;
-            app.took_ms    = None; // IpcResponse doesn't carry took_ms
-            let n = app.hits.len();
-            app.status_msg = format!("{} result(s) (total: {})", n, app.total_hits);
-            if !app.hits.is_empty() && app.list_state.selected().is_none() {
-                app.list_state.select(Some(0));
-            }
-            if app.hits.is_empty() {
-                app.list_state = ListState::default();
-            }
-        }
+async fn search(app: &mut App, query: String) {
+    match app.send(IpcRequest::Search { query, limit: app.limit, offset: 0 }).await {
+        Ok(IpcResponse::Search(sr)) => app.load_hits(sr.hits, sr.total_hits),
         Ok(_) => {}
-        Err(e) => {
-            app.status_msg = format!("search error: {e}");
-        }
+        Err(e) => { app.status_msg = format!("search error: {e}"); }
     }
 }
 
-async fn open_file(app: &mut App, ipc_path: &Path, path: String) {
-    match send_request(ipc_path, IpcRequest::Open { path }).await {
-        Ok(IpcResponse::Open { opened: true, .. }) => {
-            app.status_msg = "file opened".into();
-        }
-        Ok(IpcResponse::Open { opened: false, .. }) => {
-            app.status_msg = "daemon could not open file".into();
-        }
+async fn open_file(app: &mut App, path: String) {
+    match app.send(IpcRequest::Open { path }).await {
+        Ok(IpcResponse::Open { opened: true,  .. }) => { app.status_msg = "file opened".into(); }
+        Ok(IpcResponse::Open { opened: false, .. }) => { app.status_msg = "daemon could not open file".into(); }
         Ok(_)  => {}
-        Err(e) => {
-            app.status_msg = format!("open error: {e}");
-        }
+        Err(e) => { app.status_msg = format!("open error: {e}"); }
     }
 }
 
-async fn reindex(ipc_path: &Path) {
-    let _ = send_request(ipc_path, IpcRequest::Reindex { full: true }).await;
-}
-
-async fn send_request(
-    ipc_path: &Path,
-    req:      IpcRequest,
-) -> Result<IpcResponse, IpcClientError> {
-    let mut client = IpcClient::connect(ipc_path).await?;
-    client.request(req).await
+async fn reindex(app: &mut App) {
+    let _ = app.send(IpcRequest::Reindex { full: true }).await;
 }
 
 // ---------------------------------------------------------------------------
-// Rendering
+// Rendering — zero heap allocations for stable frames
 // ---------------------------------------------------------------------------
 
 fn render(f: &mut Frame, app: &mut App) {
@@ -329,11 +368,10 @@ fn render(f: &mut Frame, app: &mut App) {
         .split(f.size());
 
     // ── Search input ──────────────────────────────────────────────────────
-    let mode_label = app.mode.label();
-    let input_title = format!(" Search [{mode_label}] ");
     let search_block = Block::default()
         .borders(Borders::ALL)
-        .title(input_title.as_str());
+        // Borrows the pre-computed String — no allocation.
+        .title(app.mode_title.as_str());
     let input_para = Paragraph::new(app.input.as_str())
         .block(search_block)
         .style(Style::default().fg(Color::White));
@@ -348,20 +386,16 @@ fn render(f: &mut Frame, app: &mut App) {
     );
 
     // ── Results list ─────────────────────────────────────────────────────
-    let items: Vec<ListItem> = app.hits.iter().map(|h| {
-        let zip_tag = if h.archive_path.is_some() {
+    // Borrows pre-computed strings — no clone, no format! per row per frame.
+    let items: Vec<ListItem> = app.rows.iter().map(|row| {
+        let zip_tag = if row.is_archive {
             Span::styled(" [zip]", Style::default().fg(Color::DarkGray).add_modifier(Modifier::DIM))
         } else {
             Span::raw("")
         };
-        let ext_str = h.extension.as_deref().unwrap_or("");
-        let size_str = humanize_size(h.size_bytes);
         let line = Line::from(vec![
-            Span::raw(h.path.clone()),
-            Span::styled(
-                format!("  {size_str}  {ext_str}"),
-                Style::default().fg(Color::DarkGray),
-            ),
+            Span::raw(row.path.as_str()),
+            Span::styled(row.meta.as_str(), Style::default().fg(Color::DarkGray)),
             zip_tag,
         ]);
         ListItem::new(line)

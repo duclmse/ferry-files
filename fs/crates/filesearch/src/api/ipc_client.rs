@@ -46,6 +46,15 @@ impl std::fmt::Display for IpcClientError {
 
 impl std::error::Error for IpcClientError {}
 
+impl IpcClientError {
+    /// Returns `true` for transport-layer failures that warrant a reconnect.
+    /// Logical daemon errors (`DaemonError`, `UnexpectedMessage`) are not
+    /// connection errors and should not trigger a reconnect attempt.
+    pub fn is_connection_error(&self) -> bool {
+        matches!(self, Self::Connect(_) | Self::Read(_) | Self::Write(_))
+    }
+}
+
 // ---------------------------------------------------------------------------
 // Client
 // ---------------------------------------------------------------------------

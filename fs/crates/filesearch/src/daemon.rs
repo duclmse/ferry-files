@@ -1,10 +1,13 @@
 //! Daemon lifecycle — startup, API server orchestration, graceful shutdown.
 
 use std::path::PathBuf;
-use std::sync::Arc;
+use std::sync::{
+    atomic::{AtomicBool, Ordering},
+    Arc,
+};
 use std::time::Duration;
 
-use tokio::sync::{mpsc, watch, RwLock};
+use tokio::sync::{mpsc, watch, RwLock, Semaphore};
 use tokio_util::sync::CancellationToken;
 use tracing_subscriber::{fmt, layer::SubscriberExt, util::SubscriberInitExt, EnvFilter};
 
@@ -16,6 +19,12 @@ use crate::error::AppError;
 use crate::indexer::crawler::{full_crawl, process_event, IndexEvent, IndexMetrics};
 use crate::store::{sqlite_store::SqliteStore, tantivy_store::TantivyStore};
 use crate::watcher;
+
+// Maximum concurrent filesystem-event processing tasks.
+// Beyond this, new events wait for a running task to finish rather than
+// spawning unboundedly. Keeps memory and SQLite-pool contention bounded
+// under inotify/FSEvents bursts (e.g. large `git checkout`).
+const MAX_EVENT_TASKS: usize = 16;
 
 // ---------------------------------------------------------------------------
 // Public entry point
@@ -53,22 +62,29 @@ pub async fn run(config_path: PathBuf) -> Result<(), AppError> {
     write_pid_file(&pid_path)?;
 
     // ── 4-5. Stores ────────────────────────────────────────────────────────
-    let sqlite = Arc::new(
-        SqliteStore::new(&cfg.data_dir.join("index.db"))?,
-    );
-    let tantivy = Arc::new(
-        TantivyStore::new(&cfg.data_dir.join("tantivy"))?,
-    );
+    let sqlite  = Arc::new(SqliteStore::new(&cfg.data_dir.join("index.db"))?);
+    let tantivy = Arc::new(TantivyStore::new(&cfg.data_dir.join("tantivy"))?);
     let metrics = IndexMetrics::new();
 
     // ── 6. Shared config + cancellation ────────────────────────────────────
     let shared_cfg = Arc::new(RwLock::new(cfg));
     let shutdown   = CancellationToken::new();
 
-    // ── 7. Reindex watch channel ────────────────────────────────────────────
+    // ── 7. Crawl-in-progress guard ─────────────────────────────────────────
+    // Prevents two concurrent full crawls (initial + API-triggered reindex)
+    // from fighting over the SQLite write connection.
+    let crawl_active = Arc::new(AtomicBool::new(false));
+
+    // ── 8. Reindex watch channel ───────────────────────────────────────────
     let (reindex_tx, mut reindex_rx) = watch::channel(false);
 
-    // ── 8. Ctrl+C → cancel token ────────────────────────────────────────────
+    // ── 9. Event-task semaphore ────────────────────────────────────────────
+    // Caps the number of concurrently running process_event tasks to
+    // MAX_EVENT_TASKS. Provides backpressure during watcher bursts without
+    // spawning an unbounded number of tokio tasks.
+    let event_sem = Arc::new(Semaphore::new(MAX_EVENT_TASKS));
+
+    // ── 10. Ctrl+C → cancel token ──────────────────────────────────────────
     {
         let shutdown_c = shutdown.clone();
         tokio::spawn(async move {
@@ -79,7 +95,7 @@ pub async fn run(config_path: PathBuf) -> Result<(), AppError> {
         });
     }
 
-    // ── 9. Tantivy commit loop ──────────────────────────────────────────────
+    // ── 11. Tantivy commit loop ────────────────────────────────────────────
     {
         let tantivy_c  = Arc::clone(&tantivy);
         let shutdown_c = shutdown.clone();
@@ -99,14 +115,14 @@ pub async fn run(config_path: PathBuf) -> Result<(), AppError> {
         });
     }
 
-    // ── 10. Config hot-reload watcher ──────────────────────────────────────
+    // ── 12. Config hot-reload watcher ──────────────────────────────────────
     {
         let shutdown_c  = shutdown.clone();
         let shared_cfg2 = Arc::clone(&shared_cfg);
         tokio::spawn(config::watch_config(config_path, shared_cfg2, shutdown_c));
     }
 
-    // ── 11. Filesystem watcher → IndexEvent channel ────────────────────────
+    // ── 13. Filesystem watcher → IndexEvent channel ────────────────────────
     let (ev_tx, mut ev_rx) = mpsc::channel::<IndexEvent>(1024);
     {
         let shutdown_c = shutdown.clone();
@@ -118,7 +134,7 @@ pub async fn run(config_path: PathBuf) -> Result<(), AppError> {
         });
     }
 
-    // ── 12. IPC server ─────────────────────────────────────────────────────
+    // ── 14. IPC server ─────────────────────────────────────────────────────
     {
         let shutdown_c = shutdown.clone();
         let cfg_c      = Arc::clone(&shared_cfg);
@@ -130,7 +146,7 @@ pub async fn run(config_path: PathBuf) -> Result<(), AppError> {
         });
     }
 
-    // ── 13. REST server ────────────────────────────────────────────────────
+    // ── 15. REST server ────────────────────────────────────────────────────
     let rest_port = shared_cfg.read().await.api.rest_port;
     {
         let app_state = AppState {
@@ -149,15 +165,16 @@ pub async fn run(config_path: PathBuf) -> Result<(), AppError> {
                 Ok(l) => l,
                 Err(e) => { tracing::error!("REST bind error: {e}"); return; }
             };
-            let server = axum::serve(listener, router)
-                .with_graceful_shutdown(async move { shutdown_c.cancelled().await });
-            if let Err(e) = server.await {
+            if let Err(e) = axum::serve(listener, router)
+                .with_graceful_shutdown(async move { shutdown_c.cancelled().await })
+                .await
+            {
                 tracing::error!("REST server error: {e}");
             }
         });
     }
 
-    // ── 14. gRPC server ────────────────────────────────────────────────────
+    // ── 16. gRPC server ────────────────────────────────────────────────────
     let grpc_port = shared_cfg.read().await.api.grpc_port;
     {
         let svc = FileSearchService {
@@ -181,56 +198,59 @@ pub async fn run(config_path: PathBuf) -> Result<(), AppError> {
         });
     }
 
-    // ── 15. Initial full crawl ─────────────────────────────────────────────
-    {
-        let sqlite_c   = Arc::clone(&sqlite);
-        let tantivy_c  = Arc::clone(&tantivy);
-        let metrics_c  = Arc::clone(&metrics);
-        let cfg_c      = Arc::clone(&shared_cfg);
-        let shutdown_c = shutdown.clone();
-        tokio::spawn(async move {
-            tracing::info!("starting full crawl");
-            if let Err(e) = full_crawl(cfg_c, sqlite_c, tantivy_c, metrics_c, shutdown_c).await {
-                tracing::error!("full_crawl error: {e}");
-            } else {
-                tracing::info!("full crawl complete");
-            }
-        });
-    }
+    // ── 17. Initial full crawl ─────────────────────────────────────────────
+    spawn_crawl(
+        &crawl_active,
+        Arc::clone(&sqlite),
+        Arc::clone(&tantivy),
+        Arc::clone(&metrics),
+        Arc::clone(&shared_cfg),
+        shutdown.clone(),
+    );
 
-    // ── 16. Main event loop ────────────────────────────────────────────────
+    // ── 18. Main event loop ────────────────────────────────────────────────
     loop {
         tokio::select! {
             _ = shutdown.cancelled() => {
                 break;
             }
             Some(event) = ev_rx.recv() => {
+                // Acquire a semaphore permit before spawning. When MAX_EVENT_TASKS
+                // are already running this yields here (backpressure) rather than
+                // allocating another task.
+                let permit   = Arc::clone(&event_sem).acquire_owned().await.unwrap();
                 let sqlite_e  = Arc::clone(&sqlite);
                 let tantivy_e = Arc::clone(&tantivy);
                 let metrics_e = Arc::clone(&metrics);
                 let cfg_e     = Arc::clone(&shared_cfg);
                 tokio::spawn(async move {
                     process_event(event, cfg_e, sqlite_e, tantivy_e, metrics_e).await;
+                    drop(permit); // release when done
                 });
             }
             Ok(()) = reindex_rx.changed() => {
                 let full = *reindex_rx.borrow();
-                tracing::info!("reindex requested (full={})", full);
-                let sqlite_c   = Arc::clone(&sqlite);
-                let tantivy_c  = Arc::clone(&tantivy);
-                let metrics_c  = Arc::clone(&metrics);
-                let cfg_c      = Arc::clone(&shared_cfg);
-                let shutdown_c = shutdown.clone();
-                tokio::spawn(async move {
-                    if let Err(e) = full_crawl(cfg_c, sqlite_c, tantivy_c, metrics_c, shutdown_c).await {
-                        tracing::error!("reindex crawl error: {e}");
-                    }
-                });
+                if crawl_active
+                    .compare_exchange(false, true, Ordering::AcqRel, Ordering::Relaxed)
+                    .is_ok()
+                {
+                    tracing::info!("reindex requested (full={full})");
+                    spawn_crawl(
+                        &crawl_active,
+                        Arc::clone(&sqlite),
+                        Arc::clone(&tantivy),
+                        Arc::clone(&metrics),
+                        Arc::clone(&shared_cfg),
+                        shutdown.clone(),
+                    );
+                } else {
+                    tracing::info!("reindex ignored: crawl already active");
+                }
             }
         }
     }
 
-    // ── 17. Graceful shutdown ──────────────────────────────────────────────
+    // ── 19. Graceful shutdown ──────────────────────────────────────────────
     tracing::info!("draining in-flight events (max 10s)…");
     let drain_deadline = tokio::time::Instant::now() + Duration::from_secs(10);
     while tokio::time::Instant::now() < drain_deadline {
@@ -254,6 +274,37 @@ pub async fn run(config_path: PathBuf) -> Result<(), AppError> {
 
     tracing::info!("filesearch daemon stopped");
     Ok(())
+}
+
+// ---------------------------------------------------------------------------
+// Crawl spawner — deduplicates the "start a full crawl as a background task"
+// pattern used both for the initial crawl and API-triggered reindexes.
+//
+// The `crawl_active` flag is set to `true` before calling this function by
+// the caller (or here for the initial crawl). It is cleared to `false` when
+// the spawned task finishes.
+// ---------------------------------------------------------------------------
+
+fn spawn_crawl(
+    crawl_active: &Arc<AtomicBool>,
+    sqlite:       Arc<SqliteStore>,
+    tantivy:      Arc<TantivyStore>,
+    metrics:      Arc<IndexMetrics>,
+    cfg:          Arc<RwLock<crate::config::Config>>,
+    shutdown:     CancellationToken,
+) {
+    // Set the flag so concurrent reindex requests are rejected until done.
+    crawl_active.store(true, Ordering::Release);
+    let ca = Arc::clone(crawl_active);
+    tokio::spawn(async move {
+        tracing::info!("full crawl starting");
+        if let Err(e) = full_crawl(cfg, sqlite, tantivy, metrics, shutdown).await {
+            tracing::error!("full_crawl error: {e}");
+        } else {
+            tracing::info!("full crawl complete");
+        }
+        ca.store(false, Ordering::Release);
+    });
 }
 
 // ---------------------------------------------------------------------------

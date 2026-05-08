@@ -11,6 +11,8 @@ use crate::indexer::crawler::IndexMetrics;
 use crate::query::{evaluator, parser};
 use crate::store::{sqlite_store::SqliteStore, tantivy_store::TantivyStore, FileRecord};
 
+use super::dto::archive_entry;
+
 // Include tonic-generated types.
 pub mod proto {
     tonic::include_proto!("filesearch");
@@ -46,11 +48,13 @@ impl FileSearch for FileSearchService {
         request: Request<SearchRequest>,
     ) -> Result<Response<SearchResponse>, Status> {
         let req = request.into_inner();
-        let (results, total, took_ms) = self.run_query(&req.query, req.limit as usize, req.offset as usize).await?;
+        let (results, total, took_ms) = self
+            .run_query(&req.query, req.limit as usize, req.offset as usize)
+            .await?;
         Ok(Response::new(SearchResponse {
             results,
-            total: total as i32,
-            took_ms: took_ms as i64,
+            total:    total as i32,
+            took_ms:  took_ms as i64,
         }))
     }
 
@@ -61,8 +65,12 @@ impl FileSearch for FileSearchService {
         request: Request<SearchRequest>,
     ) -> Result<Response<Self::SearchStreamStream>, Status> {
         let req = request.into_inner();
-        let (results, _, _) = self.run_query(&req.query, req.limit as usize, req.offset as usize).await?;
+        let (results, _, _) = self
+            .run_query(&req.query, req.limit as usize, req.offset as usize)
+            .await?;
 
+        // Fan results out through a bounded channel so the caller can start
+        // consuming before all records are serialised.
         let (tx, rx) = tokio::sync::mpsc::channel(64);
         tokio::spawn(async move {
             for r in results {
@@ -122,6 +130,7 @@ impl FileSearchService {
         limit:     usize,
         offset:    usize,
     ) -> Result<(Vec<SearchResult>, usize, u64), Status> {
+        // Single config lock — reads macros then releases.
         let macros = self.config.read().await.macros.clone();
         let expr = parser::parse(query_str, &macros)
             .map_err(|e| Status::invalid_argument(e.to_string()))?;
@@ -140,29 +149,28 @@ impl FileSearchService {
         .await
         .map_err(|e| Status::internal(e.to_string()))?;
 
-        let results = result.hits.iter().map(file_record_to_result).collect();
+        // Consume hits by value — moves Strings rather than cloning them.
+        let results = result.hits.into_iter().map(file_record_into_result).collect();
         Ok((results, result.total, result.took_ms))
     }
 }
 
-fn file_record_to_result(r: &FileRecord) -> SearchResult {
-    let archive_entry = r.archive_path.as_ref().map_or(String::new(), |_| {
-        r.path
-            .find("!/")
-            .map(|i| r.path[i + 2..].to_owned())
-            .unwrap_or_default()
-    });
-
+/// Converts an owned `FileRecord` into a proto `SearchResult`, moving all
+/// `String` fields to avoid heap copies.
+fn file_record_into_result(r: FileRecord) -> SearchResult {
+    // Compute archive_entry while path is still accessible, then move path.
+    let entry = archive_entry(&r);
+    let archive_path = r.archive_path.unwrap_or_default();
     SearchResult {
-        path:          r.path.clone(),
-        name:          r.name.clone(),
-        extension:     r.extension.clone().unwrap_or_default(),
+        path:          r.path,
+        name:          r.name,
+        extension:     r.extension.unwrap_or_default(),
         size_bytes:    r.size_bytes as i64,
         mtime:         r.mtime,
         score:         0.0,
         snippet:       String::new(),
         is_dir:        r.is_dir,
-        archive_path:  r.archive_path.clone().unwrap_or_default(),
-        archive_entry,
+        archive_path,
+        archive_entry: entry,
     }
 }
