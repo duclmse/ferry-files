@@ -358,4 +358,36 @@ mod tests {
         let result = convert_to_bytes(src, &cfg);
         assert!(result.is_err());
     }
+
+    #[test]
+    fn zip_filename_bare_tar() {
+        assert_eq!(zip_filename(Path::new("/w/data.tar")), "data.zip");
+    }
+
+    #[test]
+    fn zip_filename_no_extension() {
+        assert_eq!(zip_filename(Path::new("/w/Makefile")), "Makefile.zip");
+    }
+
+    #[test]
+    fn zip_filename_path_less() {
+        assert_eq!(zip_filename(Path::new("only.rar")), "only.zip");
+    }
+
+    #[test]
+    fn copy_chunked_copies_all_bytes() {
+        let src_data = b"hello, world!";
+        let mut src = std::io::Cursor::new(src_data);
+        let mut dst = Vec::new();
+        copy_chunked(&mut src, &mut dst).unwrap();
+        assert_eq!(dst, src_data);
+    }
+
+    #[test]
+    fn copy_chunked_empty_source_writes_nothing() {
+        let mut src = std::io::Cursor::new(b"" as &[u8]);
+        let mut dst = Vec::new();
+        copy_chunked(&mut src, &mut dst).unwrap();
+        assert!(dst.is_empty());
+    }
 }

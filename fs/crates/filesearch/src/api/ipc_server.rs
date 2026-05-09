@@ -13,7 +13,7 @@ use std::sync::{
 };
 
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
-use tokio::sync::RwLock;
+use tokio::sync::{watch, RwLock};
 use tokio_util::sync::CancellationToken;
 
 use crate::config::Config;
@@ -32,11 +32,12 @@ use super::ipc_protocol::{
 
 /// Run the IPC listener until `shutdown` is cancelled.
 pub async fn run_ipc_server(
-    cfg:      Arc<RwLock<Config>>,
-    sqlite:   Arc<SqliteStore>,
-    tantivy:  Arc<TantivyStore>,
-    metrics:  Arc<IndexMetrics>,
-    shutdown: CancellationToken,
+    cfg:        Arc<RwLock<Config>>,
+    sqlite:     Arc<SqliteStore>,
+    tantivy:    Arc<TantivyStore>,
+    metrics:    Arc<IndexMetrics>,
+    reindex_tx: watch::Sender<bool>,
+    shutdown:   CancellationToken,
 ) {
     let ipc_path = cfg.read().await.api.ipc_path.clone();
 
@@ -67,10 +68,11 @@ pub async fn run_ipc_server(
                     match res {
                         Ok((stream, _)) => {
                             let ctx = ConnCtx {
-                                cfg:     Arc::clone(&cfg),
-                                sqlite:  Arc::clone(&sqlite),
-                                tantivy: Arc::clone(&tantivy),
-                                metrics: Arc::clone(&metrics),
+                                cfg:        Arc::clone(&cfg),
+                                sqlite:     Arc::clone(&sqlite),
+                                tantivy:    Arc::clone(&tantivy),
+                                metrics:    Arc::clone(&metrics),
+                                reindex_tx: reindex_tx.clone(),
                             };
                             tokio::spawn(handle_connection(stream, ctx));
                         }
@@ -108,10 +110,11 @@ pub async fn run_ipc_server(
                     match res {
                         Ok(()) => {
                             let ctx = ConnCtx {
-                                cfg:     Arc::clone(&cfg),
-                                sqlite:  Arc::clone(&sqlite),
-                                tantivy: Arc::clone(&tantivy),
-                                metrics: Arc::clone(&metrics),
+                                cfg:        Arc::clone(&cfg),
+                                sqlite:     Arc::clone(&sqlite),
+                                tantivy:    Arc::clone(&tantivy),
+                                metrics:    Arc::clone(&metrics),
+                                reindex_tx: reindex_tx.clone(),
                             };
                             tokio::spawn(handle_connection(server, ctx));
                         }
@@ -131,10 +134,11 @@ pub async fn run_ipc_server(
 // ---------------------------------------------------------------------------
 
 struct ConnCtx {
-    cfg:     Arc<RwLock<Config>>,
-    sqlite:  Arc<SqliteStore>,
-    tantivy: Arc<TantivyStore>,
-    metrics: Arc<IndexMetrics>,
+    cfg:        Arc<RwLock<Config>>,
+    sqlite:     Arc<SqliteStore>,
+    tantivy:    Arc<TantivyStore>,
+    metrics:    Arc<IndexMetrics>,
+    reindex_tx: watch::Sender<bool>,
 }
 
 // ---------------------------------------------------------------------------
@@ -227,8 +231,8 @@ async fn dispatch(req: IpcRequest, request_id: u128, ctx: &ConnCtx) -> IpcEnvelo
             search_handler(request_id, query, limit, offset, ctx).await
         }
         IpcRequest::Stats => stats_handler(request_id, ctx),
-        IpcRequest::Reindex { full } => reindex_handler(request_id, full),
-        IpcRequest::Open { path } => open_handler(request_id, path),
+        IpcRequest::Reindex { full } => reindex_handler(request_id, full, ctx),
+        IpcRequest::Open { path } => open_handler(request_id, path, ctx).await,
     }
 }
 
@@ -294,20 +298,38 @@ fn stats_handler(request_id: u128, ctx: &ConnCtx) -> IpcEnvelope {
     )
 }
 
-fn reindex_handler(request_id: u128, _full: bool) -> IpcEnvelope {
-    // Reindex signalling is implemented by the daemon main loop; for now,
-    // acknowledge the request. Full wiring is a Phase 7 task.
+fn reindex_handler(request_id: u128, full: bool, ctx: &ConnCtx) -> IpcEnvelope {
+    let _ = ctx.reindex_tx.send(full);
     IpcEnvelope::new(
         request_id,
         IpcMessage::Response(IpcResponse::Reindex { accepted: true }),
     )
 }
 
-fn open_handler(request_id: u128, _path: String) -> IpcEnvelope {
-    IpcEnvelope::new(
-        request_id,
-        IpcMessage::Response(IpcResponse::Open { opened: false, temp_path: None }),
-    )
+async fn open_handler(request_id: u128, path: String, ctx: &ConnCtx) -> IpcEnvelope {
+    match ctx.sqlite.get_by_path(&path) {
+        Ok(None) => return error_response(request_id, "NOT_FOUND", "path not in index"),
+        Err(e)   => return error_response(request_id, "STORE_ERROR", e.to_string()),
+        Ok(Some(_)) => {}
+    }
+
+    if path.contains("!/") {
+        match super::rest::extract_and_open(&path).await {
+            Ok(temp) => IpcEnvelope::new(
+                request_id,
+                IpcMessage::Response(IpcResponse::Open { opened: true, temp_path: Some(temp) }),
+            ),
+            Err(e) => error_response(request_id, "OPEN_ERROR", e),
+        }
+    } else {
+        match super::rest::open_with_os(&path).await {
+            Ok(()) => IpcEnvelope::new(
+                request_id,
+                IpcMessage::Response(IpcResponse::Open { opened: true, temp_path: None }),
+            ),
+            Err(e) => error_response(request_id, "OPEN_ERROR", e),
+        }
+    }
 }
 
 // ---------------------------------------------------------------------------
@@ -341,5 +363,77 @@ fn decode_err_code(e: &DecodeError) -> &'static str {
         DecodeError::BadMagic(_)        => "BAD_MAGIC",
         DecodeError::VersionMismatch(_) => "VERSION_MISMATCH",
         DecodeError::Io(_)              => "IO_ERROR",
+    }
+}
+
+// ---------------------------------------------------------------------------
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::store::FileRecord;
+
+    fn make_record(path: &str, archive_path: Option<&str>) -> FileRecord {
+        FileRecord {
+            id:              None,
+            path:            path.into(),
+            name:            path.rsplit('/').next().unwrap_or(path).into(),
+            extension:       Some("rs".into()),
+            size_bytes:      2048,
+            mtime:           1_700_000_000,
+            ctime:           1_700_000_000,
+            is_dir:          false,
+            is_hidden:       false,
+            is_symlink:      false,
+            attrib_bitmask:  0,
+            content_indexed: false,
+            tantivy_id:      None,
+            indexed_at:      0,
+            archive_path:    archive_path.map(str::to_string),
+        }
+    }
+
+    #[test]
+    fn error_response_sets_correct_fields() {
+        let env = error_response(99u128, "MY_CODE", "bad things");
+        assert_eq!(env.request_id, 99u128);
+        assert!(matches!(
+            env.message,
+            IpcMessage::Response(IpcResponse::Error { ref code, ref message })
+            if code == "MY_CODE" && message == "bad things"
+        ));
+    }
+
+    #[test]
+    fn decode_err_code_all_variants() {
+        use crate::api::ipc_protocol::DecodeError;
+        assert_eq!(decode_err_code(&DecodeError::Postcard(postcard::Error::WontImplement)), "DECODE_ERROR");
+        assert_eq!(decode_err_code(&DecodeError::FrameTooLarge(99)), "FRAME_TOO_LARGE");
+        assert_eq!(decode_err_code(&DecodeError::BadMagic(*b"XXXX")), "BAD_MAGIC");
+        assert_eq!(decode_err_code(&DecodeError::VersionMismatch(99)), "VERSION_MISMATCH");
+        assert_eq!(decode_err_code(&DecodeError::Io(
+            std::io::Error::new(std::io::ErrorKind::Other, "io")
+        )), "IO_ERROR");
+    }
+
+    #[test]
+    fn file_record_to_dto_maps_all_fields() {
+        let r = make_record("/data/archive.zip!/src/main.rs", Some("/data/archive.zip"));
+        let dto = file_record_to_dto(&r);
+        assert_eq!(dto.path, r.path);
+        assert_eq!(dto.name, r.name);
+        assert_eq!(dto.extension, r.extension);
+        assert_eq!(dto.size_bytes, 2048);
+        assert_eq!(dto.mtime, 1_700_000_000);
+        assert!(!dto.is_dir);
+        assert_eq!(dto.archive_path, Some("/data/archive.zip".into()));
+        assert_eq!(dto.snippet, None);
+    }
+
+    #[test]
+    fn file_record_to_dto_real_file_has_no_archive_path() {
+        let r = make_record("/home/user/main.rs", None);
+        let dto = file_record_to_dto(&r);
+        assert_eq!(dto.archive_path, None);
     }
 }

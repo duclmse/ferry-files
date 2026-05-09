@@ -59,24 +59,24 @@ CREATE TABLE IF NOT EXISTS index_meta (
 
 ### Key Methods
 
-| Method                                 | SQL                                                         |
-| -------------------------------------- | ----------------------------------------------------------- | --- | ----- |
-| `upsert_file(record)`                  | `INSERT OR REPLACE INTO files ...`                          |
-| `remove_file(path)`                    | `DELETE FROM files WHERE path = ?`                          |
-| `remove_directory(path)`               | `DELETE FROM files WHERE path LIKE ?                        |     | '/%'` |
-| `get_by_path(path)`                    | `SELECT * FROM files WHERE path = ?`                        |
-| `search_name(name, filters, limit)`    | `SELECT * FROM files WHERE name LIKE ? [+ filters]`         |
-| `search_meta(filters, limit)`          | Dynamic WHERE from MetaFilters                              |
-| `paths_under(dir)`                     | `SELECT path FROM files WHERE path LIKE ?                   |     | '/%'` |
-| `has_child(parent, pattern)`           | `SELECT COUNT(*) FROM files WHERE parent = ? AND name LIKE ?` (indexed) |
-| `find_dupes(kind, conditions, limit)`  | Two-pass GROUP BY + IN query                                |
-| `total_files()`                        | `SELECT COUNT(*) FROM files WHERE archive_path IS NULL`     |
-| `total_archive_entries()`              | `SELECT COUNT(*) FROM files WHERE archive_path IS NOT NULL` |
-| `remove_archive_entries(archive_path)` | Delete all inner records for a given ZIP path               |
-| `paths_in_archive(archive_path)`       | Return all virtual paths belonging to a ZIP                 |
-| `begin_crawl_generation()`            | Increment and return `crawl_generation` counter in index_meta |
-| `mark_seen(path, watch_root, gen)`    | `UPDATE files SET watch_root=?, crawl_generation=? WHERE path=?` |
-| `remove_stale_for_root(root, gen)`    | `DELETE FROM files WHERE (watch_root=? OR path LIKE root||'/%') AND generation < ?` |
+| Method                                 | SQL                                                                                     |
+| -------------------------------------- | --------------------------------------------------------------------------------------- |
+| `upsert_file(record)`                  | `INSERT OR REPLACE INTO files ...`                                                      |
+| `remove_file(path)`                    | `DELETE FROM files WHERE path = ?`                                                      |
+| `remove_directory(path)`               | `DELETE FROM files WHERE path LIKE ? \|\| '/%'`                                         |
+| `get_by_path(path)`                    | `SELECT * FROM files WHERE path = ?`                                                    |
+| `search_name(name, filters, limit)`    | `SELECT * FROM files WHERE name LIKE ? [+ filters]`                                     |
+| `search_meta(filters, limit)`          | Dynamic WHERE from MetaFilters                                                          |
+| `paths_under(dir)`                     | `SELECT path FROM files WHERE path LIKE ? \|\| '/%'`                                    |
+| `has_child(parent, pattern)`           | `SELECT COUNT(*) FROM files WHERE parent = ? AND name LIKE ?` (indexed)                 |
+| `find_dupes(kind, conditions, limit)`  | Two-pass GROUP BY + IN query                                                            |
+| `total_files()`                        | `SELECT COUNT(*) FROM files WHERE archive_path IS NULL`                                 |
+| `total_archive_entries()`              | `SELECT COUNT(*) FROM files WHERE archive_path IS NOT NULL`                             |
+| `remove_archive_entries(archive_path)` | Delete all inner records for a given ZIP path                                           |
+| `paths_in_archive(archive_path)`       | Return all virtual paths belonging to a ZIP                                             |
+| `begin_crawl_generation()`             | Increment and return `crawl_generation` counter in index_meta                           |
+| `mark_seen(path, watch_root, gen)`     | `UPDATE files SET watch_root=?, crawl_generation=? WHERE path=?`                        |
+| `remove_stale_for_root(root, gen)`     | `DELETE FROM files WHERE (watch_root=? OR path LIKE root \|\| '/%') AND generation < ?` |
 
 ### MetaFilters → WHERE clauses
 
@@ -277,7 +277,7 @@ let pool = r2d2::Pool::builder()
 
 ---
 
-## 2.7 Implementation Notes *(added during Phase 2 implementation)*
+## 2.7 Implementation Notes _(added during Phase 2 implementation)_
 
 ### A. SQL typo in phase 2 spec — use ref doc schema
 
@@ -287,10 +287,10 @@ correct. The implementation uses the ref doc version.
 
 ### B. `SqlCondition` defined with all Phase 5 variants
 
-`store/mod.rs` defines the full set of `SqlCondition` variants upfront (including
-`NameGlob`, `DepthOp`, `NameLenOp`, `AttribAll`, `AttribAny`, etc.) rather than
-just the ones needed for Phase 2. This prevents breaking changes to the store's
-public API when the Phase 5 query evaluator is wired up.
+`store/mod.rs` defines the full set of `SqlCondition` variants upfront
+(including `NameGlob`, `DepthOp`, `NameLenOp`, `AttribAll`, `AttribAny`, etc.)
+rather than just the ones needed for Phase 2. This prevents breaking changes to
+the store's public API when the Phase 5 query evaluator is wired up.
 
 ### C. `:memory:` SQLite is connection-private — use real temp files for concurrent tests
 
@@ -299,8 +299,8 @@ database per connection. With an r2d2 pool of 16 connections, threads picking up
 different connections see empty databases. Both concurrent tests
 (`concurrent_upserts_all_succeed` in `sqlite_store.rs` and
 `concurrent_enqueue_all_succeed` in `queue.rs`) were updated to use
-`tempfile::NamedTempFile` so all pool connections share the same real file.
-This is also the realistic scenario in production.
+`tempfile::NamedTempFile` so all pool connections share the same real file. This
+is also the realistic scenario in production.
 
 ### D. `tantivy::schema::Value` trait must be in scope
 

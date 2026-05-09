@@ -541,4 +541,64 @@ mod tests {
 
         assert!(q.get_expired_groups(0).unwrap().is_empty());
     }
+
+    #[test]
+    fn status_from_str_unknown_returns_error() {
+        assert!(Status::from_str("bogus").is_err());
+        assert!(Status::from_str("").is_err());
+    }
+
+    #[test]
+    fn strategy_from_str_unknown_returns_error() {
+        assert!(Strategy::from_str("bogus").is_err());
+        assert!(Strategy::from_str("DISK").is_err()); // case-sensitive
+    }
+
+    #[test]
+    fn get_failed_jobs_returns_only_failed() {
+        let q = make_queue();
+        let id1 = enqueue_one(&q, "h1");
+        let _id2 = enqueue_one(&q, "h2"); // stays pending
+        q.set_status(&id1, Status::Failed, Some("crash")).unwrap();
+        let failed = q.get_failed_jobs().unwrap();
+        assert_eq!(failed.len(), 1);
+        assert_eq!(failed[0].id, id1);
+        assert_eq!(failed[0].error.as_deref(), Some("crash"));
+    }
+
+    #[test]
+    fn recent_jobs_excludes_pending_and_respects_limit() {
+        let q = make_queue();
+        let id1 = enqueue_one(&q, "h1");
+        let id2 = enqueue_one(&q, "h2");
+        let id3 = enqueue_one(&q, "h3"); // stays pending
+        q.set_status(&id1, Status::Done, None).unwrap();
+        q.set_status(&id2, Status::Failed, Some("err")).unwrap();
+        let recent = q.recent_jobs(10).unwrap();
+        assert_eq!(recent.len(), 2);
+        let ids: Vec<&str> = recent.iter().map(|j| j.id.as_str()).collect();
+        assert!(!ids.contains(&id3.as_str()));
+        // Limit is respected
+        let limited = q.recent_jobs(1).unwrap();
+        assert_eq!(limited.len(), 1);
+    }
+
+    #[test]
+    fn increment_retry_accumulates() {
+        let q = make_queue();
+        let id = enqueue_one(&q, "h1");
+        q.increment_retry(&id).unwrap();
+        q.increment_retry(&id).unwrap();
+        let jobs = q.get_pending_jobs(10).unwrap();
+        let job = jobs.iter().find(|j| j.id == id).unwrap();
+        assert_eq!(job.retry_count, 2);
+    }
+
+    #[test]
+    fn add_part_dedup_ignores_duplicate_path() {
+        let q = make_queue();
+        q.add_part("grp", Path::new("/watch/a.part1.rar")).unwrap();
+        q.add_part("grp", Path::new("/watch/a.part1.rar")).unwrap(); // same path → INSERT OR IGNORE
+        assert_eq!(q.get_parts("grp").unwrap().len(), 1);
+    }
 }

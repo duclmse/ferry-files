@@ -419,4 +419,59 @@ mod tests {
             assert!(backoff_secs(10, a) <= 300);
         }
     }
+
+    #[test]
+    fn backoff_base_zero_always_zero() {
+        for a in 0..10 {
+            assert_eq!(backoff_secs(0, a), 0);
+        }
+    }
+
+    #[test]
+    fn sha256_of_produces_64_hex_chars_and_is_deterministic() {
+        let d1 = sha256_of(b"hello");
+        let d2 = sha256_of(b"hello");
+        assert_eq!(d1.len(), 64, "SHA-256 must be 64 hex chars");
+        assert_eq!(d1, d2, "same input must produce same digest");
+        assert!(d1.chars().all(|c| c.is_ascii_hexdigit()));
+    }
+
+    #[test]
+    fn sha256_of_different_inputs_differ() {
+        assert_ne!(sha256_of(b"abc"), sha256_of(b"abd"));
+        assert_ne!(sha256_of(b""),    sha256_of(b"a"));
+    }
+
+    #[test]
+    fn remote_path_strips_trailing_slash() {
+        let dest = crate::config::Destination {
+            host:        "server".into(),
+            port:        22,
+            user:        "user".into(),
+            remote_path: "/remote/".into(),
+            ssh_key_path: "/key".into(),
+        };
+        let local = Path::new("/tmp/archive.zip");
+        assert_eq!(remote_path(&dest, local), "/remote/archive.zip");
+    }
+
+    #[test]
+    fn remote_path_no_trailing_slash() {
+        let dest = crate::config::Destination {
+            host:        "server".into(),
+            port:        22,
+            user:        "user".into(),
+            remote_path: "/remote".into(),
+            ssh_key_path: "/key".into(),
+        };
+        let local = Path::new("/tmp/archive.zip");
+        assert_eq!(remote_path(&dest, local), "/remote/archive.zip");
+    }
+
+    #[tokio::test]
+    async fn throttle_zero_kbps_returns_immediately() {
+        let start = std::time::Instant::now();
+        throttle_async(u64::MAX, 0, &start).await; // limit=0 → immediate return
+        assert!(start.elapsed().as_millis() < 50, "should return without sleeping");
+    }
 }

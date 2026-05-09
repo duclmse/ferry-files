@@ -2,11 +2,11 @@
 //!
 //! Layout:
 //!   ┌──────────────────────────────────────────┐
-//!   │ 🔍  [search input                      ]  │
+//!   │ 🔍  [search input                      ] │
 //!   ├──────────────────────────────────────────┤
-//!   │ (scrollable results list)                 │
+//!   │ (scrollable results list)                │
 //!   ├──────────────────────────────────────────┤
-//!   │ N results  •  Xms  •  mode  •  M idx      │
+//!   │ N results  •  Xms  •  mode  •  M idx     │
 //!   └──────────────────────────────────────────┘
 //!
 //! Keybindings:
@@ -41,7 +41,7 @@ use crate::api::ipc_protocol::{IpcRequest, IpcResponse, SearchHitDto};
 // Search modes
 // ---------------------------------------------------------------------------
 
-#[derive(Clone, Copy, PartialEq, Eq)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
 enum Mode {
     Exact,
     Fuzzy,
@@ -111,6 +111,8 @@ struct App {
     limit:          u32,
     // Cached title string; updated only when mode changes (not every frame).
     mode_title:     String,
+    // Last search latency (IPC round-trip, client-side).
+    last_took_ms:   Option<u64>,
     // Reused IPC connection; reconnected lazily on transport errors.
     ipc_path:       std::path::PathBuf,
     ipc:            Option<IpcClient>,
@@ -129,6 +131,7 @@ impl App {
             search_pending: false,
             limit:          100,
             mode_title:     format!(" Search [{}] ", Mode::Exact.label()),
+            last_took_ms:   None,
             ipc_path:       ipc_path.to_path_buf(),
             ipc:            None,
         }
@@ -192,16 +195,20 @@ impl App {
     }
 
     /// Load new hits, pre-computing per-row display strings.
-    fn load_hits(&mut self, hits: Vec<SearchHitDto>, total: u64) {
+    fn load_hits(&mut self, hits: Vec<SearchHitDto>, total: u64, took_ms: u64) {
         self.rows.clear();
         self.rows.extend(hits.into_iter().map(|h| {
             let ext  = h.extension.as_deref().unwrap_or("");
             let meta = format!("  {}  {ext}", humanize_size(h.size_bytes));
             HitRow { path: h.path, meta, is_archive: h.archive_path.is_some() }
         }));
-        self.total_hits = total;
+        self.total_hits   = total;
+        self.last_took_ms = Some(took_ms);
         let n = self.rows.len();
-        self.status_msg = format!("{n} result(s) (total: {total})");
+        self.status_msg = format!(
+            "{n} results (total: {total})  •  {took_ms}ms  •  {}",
+            self.mode.label()
+        );
         if !self.rows.is_empty() && self.list_state.selected().is_none() {
             self.list_state.select(Some(0));
         }
@@ -212,8 +219,9 @@ impl App {
 
     fn clear_hits(&mut self) {
         self.rows.clear();
-        self.total_hits = 0;
-        self.list_state = ListState::default();
+        self.total_hits   = 0;
+        self.last_took_ms = None;
+        self.list_state   = ListState::default();
         self.status_msg.clear();
     }
 }
@@ -333,8 +341,12 @@ async fn handle_key(app: &mut App, key: KeyEvent) -> anyhow::Result<bool> {
 // ---------------------------------------------------------------------------
 
 async fn search(app: &mut App, query: String) {
+    let t0 = Instant::now();
     match app.send(IpcRequest::Search { query, limit: app.limit, offset: 0 }).await {
-        Ok(IpcResponse::Search(sr)) => app.load_hits(sr.hits, sr.total_hits),
+        Ok(IpcResponse::Search(sr)) => {
+            let took_ms = t0.elapsed().as_millis() as u64;
+            app.load_hits(sr.hits, sr.total_hits, took_ms);
+        }
         Ok(_) => {}
         Err(e) => { app.status_msg = format!("search error: {e}"); }
     }
@@ -425,5 +437,197 @@ fn humanize_size(bytes: u64) -> String {
         format!("{:.1}MB", bytes as f64 / (1024.0 * 1024.0))
     } else {
         format!("{:.1}GB", bytes as f64 / (1024.0 * 1024.0 * 1024.0))
+    }
+}
+
+// ---------------------------------------------------------------------------
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::api::ipc_protocol::SearchHitDto;
+
+    fn make_app() -> App {
+        App::new(std::path::Path::new("/tmp/test.sock"))
+    }
+
+    fn make_hit(path: &str, archive_path: Option<&str>) -> SearchHitDto {
+        SearchHitDto {
+            path:         path.into(),
+            name:         path.rsplit('/').next().unwrap_or(path).into(),
+            extension:    Some("rs".into()),
+            size_bytes:   1024,
+            mtime:        0,
+            is_dir:       false,
+            archive_path: archive_path.map(str::to_string),
+            snippet:      None,
+        }
+    }
+
+    // ── Mode ─────────────────────────────────────────────────────────────────
+
+    #[test]
+    fn mode_prefix_all_variants() {
+        assert_eq!(Mode::Exact.prefix(),   "");
+        assert_eq!(Mode::Fuzzy.prefix(),   "fuzzy:");
+        assert_eq!(Mode::Regex.prefix(),   "regex:");
+        assert_eq!(Mode::Content.prefix(), "content:");
+        assert_eq!(Mode::Archive.prefix(), "archive:");
+    }
+
+    #[test]
+    fn mode_label_all_variants() {
+        assert_eq!(Mode::Exact.label(),   "exact");
+        assert_eq!(Mode::Fuzzy.label(),   "fuzzy");
+        assert_eq!(Mode::Regex.label(),   "regex");
+        assert_eq!(Mode::Content.label(), "content");
+        assert_eq!(Mode::Archive.label(), "archive");
+    }
+
+    #[test]
+    fn mode_next_cycles_through_all_and_wraps() {
+        let cycle = [Mode::Exact, Mode::Fuzzy, Mode::Regex, Mode::Content, Mode::Archive, Mode::Exact];
+        for pair in cycle.windows(2) {
+            assert_eq!(pair[0].next(), pair[1]);
+        }
+    }
+
+    // ── App::full_query ───────────────────────────────────────────────────────
+
+    #[test]
+    fn full_query_exact_mode_returns_raw_input() {
+        let mut app = make_app();
+        app.input = "main.rs".into();
+        assert_eq!(app.full_query(), "main.rs");
+    }
+
+    #[test]
+    fn full_query_fuzzy_mode_prepends_prefix() {
+        let mut app = make_app();
+        app.mode  = Mode::Fuzzy;
+        app.input = "mian".into();
+        assert_eq!(app.full_query(), "fuzzy:mian");
+    }
+
+    #[test]
+    fn full_query_non_exact_mode_with_empty_input_returns_empty() {
+        let mut app = make_app();
+        app.mode  = Mode::Content;
+        app.input = String::new();
+        assert_eq!(app.full_query(), "");
+    }
+
+    // ── Navigation ───────────────────────────────────────────────────────────
+
+    #[test]
+    fn select_next_clamps_at_last_row() {
+        let mut app = make_app();
+        app.load_hits(vec![make_hit("/a", None), make_hit("/b", None)], 2, 5);
+        app.select_next();
+        app.select_next();
+        app.select_next(); // past end
+        assert_eq!(app.list_state.selected(), Some(1)); // clamped at index 1
+    }
+
+    #[test]
+    fn select_next_empty_rows_is_noop() {
+        let mut app = make_app();
+        app.select_next();
+        assert_eq!(app.list_state.selected(), None);
+    }
+
+    #[test]
+    fn select_prev_clamps_at_zero() {
+        let mut app = make_app();
+        app.load_hits(vec![make_hit("/a", None), make_hit("/b", None)], 2, 5);
+        app.select_prev(); // already at 0 (auto-selected on load)
+        app.select_prev();
+        assert_eq!(app.list_state.selected(), Some(0));
+    }
+
+    #[test]
+    fn selected_path_none_when_nothing_selected() {
+        let app = make_app();
+        assert_eq!(app.selected_path(), None);
+    }
+
+    #[test]
+    fn selected_path_returns_path_of_selected_row() {
+        let mut app = make_app();
+        app.load_hits(vec![make_hit("/first.rs", None), make_hit("/second.rs", None)], 2, 5);
+        app.list_state.select(Some(1));
+        assert_eq!(app.selected_path(), Some("/second.rs".into()));
+    }
+
+    // ── load_hits / clear_hits ───────────────────────────────────────────────
+
+    #[test]
+    fn load_hits_populates_rows_and_auto_selects() {
+        let mut app = make_app();
+        app.load_hits(vec![make_hit("/a.rs", None), make_hit("/b.rs", None)], 42, 7);
+        assert_eq!(app.rows.len(), 2);
+        assert_eq!(app.total_hits, 42);
+        assert_eq!(app.last_took_ms, Some(7));
+        assert_eq!(app.list_state.selected(), Some(0)); // auto-selected
+        assert!(app.status_msg.contains("2 results"));
+        assert!(app.status_msg.contains("7ms"));
+        assert!(app.status_msg.contains("exact"));
+    }
+
+    #[test]
+    fn load_hits_empty_clears_selection() {
+        let mut app = make_app();
+        app.load_hits(vec![make_hit("/a.rs", None)], 1, 5);
+        app.load_hits(vec![], 0, 3);
+        assert!(app.rows.is_empty());
+        assert_eq!(app.list_state.selected(), None);
+    }
+
+    #[test]
+    fn load_hits_marks_archive_entries() {
+        let mut app = make_app();
+        app.load_hits(vec![
+            make_hit("/archive.zip!/main.rs", Some("/archive.zip")),
+            make_hit("/real.rs", None),
+        ], 2, 1);
+        assert!(app.rows[0].is_archive);
+        assert!(!app.rows[1].is_archive);
+    }
+
+    #[test]
+    fn clear_hits_resets_all_state() {
+        let mut app = make_app();
+        app.load_hits(vec![make_hit("/a.rs", None)], 1, 5);
+        app.clear_hits();
+        assert!(app.rows.is_empty());
+        assert_eq!(app.total_hits, 0);
+        assert_eq!(app.last_took_ms, None);
+        assert_eq!(app.list_state.selected(), None);
+        assert!(app.status_msg.is_empty());
+    }
+
+    // ── humanize_size ─────────────────────────────────────────────────────────
+
+    #[test]
+    fn humanize_size_boundaries() {
+        assert_eq!(humanize_size(0),           "0B");
+        assert_eq!(humanize_size(1023),        "1023B");
+        assert_eq!(humanize_size(1024),        "1.0KB");
+        assert_eq!(humanize_size(1024 * 1024 - 1), "1024.0KB");
+        assert_eq!(humanize_size(1024 * 1024), "1.0MB");
+        assert_eq!(humanize_size(1024 * 1024 * 1024), "1.0GB");
+    }
+
+    // ── cycle_mode ────────────────────────────────────────────────────────────
+
+    #[test]
+    fn cycle_mode_updates_title_and_sets_pending() {
+        let mut app = make_app();
+        assert_eq!(app.mode, Mode::Exact);
+        app.cycle_mode();
+        assert_eq!(app.mode, Mode::Fuzzy);
+        assert!(app.mode_title.contains("fuzzy"));
+        assert!(app.search_pending);
+        assert!(app.last_key_at.is_some());
     }
 }

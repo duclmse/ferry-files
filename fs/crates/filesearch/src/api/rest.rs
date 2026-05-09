@@ -263,7 +263,7 @@ async fn open_handler(
 // Open helpers
 // ---------------------------------------------------------------------------
 
-async fn open_with_os(path: &str) -> Result<(), String> {
+pub(crate) async fn open_with_os(path: &str) -> Result<(), String> {
     #[cfg(target_os = "macos")]
     let (prog, args): (&str, &[&str]) = ("open", &[path]);
     #[cfg(target_os = "linux")]
@@ -281,7 +281,7 @@ async fn open_with_os(path: &str) -> Result<(), String> {
         .map_err(|e| e.to_string())
 }
 
-async fn extract_and_open(virtual_path: &str) -> Result<String, String> {
+pub(crate) async fn extract_and_open(virtual_path: &str) -> Result<String, String> {
     let sep = virtual_path
         .find("!/")
         .ok_or_else(|| "invalid virtual path".to_owned())?;
@@ -346,5 +346,76 @@ fn eval_strategy_mode(strategy: &evaluator::EvalStrategy) -> &'static str {
         evaluator::EvalStrategy::TantivyThenSqlite => "content",
         evaluator::EvalStrategy::DupeSearch(_)     => "dupes",
         evaluator::EvalStrategy::FuzzyFilter(_)    => "fuzzy",
+    }
+}
+
+// ---------------------------------------------------------------------------
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::query::evaluator::EvalStrategy;
+    use crate::store::{DupeKind, FileRecord};
+
+    fn make_record(path: &str, is_dir: bool, archive_path: Option<&str>) -> FileRecord {
+        FileRecord {
+            id:              None,
+            path:            path.into(),
+            name:            path.rsplit('/').next().unwrap_or(path).into(),
+            extension:       Some("rs".into()),
+            size_bytes:      4096,
+            mtime:           1_700_000_000,
+            ctime:           1_700_000_000,
+            is_dir,
+            is_hidden:       false,
+            is_symlink:      false,
+            attrib_bitmask:  0,
+            content_indexed: false,
+            tantivy_id:      None,
+            indexed_at:      0,
+            archive_path:    archive_path.map(str::to_string),
+        }
+    }
+
+    #[test]
+    fn file_record_to_hit_real_file() {
+        let r = make_record("/home/user/main.rs", false, None);
+        let hit = file_record_to_hit(&r);
+        assert_eq!(hit.path, "/home/user/main.rs");
+        assert_eq!(hit.name, "main.rs");
+        assert_eq!(hit.kind, "file");
+        assert_eq!(hit.score, 0.0);
+        assert_eq!(hit.archive_path, None);
+        assert_eq!(hit.archive_entry, None);
+    }
+
+    #[test]
+    fn file_record_to_hit_directory() {
+        let r = make_record("/home/user/src", true, None);
+        let hit = file_record_to_hit(&r);
+        assert_eq!(hit.kind, "dir");
+    }
+
+    #[test]
+    fn file_record_to_hit_archive_entry() {
+        let r = make_record("/data/archive.zip!/src/main.rs", false, Some("/data/archive.zip"));
+        let hit = file_record_to_hit(&r);
+        assert_eq!(hit.archive_path, Some("/data/archive.zip".into()));
+        assert_eq!(hit.archive_entry, Some("src/main.rs".into()));
+    }
+
+    #[test]
+    fn eval_strategy_mode_all_variants() {
+        assert_eq!(eval_strategy_mode(&EvalStrategy::SqliteOnly),        "exact");
+        assert_eq!(eval_strategy_mode(&EvalStrategy::TantivyThenSqlite), "content");
+        assert_eq!(eval_strategy_mode(&EvalStrategy::DupeSearch(DupeKind::Name)), "dupes");
+        assert_eq!(eval_strategy_mode(&EvalStrategy::FuzzyFilter("x".into())),   "fuzzy");
+    }
+
+    #[tokio::test]
+    async fn extract_and_open_no_separator_returns_err() {
+        let result = extract_and_open("no-separator-here").await;
+        assert!(result.is_err());
+        assert!(result.unwrap_err().contains("invalid virtual path"));
     }
 }

@@ -13,7 +13,8 @@
       "WebFetch(domain:docs.rs)",
       "WebFetch(domain:github.com)",
       "WebFetch(domain:raw.githubusercontent.com)",
-      "Bash(cargo clippy *)"
+      "Bash(cargo clippy *)",
+      "Bash(grep -E \"error|test result|FAILED|ok$\")"
     ]
   }
 }

@@ -125,3 +125,32 @@ async fn send_email(to: &str, cfg: &SmtpConfig, payload: &AlertPayload) {
         tracing::warn!("alert email: send failed: {e}");
     }
 }
+
+// ---------------------------------------------------------------------------
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::config::ObservabilityConfig;
+
+    #[test]
+    fn alert_level_label() {
+        assert_eq!(AlertLevel::Warning.label(), "WARNING");
+        assert_eq!(AlertLevel::Error.label(), "ERROR");
+    }
+
+    #[tokio::test]
+    async fn notify_with_no_webhook_or_email_does_not_panic() {
+        let cfg = ObservabilityConfig {
+            webhook_url:  None,
+            alert_email:  None,
+            ..Default::default()
+        };
+        let payload = AlertPayload {
+            job_id:  "test-job".into(),
+            message: "test message".into(),
+            level:   AlertLevel::Warning,
+        };
+        notify(payload, &cfg, &None).await; // must complete without panic
+    }
+}

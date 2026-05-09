@@ -398,4 +398,85 @@ mod tests {
         let depth2 = queue.queue_depth().unwrap();
         assert_eq!(depth2.get("pending").copied().unwrap_or(0), 1);
     }
+
+    // ── classify edge cases ──────────────────────────────────────────────────
+
+    #[test]
+    fn classify_old_style_continuation_r07() {
+        match super::classify("archive.r07") {
+            super::MultipartClass::OldStylePart { base, part_num } => {
+                assert_eq!(base, "archive");
+                assert_eq!(part_num, 8); // r07 = nn=7 → part_num = 8
+            }
+            other => panic!("expected OldStylePart, got {:?}", other),
+        }
+    }
+
+    #[test]
+    fn classify_plain_rar_is_old_style_main() {
+        match super::classify("archive.rar") {
+            super::MultipartClass::OldStyleMain { base } => {
+                assert_eq!(base, "archive");
+            }
+            other => panic!("expected OldStyleMain, got {:?}", other),
+        }
+    }
+
+    #[test]
+    fn classify_uppercase_new_style() {
+        match super::classify("MOVIE.PART2.RAR") {
+            super::MultipartClass::NewStylePart { base, part_num } => {
+                assert_eq!(base, "MOVIE");
+                assert_eq!(part_num, 2);
+            }
+            other => panic!("expected NewStylePart, got {:?}", other),
+        }
+    }
+
+    #[test]
+    fn classify_part_without_digits_is_old_style_main() {
+        // ".part" not followed by digits → treated as part of the stem
+        match super::classify("file.part.rar") {
+            super::MultipartClass::OldStyleMain { base } => {
+                assert_eq!(base, "file.part");
+            }
+            other => panic!("expected OldStyleMain, got {:?}", other),
+        }
+    }
+
+    // ── passes_filters ───────────────────────────────────────────────────────
+
+    fn filters_cfg(extensions: &[&str], excludes: &[&str]) -> crate::config::Config {
+        crate::config::Config {
+            watch_folder:       "/tmp".into(),
+            failed_folder:      "/tmp/failed".into(),
+            exclude_patterns:   excludes.iter().map(|s| s.to_string()).collect(),
+            include_extensions: extensions.iter().map(|s| s.to_string()).collect(),
+            watch_subdirs:      None,
+            min_file_age_secs:  0,
+            conversion:         crate::config::ConversionConfig::default(),
+            destinations:       vec![],
+            transfer:           crate::config::TransferConfig::default(),
+            observability:      crate::config::ObservabilityConfig::default(),
+            smtp:               None,
+        }
+    }
+
+    #[test]
+    fn passes_filters_extension_case_insensitive() {
+        let cfg = filters_cfg(&["rar"], &[]);
+        assert!(super::passes_filters(Path::new("/w/ARCHIVE.RAR"), &cfg));
+        assert!(super::passes_filters(Path::new("/w/archive.rar"), &cfg));
+        assert!(!super::passes_filters(Path::new("/w/archive.zip"), &cfg));
+    }
+
+    #[test]
+    fn passes_filters_exclude_glob_overrides_extension() {
+        let cfg = filters_cfg(&["rar"], &["*.tmp"]);
+        assert!(!super::passes_filters(Path::new("/w/archive.tmp"), &cfg));
+        // Right extension but not in include list
+        assert!(!super::passes_filters(Path::new("/w/archive.7z"), &cfg));
+        // Good extension, no exclude match
+        assert!(super::passes_filters(Path::new("/w/movie.part1.rar"), &cfg));
+    }
 }

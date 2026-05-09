@@ -136,13 +136,14 @@ pub async fn run(config_path: PathBuf) -> Result<(), AppError> {
 
     // ── 14. IPC server ─────────────────────────────────────────────────────
     {
-        let shutdown_c = shutdown.clone();
-        let cfg_c      = Arc::clone(&shared_cfg);
-        let sqlite_c   = Arc::clone(&sqlite);
-        let tantivy_c  = Arc::clone(&tantivy);
-        let metrics_c  = Arc::clone(&metrics);
+        let shutdown_c  = shutdown.clone();
+        let cfg_c       = Arc::clone(&shared_cfg);
+        let sqlite_c    = Arc::clone(&sqlite);
+        let tantivy_c   = Arc::clone(&tantivy);
+        let metrics_c   = Arc::clone(&metrics);
+        let reindex_ipc = reindex_tx.clone();
         tokio::spawn(async move {
-            run_ipc_server(cfg_c, sqlite_c, tantivy_c, metrics_c, shutdown_c).await;
+            run_ipc_server(cfg_c, sqlite_c, tantivy_c, metrics_c, reindex_ipc, shutdown_c).await;
         });
     }
 
