@@ -419,9 +419,9 @@ All four subcommands:
 - [x] `retry-failed` resets failed jobs. *(code complete; `reset_failed()` covered by unit tests)*
 - [x] `validate-config` exits 0 on valid config. *(code complete; covered by `config::tests`)*
 - [ ] Windows Service: `sc start rar2zip` starts the service.
-      *(code complete with `#[cfg(target_os = "windows")]` guards; requires Windows SCM to verify)*
-- [ ] `cargo build --release -p rar2zip` succeeds on Windows with zero warnings.
-      *(debug build succeeds on macOS; release build on Windows requires CI / Windows runner)*
+      *(code complete with `#[cfg(target_os = "windows")]` guards + `install-service.ps1` created; requires Windows SCM to verify at runtime)*
+- [x] `cargo build --release -p rar2zip` succeeds on Windows with zero warnings.
+      *(verified 2026-05-09 on Windows 11; 2m 08s release build, zero warnings)*
 - [ ] Strategy::Stream: large archive transferred with no zip created on disk.
       *(code complete; requires real SFTP server + large archive to verify end-to-end)*
 
@@ -577,14 +577,71 @@ Test totals after the audit: **132 filesearch** (+26), **58 rar2zip** (+17).
 
 ### rar2zip DoD assessment
 
-The three remaining unchecked DoD items are not missing code — they require
-external infrastructure that is unavailable in the current development
-environment:
+The remaining unchecked DoD items are not missing code — they require
+external infrastructure:
 
 - **`run` end-to-end** — needs a real RAR/7z/tar archive to be placed in the
   watch folder and a reachable SFTP destination. The watcher, intake, convert,
   and transfer layers are all unit-tested individually.
-- **Windows Service** — `service.rs` is fully implemented behind
-  `#[cfg(target_os = "windows")]`; verifiable only on a Windows runner.
-- **`cargo build --release` on Windows** — the crate compiles without warnings
-  on macOS (`debug`); a Windows release build is a CI concern.
+- **Windows Service** — `service.rs` is fully implemented; `install-service.ps1`
+  is created. Verifiable only when run against Windows SCM (`sc create/start`).
+
+---
+
+## Windows Completion Notes (2026-05-09)
+
+Three items were completed to make phase 6 fully buildable and correct on Windows.
+
+### 1 — Build: vendored `protoc`
+
+`cargo build` (and `cargo check`) failed on Windows because `protoc` is not
+installed in PATH. Fixed by adding `protoc-bin-vendored = "3"` to
+`[build-dependencies]` in `crates/filesearch/Cargo.toml` and updating `build.rs`
+to set the `PROTOC` env var before calling `tonic_build`. The vendored crate
+ships a pre-compiled `protoc` binary for the current platform; no system-level
+installation required.
+
+**Files changed:**
+- `crates/filesearch/Cargo.toml` — `protoc-bin-vendored = "3"` in
+  `[build-dependencies]`; `Win32_Foundation`, `Win32_Security`,
+  `Win32_System_Threading` added to `windows` feature list.
+- `crates/filesearch/build.rs` — calls `protoc_bin_vendored::protoc_bin_path()`
+  and sets `PROTOC` before `tonic_build::configure().compile(...)`.
+
+### 2 — Daemon: Windows named-mutex instance guard
+
+The startup sequence (§6.4 step 3) specifies a Unix PID file **and** a Windows
+named mutex to prevent duplicate daemon instances. The PID file was implemented;
+the mutex was missing.
+
+**Fix:** Added `win_guard` sub-module in `daemon.rs`
+(`#[cfg(windows)]`). `win_guard::acquire()` calls `CreateMutexW` with
+`bInitialOwner = TRUE` on the named object `Global\filesearch_daemon`. If
+`GetLastError() == ERROR_ALREADY_EXISTS` after a valid-handle return, a second
+instance is already running and the daemon exits with an error. The returned
+`InstanceGuard` holds the `HANDLE` and closes it via `Drop`, releasing the mutex
+when the daemon exits.
+
+**Files changed:**
+- `crates/filesearch/src/daemon.rs` — `win_guard` module + `_instance_guard`
+  binding in `run()`.
+
+### 3 — rar2zip: `install-service.ps1`
+
+The spec (§6.7) describes a PowerShell script for installing/uninstalling the
+Windows Service. It was missing.
+
+**File created:**
+- `crates/rar2zip/install-service.ps1` — `#Requires -RunAsAdministrator` script
+  with `-BinaryPath`, `-ConfigPath`, `-ServiceName`, `-Uninstall` parameters.
+  Uses `sc.exe create/failure/start/stop/delete`. Resolves relative paths with
+  `Resolve-Path` before passing to `sc.exe`.
+
+### Verification
+
+```
+cargo check --workspace          → Finished (0 errors, 0 warnings)
+cargo clippy --workspace -- -D warnings → Finished (0 warnings)
+cargo test --workspace           → 132 filesearch, 58 rar2zip — all pass
+cargo build --release -p rar2zip → Finished (0 warnings, 2m 08s on Windows 11)
+```

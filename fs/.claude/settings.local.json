@@ -14,7 +14,11 @@
       "WebFetch(domain:github.com)",
       "WebFetch(domain:raw.githubusercontent.com)",
       "Bash(cargo clippy *)",
-      "Bash(grep -E \"error|test result|FAILED|ok$\")"
+      "Bash(grep -E \"error|test result|FAILED|ok$\")",
+      "Bash(cargo build *)",
+      "Read(//c/Users/duclm/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/**)",
+      "WebSearch",
+      "WebFetch(domain:crates.io)"
     ]
   }
 }

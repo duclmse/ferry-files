@@ -20,6 +20,40 @@ use crate::indexer::crawler::{full_crawl, process_event, IndexEvent, IndexMetric
 use crate::store::{sqlite_store::SqliteStore, tantivy_store::TantivyStore};
 use crate::watcher;
 
+// ---------------------------------------------------------------------------
+// Windows single-instance guard via named mutex
+// ---------------------------------------------------------------------------
+
+#[cfg(windows)]
+mod win_guard {
+    use super::AppError;
+    use windows::Win32::Foundation::{CloseHandle, GetLastError, BOOL, ERROR_ALREADY_EXISTS, HANDLE};
+    use windows::Win32::System::Threading::CreateMutexW;
+    use windows::core::PCWSTR;
+
+    pub struct InstanceGuard(HANDLE);
+
+    impl Drop for InstanceGuard {
+        fn drop(&mut self) {
+            unsafe { let _ = CloseHandle(self.0); }
+        }
+    }
+
+    pub fn acquire() -> Result<InstanceGuard, AppError> {
+        let name: Vec<u16> = "Global\\filesearch_daemon\0".encode_utf16().collect();
+        unsafe {
+            let handle = CreateMutexW(None, BOOL(1), PCWSTR(name.as_ptr()))
+                .map_err(|e| AppError::Config(format!("CreateMutexW: {e}")))?;
+            // A valid handle with ERROR_ALREADY_EXISTS means another instance owns the mutex.
+            if GetLastError() == ERROR_ALREADY_EXISTS {
+                let _ = CloseHandle(handle);
+                return Err(AppError::Config("filesearch daemon is already running".into()));
+            }
+            Ok(InstanceGuard(handle))
+        }
+    }
+}
+
 // Maximum concurrent filesystem-event processing tasks.
 // Beyond this, new events wait for a running task to finish rather than
 // spawning unboundedly. Keeps memory and SQLite-pool contention bounded
@@ -55,11 +89,13 @@ pub async fn run(config_path: PathBuf) -> Result<(), AppError> {
 
     tracing::info!("filesearch daemon starting");
 
-    // ── 3. PID file (Unix only) ────────────────────────────────────────────
+    // ── 3. Instance guard: PID file (Unix) / named mutex (Windows) ────────
     #[cfg(unix)]
     let pid_path = cfg.data_dir.join("filesearch.pid");
     #[cfg(unix)]
     write_pid_file(&pid_path)?;
+    #[cfg(windows)]
+    let _instance_guard = win_guard::acquire()?;
 
     // ── 4-5. Stores ────────────────────────────────────────────────────────
     let sqlite  = Arc::new(SqliteStore::new(&cfg.data_dir.join("index.db"))?);
