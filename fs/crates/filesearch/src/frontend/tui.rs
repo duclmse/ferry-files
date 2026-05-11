@@ -113,6 +113,9 @@ struct App {
     mode_title:     String,
     // Last search latency (IPC round-trip, client-side).
     last_took_ms:   Option<u64>,
+    // Latest index stats for the status bar footer (3.2M idx  4k zip).
+    stats_total_files: u64,
+    stats_zip_entries: u64,
     // Reused IPC connection; reconnected lazily on transport errors.
     ipc_path:       std::path::PathBuf,
     ipc:            Option<IpcClient>,
@@ -132,6 +135,8 @@ impl App {
             limit:          100,
             mode_title:     format!(" Search [{}] ", Mode::Exact.label()),
             last_took_ms:   None,
+            stats_total_files: 0,
+            stats_zip_entries: 0,
             ipc_path:       ipc_path.to_path_buf(),
             ipc:            None,
         }
@@ -204,11 +209,7 @@ impl App {
         }));
         self.total_hits   = total;
         self.last_took_ms = Some(took_ms);
-        let n = self.rows.len();
-        self.status_msg = format!(
-            "{n} results (total: {total})  •  {took_ms}ms  •  {}",
-            self.mode.label()
-        );
+        self.rebuild_status();
         if !self.rows.is_empty() && self.list_state.selected().is_none() {
             self.list_state.select(Some(0));
         }
@@ -217,12 +218,39 @@ impl App {
         }
     }
 
+    /// Update stats counters from a Stats IPC response.
+    fn load_stats(&mut self, total_files: u64, zip_entries: u64) {
+        self.stats_total_files = total_files;
+        self.stats_zip_entries = zip_entries;
+        self.rebuild_status();
+    }
+
+    /// Rebuild the status bar string from current state.
+    fn rebuild_status(&mut self) {
+        let n       = self.rows.len();
+        let total   = self.total_hits;
+        let took_ms = self.last_took_ms.unwrap_or(0);
+        let mode    = self.mode.label();
+        let idx     = humanize_count(self.stats_total_files);
+        let zip     = humanize_count(self.stats_zip_entries);
+        self.status_msg = format!(
+            "{n} results (total: {total})  •  {took_ms}ms  •  {mode}  •  {idx} idx  {zip} zip"
+        );
+    }
+
     fn clear_hits(&mut self) {
         self.rows.clear();
         self.total_hits   = 0;
         self.last_took_ms = None;
         self.list_state   = ListState::default();
         self.status_msg.clear();
+    }
+
+    /// Reset stats counters (used in tests).
+    #[cfg(test)]
+    fn reset_stats(&mut self) {
+        self.stats_total_files = 0;
+        self.stats_zip_entries = 0;
     }
 }
 
@@ -346,9 +374,16 @@ async fn search(app: &mut App, query: String) {
         Ok(IpcResponse::Search(sr)) => {
             let took_ms = t0.elapsed().as_millis() as u64;
             app.load_hits(sr.hits, sr.total_hits, took_ms);
+            fetch_stats(app).await;
         }
         Ok(_) => {}
         Err(e) => { app.status_msg = format!("search error: {e}"); }
+    }
+}
+
+async fn fetch_stats(app: &mut App) {
+    if let Ok(IpcResponse::Stats(s)) = app.send(IpcRequest::Stats).await {
+        app.load_stats(s.total_files, s.archive_entries_indexed);
     }
 }
 
@@ -437,6 +472,16 @@ fn humanize_size(bytes: u64) -> String {
         format!("{:.1}MB", bytes as f64 / (1024.0 * 1024.0))
     } else {
         format!("{:.1}GB", bytes as f64 / (1024.0 * 1024.0 * 1024.0))
+    }
+}
+
+fn humanize_count(n: u64) -> String {
+    if n < 1_000 {
+        format!("{n}")
+    } else if n < 1_000_000 {
+        format!("{:.1}k", n as f64 / 1_000.0)
+    } else {
+        format!("{:.1}M", n as f64 / 1_000_000.0)
     }
 }
 
@@ -629,5 +674,70 @@ mod tests {
         assert!(app.mode_title.contains("fuzzy"));
         assert!(app.search_pending);
         assert!(app.last_key_at.is_some());
+    }
+
+    // ── humanize_count ────────────────────────────────────────────────────────
+
+    #[test]
+    fn humanize_count_below_thousand() {
+        assert_eq!(humanize_count(0),   "0");
+        assert_eq!(humanize_count(1),   "1");
+        assert_eq!(humanize_count(999), "999");
+    }
+
+    #[test]
+    fn humanize_count_thousands() {
+        assert_eq!(humanize_count(1_000),   "1.0k");
+        assert_eq!(humanize_count(1_500),   "1.5k");
+        assert_eq!(humanize_count(999_999), "1000.0k");
+    }
+
+    #[test]
+    fn humanize_count_millions() {
+        assert_eq!(humanize_count(1_000_000), "1.0M");
+        assert_eq!(humanize_count(3_200_000), "3.2M");
+    }
+
+    // ── load_stats / rebuild_status ───────────────────────────────────────────
+
+    #[test]
+    fn load_stats_updates_counters_and_rebuilds_status() {
+        let mut app = make_app();
+        app.load_hits(vec![make_hit("/a.rs", None)], 1, 10);
+        app.load_stats(3_200_000, 4_000);
+        assert_eq!(app.stats_total_files, 3_200_000);
+        assert_eq!(app.stats_zip_entries, 4_000);
+        assert!(app.status_msg.contains("3.2M idx"));
+        assert!(app.status_msg.contains("4.0k zip"));
+    }
+
+    #[test]
+    fn rebuild_status_shows_result_count_took_and_mode() {
+        let mut app = make_app();
+        app.load_hits(vec![make_hit("/a.rs", None), make_hit("/b.rs", None)], 99, 42);
+        assert!(app.status_msg.contains("2 results"));
+        assert!(app.status_msg.contains("total: 99"));
+        assert!(app.status_msg.contains("42ms"));
+        assert!(app.status_msg.contains("exact"));
+    }
+
+    #[test]
+    fn stats_persist_across_clear_hits() {
+        let mut app = make_app();
+        app.load_stats(5_000, 200);
+        app.load_hits(vec![make_hit("/a.rs", None)], 1, 5);
+        app.clear_hits();
+        // Stats counters survive clear_hits (they're daemon-side facts)
+        assert_eq!(app.stats_total_files, 5_000);
+        assert_eq!(app.stats_zip_entries, 200);
+    }
+
+    #[test]
+    fn reset_stats_zeroes_counters() {
+        let mut app = make_app();
+        app.load_stats(1_000, 50);
+        app.reset_stats();
+        assert_eq!(app.stats_total_files, 0);
+        assert_eq!(app.stats_zip_entries, 0);
     }
 }

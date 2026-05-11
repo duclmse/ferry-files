@@ -36,22 +36,41 @@ fn main() {
     match cli.command {
         // ------------------------------------------------------------------
         Command::ValidateConfig => {
-            match config::load(&cli.config) {
-                Ok(cfg) => {
-                    let errors = config::validate(&cfg);
-                    if errors.is_empty() {
-                        println!("Config OK");
-                    } else {
-                        for e in &errors {
-                            eprintln!("ERROR: {e}");
-                        }
-                        std::process::exit(1);
+            let cfg = match config::load(&cli.config) {
+                Ok(c)  => c,
+                Err(e) => { eprintln!("Failed to load config: {e}"); std::process::exit(1); }
+            };
+            let errors = config::validate(&cfg);
+            if !errors.is_empty() {
+                for e in &errors {
+                    eprintln!("ERROR: {e}");
+                }
+                std::process::exit(1);
+            }
+
+            // TCP-ping each destination (5 s timeout) to catch network/firewall issues.
+            let rt = tokio::runtime::Runtime::new().expect("tokio runtime");
+            let mut ping_ok = true;
+            rt.block_on(async {
+                for dest in &cfg.destinations {
+                    let addr = format!("{}:{}", dest.host, dest.port);
+                    let result = tokio::time::timeout(
+                        std::time::Duration::from_secs(5),
+                        tokio::net::TcpStream::connect(&addr),
+                    )
+                    .await;
+                    match result {
+                        Ok(Ok(_))  => println!("  OK  {addr}"),
+                        Ok(Err(e)) => { eprintln!("  FAIL {addr}: {e}"); ping_ok = false; }
+                        Err(_)     => { eprintln!("  FAIL {addr}: timed out"); ping_ok = false; }
                     }
                 }
-                Err(e) => {
-                    eprintln!("Failed to load config: {e}");
-                    std::process::exit(1);
-                }
+            });
+
+            if ping_ok {
+                println!("Config OK");
+            } else {
+                std::process::exit(1);
             }
         }
 

@@ -221,12 +221,17 @@ pub async fn run(config_path: PathBuf) -> Result<(), AppError> {
             metrics:    Arc::clone(&metrics),
             reindex_tx: reindex_tx.clone(),
         };
+        let reflection = tonic_reflection::server::Builder::configure()
+            .register_encoded_file_descriptor_set(grpc::proto::FILE_DESCRIPTOR_SET)
+            .build()
+            .expect("gRPC reflection service build");
         let shutdown_c = shutdown.clone();
         tokio::spawn(async move {
             let addr = std::net::SocketAddr::from(([0, 0, 0, 0], grpc_port));
             tracing::info!("gRPC listening on {addr}");
             if let Err(e) = tonic::transport::Server::builder()
                 .add_service(grpc::service(svc))
+                .add_service(reflection)
                 .serve_with_shutdown(addr, shutdown_c.cancelled())
                 .await
             {
@@ -235,15 +240,24 @@ pub async fn run(config_path: PathBuf) -> Result<(), AppError> {
         });
     }
 
-    // ── 17. Initial full crawl ─────────────────────────────────────────────
-    spawn_crawl(
-        &crawl_active,
-        Arc::clone(&sqlite),
-        Arc::clone(&tantivy),
-        Arc::clone(&metrics),
-        Arc::clone(&shared_cfg),
-        shutdown.clone(),
-    );
+    // ── 17. Initial full crawl (only if the index has never been built) ───────
+    // If last_crawl_time is present the index is warm; the watcher covers
+    // changes that happened during downtime via the startup backlog.
+    let needs_crawl = sqlite.get_meta("last_crawl_time")
+        .map(|v| v.is_none())
+        .unwrap_or(true); // on error assume uncrawled
+    if needs_crawl {
+        spawn_crawl(
+            &crawl_active,
+            Arc::clone(&sqlite),
+            Arc::clone(&tantivy),
+            Arc::clone(&metrics),
+            Arc::clone(&shared_cfg),
+            shutdown.clone(),
+        );
+    } else {
+        tracing::info!("index already built, skipping initial crawl (use Reindex API to force)");
+    }
 
     // ── 18. Main event loop ────────────────────────────────────────────────
     loop {

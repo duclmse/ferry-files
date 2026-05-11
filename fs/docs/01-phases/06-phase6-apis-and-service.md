@@ -645,3 +645,100 @@ cargo clippy --workspace -- -D warnings → Finished (0 warnings)
 cargo test --workspace           → 132 filesearch, 58 rar2zip — all pass
 cargo build --release -p rar2zip → Finished (0 warnings, 2m 08s on Windows 11)
 ```
+
+---
+
+## Phase 6 Gap Closure (2026-05-12)
+
+A second-pass audit identified six code gaps and two missing test areas. All are
+now closed.
+
+### Gap 1 — gRPC reflection service
+
+`tonic-reflection` was a dependency but the reflection service was never added to
+the gRPC server builder. Added `FILE_DESCRIPTOR_SET` constant to the `proto`
+module in `grpc.rs` (via `tonic::include_file_descriptor_set!`), wired
+`file_descriptor_set_path` into `build.rs`, and added the reflection service
+builder in `daemon.rs` step 16 so gRPC tools like `grpcurl` and Postman can
+enumerate the service schema.
+
+**Files changed:**
+- `crates/filesearch/build.rs` — `file_descriptor_set_path` added.
+- `crates/filesearch/src/api/grpc.rs` — `FILE_DESCRIPTOR_SET` constant.
+- `crates/filesearch/src/daemon.rs` — reflection service wired into the server.
+
+### Gap 2 — TUI status bar index/zip counters
+
+The status bar showed only hit count + latency; the `{idx} idx  {zip} zip`
+counters from §6.5 were wired but missing the `humanize_count` helper, broken
+stats fields in `App`, and no call to fetch stats after each search.
+
+**Fix:** Added `stats_total_files` / `stats_zip_entries` to `App`, added
+`load_stats()`, `rebuild_status()`, standalone `fetch_stats()`, and the
+`humanize_count()` function. `search()` now calls `fetch_stats()` after every
+result set.
+
+**Files changed:**
+- `crates/filesearch/src/frontend/tui.rs` — all of the above plus 8 new tests.
+
+### Gap 3 — rar2zip startup: expired-group check
+
+`expire_multipart` ran only in the hourly loop, not at startup. Groups whose
+assembly window expired while the process was down were left in the queue.
+
+**Fix:** Added an `expire_multipart(&queue, &config)` call in `app::run()` right
+after `recover_stale_jobs`, before the background loops start.
+
+### Gap 4 — rar2zip graceful shutdown: wait for in-flight tasks
+
+`app::run()` broke out of the event loop immediately on shutdown without waiting
+for in-flight `process_job` tasks, risking partial transfers.
+
+**Fix:** Added `TaskTracker` (tokio-util 0.7 `rt` feature) to track all spawned
+tasks (intake and drain). After the main loop the tracker is closed and
+`tokio::time::timeout(30s, tracker.wait())` is called; a warning is logged on
+timeout. Workspace Cargo.toml updated: `tokio-util = { version = "0.7", features = ["rt"] }`.
+
+**Files changed:**
+- `Cargo.toml` — `tokio-util` gains `rt` feature.
+- `crates/rar2zip/src/app.rs` — `TaskTracker` import, tracker creation,
+  `tokio::spawn` → `tracker.spawn` in intake and drain, shutdown wait.
+
+### Gap 5 — validate-config: TCP ping destinations
+
+`rar2zip validate-config` called `config::validate()` but never tested network
+reachability for each destination.
+
+**Fix:** After the sync validation, a tokio runtime runs a 5 s
+`TcpStream::connect` against each destination's `host:port`. Results are printed
+inline; any failure causes exit code 1.
+
+**Files changed:**
+- `crates/rar2zip/src/main.rs` — TCP ping loop in `Command::ValidateConfig`.
+
+### Gap 6 — Daemon: conditional initial crawl
+
+`daemon.rs` always spawned `full_crawl` at startup even when the index was
+already built. The spec (§6.4 step 6) says "If absent → `full_crawl()`".
+
+**Fix:** Check `sqlite.get_meta("last_crawl_time")` before calling
+`spawn_crawl`. If the key is present the crawl is skipped and an info log
+directs users to the Reindex API for manual reindex.
+
+**Files changed:**
+- `crates/filesearch/src/daemon.rs` — conditional crawl guard in `run()`.
+
+### Missing tests added
+
+- `crates/filesearch/src/api/dto.rs` — 6 tests for `archive_entry` and
+  `archive_entry_opt` (real file, normal zip entry, missing `!/` separator).
+- `crates/filesearch/src/api/ipc_client.rs` — 3 tests for
+  `is_connection_error` (true for Connect/Read/Write, false for DaemonError/
+  UnexpectedMessage/FrameTooLarge) plus display format smoke test.
+
+### Final verification
+
+```
+cargo clippy --workspace -- -D warnings → Finished (0 warnings)
+cargo test --workspace                  → 148 filesearch, 58 rar2zip — all pass
+```

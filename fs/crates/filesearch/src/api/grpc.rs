@@ -13,9 +13,12 @@ use crate::store::{sqlite_store::SqliteStore, tantivy_store::TantivyStore, FileR
 
 use super::dto::archive_entry;
 
-// Include tonic-generated types.
+// Include tonic-generated types and the file descriptor set used by reflection.
 pub mod proto {
     tonic::include_proto!("filesearch");
+
+    pub const FILE_DESCRIPTOR_SET: &[u8] =
+        tonic::include_file_descriptor_set!("filesearch_descriptor");
 }
 
 use proto::{

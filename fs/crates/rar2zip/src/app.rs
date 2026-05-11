@@ -4,6 +4,7 @@ use std::time::{Duration, Instant};
 
 use tokio::sync::{Semaphore, RwLock};
 use tokio_util::sync::CancellationToken;
+use tokio_util::task::TaskTracker;
 
 use crate::alerts::{AlertLevel, AlertPayload, notify};
 use crate::config::Config;
@@ -24,6 +25,13 @@ pub async fn run(config: Config, shutdown: CancellationToken) -> Result<()> {
 
     // Recover jobs that were in-flight when the process last died
     recover_stale_jobs(&queue)?;
+
+    // Expire any multipart groups whose assembly window lapsed while we were down
+    expire_multipart(&queue, &config);
+
+    // Task tracker — lets us wait for all spawned process_job tasks to finish
+    // before fully exiting (up to 30 s).
+    let tracker = TaskTracker::new();
 
     // Shared mutable config (for hot-reload)
     let cfg_lock: Arc<RwLock<Config>> = Arc::new(RwLock::new(config.clone()));
@@ -140,7 +148,7 @@ pub async fn run(config: Config, shutdown: CancellationToken) -> Result<()> {
             path = watcher_rx.recv() => {
                 if let Some(p) = path {
                     let intake = Arc::clone(&intake);
-                    tokio::spawn(async move {
+                    tracker.spawn(async move {
                         if let Err(e) = intake.process(p.clone()).await {
                             tracing::error!("intake error for {}: {e}", p.display());
                         }
@@ -157,6 +165,7 @@ pub async fn run(config: Config, shutdown: CancellationToken) -> Result<()> {
                     Arc::clone(&metrics),
                     Arc::clone(&sem),
                     shutdown.clone(),
+                    &tracker,
                 )
                 .await;
             }
@@ -166,6 +175,14 @@ pub async fn run(config: Config, shutdown: CancellationToken) -> Result<()> {
                 break;
             }
         }
+    }
+
+    // Close the tracker so no new tasks can be spawned, then wait up to 30 s
+    // for in-flight process_job tasks to finish before tearing down stores.
+    tracker.close();
+    match tokio::time::timeout(Duration::from_secs(30), tracker.wait()).await {
+        Ok(()) => {}
+        Err(_) => tracing::warn!("graceful shutdown timed out; some jobs may not have completed"),
     }
 
     // Signal the metrics thread to stop
@@ -198,6 +215,7 @@ async fn drain_pending(
     metrics:  Arc<Metrics>,
     sem:      Arc<Semaphore>,
     shutdown: CancellationToken,
+    tracker:  &TaskTracker,
 ) {
     let config = cfg_lock.read().await.clone();
     let pending = match queue.get_pending_jobs(32) {
@@ -214,7 +232,7 @@ async fn drain_pending(
         let s  = Arc::clone(&sem);
         let c  = config.clone();
         let sd = shutdown.clone();
-        tokio::spawn(async move {
+        tracker.spawn(async move {
             if let Err(e) = process_job(job, q, c, m, s, sd).await {
                 tracing::error!("job processing error: {e}");
             }

@@ -139,3 +139,46 @@ impl IpcClient {
         decode_payload(&payload).map_err(IpcClientError::Decode)
     }
 }
+
+// ---------------------------------------------------------------------------
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn io_err(kind: std::io::ErrorKind) -> std::io::Error {
+        std::io::Error::new(kind, "test")
+    }
+
+    #[test]
+    fn is_connection_error_true_for_transport_variants() {
+        assert!(IpcClientError::Connect(io_err(std::io::ErrorKind::ConnectionRefused)).is_connection_error());
+        assert!(IpcClientError::Read(io_err(std::io::ErrorKind::BrokenPipe)).is_connection_error());
+        assert!(IpcClientError::Write(io_err(std::io::ErrorKind::BrokenPipe)).is_connection_error());
+    }
+
+    #[test]
+    fn is_connection_error_false_for_logical_variants() {
+        assert!(!IpcClientError::UnexpectedMessage.is_connection_error());
+        assert!(!IpcClientError::FrameTooLarge(1024).is_connection_error());
+        assert!(!IpcClientError::DaemonError {
+            code:    "NOT_FOUND".into(),
+            message: "no such file".into(),
+        }.is_connection_error());
+    }
+
+    #[test]
+    fn display_formats_are_non_empty() {
+        let variants: &[IpcClientError] = &[
+            IpcClientError::Connect(io_err(std::io::ErrorKind::ConnectionRefused)),
+            IpcClientError::Write(io_err(std::io::ErrorKind::BrokenPipe)),
+            IpcClientError::Read(io_err(std::io::ErrorKind::UnexpectedEof)),
+            IpcClientError::FrameTooLarge(999),
+            IpcClientError::UnexpectedMessage,
+            IpcClientError::DaemonError { code: "E".into(), message: "m".into() },
+        ];
+        for v in variants {
+            assert!(!v.to_string().is_empty(), "Display empty for {v:?}");
+        }
+    }
+}
