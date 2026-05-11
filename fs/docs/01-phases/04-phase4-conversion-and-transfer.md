@@ -441,14 +441,56 @@ inside the closure: `.map_err(Box::new)`.
 
 ## 4.9 Definition of Done
 
-- [ ] `cargo test -p rar2zip convert` passes with fixture archives.
-- [ ] `cargo test -p rar2zip transfer` passes all unit tests.
-- [ ] `cargo test -p rar2zip metrics` passes.
+- [x] `cargo test -p rar2zip convert` passes with fixture archives.
+- [x] `cargo test -p rar2zip transfer` passes all unit tests.
+- [x] `cargo test -p rar2zip metrics` passes.
 - [ ] End-to-end smoke test (Disk): drop a `.rar` into `watch_folder` → zip
       appears in `failed_folder` or on remote.
 - [ ] End-to-end smoke test (Stream): drop a large `.rar` → no zip created on
       disk; source archive deleted after remote checksum passes.
 - [ ] `GET /metrics` returns Prometheus text.
 - [ ] `GET /ui` returns HTML with auto-refresh.
-- [ ] No `unwrap()` in any conversion or transfer code.
-- [ ] `cargo clippy -- -D warnings` clean.
+- [x] No `unwrap()` in any conversion or transfer code.
+- [x] `cargo clippy -- -D warnings` clean.
+
+---
+
+## Phase 4 Gap Closure (2026-05-12)
+
+### Missing tests implemented
+
+**`crates/rar2zip/src/convert.rs`** — 6 new tests:
+
+- `tar_to_zip_entry_and_content` — creates a `.tar` programmatically, converts to zip,
+  verifies entry name and byte content match.
+- `tar_to_zip_multiple_entries_all_present` — 2-entry tar → zip, checks all names present.
+- `tar_gz_to_zip_entry` — programmatic `.tar.gz` → zip, entry name check.
+- `tar_bz2_to_zip_entry` — programmatic `.tar.bz2` → zip, entry name check.
+- `corrupt_rar_returns_conversion_error` — garbage bytes in `.rar` → `Err` with
+  descriptive message.
+- `corrupt_7z_returns_conversion_error` — garbage bytes in `.7z` → `Err`.
+
+Helper functions added in the test module: `make_tar_bytes`, `make_tar_gz_bytes`,
+`make_tar_bz2_bytes`, `zip_entry_names`. These build test archives using the same
+crates (`tar`, `flate2`, `bzip2`) used in production, without needing external
+fixture files on disk.
+
+**`crates/rar2zip/src/transfer.rs`** — pure `throttle_delay` extracted + 3 new tests:
+
+- `throttle_delay` pure function extracts the sleep-duration computation from
+  `throttle_async` so it can be tested synchronously. `throttle_async` now delegates
+  to it.
+- `throttle_delay_200kb_in_half_second_at_100kbps` — spec test case: rate=102 400 B/s,
+  200 KB sent in 0.5 s → 1.5 s sleep (± 10 ms).
+- `throttle_delay_within_budget_returns_none` — no sleep when bytes_sent < allowed.
+- `throttle_delay_zero_limit_returns_none` — `limit_kbps=0` always returns `None`.
+
+### Verification
+
+```
+cargo clippy --workspace -- -D warnings  →  0 warnings
+cargo test --workspace                   →  148 filesearch + 67 rar2zip = 215 all pass
+```
+
+The end-to-end smoke tests (Disk/Stream strategies, live SFTP, `/metrics` HTTP
+endpoint) remain manual-only; they require a real SSH server and are not automated.

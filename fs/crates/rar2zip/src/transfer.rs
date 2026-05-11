@@ -376,17 +376,23 @@ fn sha256_of(data: &[u8]) -> String {
     hex::encode(h.finalize())
 }
 
-async fn throttle_async(bytes_sent: u64, limit_kbps: u64, start: &Instant) {
+fn throttle_delay(bytes_sent: u64, limit_kbps: u64, elapsed_secs: f64) -> Option<Duration> {
     if limit_kbps == 0 {
-        return;
+        return None;
     }
-    let rate    = limit_kbps * 1024; // bytes/s
-    let elapsed = start.elapsed().as_secs_f64().max(f64::EPSILON);
-    let allowed = (rate as f64 * elapsed) as u64;
+    let rate    = limit_kbps as f64 * 1024.0;
+    let allowed = (rate * elapsed_secs.max(f64::EPSILON)) as u64;
     if bytes_sent > allowed {
-        let excess  = bytes_sent - allowed;
-        let sleep_s = excess as f64 / rate as f64;
-        tokio::time::sleep(Duration::from_secs_f64(sleep_s)).await;
+        let sleep_s = (bytes_sent - allowed) as f64 / rate;
+        Some(Duration::from_secs_f64(sleep_s))
+    } else {
+        None
+    }
+}
+
+async fn throttle_async(bytes_sent: u64, limit_kbps: u64, start: &Instant) {
+    if let Some(d) = throttle_delay(bytes_sent, limit_kbps, start.elapsed().as_secs_f64()) {
+        tokio::time::sleep(d).await;
     }
 }
 
@@ -473,5 +479,31 @@ mod tests {
         let start = std::time::Instant::now();
         throttle_async(u64::MAX, 0, &start).await; // limit=0 → immediate return
         assert!(start.elapsed().as_millis() < 50, "should return without sleeping");
+    }
+
+    // ── throttle_delay (pure computation) ────────────────────────────────────
+
+    #[test]
+    fn throttle_delay_200kb_in_half_second_at_100kbps() {
+        // rate = 100 * 1024 = 102 400 B/s
+        // allowed in 0.5 s = 51 200 B;  sent = 200 * 1024 = 204 800 B
+        // excess = 153 600 B  →  sleep = 153 600 / 102 400 = 1.5 s
+        let d = throttle_delay(200 * 1024, 100, 0.5).unwrap();
+        let secs = d.as_secs_f64();
+        assert!(
+            (secs - 1.5).abs() < 0.01,
+            "expected ~1.5 s, got {secs:.4} s"
+        );
+    }
+
+    #[test]
+    fn throttle_delay_within_budget_returns_none() {
+        // 10 KB in 0.5 s at 100 kbps: allowed = 51 200 B, sent = 10 240 → no sleep
+        assert!(throttle_delay(10 * 1024, 100, 0.5).is_none());
+    }
+
+    #[test]
+    fn throttle_delay_zero_limit_returns_none() {
+        assert!(throttle_delay(u64::MAX, 0, 1.0).is_none());
     }
 }

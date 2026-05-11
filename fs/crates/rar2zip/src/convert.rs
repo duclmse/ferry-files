@@ -390,4 +390,129 @@ mod tests {
         copy_chunked(&mut src, &mut dst).unwrap();
         assert!(dst.is_empty());
     }
+
+    // ── fixture helpers ───────────────────────────────────────────────────────
+
+    fn make_tar_bytes(entries: &[(&str, &[u8])]) -> Vec<u8> {
+        let mut builder = tar::Builder::new(Vec::new());
+        for (name, data) in entries {
+            let mut header = tar::Header::new_gnu();
+            header.set_size(data.len() as u64);
+            header.set_mode(0o644);
+            header.set_cksum();
+            builder.append_data(&mut header, name, *data).unwrap();
+        }
+        builder.into_inner().unwrap()
+    }
+
+    fn make_tar_gz_bytes(entries: &[(&str, &[u8])]) -> Vec<u8> {
+        use std::io::Write as _;
+        let tar = make_tar_bytes(entries);
+        let mut gz = Vec::new();
+        let mut enc = flate2::write::GzEncoder::new(&mut gz, flate2::Compression::default());
+        enc.write_all(&tar).unwrap();
+        enc.finish().unwrap();
+        gz
+    }
+
+    fn make_tar_bz2_bytes(entries: &[(&str, &[u8])]) -> Vec<u8> {
+        use std::io::Write as _;
+        let tar = make_tar_bytes(entries);
+        let mut bz = Vec::new();
+        let mut enc = bzip2::write::BzEncoder::new(&mut bz, bzip2::Compression::default());
+        enc.write_all(&tar).unwrap();
+        enc.finish().unwrap();
+        bz
+    }
+
+    fn zip_entry_names(zip_bytes: Vec<u8>) -> Vec<String> {
+        let mut arch = zip::ZipArchive::new(std::io::Cursor::new(zip_bytes)).unwrap();
+        (0..arch.len())
+            .map(|i| arch.by_index(i).unwrap().name().to_string())
+            .collect()
+    }
+
+    // ── fixture-based conversion tests ────────────────────────────────────────
+
+    #[test]
+    fn tar_to_zip_entry_and_content() {
+        let dir = tempfile::TempDir::new().unwrap();
+        let tar_path = dir.path().join("fixture.tar");
+        let content = b"hello from tar";
+        std::fs::write(&tar_path, make_tar_bytes(&[("hello.txt", content)])).unwrap();
+
+        let zip_bytes = convert_to_bytes(&tar_path, &ConversionConfig::default()).unwrap();
+
+        let mut arch = zip::ZipArchive::new(std::io::Cursor::new(zip_bytes)).unwrap();
+        assert_eq!(arch.len(), 1);
+        let mut f = arch.by_index(0).unwrap();
+        assert_eq!(f.name(), "hello.txt");
+        let mut buf = Vec::new();
+        std::io::Read::read_to_end(&mut f, &mut buf).unwrap();
+        assert_eq!(buf, content);
+    }
+
+    #[test]
+    fn tar_to_zip_multiple_entries_all_present() {
+        let dir = tempfile::TempDir::new().unwrap();
+        let tar_path = dir.path().join("multi.tar");
+        let entries: &[(&str, &[u8])] = &[("a.txt", b"aaa"), ("b.txt", b"bbb")];
+        std::fs::write(&tar_path, make_tar_bytes(entries)).unwrap();
+
+        let names = zip_entry_names(
+            convert_to_bytes(&tar_path, &ConversionConfig::default()).unwrap(),
+        );
+        assert_eq!(names.len(), 2);
+        assert!(names.contains(&"a.txt".to_string()));
+        assert!(names.contains(&"b.txt".to_string()));
+    }
+
+    #[test]
+    fn tar_gz_to_zip_entry() {
+        let dir = tempfile::TempDir::new().unwrap();
+        let path = dir.path().join("fixture.tar.gz");
+        std::fs::write(&path, make_tar_gz_bytes(&[("readme.md", b"# readme")])).unwrap();
+
+        let names = zip_entry_names(
+            convert_to_bytes(&path, &ConversionConfig::default()).unwrap(),
+        );
+        assert_eq!(names, ["readme.md"]);
+    }
+
+    #[test]
+    fn tar_bz2_to_zip_entry() {
+        let dir = tempfile::TempDir::new().unwrap();
+        let path = dir.path().join("fixture.tar.bz2");
+        std::fs::write(&path, make_tar_bz2_bytes(&[("data.bin", b"binary data")])).unwrap();
+
+        let names = zip_entry_names(
+            convert_to_bytes(&path, &ConversionConfig::default()).unwrap(),
+        );
+        assert_eq!(names, ["data.bin"]);
+    }
+
+    #[test]
+    fn corrupt_rar_returns_conversion_error() {
+        let dir = tempfile::TempDir::new().unwrap();
+        let rar_path = dir.path().join("corrupt.rar");
+        std::fs::write(&rar_path, b"this is not a valid rar archive at all").unwrap();
+
+        let result = convert_to_bytes(&rar_path, &ConversionConfig::default());
+        assert!(result.is_err(), "corrupt RAR must return an error");
+        let msg = result.unwrap_err().to_string();
+        assert!(
+            msg.to_lowercase().contains("corrupt") || msg.to_lowercase().contains("integrity") || msg.to_lowercase().contains("bad"),
+            "error message should indicate archive problem: {msg}"
+        );
+    }
+
+    #[test]
+    fn corrupt_7z_returns_conversion_error() {
+        let dir = tempfile::TempDir::new().unwrap();
+        let path = dir.path().join("corrupt.7z");
+        std::fs::write(&path, b"this is definitely not a 7z file").unwrap();
+
+        let result = convert_to_bytes(&path, &ConversionConfig::default());
+        assert!(result.is_err(), "corrupt 7Z must return an error");
+    }
 }
