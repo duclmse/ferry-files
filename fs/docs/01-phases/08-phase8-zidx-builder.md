@@ -373,11 +373,52 @@ integration:
 
 ## 8.11 Definition of Done
 
-- [ ] `cargo test -p filesearch zidx` passes all builder and reader tests.
-- [ ] `.zidx` files are written to `zidx_dir` during `full_crawl()` when
+- [x] `cargo test -p filesearch zidx` passes all builder and reader tests.
+- [x] `.zidx` files are written to `zidx_dir` during `full_crawl()` when
       `archive_service.enabled = true`.
-- [ ] All write paths use `to_le_bytes()` — no transmute/raw casts.
-- [ ] `ZidxIndex::open()` rejects malformed files with `ZidxError::Corrupt`.
-- [ ] Deterministic: rebuilding the same ZIP produces byte-identical output.
-- [ ] No `unwrap()` in `zidx/` module code.
-- [ ] `cargo clippy -- -D warnings` clean.
+- [x] All write paths use `to_le_bytes()` — no transmute/raw casts.
+- [x] `ZidxIndex::open()` rejects malformed files with `ZidxError::Corrupt`.
+- [x] Deterministic: rebuilding the same ZIP produces byte-identical output.
+- [x] No `unwrap()` in `zidx/` module code.
+- [x] `cargo clippy -- -D warnings` clean.
+
+---
+
+## Implementation Status (2026-05-12)
+
+### Files created
+
+| File | Description |
+|------|-------------|
+| `crates/filesearch/src/zidx/mod.rs` | Public API: `ZidxError`, `zidx_path_for()`, re-exports |
+| `crates/filesearch/src/zidx/builder.rs` | `ZidxBuilder::build()` + 8 unit tests |
+| `crates/filesearch/src/zidx/reader.rs` | `ZidxIndex`, `NodeData`, `ChildIter` + 9 unit tests |
+
+### Files modified
+
+| File | Change |
+|------|--------|
+| `Cargo.toml` (workspace) | Added `blake3 = "1"` to `[workspace.dependencies]` |
+| `crates/filesearch/Cargo.toml` | Added `blake3 = { workspace = true }` |
+| `crates/filesearch/src/lib.rs` | Added `pub mod zidx;` |
+| `crates/filesearch/src/config.rs` | Added `ArchiveServiceConfig { enabled, zidx_dir }` and field `archive_service` in `Config` |
+| `crates/filesearch/src/indexer/crawler.rs` | `crawl_archive_sync` gains `zidx_dir: Option<&Path>` parameter; all 3 call sites updated; `.zidx` built after archive crawl when enabled |
+
+### Implementation notes
+
+**`compression_method_to_u16`** — zip 2.x exposes `CompressionMethod` as a non-exhaustive enum
+(not a struct with public field, and no `From<CompressionMethod> for u16` impl). A `match` on
+`Stored` (→ 0) / `Deflated` (→ 8) / `_` (→ 0) covers all cases seen in practice.
+
+**`ZidxIndex::Debug`** — `memmap2::Mmap` does not implement `Debug`, so `ZidxIndex` has a hand-written
+impl that only shows `node_count`.
+
+**`zidx_path_for`** — uses `blake3::hash(zip_path_as_bytes).to_hex()` as the stem so sidecar files
+never collide regardless of ZIP directory depth, and they live entirely under `zidx_dir` (not in
+the watched directory tree).
+
+**Crawler integration** — `crawl_archive_sync` is already in a blocking context (`rayon` walk thread
+or `tokio::task::spawn_blocking`), so `ZidxBuilder::build()` is called synchronously — no extra
+`spawn_blocking` needed. Failures are logged as warnings and do not abort the archive crawl.
+
+**Test count after Phase 8:** 165 filesearch unit (was 148 + 17 new zidx) + 5 integration + 67 rar2zip = 237 total.

@@ -212,6 +212,7 @@ fn crawl_archive_sync(
     sqlite:       &SqliteStore,
     tantivy:      &TantivyStore,
     metrics:      &IndexMetrics,
+    zidx_dir:     Option<&Path>,
 ) -> Result<()> {
     let archive_str = archive_path.to_str().unwrap_or_default();
     sqlite.remove_archive_entries(archive_str)?;
@@ -240,6 +241,15 @@ fn crawl_archive_sync(
 
     conn.execute_batch("COMMIT").map_err(AppError::Database)?;
     metrics.archives_crawled.fetch_add(1, Ordering::Relaxed);
+
+    // Build .zidx sidecar when archive-service indexing is enabled.
+    if let Some(zidx_dir) = zidx_dir {
+        let idx_path = crate::zidx::zidx_path_for(zidx_dir, archive_path);
+        if let Err(e) = crate::zidx::ZidxBuilder::build(archive_path, &idx_path) {
+            tracing::warn!("zidx build failed for {}: {e}", archive_path.display());
+        }
+    }
+
     Ok(())
 }
 
@@ -259,6 +269,14 @@ pub async fn full_crawl(
     let exclusions  = Arc::new(ExclusionEngine::new(&cfg.exclusions)?);
     let archive_cfg = Arc::new(cfg.archive_index.clone());
     let watch_paths = cfg.watch_paths.clone();
+    let zidx_dir: Arc<Option<PathBuf>> = Arc::new(
+        if cfg.archive_service.enabled {
+            Some(cfg.archive_service.zidx_dir.clone()
+                .unwrap_or_else(|| cfg.data_dir.join("zidx")))
+        } else {
+            None
+        }
+    );
 
     // One generation per full crawl. Each upserted row is marked with the
     // watch_root it was found under and this generation. After each root
@@ -272,6 +290,7 @@ pub async fn full_crawl(
     let excl_w      = Arc::clone(&exclusions);
     let arc_cfg_w   = Arc::clone(&archive_cfg);
     let cnt_cfg_w   = Arc::new(cfg.content.clone());
+    let zidx_dir_w  = Arc::clone(&zidx_dir);
     let shutdown_w  = shutdown.clone();
 
     tokio::task::spawn_blocking(move || -> Result<()> {
@@ -287,12 +306,13 @@ pub async fn full_crawl(
                 .git_ignore(false)
                 .build_parallel();
 
-            let sqlite  = Arc::clone(&sqlite_w);
-            let tantivy = Arc::clone(&tantivy_w);
-            let metrics = Arc::clone(&metrics_w);
-            let excl    = Arc::clone(&excl_w);
-            let arc_cfg = Arc::clone(&arc_cfg_w);
-            let cnt_cfg = Arc::clone(&cnt_cfg_w);
+            let sqlite   = Arc::clone(&sqlite_w);
+            let tantivy  = Arc::clone(&tantivy_w);
+            let metrics  = Arc::clone(&metrics_w);
+            let excl     = Arc::clone(&excl_w);
+            let arc_cfg  = Arc::clone(&arc_cfg_w);
+            let cnt_cfg  = Arc::clone(&cnt_cfg_w);
+            let zidx_dir = Arc::clone(&zidx_dir_w);
             let root_str = watch_root.clone();
 
             walker.run(|| {
@@ -302,6 +322,7 @@ pub async fn full_crawl(
                 let excl     = Arc::clone(&excl);
                 let arc_cfg  = Arc::clone(&arc_cfg);
                 let cnt_cfg  = Arc::clone(&cnt_cfg);
+                let zidx_dir = Arc::clone(&zidx_dir);
                 let root_str = root_str.clone();
 
                 Box::new(move |result| {
@@ -375,9 +396,10 @@ pub async fn full_crawl(
 
                         if is_archive {
                             let crawler = ArchiveCrawler::new(&arc_cfg, &cnt_cfg);
-                            if let Err(e) =
-                                crawl_archive_sync(path, &crawler, &sqlite, &tantivy, &metrics)
-                            {
+                            if let Err(e) = crawl_archive_sync(
+                                path, &crawler, &sqlite, &tantivy, &metrics,
+                                zidx_dir.as_deref(),
+                            ) {
                                 tracing::warn!("archive crawl error for {}: {e}", path.display());
                             }
                         }
@@ -497,10 +519,19 @@ pub async fn process_event(
                     let metrics2 = Arc::clone(&metrics);
                     let arc_cfg  = cfg.archive_index.clone();
                     let cnt_cfg  = cfg.content.clone();
-                    let to2      = to.clone();
+                    let zidx_dir = if cfg.archive_service.enabled {
+                        Some(cfg.archive_service.zidx_dir.clone()
+                            .unwrap_or_else(|| cfg.data_dir.join("zidx")))
+                    } else {
+                        None
+                    };
+                    let to2 = to.clone();
                     tokio::task::spawn_blocking(move || {
                         let crawler = ArchiveCrawler::new(&arc_cfg, &cnt_cfg);
-                        let _ = crawl_archive_sync(&to2, &crawler, &sqlite2, &tantivy2, &metrics2);
+                        let _ = crawl_archive_sync(
+                            &to2, &crawler, &sqlite2, &tantivy2, &metrics2,
+                            zidx_dir.as_deref(),
+                        );
                     });
                 }
             }
@@ -508,14 +539,23 @@ pub async fn process_event(
         }
 
         IndexEvent::ArchiveModified(path) => {
-            let arc_cfg = cfg.archive_index.clone();
-            let cnt_cfg = cfg.content.clone();
+            let arc_cfg  = cfg.archive_index.clone();
+            let cnt_cfg  = cfg.content.clone();
             let sqlite2  = Arc::clone(&sqlite);
             let tantivy2 = Arc::clone(&tantivy);
             let metrics2 = Arc::clone(&metrics);
+            let zidx_dir = if cfg.archive_service.enabled {
+                Some(cfg.archive_service.zidx_dir.clone()
+                    .unwrap_or_else(|| cfg.data_dir.join("zidx")))
+            } else {
+                None
+            };
             tokio::task::spawn_blocking(move || {
                 let crawler = ArchiveCrawler::new(&arc_cfg, &cnt_cfg);
-                if let Err(e) = crawl_archive_sync(&path, &crawler, &sqlite2, &tantivy2, &metrics2) {
+                if let Err(e) = crawl_archive_sync(
+                    &path, &crawler, &sqlite2, &tantivy2, &metrics2,
+                    zidx_dir.as_deref(),
+                ) {
                     tracing::warn!("ArchiveModified crawl error: {e}");
                 }
             });
@@ -566,6 +606,7 @@ mod tests {
             indexer: IndexerConfig::default(),
             archive_index: ArchiveIndexConfig::default(),
             macros: MacroConfig::default(),
+            archive_service: ArchiveServiceConfig::default(),
         }))
     }
 
@@ -610,6 +651,7 @@ mod tests {
             indexer: IndexerConfig::default(),
             archive_index: ArchiveIndexConfig::default(),
             macros: MacroConfig::default(),
+            archive_service: ArchiveServiceConfig::default(),
         }));
 
         let tmpdir2 = TempDir::new().unwrap();

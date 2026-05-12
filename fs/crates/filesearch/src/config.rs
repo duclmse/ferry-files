@@ -27,7 +27,9 @@ pub struct Config {
     #[serde(default)]
     pub archive_index: ArchiveIndexConfig,
     #[serde(default)]
-    pub macros:        MacroConfig,
+    pub macros:          MacroConfig,
+    #[serde(default)]
+    pub archive_service: ArchiveServiceConfig,
 }
 
 #[derive(Debug, Clone, Deserialize, Default)]
@@ -182,6 +184,18 @@ impl Default for ArchiveIndexConfig {
 pub struct MacroConfig {
     #[serde(flatten)]
     pub entries: HashMap<String, String>,
+}
+
+/// Minimal archive-service config for Phase 8. Phase 9 adds HTTP/gRPC fields.
+#[derive(Debug, Clone, Deserialize, Default)]
+pub struct ArchiveServiceConfig {
+    /// Enable .zidx sidecar generation during archive crawl.
+    #[serde(default)]
+    pub enabled: bool,
+    /// Root directory for .zidx sidecar files.
+    /// Defaults to `{data_dir}/zidx` when absent.
+    #[serde(default)]
+    pub zidx_dir: Option<PathBuf>,
 }
 
 // ---------------------------------------------------------------------------

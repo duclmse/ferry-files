@@ -7,3 +7,4 @@ pub mod indexer;
 pub mod query;
 pub mod store;
 pub mod watcher;
+pub mod zidx;
