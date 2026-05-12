@@ -1,0 +1,104 @@
+# rar2zip — example configuration (Windows)
+# Copy to your preferred location and edit before starting the service.
+# Run `rar2zip --config config.toml validate-config` to verify.
+
+# ── Watch folder ──────────────────────────────────────────────────────────────
+
+# Folder monitored for incoming archives. Must exist.
+watch_folder = 'C:\Incoming\Archives'
+
+# Failed or expired jobs are moved here.
+failed_folder = 'C:\Incoming\Failed'
+
+# ── File filters ──────────────────────────────────────────────────────────────
+
+# Extensions to process (case-insensitive).
+include_extensions = ["rar", "7z", "tar.gz", "tar.bz2", "tar"]
+
+# Glob patterns for filenames to ignore.
+exclude_patterns = ["*.tmp", "*.part", "*.!ut"]
+
+# Only watch these subdirectory names inside watch_folder.
+# Omit (or set to []) to watch all subdirectories.
+# watch_subdirs = ["inbound", "uploads"]
+
+# Minimum file age in seconds before processing.
+# Prevents acting on files that are still being written.
+min_file_age_secs = 5
+
+# ── Destinations ─────────────────────────────────────────────────────────────
+# Add one [[destinations]] block per SFTP server.
+
+[[destinations]]
+host         = "sftp.example.com"
+port         = 22
+user         = "deploy"
+remote_path  = "/srv/uploads/zips"
+ssh_key_path = 'C:\Users\service\.ssh\id_ed25519'
+
+# Second destination (optional — forces Disk strategy for all jobs)
+# [[destinations]]
+# host         = "backup.example.com"
+# port         = 22
+# user         = "backup"
+# remote_path  = "/backup/uploads"
+# ssh_key_path = 'C:\Users\service\.ssh\id_ed25519'
+
+# ── Conversion ────────────────────────────────────────────────────────────────
+
+[conversion]
+# ZIP deflate compression level (0 = store only, 9 = maximum compression).
+compression_level = 6
+
+# Password for encrypted source archives. Leave unset if not needed.
+# archive_password = "secret"
+
+# Files larger than this (MB) use the Stream strategy (no local ZIP created).
+# Set to 0 to always use the Disk strategy.
+stream_to_transfer_threshold_mb = 500
+
+# Expire incomplete multi-part archive groups after this many hours.
+# Set to 0 to never expire (not recommended — disk space will accumulate).
+multipart_timeout_hours = 24
+
+# ── Transfer ──────────────────────────────────────────────────────────────────
+
+[transfer]
+# Maximum concurrent SFTP upload connections across all destinations.
+max_concurrent = 3
+
+# Number of retry attempts per destination on transfer failure.
+max_retries = 3
+
+# Initial backoff delay between retries (seconds). Doubles each retry, capped at 5 min.
+retry_delay_secs = 10
+
+# Upload bandwidth limit in KB/s. 0 = unlimited.
+bandwidth_limit_kbps = 0
+
+# ── Observability ─────────────────────────────────────────────────────────────
+
+[observability]
+# Prometheus metrics endpoint: GET http://host:9090/metrics
+metrics_port = 9090
+
+# HTML dashboard endpoint: GET http://host:8080/ui
+dashboard_port = 8080
+
+# Slack / Teams webhook for job failure alerts.
+# webhook_url = "https://hooks.slack.com/services/..."
+
+# Email address for alerts (requires [smtp] section below).
+# alert_email = "oncall@example.com"
+
+# Send an alert when the pending queue depth exceeds this value.
+alert_queue_depth_threshold = 50
+
+# ── SMTP (optional — required for email alerts) ───────────────────────────────
+
+# [smtp]
+# host     = "smtp.example.com"
+# port     = 587
+# user     = "alerts@example.com"
+# password = "..."
+# from     = "rar2zip <alerts@example.com>"

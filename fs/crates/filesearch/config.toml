@@ -1,0 +1,135 @@
+# filesearch — example configuration
+# Copy to your preferred location and edit before starting the daemon.
+# Run `filesearch --config /path/to/config.toml validate-config` to verify.
+
+# ── Paths ─────────────────────────────────────────────────────────────────────
+
+# Directories to watch and index. At least one required.
+watch_paths = [
+    "/home/user/documents",
+    "/home/user/projects",
+]
+
+# Directory for SQLite metadata store and Tantivy full-text index.
+# Created automatically on first run. Must be writable.
+data_dir = "/var/lib/filesearch"
+
+# Directory for rolling daily log files.
+log_dir = "/var/log/filesearch"
+
+# ── Exclusions ────────────────────────────────────────────────────────────────
+
+[exclusions]
+# Glob patterns applied to full paths. Matched files/directories are skipped.
+path_patterns = [
+    "**/.git/**",
+    "**/node_modules/**",
+    "**/__pycache__/**",
+    "**/*.pyc",
+    "**/target/**",        # Rust build artefacts
+]
+
+# Skip dot-files and dot-directories (e.g. .ssh, .config).
+exclude_hidden = false
+
+# Do not extract content from files on network-mounted filesystems.
+skip_network_content = false
+
+# ── Content indexing ──────────────────────────────────────────────────────────
+
+[content]
+# Per-extension byte limit for full-text content extraction.
+# Use "*" as a fallback for extensions not listed here. 0 = skip.
+[content.extension_limits]
+rs   = 524288   # 512 KB
+py   = 524288
+js   = 262144   # 256 KB
+ts   = 262144
+go   = 524288
+md   = 131072   # 128 KB
+txt  = 131072
+toml = 65536    # 64 KB
+yaml = 65536
+json = 65536
+"*"  = 32768    # 32 KB default for anything else
+
+# ── Archive inner-file indexing ───────────────────────────────────────────────
+
+[archive_index]
+# Index files inside ZIP archives as virtual entries.
+enabled = true
+
+# Supported archive formats (only "zip" is currently supported).
+formats = ["zip"]
+
+# Stop indexing an archive after this many inner entries.
+max_entries_per_archive = 10000
+
+# How deep to recurse into nested ZIPs (0 = no nesting, 1 = one level, etc.).
+max_nesting_depth = 0
+
+# Passwords to try for encrypted ZIPs. Leave empty if not needed.
+passwords = []
+
+# Per-extension byte limit for inner-entry content extraction.
+[archive_index.inner_extension_limits]
+rs = 262144
+py = 262144
+"*" = 32768
+
+# ── API ───────────────────────────────────────────────────────────────────────
+
+[api]
+# HTTP REST API port.
+rest_port = 7700
+
+# gRPC port (Tonic + reflection).
+grpc_port = 7701
+
+# IPC socket / named pipe path.
+# Linux/macOS default: /tmp/filesearch.sock
+# Windows default:     \\.\pipe\filesearch
+# ipc_path = "/tmp/filesearch.sock"
+
+# CORS origins allowed for the REST API. Use ["*"] to allow all.
+rest_cors_origins = ["*"]
+
+# ── Search ────────────────────────────────────────────────────────────────────
+
+[search]
+# Default number of results returned when no limit is specified.
+default_limit = 100
+
+# Hard upper bound on the limit parameter.
+max_limit = 10000
+
+# Minimum nucleo similarity score for fuzzy: queries (0.0–1.0).
+fuzzy_threshold = 0.7
+
+# Max candidate rows loaded from SQLite before scoring with nucleo.
+# Lower this if fuzzy searches are slow on very large indices.
+max_fuzzy_candidates = 50000
+
+# ── Indexer ───────────────────────────────────────────────────────────────────
+
+[indexer]
+# Number of threads for the initial full crawl.
+# Default: half the available CPU cores.
+crawl_threads = 4
+
+# Number of threads for parallel content extraction during crawl.
+content_threads = 4
+
+# How often to commit the Tantivy index to disk (seconds).
+# Lower values give more up-to-date full-text results at the cost of more I/O.
+commit_interval_secs = 5
+
+# Maximum filesystem events processed in one batch.
+event_batch_size = 100
+
+# ── User macros ───────────────────────────────────────────────────────────────
+# Define shorthand query expansions.
+# Example: "q:work" expands to "dir:projects size:>1kb"
+[macros]
+# work = "dir:projects size:>1kb"
+# src  = "ext:rs OR ext:py OR ext:go OR ext:ts"

@@ -218,7 +218,9 @@ fn modifier_from_kw(kw: &str, val: &str) -> Option<ModifierKind> {
         "wfn"                            => Some(ModifierKind::WholeFilename),
         "w"  | "wholeword" | "ww"        => Some(ModifierKind::WholeWord),
         "file"                           => Some(ModifierKind::FilesOnly),
-        "folder" | "dir"                 => Some(ModifierKind::FoldersOnly),
+        // "dir" / "folder" with no value = FoldersOnly modifier.
+        // "dir:name" with a value falls through to build_predicate as Function::Parent.
+        "folder" | "dir" if val.is_empty() => Some(ModifierKind::FoldersOnly),
         // path: with no value is the path modifier; with a value it's a function
         "path" if val.is_empty()         => Some(ModifierKind::MatchPath),
         "archive"   if val.is_empty()    => Some(ModifierKind::ArchiveOnly(true)),
@@ -314,7 +316,7 @@ fn build_predicate(kw: &str, val: &str, mods: Modifiers) -> Result<Expr> {
             Function::Ext(exts)
         }
         "path" => Function::Path(val.to_owned()),
-        "parent" => Function::Parent(val.to_owned()),
+        "parent" | "dir" => Function::Parent(val.to_owned()),
         "content" => Function::Content(val.to_owned()),
         "fuzzy" => {
             return Ok(Expr::Predicate(Predicate {

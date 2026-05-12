@@ -19,8 +19,7 @@ enum MultipartClass {
     /// `archive.rar` — old-style main (always first/only old-style file)
     OldStyleMain { base: String },
     /// `archive.rNN` — old-style continuation part (0-based NN, so part_num = NN + 1)
-    #[allow(dead_code)]
-    OldStylePart { base: String, part_num: u32 },
+    OldStylePart { base: String, #[allow(dead_code)] part_num: u32 },
     /// Single archive — not part of any multi-part set
     Single,
 }

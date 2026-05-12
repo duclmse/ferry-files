@@ -65,6 +65,15 @@ const MAX_EVENT_TASKS: usize = 16;
 // ---------------------------------------------------------------------------
 
 pub async fn run(config_path: PathBuf) -> Result<(), AppError> {
+    run_with_shutdown(config_path, CancellationToken::new()).await
+}
+
+/// Like [`run`] but accepts an external shutdown token so tests (and
+/// embedders) can cancel the daemon programmatically.
+pub async fn run_with_shutdown(
+    config_path: PathBuf,
+    shutdown:    CancellationToken,
+) -> Result<(), AppError> {
     // ── 1. Load & validate config ──────────────────────────────────────────
     let cfg = config::load(&config_path)?;
     let errors = config::validate(&cfg);
@@ -81,11 +90,13 @@ pub async fn run(config_path: PathBuf) -> Result<(), AppError> {
     // ── 2. Logging ─────────────────────────────────────────────────────────
     let file_appender = tracing_appender::rolling::daily(&cfg.log_dir, "filesearch.log");
     let (non_blocking, _guard) = tracing_appender::non_blocking(file_appender);
-    tracing_subscriber::registry()
+    // Ignore error when already initialised (happens in integration tests that
+    // run multiple daemon instances within the same process).
+    let _ = tracing_subscriber::registry()
         .with(EnvFilter::from_default_env().add_directive(tracing::Level::INFO.into()))
         .with(fmt::layer().with_writer(std::io::stderr))
         .with(fmt::layer().with_writer(non_blocking).with_ansi(false))
-        .init();
+        .try_init();
 
     tracing::info!("filesearch daemon starting");
 
@@ -102,9 +113,8 @@ pub async fn run(config_path: PathBuf) -> Result<(), AppError> {
     let tantivy = Arc::new(TantivyStore::new(&cfg.data_dir.join("tantivy"))?);
     let metrics = IndexMetrics::new();
 
-    // ── 6. Shared config + cancellation ────────────────────────────────────
+    // ── 6. Shared config ───────────────────────────────────────────────────
     let shared_cfg = Arc::new(RwLock::new(cfg));
-    let shutdown   = CancellationToken::new();
 
     // ── 7. Crawl-in-progress guard ─────────────────────────────────────────
     // Prevents two concurrent full crawls (initial + API-triggered reindex)
