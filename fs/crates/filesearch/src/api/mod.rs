@@ -1,3 +1,4 @@
+pub mod archive;
 pub mod dto;
 pub mod grpc;
 pub mod ipc_client;

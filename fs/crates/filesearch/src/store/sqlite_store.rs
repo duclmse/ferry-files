@@ -493,6 +493,20 @@ impl SqliteStore {
         Ok(())
     }
 
+    /// Return paths of all real ZIP files in the index (not inner archive entries).
+    pub fn list_archive_paths(&self) -> Result<Vec<String>> {
+        let conn = self.get_conn()?;
+        let mut stmt = conn.prepare(
+            "SELECT path FROM files
+             WHERE archive_path IS NULL AND is_dir = 0 AND extension = 'zip'",
+        )?;
+        let paths = stmt
+            .query_map([], |row| row.get(0))?
+            .filter_map(|r| r.ok())
+            .collect();
+        Ok(paths)
+    }
+
     // -----------------------------------------------------------------------
     // Index metadata (key-value)
     // -----------------------------------------------------------------------

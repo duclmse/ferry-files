@@ -11,6 +11,7 @@ use tokio::sync::{mpsc, watch, RwLock, Semaphore};
 use tokio_util::sync::CancellationToken;
 use tracing_subscriber::{fmt, layer::SubscriberExt, util::SubscriberInitExt, EnvFilter};
 
+use crate::api::archive::ArchiveRegistry;
 use crate::api::grpc::{self, FileSearchService};
 use crate::api::ipc_server::run_ipc_server;
 use crate::api::rest::AppState;
@@ -19,6 +20,7 @@ use crate::error::AppError;
 use crate::indexer::crawler::{full_crawl, process_event, IndexEvent, IndexMetrics};
 use crate::store::{sqlite_store::SqliteStore, tantivy_store::TantivyStore};
 use crate::watcher;
+use crate::zidx::zidx_path_for;
 
 // ---------------------------------------------------------------------------
 // Windows single-instance guard via named mutex
@@ -113,6 +115,30 @@ pub async fn run_with_shutdown(
     let tantivy = Arc::new(TantivyStore::new(&cfg.data_dir.join("tantivy"))?);
     let metrics = IndexMetrics::new();
 
+    // ── 5b. Archive registry ───────────────────────────────────────────────
+    let archive_registry: Arc<ArchiveRegistry> = {
+        if cfg.archive_service.enabled {
+            let zidx_dir = cfg.archive_service.zidx_dir.clone()
+                .unwrap_or_else(|| cfg.data_dir.join("zidx"));
+            std::fs::create_dir_all(&zidx_dir).map_err(AppError::Io)?;
+            let cache_size = cfg.archive_service.index_cache_size;
+            let reg = Arc::new(ArchiveRegistry::new(zidx_dir.clone(), cache_size));
+            // Warm the registry from existing .zidx files without a full re-crawl.
+            if let Ok(zip_paths) = sqlite.list_archive_paths() {
+                for zip_str in zip_paths {
+                    let zip_path = std::path::PathBuf::from(&zip_str);
+                    let zidx_path = zidx_path_for(&zidx_dir, &zip_path);
+                    if zidx_path.exists() {
+                        reg.register(zip_path);
+                    }
+                }
+            }
+            reg
+        } else {
+            Arc::new(ArchiveRegistry::disabled())
+        }
+    };
+
     // ── 6. Shared config ───────────────────────────────────────────────────
     let shared_cfg = Arc::new(RwLock::new(cfg));
 
@@ -197,11 +223,12 @@ pub async fn run_with_shutdown(
     let rest_port = shared_cfg.read().await.api.rest_port;
     {
         let app_state = AppState {
-            sqlite:     Arc::clone(&sqlite),
-            tantivy:    Arc::clone(&tantivy),
-            config:     Arc::clone(&shared_cfg),
-            metrics:    Arc::clone(&metrics),
-            reindex_tx: reindex_tx.clone(),
+            sqlite:           Arc::clone(&sqlite),
+            tantivy:          Arc::clone(&tantivy),
+            config:           Arc::clone(&shared_cfg),
+            metrics:          Arc::clone(&metrics),
+            reindex_tx:       reindex_tx.clone(),
+            archive_registry: Arc::clone(&archive_registry),
         };
         let shutdown_c = shutdown.clone();
         tokio::spawn(async move {
@@ -262,6 +289,7 @@ pub async fn run_with_shutdown(
             Arc::clone(&sqlite),
             Arc::clone(&tantivy),
             Arc::clone(&metrics),
+            Arc::clone(&archive_registry),
             Arc::clone(&shared_cfg),
             shutdown.clone(),
         );
@@ -279,13 +307,14 @@ pub async fn run_with_shutdown(
                 // Acquire a semaphore permit before spawning. When MAX_EVENT_TASKS
                 // are already running this yields here (backpressure) rather than
                 // allocating another task.
-                let permit   = Arc::clone(&event_sem).acquire_owned().await.unwrap();
+                let permit    = Arc::clone(&event_sem).acquire_owned().await.unwrap();
                 let sqlite_e  = Arc::clone(&sqlite);
                 let tantivy_e = Arc::clone(&tantivy);
                 let metrics_e = Arc::clone(&metrics);
                 let cfg_e     = Arc::clone(&shared_cfg);
+                let reg_e     = Arc::clone(&archive_registry);
                 tokio::spawn(async move {
-                    process_event(event, cfg_e, sqlite_e, tantivy_e, metrics_e).await;
+                    process_event(event, cfg_e, sqlite_e, tantivy_e, metrics_e, reg_e).await;
                     drop(permit); // release when done
                 });
             }
@@ -301,6 +330,7 @@ pub async fn run_with_shutdown(
                         Arc::clone(&sqlite),
                         Arc::clone(&tantivy),
                         Arc::clone(&metrics),
+                        Arc::clone(&archive_registry),
                         Arc::clone(&shared_cfg),
                         shutdown.clone(),
                     );
@@ -321,7 +351,8 @@ pub async fn run_with_shutdown(
                 let tantivy_e = Arc::clone(&tantivy);
                 let metrics_e = Arc::clone(&metrics);
                 let cfg_e     = Arc::clone(&shared_cfg);
-                process_event(event, cfg_e, sqlite_e, tantivy_e, metrics_e).await;
+                let reg_e     = Arc::clone(&archive_registry);
+                process_event(event, cfg_e, sqlite_e, tantivy_e, metrics_e, reg_e).await;
             }
             Err(_) => break,
         }
@@ -351,6 +382,7 @@ fn spawn_crawl(
     sqlite:       Arc<SqliteStore>,
     tantivy:      Arc<TantivyStore>,
     metrics:      Arc<IndexMetrics>,
+    registry:     Arc<ArchiveRegistry>,
     cfg:          Arc<RwLock<crate::config::Config>>,
     shutdown:     CancellationToken,
 ) {
@@ -359,7 +391,7 @@ fn spawn_crawl(
     let ca = Arc::clone(crawl_active);
     tokio::spawn(async move {
         tracing::info!("full crawl starting");
-        if let Err(e) = full_crawl(cfg, sqlite, tantivy, metrics, shutdown).await {
+        if let Err(e) = full_crawl(cfg, sqlite, tantivy, metrics, registry, shutdown).await {
             tracing::error!("full_crawl error: {e}");
         } else {
             tracing::info!("full crawl complete");

@@ -9,6 +9,7 @@ use ignore::WalkBuilder;
 use tokio::sync::RwLock;
 use tokio_util::sync::CancellationToken;
 
+use crate::api::archive::ArchiveRegistry;
 use crate::config::Config;
 use crate::error::{AppError, Result};
 use crate::store::{
@@ -213,6 +214,7 @@ fn crawl_archive_sync(
     tantivy:      &TantivyStore,
     metrics:      &IndexMetrics,
     zidx_dir:     Option<&Path>,
+    registry:     Option<&ArchiveRegistry>,
 ) -> Result<()> {
     let archive_str = archive_path.to_str().unwrap_or_default();
     sqlite.remove_archive_entries(archive_str)?;
@@ -247,6 +249,8 @@ fn crawl_archive_sync(
         let idx_path = crate::zidx::zidx_path_for(zidx_dir, archive_path);
         if let Err(e) = crate::zidx::ZidxBuilder::build(archive_path, &idx_path) {
             tracing::warn!("zidx build failed for {}: {e}", archive_path.display());
+        } else if let Some(reg) = registry {
+            reg.register(archive_path.to_path_buf());
         }
     }
 
@@ -262,6 +266,7 @@ pub async fn full_crawl(
     sqlite:   Arc<SqliteStore>,
     tantivy:  Arc<TantivyStore>,
     metrics:  Arc<IndexMetrics>,
+    registry: Arc<ArchiveRegistry>,
     shutdown: CancellationToken,
 ) -> Result<()> {
     let cfg = config.read().await.clone();
@@ -291,6 +296,7 @@ pub async fn full_crawl(
     let arc_cfg_w   = Arc::clone(&archive_cfg);
     let cnt_cfg_w   = Arc::new(cfg.content.clone());
     let zidx_dir_w  = Arc::clone(&zidx_dir);
+    let registry_w  = Arc::clone(&registry);
     let shutdown_w  = shutdown.clone();
 
     tokio::task::spawn_blocking(move || -> Result<()> {
@@ -306,24 +312,26 @@ pub async fn full_crawl(
                 .git_ignore(false)
                 .build_parallel();
 
-            let sqlite   = Arc::clone(&sqlite_w);
-            let tantivy  = Arc::clone(&tantivy_w);
-            let metrics  = Arc::clone(&metrics_w);
-            let excl     = Arc::clone(&excl_w);
-            let arc_cfg  = Arc::clone(&arc_cfg_w);
-            let cnt_cfg  = Arc::clone(&cnt_cfg_w);
-            let zidx_dir = Arc::clone(&zidx_dir_w);
-            let root_str = watch_root.clone();
+            let sqlite    = Arc::clone(&sqlite_w);
+            let tantivy   = Arc::clone(&tantivy_w);
+            let metrics   = Arc::clone(&metrics_w);
+            let excl      = Arc::clone(&excl_w);
+            let arc_cfg   = Arc::clone(&arc_cfg_w);
+            let cnt_cfg   = Arc::clone(&cnt_cfg_w);
+            let zidx_dir  = Arc::clone(&zidx_dir_w);
+            let registry  = Arc::clone(&registry_w);
+            let root_str  = watch_root.clone();
 
             walker.run(|| {
-                let sqlite   = Arc::clone(&sqlite);
-                let tantivy  = Arc::clone(&tantivy);
-                let metrics  = Arc::clone(&metrics);
-                let excl     = Arc::clone(&excl);
-                let arc_cfg  = Arc::clone(&arc_cfg);
-                let cnt_cfg  = Arc::clone(&cnt_cfg);
-                let zidx_dir = Arc::clone(&zidx_dir);
-                let root_str = root_str.clone();
+                let sqlite    = Arc::clone(&sqlite);
+                let tantivy   = Arc::clone(&tantivy);
+                let metrics   = Arc::clone(&metrics);
+                let excl      = Arc::clone(&excl);
+                let arc_cfg   = Arc::clone(&arc_cfg);
+                let cnt_cfg   = Arc::clone(&cnt_cfg);
+                let zidx_dir  = Arc::clone(&zidx_dir);
+                let registry  = Arc::clone(&registry);
+                let root_str  = root_str.clone();
 
                 Box::new(move |result| {
                     let entry = match result {
@@ -399,6 +407,7 @@ pub async fn full_crawl(
                             if let Err(e) = crawl_archive_sync(
                                 path, &crawler, &sqlite, &tantivy, &metrics,
                                 zidx_dir.as_deref(),
+                                Some(&registry),
                             ) {
                                 tracing::warn!("archive crawl error for {}: {e}", path.display());
                             }
@@ -442,11 +451,12 @@ pub async fn full_crawl(
 // ---------------------------------------------------------------------------
 
 pub async fn process_event(
-    event:   IndexEvent,
-    config:  Arc<RwLock<Config>>,
-    sqlite:  Arc<SqliteStore>,
-    tantivy: Arc<TantivyStore>,
-    metrics: Arc<IndexMetrics>,
+    event:    IndexEvent,
+    config:   Arc<RwLock<Config>>,
+    sqlite:   Arc<SqliteStore>,
+    tantivy:  Arc<TantivyStore>,
+    metrics:  Arc<IndexMetrics>,
+    registry: Arc<ArchiveRegistry>,
 ) {
     let cfg = config.read().await.clone();
 
@@ -514,12 +524,13 @@ pub async fn process_event(
                     .map(|e| cfg.archive_index.formats.iter().any(|f| f.eq_ignore_ascii_case(e)))
                     .unwrap_or(false);
                 if cfg.archive_index.enabled && is_archive {
-                    let sqlite2  = Arc::clone(&sqlite);
-                    let tantivy2 = Arc::clone(&tantivy);
-                    let metrics2 = Arc::clone(&metrics);
-                    let arc_cfg  = cfg.archive_index.clone();
-                    let cnt_cfg  = cfg.content.clone();
-                    let zidx_dir = if cfg.archive_service.enabled {
+                    let sqlite2   = Arc::clone(&sqlite);
+                    let tantivy2  = Arc::clone(&tantivy);
+                    let metrics2  = Arc::clone(&metrics);
+                    let registry2 = Arc::clone(&registry);
+                    let arc_cfg   = cfg.archive_index.clone();
+                    let cnt_cfg   = cfg.content.clone();
+                    let zidx_dir  = if cfg.archive_service.enabled {
                         Some(cfg.archive_service.zidx_dir.clone()
                             .unwrap_or_else(|| cfg.data_dir.join("zidx")))
                     } else {
@@ -531,6 +542,7 @@ pub async fn process_event(
                         let _ = crawl_archive_sync(
                             &to2, &crawler, &sqlite2, &tantivy2, &metrics2,
                             zidx_dir.as_deref(),
+                            Some(&registry2),
                         );
                     });
                 }
@@ -539,12 +551,13 @@ pub async fn process_event(
         }
 
         IndexEvent::ArchiveModified(path) => {
-            let arc_cfg  = cfg.archive_index.clone();
-            let cnt_cfg  = cfg.content.clone();
-            let sqlite2  = Arc::clone(&sqlite);
-            let tantivy2 = Arc::clone(&tantivy);
-            let metrics2 = Arc::clone(&metrics);
-            let zidx_dir = if cfg.archive_service.enabled {
+            let arc_cfg   = cfg.archive_index.clone();
+            let cnt_cfg   = cfg.content.clone();
+            let sqlite2   = Arc::clone(&sqlite);
+            let tantivy2  = Arc::clone(&tantivy);
+            let metrics2  = Arc::clone(&metrics);
+            let registry2 = Arc::clone(&registry);
+            let zidx_dir  = if cfg.archive_service.enabled {
                 Some(cfg.archive_service.zidx_dir.clone()
                     .unwrap_or_else(|| cfg.data_dir.join("zidx")))
             } else {
@@ -555,6 +568,7 @@ pub async fn process_event(
                 if let Err(e) = crawl_archive_sync(
                     &path, &crawler, &sqlite2, &tantivy2, &metrics2,
                     zidx_dir.as_deref(),
+                    Some(&registry2),
                 ) {
                     tracing::warn!("ArchiveModified crawl error: {e}");
                 }
@@ -563,6 +577,7 @@ pub async fn process_event(
         }
 
         IndexEvent::ArchiveDeleted(path) => {
+            registry.unregister(&path);
             let path_str = path.to_string_lossy().into_owned();
             if let Err(e) = sqlite.remove_archive_entries(&path_str) {
                 tracing::warn!("ArchiveDeleted remove_archive_entries: {e}");
@@ -622,7 +637,8 @@ mod tests {
         let config  = make_config(dir.path());
         let token   = CancellationToken::new();
 
-        full_crawl(config, sqlite.clone(), tantivy, metrics, token).await.unwrap();
+        let registry = Arc::new(ArchiveRegistry::disabled());
+        full_crawl(config, sqlite.clone(), tantivy, metrics, registry, token).await.unwrap();
 
         let total = sqlite.total_files().unwrap();
         assert!(total >= 5, "expected ≥5 files, got {total}");
@@ -655,12 +671,13 @@ mod tests {
         }));
 
         let tmpdir2 = TempDir::new().unwrap();
-        let sqlite  = make_sqlite(&tmpdir2);
-        let tantivy = make_tantivy(&tmpdir2);
-        let metrics = IndexMetrics::new();
-        let token   = CancellationToken::new();
+        let sqlite   = make_sqlite(&tmpdir2);
+        let tantivy  = make_tantivy(&tmpdir2);
+        let metrics  = IndexMetrics::new();
+        let registry = Arc::new(ArchiveRegistry::disabled());
+        let token    = CancellationToken::new();
 
-        full_crawl(config, sqlite.clone(), tantivy, metrics, token).await.unwrap();
+        full_crawl(config, sqlite.clone(), tantivy, metrics, registry, token).await.unwrap();
 
         let skip_path = dir.path().join("skip.log").to_string_lossy().into_owned();
         assert!(sqlite.get_by_path(&skip_path).unwrap().is_none(), "excluded file should not be indexed");
@@ -684,12 +701,14 @@ mod tests {
         sqlite.upsert_file(&record).unwrap();
 
         // Now fire Delete event
+        let registry = Arc::new(ArchiveRegistry::disabled());
         process_event(
             IndexEvent::Deleted(file.clone()),
             config,
             sqlite.clone(),
             tantivy,
             metrics,
+            registry,
         ).await;
 
         let path_str = file.to_string_lossy().into_owned();

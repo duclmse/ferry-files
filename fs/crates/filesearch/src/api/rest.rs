@@ -21,6 +21,7 @@ use serde::{Deserialize, Serialize};
 use tokio::sync::{watch, RwLock};
 use tower_http::cors::CorsLayer;
 
+use crate::api::archive::ArchiveRegistry;
 use crate::config::Config;
 use crate::indexer::crawler::IndexMetrics;
 use crate::query::{evaluator, parser};
@@ -34,11 +35,12 @@ use super::dto::archive_entry_opt;
 
 #[derive(Clone)]
 pub struct AppState {
-    pub sqlite:     Arc<SqliteStore>,
-    pub tantivy:    Arc<TantivyStore>,
-    pub config:     Arc<RwLock<Config>>,
-    pub metrics:    Arc<IndexMetrics>,
-    pub reindex_tx: watch::Sender<bool>,
+    pub sqlite:            Arc<SqliteStore>,
+    pub tantivy:           Arc<TantivyStore>,
+    pub config:            Arc<RwLock<Config>>,
+    pub metrics:           Arc<IndexMetrics>,
+    pub reindex_tx:        watch::Sender<bool>,
+    pub archive_registry:  Arc<ArchiveRegistry>,
 }
 
 // ---------------------------------------------------------------------------
@@ -102,15 +104,19 @@ fn api_error(status: StatusCode, msg: impl Into<String>) -> impl IntoResponse {
 // ---------------------------------------------------------------------------
 
 pub fn router(state: AppState) -> Router {
-    Router::new()
+    let mut r = Router::new()
         .route("/search",  get(search_handler))
         .route("/stats",   get(stats_handler))
         .route("/reindex", post(reindex_handler))
         .route("/health",  get(health_handler))
         .route("/file",    get(file_handler))
-        .route("/open",    post(open_handler))
-        .layer(CorsLayer::permissive())
-        .with_state(state)
+        .route("/open",    post(open_handler));
+
+    if state.archive_registry.is_enabled() {
+        r = r.merge(crate::api::archive::router(state.clone()));
+    }
+
+    r.layer(CorsLayer::permissive()).with_state(state)
 }
 
 // ---------------------------------------------------------------------------
