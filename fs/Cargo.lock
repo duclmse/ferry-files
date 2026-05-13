@@ -1469,6 +1469,7 @@ dependencies = [
  "hyper 1.9.0",
  "ignore",
  "lru",
+ "memchr",
  "memmap2",
  "nix 0.28.0",
  "notify",
@@ -1485,6 +1486,7 @@ dependencies = [
  "regex",
  "reqwest",
  "rusqlite",
+ "sd-notify",
  "serde",
  "serde_json",
  "tantivy",
@@ -1505,6 +1507,7 @@ dependencies = [
  "tracing-subscriber",
  "uuid",
  "windows 0.54.0",
+ "windows-service",
  "zip",
 ]
 
@@ -4349,6 +4352,15 @@ dependencies = [
  "pbkdf2 0.13.0",
  "salsa20",
  "sha2 0.11.0",
+]
+
+[[package]]
+name = "sd-notify"
+version = "0.4.5"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "b943eadf71d8b69e661330cb0e2656e31040acf21ee7708e2c238a0ec6af2bf4"
+dependencies = [
+ "libc",
 ]
 
 [[package]]

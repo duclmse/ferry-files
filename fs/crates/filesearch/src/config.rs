@@ -14,32 +14,64 @@ pub struct Config {
     pub watch_paths:   Vec<PathBuf>,
     pub data_dir:      PathBuf,
     pub log_dir:       PathBuf,
+
     #[serde(default)]
     pub exclusions:    ExclusionConfig,
+
     #[serde(default)]
     pub content:       ContentConfig,
+
     #[serde(default)]
     pub api:           ApiConfig,
+
     #[serde(default)]
     pub search:        SearchConfig,
+
     #[serde(default)]
     pub indexer:       IndexerConfig,
+
     #[serde(default)]
     pub archive_index: ArchiveIndexConfig,
+
     #[serde(default)]
     pub macros:          MacroConfig,
+
     #[serde(default)]
     pub archive_service: ArchiveServiceConfig,
+
+    #[serde(default)]
+    pub store:           StoreConfig,
+}
+
+/// Which backend persists the file-metadata index.
+#[derive(Debug, Clone, Deserialize, Default, PartialEq, Eq)]
+#[serde(rename_all = "lowercase")]
+pub enum StoreMode {
+    /// SQLite WAL database (default). Best for concurrent API access.
+    #[default]
+    Sqlite,
+    /// In-memory `Vec<FileRecord>` with binary mmap file on shutdown.
+    /// Near-zero startup latency; single-writer only.
+    Memory,
+}
+
+#[derive(Debug, Clone, Deserialize, Default)]
+pub struct StoreConfig {
+    #[serde(default)]
+    pub mode: StoreMode,
 }
 
 #[derive(Debug, Clone, Deserialize, Default)]
 pub struct ExclusionConfig {
     #[serde(default)]
     pub path_patterns:          Vec<String>,
+
     #[serde(default)]
     pub exclude_hidden:         bool,
+
     #[serde(default)]
     pub max_content_size_bytes: u64,
+
     #[serde(default)]
     pub skip_network_content:   bool,
 }
@@ -55,22 +87,41 @@ pub struct ContentConfig {
 pub struct ApiConfig {
     #[serde(default = "default_rest_port")]
     pub rest_port:         u16,
+
     #[serde(default = "default_grpc_port")]
     pub grpc_port:         u16,
+
     #[serde(default = "default_ipc_path")]
     pub ipc_path:          PathBuf,
+
     #[serde(default = "default_cors_origins")]
     pub rest_cors_origins: Vec<String>,
+
+    /// Enable the REST HTTP API (default: true).
+    #[serde(default = "default_true")]
+
+    pub rest_enabled:      bool,
+    /// Enable the gRPC API (default: true).
+
+    #[serde(default = "default_true")]
+    pub grpc_enabled:      bool,
+
+    /// Enable the Named-Pipe / Unix-socket IPC API (default: true).
+    #[serde(default = "default_true")]
+    pub ipc_enabled:       bool,
 }
 
 fn default_rest_port() -> u16 { 7700 }
+
 fn default_grpc_port() -> u16 { 7701 }
+
 fn default_ipc_path() -> PathBuf {
     #[cfg(windows)]
     return PathBuf::from(r"\\.\pipe\filesearch");
     #[cfg(not(windows))]
     return PathBuf::from("/tmp/filesearch.sock");
 }
+
 fn default_cors_origins() -> Vec<String> { vec!["*".into()] }
 
 impl Default for ApiConfig {
@@ -80,6 +131,9 @@ impl Default for ApiConfig {
             grpc_port:         default_grpc_port(),
             ipc_path:          default_ipc_path(),
             rest_cors_origins: default_cors_origins(),
+            rest_enabled:      true,
+            grpc_enabled:      true,
+            ipc_enabled:       true,
         }
     }
 }
@@ -88,10 +142,13 @@ impl Default for ApiConfig {
 pub struct SearchConfig {
     #[serde(default = "default_default_limit")]
     pub default_limit:        usize,
+
     #[serde(default = "default_max_limit")]
     pub max_limit:            usize,
+
     #[serde(default = "default_fuzzy_threshold")]
     pub fuzzy_threshold:      f32,
+
     /// Maximum number of candidate rows to score during a `fuzzy:` query.
     /// Caps memory usage for broad fuzzy searches; 0 means no cap.
     #[serde(default = "default_max_fuzzy_candidates")]
@@ -99,8 +156,11 @@ pub struct SearchConfig {
 }
 
 fn default_default_limit() -> usize { 100 }
+
 fn default_max_limit() -> usize { 10_000 }
+
 fn default_fuzzy_threshold() -> f32 { 0.7 }
+
 fn default_max_fuzzy_candidates() -> usize { 50_000 }
 
 impl Default for SearchConfig {
@@ -118,10 +178,13 @@ impl Default for SearchConfig {
 pub struct IndexerConfig {
     #[serde(default = "default_threads")]
     pub crawl_threads:        usize,
+
     #[serde(default = "default_threads")]
     pub content_threads:      usize,
+
     #[serde(default = "default_commit_interval")]
     pub commit_interval_secs: u64,
+
     #[serde(default = "default_event_batch_size")]
     pub event_batch_size:     usize,
 }
@@ -164,7 +227,9 @@ pub struct ArchiveIndexConfig {
 }
 
 fn default_true() -> bool { true }
+
 fn default_archive_formats() -> Vec<String> { vec!["zip".into()] }
+
 fn default_max_entries() -> usize { 10_000 }
 
 impl Default for ArchiveIndexConfig {
@@ -225,7 +290,7 @@ pub fn validate(cfg: &Config) -> Vec<String> {
         }
     }
 
-    if cfg.api.rest_port == cfg.api.grpc_port {
+    if cfg.api.rest_enabled && cfg.api.grpc_enabled && cfg.api.rest_port == cfg.api.grpc_port {
         errors.push(format!(
             "rest_port and grpc_port must differ (both are {})",
             cfg.api.rest_port
@@ -392,6 +457,42 @@ log_dir     = "{dir}/logs"
         let cfg = load(f.path()).unwrap();
         let errs = validate(&cfg);
         assert!(errs.iter().any(|e| e.contains("rest_port")));
+    }
+
+    #[test]
+    fn duplicate_ports_ignored_when_one_service_disabled() {
+        let dir = tempfile::tempdir().unwrap();
+        let f = write_config(&format!(
+            "{}\n[api]\nrest_port = 7700\ngrpc_port = 7700\ngrpc_enabled = false",
+            minimal_config_toml(dir.path())
+        ));
+        let cfg = load(f.path()).unwrap();
+        assert!(!cfg.api.grpc_enabled);
+        let errs = validate(&cfg);
+        assert!(!errs.iter().any(|e| e.contains("rest_port")));
+    }
+
+    #[test]
+    fn api_services_default_to_enabled() {
+        let dir = tempfile::tempdir().unwrap();
+        let f = write_config(&minimal_config_toml(dir.path()));
+        let cfg = load(f.path()).unwrap();
+        assert!(cfg.api.rest_enabled);
+        assert!(cfg.api.grpc_enabled);
+        assert!(cfg.api.ipc_enabled);
+    }
+
+    #[test]
+    fn api_services_can_be_disabled() {
+        let dir = tempfile::tempdir().unwrap();
+        let f = write_config(&format!(
+            "{}\n[api]\nrest_enabled = false\ngrpc_enabled = false\nipc_enabled = false",
+            minimal_config_toml(dir.path())
+        ));
+        let cfg = load(f.path()).unwrap();
+        assert!(!cfg.api.rest_enabled);
+        assert!(!cfg.api.grpc_enabled);
+        assert!(!cfg.api.ipc_enabled);
     }
 
     #[test]

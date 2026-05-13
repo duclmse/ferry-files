@@ -20,7 +20,7 @@ use tokio::sync::RwLock;
 use tokio::runtime::Runtime;
 
 use filesearch::config::Config;
-use filesearch::store::{sqlite_store::SqliteStore, tantivy_store::TantivyStore};
+use filesearch::store::{FileStore, sqlite_store::SqliteStore, tantivy_store::TantivyStore};
 
 // ---------------------------------------------------------------------------
 // Setup helpers
@@ -47,13 +47,13 @@ log_dir     = "{dir}/logs"
 }
 
 /// Populate SQLite with `count` synthetic records and return the store.
-fn setup_sqlite(count: usize) -> Arc<SqliteStore> {
-    let store = Arc::new(
+fn setup_sqlite(count: usize) -> Arc<FileStore> {
+    let inner = Arc::new(
         SqliteStore::new(std::path::Path::new(":memory:"))
             .expect("sqlite in-memory"),
     );
-    store.populate_for_bench(count).expect("populate");
-    store
+    inner.populate_for_bench(count).expect("populate");
+    Arc::new(FileStore::Sqlite(inner))
 }
 
 /// Create an empty Tantivy index in a temp directory.

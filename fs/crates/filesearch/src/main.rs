@@ -18,7 +18,11 @@ struct Cli {
 #[derive(Subcommand)]
 enum Command {
     /// Start the search daemon
-    Daemon,
+    Daemon {
+        /// Run as a Windows Service (called by the SCM, not directly)
+        #[arg(long)]
+        service: bool,
+    },
     /// Validate the configuration file
     ValidateConfig,
     /// Search the index (requires daemon to be running)
@@ -42,6 +46,10 @@ enum Command {
     Open { path: String },
     /// Launch the interactive TUI
     Tui,
+    /// Install filesearch as a Windows Service (Windows only)
+    InstallService,
+    /// Uninstall the filesearch Windows Service (Windows only)
+    UninstallService,
 }
 
 #[tokio::main]
@@ -69,9 +77,60 @@ async fn main() {
                 }
             }
         }
-        Command::Daemon => {
+        Command::Daemon { service } => {
+            #[cfg(target_os = "windows")]
+            if service {
+                if let Err(e) = filesearch::service::windows::run_as_service(cli.config) {
+                    eprintln!("service dispatcher error: {e}");
+                    std::process::exit(1);
+                }
+                return;
+            }
+            #[cfg(not(target_os = "windows"))]
+            if service {
+                eprintln!("--service is only supported on Windows");
+                std::process::exit(1);
+            }
             if let Err(e) = daemon::run(cli.config).await {
                 eprintln!("daemon error: {e}");
+                std::process::exit(1);
+            }
+        }
+        Command::InstallService => {
+            #[cfg(target_os = "windows")]
+            {
+                let exe_path = match std::env::current_exe() {
+                    Ok(p) => p,
+                    Err(e) => { eprintln!("cannot determine exe path: {e}"); std::process::exit(1); }
+                };
+                let config_path = match cli.config.canonicalize() {
+                    Ok(p) => p,
+                    Err(e) => { eprintln!("cannot resolve config path: {e}"); std::process::exit(1); }
+                };
+                if let Err(e) = filesearch::service::windows::install(&exe_path, &config_path) {
+                    eprintln!("install-service error: {e}");
+                    std::process::exit(1);
+                }
+                println!("Service '{}' installed.", filesearch::service::windows::SERVICE_NAME);
+            }
+            #[cfg(not(target_os = "windows"))]
+            {
+                eprintln!("install-service is only supported on Windows");
+                std::process::exit(1);
+            }
+        }
+        Command::UninstallService => {
+            #[cfg(target_os = "windows")]
+            {
+                if let Err(e) = filesearch::service::windows::uninstall() {
+                    eprintln!("uninstall-service error: {e}");
+                    std::process::exit(1);
+                }
+                println!("Service '{}' uninstalled.", filesearch::service::windows::SERVICE_NAME);
+            }
+            #[cfg(not(target_os = "windows"))]
+            {
+                eprintln!("uninstall-service is only supported on Windows");
                 std::process::exit(1);
             }
         }

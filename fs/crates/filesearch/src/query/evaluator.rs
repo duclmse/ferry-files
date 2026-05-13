@@ -9,8 +9,8 @@ use tokio::sync::RwLock;
 use crate::config::Config;
 use crate::error::{AppError, Result};
 use crate::store::{
-    build_conditions, CmpOp, DupeKind, FileRecord, SqlCondition,
-    sqlite_store::SqliteStore, tantivy_store::TantivyStore,
+    build_conditions, CmpOp, DupeKind, FileRecord, FileStore, SqlCondition,
+    tantivy_store::TantivyStore,
 };
 
 use super::ast::{
@@ -368,11 +368,11 @@ fn merge_mods(parent: &Modifiers, child: &Modifiers) -> Modifiers {
 pub fn apply_post_filters(
     records: Vec<FileRecord>,
     filters: &[PostFilter],
-    sqlite:  &SqliteStore,
+    store:   &FileStore,
 ) -> Vec<FileRecord> {
     records.into_iter().filter(|r| {
         for f in filters {
-            if !post_filter_match(f, r, sqlite) {
+            if !post_filter_match(f, r, store) {
                 return false;
             }
         }
@@ -380,10 +380,10 @@ pub fn apply_post_filters(
     }).collect()
 }
 
-fn post_filter_match(f: &PostFilter, r: &FileRecord, sqlite: &SqliteStore) -> bool {
+fn post_filter_match(f: &PostFilter, r: &FileRecord, store: &FileStore) -> bool {
     match f {
         PostFilter::Regex(re, _cs) => re.is_match(&r.path),
-        PostFilter::Child(name)    => sqlite.has_child(&r.path, name).unwrap_or(false),
+        PostFilter::Child(name)    => store.has_child(&r.path, name).unwrap_or(false),
         PostFilter::WholeWord(w, cs) => {
             let text = if *cs { r.name.clone() } else { r.name.to_ascii_lowercase() };
             let word = if *cs { w.clone()      } else { w.to_ascii_lowercase()      };
@@ -419,7 +419,7 @@ fn is_whole_word(text: &str, word: &str) -> bool {
 
 pub async fn execute_plan(
     plan:    QueryPlan,
-    sqlite:  Arc<SqliteStore>,
+    store:   Arc<FileStore>,
     tantivy: Arc<TantivyStore>,
     config:  Arc<RwLock<Config>>,
 ) -> Result<QueryResult> {
@@ -431,11 +431,11 @@ pub async fn execute_plan(
 
     let records = match &plan.strategy {
         EvalStrategy::SqliteOnly => {
-            let conds   = plan.sql_conditions.clone();
-            let lim     = limit + offset + plan.post_filters.len().min(1000);
-            let sqlite2 = Arc::clone(&sqlite);
+            let conds  = plan.sql_conditions.clone();
+            let lim    = limit + offset + plan.post_filters.len().min(1000);
+            let store2 = Arc::clone(&store);
             tokio::task::spawn_blocking(move || {
-                run_sqlite_conditions(&sqlite2, &conds, lim)
+                store2.search_conditions(&conds, lim)
             })
             .await
             .map_err(|e| AppError::Query(e.to_string()))??
@@ -453,11 +453,11 @@ pub async fn execute_plan(
             .await
             .map_err(|e| AppError::Query(e.to_string()))??;
 
-            let paths: Vec<String> = hits.into_iter().map(|h| h.path).collect();
-            let sql2 = Arc::clone(&sqlite);
-            let conds = plan.sql_conditions.clone();
+            let paths:  Vec<String> = hits.into_iter().map(|h| h.path).collect();
+            let store2  = Arc::clone(&store);
+            let conds   = plan.sql_conditions.clone();
             tokio::task::spawn_blocking(move || {
-                filter_paths_by_conditions(&sql2, &paths, &conds, limit)
+                store2.search_by_paths(&paths, &conds, limit)
             })
             .await
             .map_err(|e| AppError::Query(e.to_string()))??
@@ -465,10 +465,10 @@ pub async fn execute_plan(
 
         EvalStrategy::DupeSearch(kind) => {
             let kind2  = *kind;
-            let conds   = plan.sql_conditions.clone();
-            let sqlite2 = Arc::clone(&sqlite);
+            let conds  = plan.sql_conditions.clone();
+            let store2 = Arc::clone(&store);
             tokio::task::spawn_blocking(move || {
-                sqlite2.find_dupes(kind2, &conds, limit)
+                store2.find_dupes(kind2, &conds, limit)
             })
             .await
             .map_err(|e| AppError::Query(e.to_string()))??
@@ -479,11 +479,10 @@ pub async fn execute_plan(
             let max_cands    = cfg.search.max_fuzzy_candidates;
             let threshold    = cfg.search.fuzzy_threshold;
             let term_clone   = term.clone();
-            let sqlite2      = Arc::clone(&sqlite);
+            let store2       = Arc::clone(&store);
 
             tokio::task::spawn_blocking(move || {
-                let candidates = run_sqlite_conditions(
-                    &sqlite2,
+                let candidates = store2.search_conditions(
                     &conds,
                     if max_cands > 0 { max_cands } else { 50_000 },
                 )?;
@@ -499,10 +498,10 @@ pub async fn execute_plan(
     drop(cfg);
 
     // Apply post-filters
-    let sqlite_ref = Arc::clone(&sqlite);
-    let filters    = plan.post_filters;
-    let filtered   = tokio::task::spawn_blocking(move || {
-        apply_post_filters(records, &filters, &sqlite_ref)
+    let store_ref = Arc::clone(&store);
+    let filters   = plan.post_filters;
+    let filtered  = tokio::task::spawn_blocking(move || {
+        apply_post_filters(records, &filters, &store_ref)
     })
     .await
     .map_err(|e| AppError::Query(e.to_string()))?;
@@ -519,101 +518,6 @@ pub async fn execute_plan(
     })
 }
 
-// ---------------------------------------------------------------------------
-// SQLite helper
-// ---------------------------------------------------------------------------
-
-fn run_sqlite_conditions(
-    sqlite: &SqliteStore,
-    conds:  &[SqlCondition],
-    limit:  usize,
-) -> Result<Vec<FileRecord>> {
-    use crate::store::MetaFilters;
-    if conds.is_empty() {
-        return sqlite.search_meta(&MetaFilters::default(), limit);
-    }
-    let (where_extra, params) = build_conditions(conds);
-    let sql = format!(
-        "SELECT id, path, name, extension, size_bytes, mtime, ctime,
-                is_dir, is_hidden, is_symlink, attrib_bitmask,
-                content_indexed, tantivy_id, indexed_at, archive_path
-         FROM files WHERE 1=1 {where_extra} LIMIT ?"
-    );
-    let conn = sqlite.get_conn()?;
-    let mut stmt = conn.prepare(&sql)?;
-    let mut all_params = params;
-    all_params.push(rusqlite::types::Value::Integer(limit as i64));
-    let rows = stmt.query_map(rusqlite::params_from_iter(all_params.iter()), |row| {
-        Ok(FileRecord {
-            id:              Some(row.get(0)?),
-            path:            row.get(1)?,
-            name:            row.get(2)?,
-            extension:       row.get(3)?,
-            size_bytes:      row.get::<_, i64>(4)? as u64,
-            mtime:           row.get(5)?,
-            ctime:           row.get(6)?,
-            is_dir:          row.get::<_, i64>(7)? != 0,
-            is_hidden:       row.get::<_, i64>(8)? != 0,
-            is_symlink:      row.get::<_, i64>(9)? != 0,
-            attrib_bitmask:  row.get::<_, i64>(10)? as u32,
-            content_indexed: row.get::<_, i64>(11)? != 0,
-            tantivy_id:      row.get(12)?,
-            indexed_at:      row.get(13)?,
-            archive_path:    row.get(14)?,
-        })
-    })?;
-    rows.map(|r| r.map_err(AppError::Database)).collect()
-}
-
-fn filter_paths_by_conditions(
-    sqlite: &SqliteStore,
-    paths:  &[String],
-    conds:  &[SqlCondition],
-    limit:  usize,
-) -> Result<Vec<FileRecord>> {
-    let mut results = Vec::with_capacity(paths.len().min(limit));
-    let (where_extra, extra_params) = build_conditions(conds);
-    let conn = sqlite.get_conn()?;
-    let sql = format!(
-        "SELECT id, path, name, extension, size_bytes, mtime, ctime,
-                is_dir, is_hidden, is_symlink, attrib_bitmask,
-                content_indexed, tantivy_id, indexed_at, archive_path
-         FROM files WHERE path = ? {where_extra}"
-    );
-    let mut stmt = conn.prepare(&sql)?;
-
-    for path in paths.iter().take(limit * 4) {
-        let mut params: Vec<rusqlite::types::Value> =
-            vec![rusqlite::types::Value::Text(path.clone())];
-        params.extend(extra_params.clone());
-
-        let row = stmt.query_map(rusqlite::params_from_iter(params.iter()), |row| {
-            Ok(FileRecord {
-                id:              Some(row.get(0)?),
-                path:            row.get(1)?,
-                name:            row.get(2)?,
-                extension:       row.get(3)?,
-                size_bytes:      row.get::<_, i64>(4)? as u64,
-                mtime:           row.get(5)?,
-                ctime:           row.get(6)?,
-                is_dir:          row.get::<_, i64>(7)? != 0,
-                is_hidden:       row.get::<_, i64>(8)? != 0,
-                is_symlink:      row.get::<_, i64>(9)? != 0,
-                attrib_bitmask:  row.get::<_, i64>(10)? as u32,
-                content_indexed: row.get::<_, i64>(11)? != 0,
-                tantivy_id:      row.get(12)?,
-                indexed_at:      row.get(13)?,
-                archive_path:    row.get(14)?,
-            })
-        })?
-        .next();
-        if let Some(Ok(rec)) = row {
-            results.push(rec);
-        }
-        if results.len() >= limit { break; }
-    }
-    Ok(results)
-}
 
 // ---------------------------------------------------------------------------
 // Fuzzy scoring with nucleo

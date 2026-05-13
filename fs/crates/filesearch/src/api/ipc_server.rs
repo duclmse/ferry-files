@@ -19,7 +19,7 @@ use tokio_util::sync::CancellationToken;
 use crate::config::Config;
 use crate::indexer::crawler::IndexMetrics;
 use crate::query::{evaluator, parser};
-use crate::store::{sqlite_store::SqliteStore, tantivy_store::TantivyStore, FileRecord};
+use crate::store::{FileStore, tantivy_store::TantivyStore, FileRecord};
 
 use super::ipc_protocol::{
     decode_payload, encode_frame, DecodeError, IpcEnvelope, IpcMessage, IpcRequest, IpcResponse,
@@ -33,7 +33,7 @@ use super::ipc_protocol::{
 /// Run the IPC listener until `shutdown` is cancelled.
 pub async fn run_ipc_server(
     cfg:        Arc<RwLock<Config>>,
-    sqlite:     Arc<SqliteStore>,
+    sqlite:     Arc<FileStore>,
     tantivy:    Arc<TantivyStore>,
     metrics:    Arc<IndexMetrics>,
     reindex_tx: watch::Sender<bool>,
@@ -135,7 +135,7 @@ pub async fn run_ipc_server(
 
 struct ConnCtx {
     cfg:        Arc<RwLock<Config>>,
-    sqlite:     Arc<SqliteStore>,
+    sqlite:     Arc<FileStore>,
     tantivy:    Arc<TantivyStore>,
     metrics:    Arc<IndexMetrics>,
     reindex_tx: watch::Sender<bool>,

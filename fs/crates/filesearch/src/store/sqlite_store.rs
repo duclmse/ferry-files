@@ -99,7 +99,8 @@ impl SqliteStore {
             conn.execute_batch(
                 "PRAGMA journal_mode=WAL;
                  PRAGMA synchronous=NORMAL;
-                 PRAGMA foreign_keys=ON;",
+                 PRAGMA foreign_keys=ON;
+                 PRAGMA busy_timeout=5000;",
             )?;
             Ok(())
         });
@@ -176,6 +177,82 @@ impl SqliteStore {
         Ok(conn.last_insert_rowid())
     }
 
+    /// Upsert a batch of crawl records in a single transaction.
+    /// Combines the former `upsert_file` + `mark_seen` into one SQL round-trip per
+    /// record, and wraps the whole batch in a single BEGIN/COMMIT — turning 2N
+    /// individual transactions into ⌈N/batch_size⌉ transactions.
+    pub fn batch_upsert_crawl(
+        &self,
+        batch:      &[(FileRecord, String)],
+        generation: i64,
+    ) -> Result<()> {
+        if batch.is_empty() {
+            return Ok(());
+        }
+        let conn = self.get_conn()?;
+        conn.execute_batch("BEGIN").map_err(AppError::Database)?;
+
+        let result: Result<()> = (|| {
+            let mut stmt = conn.prepare(
+                "INSERT INTO files (
+                    path, name, extension, size_bytes, mtime, ctime,
+                    is_dir, is_hidden, is_symlink, attrib_bitmask,
+                    content_indexed, tantivy_id, indexed_at, archive_path, parent,
+                    watch_root, crawl_generation
+                 ) VALUES (?1,?2,?3,?4,?5,?6,?7,?8,?9,?10,?11,?12,?13,?14,?15,?16,?17)
+                 ON CONFLICT(path) DO UPDATE SET
+                    name             = excluded.name,
+                    extension        = excluded.extension,
+                    size_bytes       = excluded.size_bytes,
+                    mtime            = excluded.mtime,
+                    ctime            = excluded.ctime,
+                    is_dir           = excluded.is_dir,
+                    is_hidden        = excluded.is_hidden,
+                    is_symlink       = excluded.is_symlink,
+                    attrib_bitmask   = excluded.attrib_bitmask,
+                    content_indexed  = excluded.content_indexed,
+                    tantivy_id       = excluded.tantivy_id,
+                    indexed_at       = excluded.indexed_at,
+                    archive_path     = excluded.archive_path,
+                    parent           = excluded.parent,
+                    watch_root       = excluded.watch_root,
+                    crawl_generation = excluded.crawl_generation",
+            ).map_err(AppError::Database)?;
+
+            for (record, watch_root) in batch {
+                let parent = parent_of(&record.path);
+                stmt.execute(rusqlite::params![
+                    &record.path,
+                    &record.name,
+                    &record.extension,
+                    record.size_bytes as i64,
+                    record.mtime,
+                    record.ctime,
+                    i64::from(record.is_dir),
+                    i64::from(record.is_hidden),
+                    i64::from(record.is_symlink),
+                    record.attrib_bitmask,
+                    i64::from(record.content_indexed),
+                    &record.tantivy_id,
+                    record.indexed_at,
+                    &record.archive_path,
+                    parent,
+                    watch_root,
+                    generation,
+                ]).map_err(AppError::Database)?;
+            }
+            Ok(())
+        })();
+
+        match result {
+            Ok(()) => conn.execute_batch("COMMIT").map_err(AppError::Database),
+            Err(e) => {
+                let _ = conn.execute_batch("ROLLBACK");
+                Err(e)
+            }
+        }
+    }
+
     pub fn remove_file(&self, path: &str) -> Result<()> {
         let conn = self.get_conn()?;
         conn.execute("DELETE FROM files WHERE path = ?", [path])?;
@@ -210,17 +287,6 @@ impl SqliteStore {
             |row| row.get(0),
         )?;
         Ok(gen)
-    }
-
-    /// Mark a row as belonging to the current crawl generation.
-    /// Called for every file upserted during a full crawl.
-    pub fn mark_seen(&self, path: &str, watch_root: &str, generation: i64) -> Result<()> {
-        let conn = self.get_conn()?;
-        conn.execute(
-            "UPDATE files SET watch_root = ?1, crawl_generation = ?2 WHERE path = ?3",
-            rusqlite::params![watch_root, generation, path],
-        )?;
-        Ok(())
     }
 
     /// Delete all rows under `watch_root` whose `crawl_generation` is older than
@@ -408,6 +474,29 @@ impl SqliteStore {
     // Archive inner-file methods
     // -----------------------------------------------------------------------
 
+    /// Upsert a batch of archive inner-file records in a single transaction.
+    /// Replaces the former pattern of calling `get_conn()` + `upsert_file_conn()` in a loop.
+    pub fn upsert_archive_batch(&self, records: &[FileRecord]) -> Result<()> {
+        if records.is_empty() {
+            return Ok(());
+        }
+        let conn = self.get_conn()?;
+        conn.execute_batch("BEGIN").map_err(AppError::Database)?;
+        let result: Result<()> = (|| {
+            for record in records {
+                self.upsert_file_conn(&conn, record)?;
+            }
+            Ok(())
+        })();
+        match result {
+            Ok(()) => conn.execute_batch("COMMIT").map_err(AppError::Database),
+            Err(e) => {
+                let _ = conn.execute_batch("ROLLBACK");
+                Err(e)
+            }
+        }
+    }
+
     pub fn remove_archive_entries(&self, archive_path: &str) -> Result<usize> {
         let conn = self.get_conn()?;
         let n = conn.execute(
@@ -491,6 +580,63 @@ impl SqliteStore {
         }
         tx.commit()?;
         Ok(())
+    }
+
+    /// Execute arbitrary SqlConditions and return matching records.
+    /// Used by `FileStore::search_conditions` dispatch.
+    pub fn search_conditions(&self, conds: &[SqlCondition], limit: usize) -> Result<Vec<FileRecord>> {
+        if conds.is_empty() {
+            return self.search_meta(&MetaFilters::default(), limit);
+        }
+        let (where_extra, params) = build_conditions(conds);
+        let sql = format!(
+            "SELECT id, path, name, extension, size_bytes, mtime, ctime,
+                    is_dir, is_hidden, is_symlink, attrib_bitmask,
+                    content_indexed, tantivy_id, indexed_at, archive_path
+             FROM files WHERE 1=1 {where_extra} LIMIT ?"
+        );
+        let conn = self.get_conn()?;
+        let mut stmt = conn.prepare(&sql)?;
+        let mut all_params = params;
+        all_params.push(rusqlite::types::Value::Integer(limit as i64));
+        query_records(&mut stmt, all_params)
+    }
+
+    /// Look up `paths` in order, applying `conds` as additional filters.
+    /// Used by `FileStore::search_by_paths` for the Tantivy → SQLite path.
+    pub fn search_by_paths(
+        &self,
+        paths:  &[String],
+        conds:  &[SqlCondition],
+        limit:  usize,
+    ) -> Result<Vec<FileRecord>> {
+        let mut results = Vec::with_capacity(paths.len().min(limit));
+        let (where_extra, extra_params) = build_conditions(conds);
+        let sql = format!(
+            "SELECT id, path, name, extension, size_bytes, mtime, ctime,
+                    is_dir, is_hidden, is_symlink, attrib_bitmask,
+                    content_indexed, tantivy_id, indexed_at, archive_path
+             FROM files WHERE path = ? {where_extra}"
+        );
+        let conn = self.get_conn()?;
+        let mut stmt = conn.prepare(&sql)?;
+        for path in paths.iter().take(limit * 4) {
+            let mut params: Vec<rusqlite::types::Value> =
+                vec![rusqlite::types::Value::Text(path.clone())];
+            params.extend(extra_params.clone());
+            let row = stmt
+                .query_map(rusqlite::params_from_iter(params.iter()), |row| {
+                    row_to_record(row)
+                })?
+                .next();
+            if let Some(Ok(rec)) = row {
+                results.push(rec);
+            }
+            if results.len() >= limit {
+                break;
+            }
+        }
+        Ok(results)
     }
 
     /// Return paths of all real ZIP files in the index (not inner archive entries).
@@ -771,27 +917,6 @@ mod tests {
         let g1 = store.begin_crawl_generation().unwrap();
         let g2 = store.begin_crawl_generation().unwrap();
         assert!(g2 > g1, "each call must return a strictly larger generation");
-    }
-
-    #[test]
-    fn mark_seen_and_remove_stale() {
-        let db_file = tempfile::NamedTempFile::new().unwrap();
-        let store = SqliteStore::new(db_file.path()).unwrap();
-
-        // Insert two files under /watch
-        store.upsert_file(&sample_record("/watch/keep.rs")).unwrap();
-        store.upsert_file(&sample_record("/watch/stale.rs")).unwrap();
-
-        let gen = store.begin_crawl_generation().unwrap();
-
-        // Only mark keep.rs as seen in this generation
-        store.mark_seen("/watch/keep.rs", "/watch", gen).unwrap();
-
-        // stale.rs was never marked — remove_stale_for_root should delete it
-        let removed = store.remove_stale_for_root("/watch", gen).unwrap();
-        assert_eq!(removed, 1, "one stale row expected");
-        assert!(store.get_by_path("/watch/keep.rs").unwrap().is_some());
-        assert!(store.get_by_path("/watch/stale.rs").unwrap().is_none());
     }
 
     #[test]

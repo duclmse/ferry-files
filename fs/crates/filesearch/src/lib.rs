@@ -5,6 +5,7 @@ pub mod error;
 pub mod frontend;
 pub mod indexer;
 pub mod query;
+pub mod service;
 pub mod store;
 pub mod watcher;
 pub mod zidx;

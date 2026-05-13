@@ -81,10 +81,17 @@ dashmap   = "5"
 lru       = "0.12"
 flate2    = "1"
 
+# SIMD substring search (fast path for %term% LIKE patterns)
+memchr = "2"
+
 [target.'cfg(unix)'.dependencies]
 nix = { version = "0.28", features = ["fs", "process"] }
 
+[target.'cfg(target_os = "linux")'.dependencies]
+sd-notify = "0.4"
+
 [target.'cfg(windows)'.dependencies]
+windows-service = "0.6"
 windows = { version = "0.54", features = [
     "Win32_Foundation",
     "Win32_Security",

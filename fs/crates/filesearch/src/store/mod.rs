@@ -1,5 +1,9 @@
+use std::path::Path;
+use std::sync::Arc;
+
 use serde::{Deserialize, Serialize};
 
+pub mod memory_store;
 pub mod sqlite_store;
 pub mod tantivy_store;
 
@@ -271,6 +275,243 @@ pub fn build_conditions(
         all_params.extend(params);
     }
     (format!(" AND {}", parts.join(" AND ")), all_params)
+}
+
+// ---------------------------------------------------------------------------
+// FileStore — dispatch enum over concrete store backends
+// ---------------------------------------------------------------------------
+
+use crate::error::Result;
+use memory_store::MemoryStore;
+use sqlite_store::SqliteStore;
+
+/// Runtime-selectable metadata store. Replace `Arc<SqliteStore>` with
+/// `Arc<FileStore>` throughout the daemon to support both backends.
+pub enum FileStore {
+    Sqlite(Arc<SqliteStore>),
+    Memory(Arc<MemoryStore>),
+}
+
+impl FileStore {
+    /// Create a `FileStore` from config.
+    pub fn from_config(cfg: &crate::config::Config) -> Result<Self> {
+        match cfg.store.mode {
+            crate::config::StoreMode::Sqlite =>
+                Ok(FileStore::Sqlite(Arc::new(SqliteStore::new(&cfg.data_dir.join("index.db"))?))),
+            crate::config::StoreMode::Memory =>
+                Ok(FileStore::Memory(Arc::new(MemoryStore::new(&cfg.data_dir)?))),
+        }
+    }
+
+    // ---- upsert / delete ---------------------------------------------------
+
+    pub fn upsert_file(&self, record: &FileRecord) -> Result<i64> {
+        match self {
+            FileStore::Sqlite(s) => s.upsert_file(record),
+            FileStore::Memory(m) => { m.upsert_file(record); Ok(0) }
+        }
+    }
+
+    pub fn remove_file(&self, path: &str) -> Result<()> {
+        match self {
+            FileStore::Sqlite(s) => s.remove_file(path),
+            FileStore::Memory(m) => { m.remove_file(path); Ok(()) }
+        }
+    }
+
+    pub fn remove_directory(&self, path: &str) -> Result<usize> {
+        match self {
+            FileStore::Sqlite(s) => s.remove_directory(path),
+            FileStore::Memory(m) => Ok(m.remove_directory(path)),
+        }
+    }
+
+    pub fn upsert_archive_batch(&self, records: &[FileRecord]) -> Result<()> {
+        match self {
+            FileStore::Sqlite(s) => s.upsert_archive_batch(records),
+            FileStore::Memory(m) => { m.upsert_archive_batch(records); Ok(()) }
+        }
+    }
+
+    pub fn remove_archive_entries(&self, archive_path: &str) -> Result<usize> {
+        match self {
+            FileStore::Sqlite(s) => s.remove_archive_entries(archive_path),
+            FileStore::Memory(m) => Ok(m.remove_archive_entries(archive_path)),
+        }
+    }
+
+    // ---- crawl generation --------------------------------------------------
+
+    pub fn begin_crawl_generation(&self) -> Result<i64> {
+        match self {
+            FileStore::Sqlite(s) => s.begin_crawl_generation(),
+            FileStore::Memory(m) => Ok(m.begin_crawl_generation()),
+        }
+    }
+
+    pub fn batch_upsert_crawl(&self, batch: &[(FileRecord, String)], generation: i64) -> Result<()> {
+        match self {
+            FileStore::Sqlite(s) => s.batch_upsert_crawl(batch, generation),
+            FileStore::Memory(m) => { m.batch_upsert_crawl(batch, generation); Ok(()) }
+        }
+    }
+
+    pub fn remove_stale_for_root(&self, watch_root: &str, generation: i64) -> Result<usize> {
+        match self {
+            FileStore::Sqlite(s) => s.remove_stale_for_root(watch_root, generation),
+            FileStore::Memory(m) => Ok(m.remove_stale_for_root(watch_root, generation)),
+        }
+    }
+
+    // ---- queries -----------------------------------------------------------
+
+    pub fn get_by_path(&self, path: &str) -> Result<Option<FileRecord>> {
+        match self {
+            FileStore::Sqlite(s) => s.get_by_path(path),
+            FileStore::Memory(m) => m.get_by_path(path),
+        }
+    }
+
+    pub fn has_child(&self, parent_path: &str, name_pattern: &str) -> Result<bool> {
+        match self {
+            FileStore::Sqlite(s) => s.has_child(parent_path, name_pattern),
+            FileStore::Memory(m) => m.has_child(parent_path, name_pattern),
+        }
+    }
+
+    pub fn total_files(&self) -> Result<i64> {
+        match self {
+            FileStore::Sqlite(s) => s.total_files(),
+            FileStore::Memory(m) => Ok(m.total_files()),
+        }
+    }
+
+    pub fn total_archive_entries(&self) -> Result<i64> {
+        match self {
+            FileStore::Sqlite(s) => s.total_archive_entries(),
+            FileStore::Memory(m) => Ok(m.total_archive_entries()),
+        }
+    }
+
+    pub fn search_meta(&self, filters: &MetaFilters, limit: usize) -> Result<Vec<FileRecord>> {
+        match self {
+            FileStore::Sqlite(s) => s.search_meta(filters, limit),
+            FileStore::Memory(m) => m.search_meta(filters, limit),
+        }
+    }
+
+    pub fn search_name(
+        &self,
+        name:    &str,
+        filters: &MetaFilters,
+        limit:   usize,
+    ) -> Result<Vec<FileRecord>> {
+        match self {
+            FileStore::Sqlite(s) => s.search_name(name, filters, limit),
+            FileStore::Memory(m) => m.search_name(name, filters, limit),
+        }
+    }
+
+    pub fn search_extension(
+        &self,
+        ext:     &str,
+        filters: &MetaFilters,
+        limit:   usize,
+    ) -> Result<Vec<FileRecord>> {
+        match self {
+            FileStore::Sqlite(s) => s.search_extension(ext, filters, limit),
+            FileStore::Memory(m) => m.search_extension(ext, filters, limit),
+        }
+    }
+
+    pub fn paths_under(&self, dir: &str) -> Result<Vec<String>> {
+        match self {
+            FileStore::Sqlite(s) => s.paths_under(dir),
+            FileStore::Memory(m) => m.paths_under(dir),
+        }
+    }
+
+    pub fn search_conditions(&self, conds: &[SqlCondition], limit: usize) -> Result<Vec<FileRecord>> {
+        match self {
+            FileStore::Sqlite(s) => s.search_conditions(conds, limit),
+            FileStore::Memory(m) => m.search_conditions(conds, limit),
+        }
+    }
+
+    pub fn search_by_paths(
+        &self,
+        paths: &[String],
+        conds: &[SqlCondition],
+        limit: usize,
+    ) -> Result<Vec<FileRecord>> {
+        match self {
+            FileStore::Sqlite(s) => s.search_by_paths(paths, conds, limit),
+            FileStore::Memory(m) => m.search_by_paths(paths, conds, limit),
+        }
+    }
+
+    pub fn find_dupes(
+        &self,
+        kind:  DupeKind,
+        conds: &[SqlCondition],
+        limit: usize,
+    ) -> Result<Vec<FileRecord>> {
+        match self {
+            FileStore::Sqlite(s) => s.find_dupes(kind, conds, limit),
+            FileStore::Memory(m) => m.find_dupes(kind, conds, limit),
+        }
+    }
+
+    pub fn list_archive_paths(&self) -> Result<Vec<String>> {
+        match self {
+            FileStore::Sqlite(s) => s.list_archive_paths(),
+            FileStore::Memory(m) => m.list_archive_paths(),
+        }
+    }
+
+    // ---- metadata (key-value) ----------------------------------------------
+
+    pub fn get_meta(&self, key: &str) -> Result<Option<String>> {
+        match self {
+            FileStore::Sqlite(s) => s.get_meta(key),
+            FileStore::Memory(m) => Ok(m.get_meta(key)),
+        }
+    }
+
+    pub fn set_meta(&self, key: &str, value: &str) -> Result<()> {
+        match self {
+            FileStore::Sqlite(s) => s.set_meta(key, value),
+            FileStore::Memory(m) => { m.set_meta(key, value); Ok(()) }
+        }
+    }
+
+    // ---- persistence -------------------------------------------------------
+
+    /// Write the in-memory index to disk. No-op for the SQLite backend.
+    pub fn flush_to_disk(&self, data_dir: &Path) -> Result<()> {
+        match self {
+            FileStore::Sqlite(_) => Ok(()),
+            FileStore::Memory(m) => m.flush_to_disk(data_dir),
+        }
+    }
+
+    // ---- USN/inotify checkpoint --------------------------------------------
+
+    /// Return the last recorded journal position (0 if never set or SQLite mode).
+    pub fn get_usn_checkpoint(&self) -> u64 {
+        match self {
+            FileStore::Sqlite(_) => 0,
+            FileStore::Memory(m) => m.get_usn_checkpoint(),
+        }
+    }
+
+    /// Persist the journal position so dirty-shutdown recovery can replay deltas.
+    /// No-op for the SQLite backend (SQLite is always consistent on disk).
+    pub fn set_usn_checkpoint(&self, checkpoint: u64) {
+        if let FileStore::Memory(m) = self {
+            m.set_usn_checkpoint(checkpoint);
+        }
+    }
 }
 
 // ---------------------------------------------------------------------------

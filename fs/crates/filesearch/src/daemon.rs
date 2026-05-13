@@ -18,7 +18,7 @@ use crate::api::rest::AppState;
 use crate::config;
 use crate::error::AppError;
 use crate::indexer::crawler::{full_crawl, process_event, IndexEvent, IndexMetrics};
-use crate::store::{sqlite_store::SqliteStore, tantivy_store::TantivyStore};
+use crate::store::{FileStore, tantivy_store::TantivyStore};
 use crate::watcher;
 use crate::zidx::zidx_path_for;
 
@@ -111,7 +111,8 @@ pub async fn run_with_shutdown(
     let _instance_guard = win_guard::acquire()?;
 
     // ── 4-5. Stores ────────────────────────────────────────────────────────
-    let sqlite  = Arc::new(SqliteStore::new(&cfg.data_dir.join("index.db"))?);
+    tracing::info!("store mode: {:?}", cfg.store.mode);
+    let sqlite  = Arc::new(FileStore::from_config(&cfg)?);
     let tantivy = Arc::new(TantivyStore::new(&cfg.data_dir.join("tantivy"))?);
     let metrics = IndexMetrics::new();
 
@@ -156,14 +157,12 @@ pub async fn run_with_shutdown(
     // spawning an unbounded number of tokio tasks.
     let event_sem = Arc::new(Semaphore::new(MAX_EVENT_TASKS));
 
-    // ── 10. Ctrl+C → cancel token ──────────────────────────────────────────
+    // ── 10. Shutdown signal → cancel token ────────────────────────────────
     {
         let shutdown_c = shutdown.clone();
         tokio::spawn(async move {
-            if tokio::signal::ctrl_c().await.is_ok() {
-                tracing::info!("ctrl-c received, shutting down");
-                shutdown_c.cancel();
-            }
+            wait_for_shutdown_signal().await;
+            shutdown_c.cancel();
         });
     }
 
@@ -208,73 +207,96 @@ pub async fn run_with_shutdown(
 
     // ── 14. IPC server ─────────────────────────────────────────────────────
     {
-        let shutdown_c  = shutdown.clone();
-        let cfg_c       = Arc::clone(&shared_cfg);
-        let sqlite_c    = Arc::clone(&sqlite);
-        let tantivy_c   = Arc::clone(&tantivy);
-        let metrics_c   = Arc::clone(&metrics);
-        let reindex_ipc = reindex_tx.clone();
-        tokio::spawn(async move {
-            run_ipc_server(cfg_c, sqlite_c, tantivy_c, metrics_c, reindex_ipc, shutdown_c).await;
-        });
+        let api_cfg = shared_cfg.read().await.api.clone();
+        if api_cfg.ipc_enabled {
+            let shutdown_c  = shutdown.clone();
+            let cfg_c       = Arc::clone(&shared_cfg);
+            let sqlite_c    = Arc::clone(&sqlite);
+            let tantivy_c   = Arc::clone(&tantivy);
+            let metrics_c   = Arc::clone(&metrics);
+            let reindex_ipc = reindex_tx.clone();
+            tokio::spawn(async move {
+                run_ipc_server(cfg_c, sqlite_c, tantivy_c, metrics_c, reindex_ipc, shutdown_c).await;
+            });
+        } else {
+            tracing::info!("IPC server disabled");
+        }
     }
 
     // ── 15. REST server ────────────────────────────────────────────────────
-    let rest_port = shared_cfg.read().await.api.rest_port;
     {
-        let app_state = AppState {
-            sqlite:           Arc::clone(&sqlite),
-            tantivy:          Arc::clone(&tantivy),
-            config:           Arc::clone(&shared_cfg),
-            metrics:          Arc::clone(&metrics),
-            reindex_tx:       reindex_tx.clone(),
-            archive_registry: Arc::clone(&archive_registry),
-        };
-        let shutdown_c = shutdown.clone();
-        tokio::spawn(async move {
-            let router = crate::api::rest::router(app_state);
-            let addr   = std::net::SocketAddr::from(([0, 0, 0, 0], rest_port));
-            tracing::info!("REST listening on {addr}");
-            let listener = match tokio::net::TcpListener::bind(addr).await {
-                Ok(l) => l,
-                Err(e) => { tracing::error!("REST bind error: {e}"); return; }
+        let api_cfg = shared_cfg.read().await.api.clone();
+        if api_cfg.rest_enabled {
+            let app_state = AppState {
+                sqlite:           Arc::clone(&sqlite),
+                tantivy:          Arc::clone(&tantivy),
+                config:           Arc::clone(&shared_cfg),
+                metrics:          Arc::clone(&metrics),
+                reindex_tx:       reindex_tx.clone(),
+                archive_registry: Arc::clone(&archive_registry),
             };
-            if let Err(e) = axum::serve(listener, router)
-                .with_graceful_shutdown(async move { shutdown_c.cancelled().await })
-                .await
-            {
-                tracing::error!("REST server error: {e}");
-            }
-        });
+            let shutdown_c = shutdown.clone();
+            let rest_port  = api_cfg.rest_port;
+            tokio::spawn(async move {
+                let router = crate::api::rest::router(app_state);
+                let addr   = std::net::SocketAddr::from(([0, 0, 0, 0], rest_port));
+                tracing::info!("REST listening on {addr}");
+                let listener = match tokio::net::TcpListener::bind(addr).await {
+                    Ok(l) => l,
+                    Err(e) => { tracing::error!("REST bind error: {e}"); return; }
+                };
+                if let Err(e) = axum::serve(listener, router)
+                    .with_graceful_shutdown(async move { shutdown_c.cancelled().await })
+                    .await
+                {
+                    tracing::error!("REST server error: {e}");
+                }
+            });
+        } else {
+            tracing::info!("REST server disabled");
+        }
     }
 
     // ── 16. gRPC server ────────────────────────────────────────────────────
-    let grpc_port = shared_cfg.read().await.api.grpc_port;
     {
-        let svc = FileSearchService {
-            sqlite:     Arc::clone(&sqlite),
-            tantivy:    Arc::clone(&tantivy),
-            config:     Arc::clone(&shared_cfg),
-            metrics:    Arc::clone(&metrics),
-            reindex_tx: reindex_tx.clone(),
-        };
-        let reflection = tonic_reflection::server::Builder::configure()
-            .register_encoded_file_descriptor_set(grpc::proto::FILE_DESCRIPTOR_SET)
-            .build()
-            .expect("gRPC reflection service build");
-        let shutdown_c = shutdown.clone();
-        tokio::spawn(async move {
-            let addr = std::net::SocketAddr::from(([0, 0, 0, 0], grpc_port));
-            tracing::info!("gRPC listening on {addr}");
-            if let Err(e) = tonic::transport::Server::builder()
-                .add_service(grpc::service(svc))
-                .add_service(reflection)
-                .serve_with_shutdown(addr, shutdown_c.cancelled())
-                .await
-            {
-                tracing::error!("gRPC server error: {e}");
-            }
-        });
+        let api_cfg = shared_cfg.read().await.api.clone();
+        if api_cfg.grpc_enabled {
+            let svc = FileSearchService {
+                sqlite:     Arc::clone(&sqlite),
+                tantivy:    Arc::clone(&tantivy),
+                config:     Arc::clone(&shared_cfg),
+                metrics:    Arc::clone(&metrics),
+                reindex_tx: reindex_tx.clone(),
+            };
+            let reflection = tonic_reflection::server::Builder::configure()
+                .register_encoded_file_descriptor_set(grpc::proto::FILE_DESCRIPTOR_SET)
+                .build()
+                .expect("gRPC reflection service build");
+            let shutdown_c = shutdown.clone();
+            let grpc_port  = api_cfg.grpc_port;
+            tokio::spawn(async move {
+                let addr = std::net::SocketAddr::from(([0, 0, 0, 0], grpc_port));
+                tracing::info!("gRPC listening on {addr}");
+                if let Err(e) = tonic::transport::Server::builder()
+                    .add_service(grpc::service(svc))
+                    .add_service(reflection)
+                    .serve_with_shutdown(addr, shutdown_c.cancelled())
+                    .await
+                {
+                    tracing::error!("gRPC server error: {e}");
+                }
+            });
+        } else {
+            tracing::info!("gRPC server disabled");
+        }
+    }
+
+    // ── 17a. Notify systemd the daemon is ready ────────────────────────────
+    #[cfg(target_os = "linux")]
+    {
+        if let Err(e) = sd_notify::notify(false, &[sd_notify::NotifyState::Ready]) {
+            tracing::debug!("sd_notify ready skipped: {e}");
+        }
     }
 
     // ── 17. Initial full crawl (only if the index has never been built) ───────
@@ -342,6 +364,10 @@ pub async fn run_with_shutdown(
     }
 
     // ── 19. Graceful shutdown ──────────────────────────────────────────────
+    #[cfg(target_os = "linux")]
+    {
+        let _ = sd_notify::notify(false, &[sd_notify::NotifyState::Stopping]);
+    }
     tracing::info!("draining in-flight events (max 10s)…");
     let drain_deadline = tokio::time::Instant::now() + Duration::from_secs(10);
     while tokio::time::Instant::now() < drain_deadline {
@@ -361,6 +387,14 @@ pub async fn run_with_shutdown(
     tracing::info!("final tantivy commit…");
     let _ = tantivy.commit();
 
+    // Flush in-memory store snapshot on clean shutdown (no-op for SQLite).
+    {
+        let data_dir = shared_cfg.read().await.data_dir.clone();
+        if let Err(e) = sqlite.flush_to_disk(&data_dir) {
+            tracing::warn!("store flush error: {e}");
+        }
+    }
+
     #[cfg(unix)]
     { let _ = std::fs::remove_file(&pid_path); }
 
@@ -379,7 +413,7 @@ pub async fn run_with_shutdown(
 
 fn spawn_crawl(
     crawl_active: &Arc<AtomicBool>,
-    sqlite:       Arc<SqliteStore>,
+    sqlite:       Arc<FileStore>,
     tantivy:      Arc<TantivyStore>,
     metrics:      Arc<IndexMetrics>,
     registry:     Arc<ArchiveRegistry>,
@@ -398,6 +432,39 @@ fn spawn_crawl(
         }
         ca.store(false, Ordering::Release);
     });
+}
+
+// ---------------------------------------------------------------------------
+// Cross-platform shutdown signal handler
+//
+// On Unix: waits for SIGTERM or SIGINT (covers systemd, kill, Ctrl-C).
+// On Windows (non-service): waits for Ctrl-C; the Windows Service path
+//   receives PRESHUTDOWN/STOP via the SCM handler in service.rs instead.
+// ---------------------------------------------------------------------------
+
+async fn wait_for_shutdown_signal() {
+    #[cfg(unix)]
+    {
+        use tokio::signal::unix::{SignalKind, signal};
+        match (signal(SignalKind::terminate()), signal(SignalKind::interrupt())) {
+            (Ok(mut sigterm), Ok(mut sigint)) => {
+                tokio::select! {
+                    _ = sigterm.recv() => tracing::info!("SIGTERM received, shutting down"),
+                    _ = sigint.recv()  => tracing::info!("SIGINT received, shutting down"),
+                }
+            }
+            (Err(e), _) | (_, Err(e)) => {
+                tracing::error!("failed to register Unix signal handler: {e}; ctrl-c only");
+                tokio::signal::ctrl_c().await.ok();
+                tracing::info!("ctrl-c received, shutting down");
+            }
+        }
+    }
+    #[cfg(not(unix))]
+    {
+        tokio::signal::ctrl_c().await.ok();
+        tracing::info!("ctrl-c received, shutting down");
+    }
 }
 
 // ---------------------------------------------------------------------------

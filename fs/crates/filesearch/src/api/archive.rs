@@ -157,11 +157,11 @@ impl ArchiveRegistry {
 
 pub fn router(state: AppState) -> Router<AppState> {
     Router::new()
-        .route("/archive",              get(list_archives))
-        .route("/archive/:id/index",    get(get_index))
-        .route("/archive/:id/dir",      get(list_dir))
-        .route("/archive/:id/file",     get(stream_file))
-        .route("/archive/:id/search",   get(search_archive))
+        .route("/archive",            get(list_archives))
+        .route("/archive/:id/index",  get(get_index))
+        .route("/archive/:id/dir",    get(list_dir))
+        .route("/archive/:id/file",   get(stream_file))
+        .route("/archive/:id/search", get(search_archive))
         .with_state(state)
 }
 
@@ -462,7 +462,6 @@ async fn search_archive(
     match evaluator::execute_plan(plan, state.sqlite, state.tantivy, state.config).await {
         Ok(result) => {
             use crate::api::rest::SearchApiResponse;
-            use crate::api::dto::archive_entry_opt;
             let hits = result.hits.iter().map(|r| crate::api::rest::SearchHit {
                 path:          r.path.clone(),
                 name:          r.name.clone(),
@@ -472,7 +471,7 @@ async fn search_archive(
                 score:         0.0,
                 snippet:       None,
                 archive_path:  r.archive_path.clone(),
-                archive_entry: archive_entry_opt(r),
+                archive_entry: crate::api::dto::archive_entry_opt(r),
             }).collect();
             Json(SearchApiResponse {
                 result:  hits,

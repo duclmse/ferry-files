@@ -292,7 +292,7 @@ impl ZidxBuilder {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use std::io::Write as _;
+    // use std::io::Write as _;
     use tempfile::TempDir;
 
     fn make_zip(entries: &[(&str, &[u8])]) -> Vec<u8> {

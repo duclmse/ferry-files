@@ -12,24 +12,14 @@ use tokio::sync::RwLock;
 
 use crate::config::Config;
 use crate::error::Result;
-use crate::store::{sqlite_store::SqliteStore, tantivy_store::TantivyStore};
+use crate::store::{FileStore, tantivy_store::TantivyStore};
 
 pub use evaluator::{EvalStrategy, QueryResult};
 
-/// Parse and execute a raw query string against the SQLite and Tantivy stores.
-///
-/// Steps:
-/// 1. Expand user macros and escape macros.
-/// 2. Tokenise.
-/// 3. Parse → AST.
-/// 4. Plan → `QueryPlan`.
-/// 5. Execute (strategy dispatch).
-/// 6. Apply post-filters.
-/// 7. Apply limit/offset.
-/// 8. Return `QueryResult`.
+/// Parse and execute a raw query string against the store backends.
 pub async fn execute(
     raw_query: &str,
-    sqlite:    Arc<SqliteStore>,
+    sqlite:    Arc<FileStore>,
     tantivy:   Arc<TantivyStore>,
     config:    Arc<RwLock<Config>>,
 ) -> Result<QueryResult> {

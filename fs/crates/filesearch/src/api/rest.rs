@@ -25,7 +25,7 @@ use crate::api::archive::ArchiveRegistry;
 use crate::config::Config;
 use crate::indexer::crawler::IndexMetrics;
 use crate::query::{evaluator, parser};
-use crate::store::{sqlite_store::SqliteStore, tantivy_store::TantivyStore, FileRecord};
+use crate::store::{FileStore, tantivy_store::TantivyStore, FileRecord};
 
 use super::dto::archive_entry_opt;
 
@@ -35,7 +35,7 @@ use super::dto::archive_entry_opt;
 
 #[derive(Clone)]
 pub struct AppState {
-    pub sqlite:            Arc<SqliteStore>,
+    pub sqlite:            Arc<FileStore>,
     pub tantivy:           Arc<TantivyStore>,
     pub config:            Arc<RwLock<Config>>,
     pub metrics:           Arc<IndexMetrics>,

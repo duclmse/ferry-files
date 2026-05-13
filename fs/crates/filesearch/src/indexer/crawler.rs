@@ -1,7 +1,7 @@
 use std::path::{Path, PathBuf};
 use std::sync::{
     atomic::{AtomicU64, Ordering},
-    Arc,
+    mpsc, Arc,
 };
 use std::time::{SystemTime, UNIX_EPOCH};
 
@@ -13,9 +13,9 @@ use crate::api::archive::ArchiveRegistry;
 use crate::config::Config;
 use crate::error::{AppError, Result};
 use crate::store::{
-    sqlite_store::SqliteStore,
-    tantivy_store::TantivyStore,
     FileRecord,
+    FileStore,
+    tantivy_store::TantivyStore,
 };
 
 use super::archive::{ArchiveCrawler, archive_entry_to_record};
@@ -210,17 +210,17 @@ fn build_file_record(path: &Path, meta: &std::fs::Metadata, is_hidden: bool, now
 fn crawl_archive_sync(
     archive_path: &Path,
     crawler:      &ArchiveCrawler<'_>,
-    sqlite:       &SqliteStore,
+    store:        &FileStore,
     tantivy:      &TantivyStore,
     metrics:      &IndexMetrics,
     zidx_dir:     Option<&Path>,
     registry:     Option<&ArchiveRegistry>,
 ) -> Result<()> {
     let archive_str = archive_path.to_str().unwrap_or_default();
-    sqlite.remove_archive_entries(archive_str)?;
+    store.remove_archive_entries(archive_str)?;
 
-    let conn = sqlite.get_conn()?;
-    conn.execute_batch("BEGIN").map_err(AppError::Database)?;
+    let mut records_batch: Vec<FileRecord>         = Vec::new();
+    let mut content_batch: Vec<(FileRecord, String)> = Vec::new();
 
     for entry_result in crawler.crawl(archive_path, 0)? {
         let entry = match entry_result {
@@ -231,17 +231,24 @@ fn crawl_archive_sync(
             }
         };
         let record = archive_entry_to_record(&entry);
-        sqlite.upsert_file_conn(&conn, &record)?;
-        if let Some(content) = &entry.content {
-            if let Err(e) = tantivy.upsert(&record, Some(content)) {
-                tracing::warn!("tantivy upsert error: {e}");
-            }
-            metrics.content_indexed.fetch_add(1, Ordering::Relaxed);
+        if let Some(content) = entry.content {
+            let mut r = record.clone();
+            r.content_indexed = true;
+            content_batch.push((r, content));
         }
+        records_batch.push(record);
         metrics.archive_entries_indexed.fetch_add(1, Ordering::Relaxed);
     }
 
-    conn.execute_batch("COMMIT").map_err(AppError::Database)?;
+    store.upsert_archive_batch(&records_batch)?;
+
+    for (record, content) in &content_batch {
+        if let Err(e) = tantivy.upsert(record, Some(content)) {
+            tracing::warn!("tantivy upsert error: {e}");
+        }
+        metrics.content_indexed.fetch_add(1, Ordering::Relaxed);
+    }
+
     metrics.archives_crawled.fetch_add(1, Ordering::Relaxed);
 
     // Build .zidx sidecar when archive-service indexing is enabled.
@@ -263,7 +270,7 @@ fn crawl_archive_sync(
 
 pub async fn full_crawl(
     config:   Arc<RwLock<Config>>,
-    sqlite:   Arc<SqliteStore>,
+    sqlite:   Arc<FileStore>,
     tantivy:  Arc<TantivyStore>,
     metrics:  Arc<IndexMetrics>,
     registry: Arc<ArchiveRegistry>,
@@ -322,7 +329,54 @@ pub async fn full_crawl(
             let registry  = Arc::clone(&registry_w);
             let root_str  = watch_root.clone();
 
+            // Dedicated writer thread batches upserts in groups of 500
+            // inside a single BEGIN/COMMIT, reducing write transactions to ⌈N/500⌉.
+            // Metrics are incremented here (not in the walker) so that
+            // `total_files` reflects rows actually committed to SQLite — tests
+            // and the REST /stats endpoint use it as a crawl-completion signal.
+            const BATCH_SIZE: usize = 500;
+            let (tx, rx) = mpsc::sync_channel::<(FileRecord, String)>(2048);
+            let writer_thread = {
+                let sqlite_b  = Arc::clone(&sqlite_w);
+                let metrics_b = Arc::clone(&metrics_w);
+                let gen       = generation;
+                std::thread::spawn(move || {
+                    let mut buf: Vec<(FileRecord, String)> = Vec::with_capacity(BATCH_SIZE);
+                    for item in rx {
+                        buf.push(item);
+                        if buf.len() >= BATCH_SIZE {
+                            if let Err(e) = sqlite_b.batch_upsert_crawl(&buf, gen) {
+                                tracing::warn!("batch_upsert_crawl error: {e}");
+                            } else {
+                                for (rec, _) in &buf {
+                                    if rec.is_dir {
+                                        metrics_b.total_dirs.fetch_add(1, Ordering::Relaxed);
+                                    } else {
+                                        metrics_b.total_files.fetch_add(1, Ordering::Relaxed);
+                                    }
+                                }
+                            }
+                            buf.clear();
+                        }
+                    }
+                    if !buf.is_empty() {
+                        if let Err(e) = sqlite_b.batch_upsert_crawl(&buf, gen) {
+                            tracing::warn!("batch_upsert_crawl (final) error: {e}");
+                        } else {
+                            for (rec, _) in &buf {
+                                if rec.is_dir {
+                                    metrics_b.total_dirs.fetch_add(1, Ordering::Relaxed);
+                                } else {
+                                    metrics_b.total_files.fetch_add(1, Ordering::Relaxed);
+                                }
+                            }
+                        }
+                    }
+                })
+            };
+
             walker.run(|| {
+                let tx_w      = tx.clone();
                 let sqlite    = Arc::clone(&sqlite);
                 let tantivy   = Arc::clone(&tantivy);
                 let metrics   = Arc::clone(&metrics);
@@ -358,23 +412,8 @@ pub async fn full_crawl(
 
                     let now    = unix_now();
                     let record = build_file_record(path, &meta, is_hidden, now);
-                    let path_str = record.path.clone();
 
-                    match sqlite.upsert_file(&record) {
-                        Ok(_) => {
-                            // Mark as seen in this generation so stale cleanup
-                            // can skip it.
-                            if let Err(e) = sqlite.mark_seen(&path_str, &root_str, generation) {
-                                tracing::warn!("mark_seen error for {path_str}: {e}");
-                            }
-                            if record.is_dir {
-                                metrics.total_dirs.fetch_add(1, Ordering::Relaxed);
-                            } else {
-                                metrics.total_files.fetch_add(1, Ordering::Relaxed);
-                            }
-                        }
-                        Err(e) => tracing::warn!("upsert error for {}: {e}", path.display()),
-                    }
+                    let _ = tx_w.send((record.clone(), root_str.clone()));
 
                     // Content indexing — sync read for small files (≤1MB) in the walk closure
                     if !meta.is_dir() {
@@ -394,7 +433,7 @@ pub async fn full_crawl(
                         }
                     }
 
-                    // Archive indexing
+                    // Archive indexing — has its own BEGIN/COMMIT, stays inline.
                     if !meta.is_dir() && arc_cfg.enabled {
                         let is_archive = path
                             .extension()
@@ -405,7 +444,7 @@ pub async fn full_crawl(
                         if is_archive {
                             let crawler = ArchiveCrawler::new(&arc_cfg, &cnt_cfg);
                             if let Err(e) = crawl_archive_sync(
-                                path, &crawler, &sqlite, &tantivy, &metrics,
+                                path, &crawler, sqlite.as_ref(), &tantivy, &metrics,
                                 zidx_dir.as_deref(),
                                 Some(&registry),
                             ) {
@@ -417,6 +456,11 @@ pub async fn full_crawl(
                     ignore::WalkState::Continue
                 })
             });
+
+            // Closing tx signals the writer thread that no more records are coming.
+            // Join before removing stale rows so all crawl_generation marks are committed.
+            drop(tx);
+            let _ = writer_thread.join();
 
             // Remove stale rows for this watch root in SQL — no Rust Vec of paths.
             let removed = sqlite_w.remove_stale_for_root(&watch_root, generation)?;
@@ -453,7 +497,7 @@ pub async fn full_crawl(
 pub async fn process_event(
     event:    IndexEvent,
     config:   Arc<RwLock<Config>>,
-    sqlite:   Arc<SqliteStore>,
+    sqlite:   Arc<FileStore>,
     tantivy:  Arc<TantivyStore>,
     metrics:  Arc<IndexMetrics>,
     registry: Arc<ArchiveRegistry>,
@@ -540,7 +584,7 @@ pub async fn process_event(
                     tokio::task::spawn_blocking(move || {
                         let crawler = ArchiveCrawler::new(&arc_cfg, &cnt_cfg);
                         let _ = crawl_archive_sync(
-                            &to2, &crawler, &sqlite2, &tantivy2, &metrics2,
+                            &to2, &crawler, sqlite2.as_ref(), &tantivy2, &metrics2,
                             zidx_dir.as_deref(),
                             Some(&registry2),
                         );
@@ -566,7 +610,7 @@ pub async fn process_event(
             tokio::task::spawn_blocking(move || {
                 let crawler = ArchiveCrawler::new(&arc_cfg, &cnt_cfg);
                 if let Err(e) = crawl_archive_sync(
-                    &path, &crawler, &sqlite2, &tantivy2, &metrics2,
+                    &path, &crawler, sqlite2.as_ref(), &tantivy2, &metrics2,
                     zidx_dir.as_deref(),
                     Some(&registry2),
                 ) {
@@ -600,8 +644,11 @@ mod tests {
     use super::*;
     use tempfile::TempDir;
 
-    fn make_sqlite(dir: &TempDir) -> Arc<SqliteStore> {
-        Arc::new(SqliteStore::new(&dir.path().join("test.db")).unwrap())
+    fn make_store(dir: &TempDir) -> Arc<FileStore> {
+        use crate::store::sqlite_store::SqliteStore;
+        Arc::new(FileStore::Sqlite(Arc::new(
+            SqliteStore::new(&dir.path().join("test.db")).unwrap()
+        )))
     }
 
     fn make_tantivy(_dir: &TempDir) -> Arc<TantivyStore> {
@@ -622,6 +669,7 @@ mod tests {
             archive_index: ArchiveIndexConfig::default(),
             macros: MacroConfig::default(),
             archive_service: ArchiveServiceConfig::default(),
+            store: StoreConfig::default(),
         }))
     }
 
@@ -631,16 +679,16 @@ mod tests {
         for i in 0..5 {
             std::fs::write(dir.path().join(format!("{i}.txt")), b"hello").unwrap();
         }
-        let sqlite  = make_sqlite(&dir);
+        let store   = make_store(&dir);
         let tantivy = make_tantivy(&dir);
         let metrics = IndexMetrics::new();
         let config  = make_config(dir.path());
         let token   = CancellationToken::new();
 
         let registry = Arc::new(ArchiveRegistry::disabled());
-        full_crawl(config, sqlite.clone(), tantivy, metrics, registry, token).await.unwrap();
+        full_crawl(config, store.clone(), tantivy, metrics, registry, token).await.unwrap();
 
-        let total = sqlite.total_files().unwrap();
+        let total = store.total_files().unwrap();
         assert!(total >= 5, "expected ≥5 files, got {total}");
     }
 
@@ -668,19 +716,20 @@ mod tests {
             archive_index: ArchiveIndexConfig::default(),
             macros: MacroConfig::default(),
             archive_service: ArchiveServiceConfig::default(),
+            store: StoreConfig::default(),
         }));
 
         let tmpdir2 = TempDir::new().unwrap();
-        let sqlite   = make_sqlite(&tmpdir2);
+        let store    = make_store(&tmpdir2);
         let tantivy  = make_tantivy(&tmpdir2);
         let metrics  = IndexMetrics::new();
         let registry = Arc::new(ArchiveRegistry::disabled());
         let token    = CancellationToken::new();
 
-        full_crawl(config, sqlite.clone(), tantivy, metrics, registry, token).await.unwrap();
+        full_crawl(config, store.clone(), tantivy, metrics, registry, token).await.unwrap();
 
         let skip_path = dir.path().join("skip.log").to_string_lossy().into_owned();
-        assert!(sqlite.get_by_path(&skip_path).unwrap().is_none(), "excluded file should not be indexed");
+        assert!(store.get_by_path(&skip_path).unwrap().is_none(), "excluded file should not be indexed");
     }
 
     #[tokio::test]
@@ -690,7 +739,7 @@ mod tests {
         std::fs::write(&file, b"bye").unwrap();
 
         let tmpdir2 = TempDir::new().unwrap();
-        let sqlite  = make_sqlite(&tmpdir2);
+        let store   = make_store(&tmpdir2);
         let tantivy = make_tantivy(&tmpdir2);
         let metrics = IndexMetrics::new();
         let config  = make_config(dir.path());
@@ -698,20 +747,20 @@ mod tests {
         // Insert the record manually
         let meta = std::fs::metadata(&file).unwrap();
         let record = build_file_record(&file, &meta, false, unix_now());
-        sqlite.upsert_file(&record).unwrap();
+        store.upsert_file(&record).unwrap();
 
         // Now fire Delete event
         let registry = Arc::new(ArchiveRegistry::disabled());
         process_event(
             IndexEvent::Deleted(file.clone()),
             config,
-            sqlite.clone(),
+            store.clone(),
             tantivy,
             metrics,
             registry,
         ).await;
 
         let path_str = file.to_string_lossy().into_owned();
-        assert!(sqlite.get_by_path(&path_str).unwrap().is_none());
+        assert!(store.get_by_path(&path_str).unwrap().is_none());
     }
 }

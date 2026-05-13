@@ -1,13 +1,13 @@
 use crate::error::Result;
-use crate::store::{DupeKind, FileRecord, SqlCondition, sqlite_store::SqliteStore};
+use crate::store::{DupeKind, FileRecord, FileStore, SqlCondition};
 
 /// Find duplicate files grouped by `kind`.
-/// Delegates to the two-pass SQL query in `SqliteStore::find_dupes`.
+/// Works with both SQLite and Memory backends via `FileStore`.
 pub fn find_dupes(
-    sqlite:           &SqliteStore,
+    store:            &FileStore,
     kind:             DupeKind,
     extra_conditions: &[SqlCondition],
     limit:            usize,
 ) -> Result<Vec<FileRecord>> {
-    sqlite.find_dupes(kind, extra_conditions, limit)
+    store.find_dupes(kind, extra_conditions, limit)
 }

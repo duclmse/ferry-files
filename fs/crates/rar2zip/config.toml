@@ -5,10 +5,10 @@
 # ── Watch folder ──────────────────────────────────────────────────────────────
 
 # Folder monitored for incoming archives. Must exist.
-watch_folder = 'C:\Incoming\Archives'
+watch_folder = 'E:\Downloads'
 
 # Failed or expired jobs are moved here.
-failed_folder = 'C:\Incoming\Failed'
+failed_folder = 'E:\Failed'
 
 # ── File filters ──────────────────────────────────────────────────────────────
 
