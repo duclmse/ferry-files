@@ -7,7 +7,6 @@
 //!   GET  /archive/:id/file?node=<u32> — stream file content
 //!   GET  /archive/:id/search?q=&limit=&offset= — archive-scoped search
 
-use std::io::{Read, Seek, SeekFrom};
 use std::num::NonZeroUsize;
 use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex};
@@ -25,7 +24,8 @@ use serde::{Deserialize, Serialize};
 
 use crate::api::rest::AppState;
 use crate::query::{evaluator, parser};
-use crate::zidx::{NodeData, ZidxIndex, zidx_path_for};
+use crate::archive::StreamExtractor;
+use crate::zidx::{ZidxIndex, zidx_path_for};
 
 // ---------------------------------------------------------------------------
 // Archive ID
@@ -365,53 +365,27 @@ async fn stream_file(
         return err_bad_node("node is a directory", node_id).into_response();
     }
 
-    let result = tokio::task::spawn_blocking(move || extract_entry_bytes(&zip_path, &node))
-        .await;
+    let meta = crate::archive::EntryMeta {
+        compression:         node.compression,
+        compressed_size:     node.compressed_size as u64,
+        uncompressed_size:   node.uncompressed_size as u64,
+        local_header_offset: node.local_header_offset,
+    };
+    let source    = Arc::new(crate::archive::LocalFileSource::new(zip_path));
+    let extractor = crate::archive::ZipStreamExtractor { source };
+    let stream    = match extractor.stream(&meta) {
+        Ok(s)  => s,
+        Err(e) => return err_internal(e.to_string()).into_response(),
+    };
 
-    match result {
-        Ok(Ok(bytes)) => (
-            StatusCode::OK,
-            [(header::CONTENT_TYPE, "application/octet-stream")],
-            bytes,
-        )
-            .into_response(),
-        Ok(Err(msg)) => err_internal(msg).into_response(),
-        Err(e)       => err_internal(e.to_string()).into_response(),
-    }
-}
-
-/// Read and decompress one entry's data using the local file header in the ZIP.
-fn extract_entry_bytes(zip_path: &Path, node: &NodeData) -> Result<Vec<u8>, String> {
-    let mut file = std::fs::File::open(zip_path).map_err(|e| e.to_string())?;
-    file.seek(SeekFrom::Start(node.local_header_offset))
-        .map_err(|e| e.to_string())?;
-
-    let mut hdr = [0u8; 30];
-    file.read_exact(&mut hdr).map_err(|e| e.to_string())?;
-
-    if &hdr[0..4] != b"PK\x03\x04" {
-        return Err("invalid local file header signature".into());
-    }
-
-    let fname_len = u16::from_le_bytes([hdr[26], hdr[27]]) as i64;
-    let extra_len = u16::from_le_bytes([hdr[28], hdr[29]]) as i64;
-
-    file.seek(SeekFrom::Current(fname_len + extra_len))
-        .map_err(|e| e.to_string())?;
-
-    let compressed_size = node.compressed_size as usize;
-    let mut compressed = vec![0u8; compressed_size];
-    file.read_exact(&mut compressed).map_err(|e| e.to_string())?;
-
-    match node.compression {
-        0 => Ok(compressed),
-        8 => {
-            let mut decoder = flate2::read::DeflateDecoder::new(&compressed[..]);
-            let mut out = Vec::with_capacity(node.uncompressed_size as usize);
-            decoder.read_to_end(&mut out).map_err(|e| e.to_string())?;
-            Ok(out)
-        }
-        other => Err(format!("unsupported compression method {other}")),
+    match axum::http::Response::builder()
+        .status(StatusCode::OK)
+        .header(header::CONTENT_TYPE, "application/octet-stream")
+        .header(header::CONTENT_LENGTH, node.uncompressed_size)
+        .body(axum::body::Body::from_stream(stream))
+    {
+        Ok(r)  => r.into_response(),
+        Err(e) => err_internal(e.to_string()).into_response(),
     }
 }
 
@@ -572,53 +546,4 @@ mod tests {
         assert!(r.index("any").is_none());
     }
 
-    #[test]
-    fn extract_entry_bytes_stored() {
-        let dir      = TempDir::new().unwrap();
-        let zip_path = dir.path().join("t.zip");
-        let content  = b"hello world from stored entry";
-        std::fs::write(&zip_path, make_zip_bytes(&[("hello.txt", content)])).unwrap();
-
-        let zidx_dir  = dir.path().to_path_buf();
-        let zidx_path = zidx_path_for(&zidx_dir, &zip_path);
-        ZidxBuilder::build(&zip_path, &zidx_path).unwrap();
-
-        let idx  = ZidxIndex::open(&zidx_path).unwrap();
-        // Node 1 is the file child of root (node 0).
-        let node = idx.node(1).unwrap();
-        assert_eq!(node.kind, 0);
-
-        let bytes = extract_entry_bytes(&zip_path, &node).unwrap();
-        assert_eq!(bytes, content);
-    }
-
-    #[test]
-    fn extract_entry_bytes_deflated() {
-        let dir      = TempDir::new().unwrap();
-        let zip_path = dir.path().join("t_deflate.zip");
-        let content  = b"hello world from deflated entry!".repeat(10);
-
-        let mut buf = std::io::Cursor::new(Vec::new());
-        {
-            let mut zw   = zip::ZipWriter::new(&mut buf);
-            let opts     = zip::write::FileOptions::<()>::default()
-                .compression_method(zip::CompressionMethod::Deflated);
-            zw.start_file("data.bin", opts).unwrap();
-            zw.write_all(&content).unwrap();
-            zw.finish().unwrap();
-        }
-        std::fs::write(&zip_path, buf.into_inner()).unwrap();
-
-        let zidx_dir  = dir.path().to_path_buf();
-        let zidx_path = zidx_path_for(&zidx_dir, &zip_path);
-        ZidxBuilder::build(&zip_path, &zidx_path).unwrap();
-
-        let idx  = ZidxIndex::open(&zidx_path).unwrap();
-        let node = idx.node(1).unwrap();
-        assert_eq!(node.kind, 0);
-        assert_eq!(node.compression, 8, "must be deflated");
-
-        let bytes = extract_entry_bytes(&zip_path, &node).unwrap();
-        assert_eq!(bytes, content);
-    }
 }

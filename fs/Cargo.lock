@@ -1453,6 +1453,8 @@ version = "0.1.0"
 dependencies = [
  "anyhow",
  "assert_fs",
+ "async-stream",
+ "async-trait",
  "axum 0.7.9",
  "blake3",
  "bytes",
@@ -1464,6 +1466,7 @@ dependencies = [
  "dashmap 5.5.3",
  "encoding_rs",
  "flate2",
+ "futures",
  "glob",
  "humansize",
  "hyper 1.9.0",

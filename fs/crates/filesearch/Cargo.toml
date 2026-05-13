@@ -84,6 +84,11 @@ flate2    = "1"
 # SIMD substring search (fast path for %term% LIKE patterns)
 memchr = "2"
 
+# Streaming ZIP decompression pipeline (Phase 10)
+async-trait  = "0.1"
+async-stream = "0.3"
+futures      = "0.3"
+
 [target.'cfg(unix)'.dependencies]
 nix = { version = "0.28", features = ["fs", "process"] }
 

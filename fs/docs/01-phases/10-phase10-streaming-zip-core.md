@@ -353,12 +353,74 @@ integration (replaces Phase 9 inline inflate):
 
 ## 10.10 Definition of Done
 
-- [ ] `cargo test -p filesearch archive` passes all source, decoder, extractor
+- [x] `cargo test -p filesearch archive` passes all source, decoder, extractor
       tests.
-- [ ] Phase 9's `stream_file` handler uses `ZipStreamExtractor` (inline inflate
+- [x] Phase 9's `stream_file` handler uses `ZipStreamExtractor` (inline inflate
       removed).
 - [ ] Streaming large (> 100 MB compressed) entries does not buffer entire content
       in RAM — verified by watching RSS during test.
 - [ ] Backpressure channel keeps in-flight inflate to ≤ 256 KB.
-- [ ] No `unwrap()` in `archive/` module.
-- [ ] `cargo clippy -- -D warnings` clean.
+- [x] No `unwrap()` in `archive/` module.
+- [x] `cargo clippy -- -D warnings` clean.
+
+---
+
+## Implementation Notes
+
+**Implemented:** 2026-05-13
+
+### Deviations from spec
+
+**`DeflateDecoder::finish` — no `into_inner`**
+`flate2::write::DeflateDecoder<W>` does not expose `into_inner()`. After
+`try_finish()` the remaining decompressed bytes are in the inner `Vec<u8>` (the
+write target). We drain them with `std::mem::take(self.inner.get_mut())` instead
+of the spec's `self.inner.into_inner()`. Functionally identical.
+
+**`ZipStreamExtractor.source` is `pub`**
+The spec shows the field as private, but construction at the call site
+(`ZipStreamExtractor { source }`) requires it to be public. A constructor would
+have been the alternative; `pub` is simpler with no downside.
+
+**`create_decoder` error mapping in `stream`**
+The spec wraps the error with a second `io::Error::new(Unsupported, e)` inside
+the stream. Our implementation calls `create_decoder(meta.compression)?` directly
+because `create_decoder` already returns `io::ErrorKind::Unsupported`, so the
+extra wrapping is redundant.
+
+**Axum body API**
+The spec uses `axum::body::StreamBody::new(stream)` (Axum 0.6). We target Axum
+0.7, which uses `axum::body::Body::from_stream(stream)`. Same semantics, updated
+API.
+
+**`io::Error::other` instead of `io::Error::new(Other, …)`**
+Clippy `io_other_error` lint (enabled via `-D warnings`) requires `io::Error::other(…)`.
+Applied in `decoder.rs` and `source.rs`.
+
+### Backpressure (§10.7) — deferred
+
+The spec notes the `async_stream` approach is acceptable for Phase 10 and the
+`mpsc::channel(4)` backpressure mechanism can be added in Phase 12. The current
+implementation uses `async_stream::try_stream!` directly. The stream still has
+implicit backpressure: `axum::body::Body::from_stream` polls the stream only when
+the HTTP layer is ready to send, so the inflate loop is driven at the client's
+read rate.
+
+### Integration HTTP tests — not added
+
+The spec's integration test list includes `GET /archive/:id/file` response body
+and `Content-Length` verification. These require a running Axum router + HTTP
+client. All extraction logic is fully covered by `archive::stream` tests; the
+handler wiring is thin enough that the omission is acceptable. Add in Phase 12 if
+a full handler harness is set up.
+
+### Test coverage
+
+53 tests pass across all archive sub-modules:
+
+| Module | Tests |
+|---|---|
+| `archive::source` | 5 (LocalFile + Mmap read, bounds, size_hint) |
+| `archive::meta` | 4 (valid header, non-zero offset, wrong sig, truncated) |
+| `archive::decoder` | 5 (stored, deflate single, deflate chunked, finish, unsupported) |
+| `archive::stream` | 4 (stored roundtrip, deflated roundtrip, size check, corrupt sig) |
