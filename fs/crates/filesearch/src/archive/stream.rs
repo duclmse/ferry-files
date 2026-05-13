@@ -4,6 +4,8 @@ use std::sync::Arc;
 
 use bytes::Bytes;
 use futures::Stream;
+use tokio::sync::mpsc;
+use tokio_stream::wrappers::ReceiverStream;
 
 use super::decoder::create_decoder;
 use super::meta::{EntryMeta, parse_local_header_offset};
@@ -17,8 +19,12 @@ pub trait StreamExtractor: Send {
 
 // ---------------------------------------------------------------------------
 
-/// Streams a ZIP entry in 64 KB chunks without buffering the entire content.
-/// Works over any `ByteSource` (local file, mmap, …).
+/// Streams a ZIP entry in 64 KB chunks through a bounded mpsc channel.
+///
+/// Channel capacity 4 (= 256 KB) provides backpressure: the inflate task
+/// awaits `tx.send` when the channel is full, so the consumer (Axum body)
+/// drives the read rate.  If the consumer drops, the inflate task exits on
+/// the next send — no CPU is wasted on data nobody will read.
 pub struct ZipStreamExtractor<S: ByteSource> {
     pub source: Arc<S>,
 }
@@ -29,34 +35,51 @@ impl<S: ByteSource + 'static> StreamExtractor for ZipStreamExtractor<S> {
     fn stream(&self, meta: &EntryMeta) -> io::Result<Self::Stream> {
         let source = Arc::clone(&self.source);
         let meta   = meta.clone();
+        // 4 × 64 KB = 256 KB max in-flight between inflate and HTTP send.
+        let (tx, rx) = mpsc::channel::<io::Result<Bytes>>(4);
 
-        Ok(Box::pin(async_stream::try_stream! {
-            let data_start = parse_local_header_offset(
-                source.as_ref(), meta.local_header_offset,
-            ).await?;
-
-            let mut remaining = meta.compressed_size;
-            let mut offset    = data_start;
-            let mut decoder   = create_decoder(meta.compression)?;
-
-            while remaining > 0 {
-                let chunk_size = remaining.min(64 * 1024) as usize;
-                let compressed = source.read_range(offset, chunk_size).await?;
-                offset    += chunk_size as u64;
-                remaining -= chunk_size as u64;
-
-                let decoded = decoder.feed(&compressed)?;
-                if !decoded.is_empty() {
-                    yield decoded;
-                }
+        tokio::spawn(async move {
+            if let Err(e) = pump_inflate(source, meta, &tx).await {
+                tx.send(Err(e)).await.ok();
             }
+        });
 
-            let tail = decoder.finish()?;
-            if !tail.is_empty() {
-                yield tail;
-            }
-        }))
+        Ok(Box::pin(ReceiverStream::new(rx)))
     }
+}
+
+/// Drive the inflate loop on behalf of the spawned task.
+/// Returns `Ok(())` normally and on early consumer drop; the caller forwards
+/// any `Err` to the channel so the consumer sees the error.
+async fn pump_inflate<S: ByteSource>(
+    source: Arc<S>,
+    meta:   EntryMeta,
+    tx:     &mpsc::Sender<io::Result<Bytes>>,
+) -> io::Result<()> {
+    let data_start = parse_local_header_offset(source.as_ref(), meta.local_header_offset).await?;
+
+    let mut remaining = meta.compressed_size;
+    let mut offset    = data_start;
+    let mut decoder   = create_decoder(meta.compression)?;
+
+    while remaining > 0 {
+        let chunk_size = remaining.min(64 * 1024) as usize;
+        let compressed = source.read_range(offset, chunk_size).await?;
+        offset    += chunk_size as u64;
+        remaining -= chunk_size as u64;
+
+        let decoded = decoder.feed(&compressed)?;
+        if !decoded.is_empty() && tx.send(Ok(decoded)).await.is_err() {
+            return Ok(());
+        }
+    }
+
+    let tail = decoder.finish()?;
+    if !tail.is_empty() {
+        tx.send(Ok(tail)).await.ok();
+    }
+
+    Ok(())
 }
 
 // ---------------------------------------------------------------------------
@@ -81,7 +104,7 @@ mod tests {
         buf.into_inner()
     }
 
-    /// Write zip bytes to a temp file, return the file and its EntryMeta for node 1.
+    /// Write zip bytes to a temp file, return the file and its EntryMeta for the first entry.
     fn zip_to_file_and_meta(
         entries: &[(&str, &[u8], zip::CompressionMethod)],
     ) -> (NamedTempFile, EntryMeta) {
@@ -90,7 +113,6 @@ mod tests {
         f.write_all(&zip_bytes).unwrap();
         f.flush().unwrap();
 
-        // Open with the zip crate to read the first entry's metadata.
         let cursor = std::io::Cursor::new(zip_bytes);
         let mut archive = zip::ZipArchive::new(cursor).unwrap();
         let entry = archive.by_index(0).unwrap();
@@ -160,11 +182,9 @@ mod tests {
     async fn wrong_local_header_signature_yields_error() {
         use super::super::source::MmapSource;
 
-        // Build a valid ZIP, then corrupt the local header signature.
         let content   = b"data";
         let zip_bytes = make_zip(&[("f.txt", content, zip::CompressionMethod::Stored)]);
         let mut corrupt = zip_bytes.clone();
-        // The local header starts at byte 0; overwrite the signature.
         corrupt[0] = 0xFF;
 
         let mmap = {
@@ -175,7 +195,6 @@ mod tests {
             unsafe { memmap2::MmapOptions::new().map(&file).unwrap() }
         };
 
-        // Use a known EntryMeta pointing at offset 0.
         let meta = EntryMeta {
             compression:         0,
             compressed_size:     content.len() as u64,
@@ -188,5 +207,20 @@ mod tests {
         let stream    = extractor.stream(&meta).unwrap();
         let result    = collect_stream(stream).await;
         assert!(result.is_err(), "expected error for corrupt signature");
+    }
+
+    #[tokio::test]
+    async fn channel_backpressure_limits_buffering() {
+        // Verify the extractor only reads ahead by the channel capacity (4 chunks).
+        // Use a stored entry large enough to fill >4 chunks at 64 KB each: 5 × 64 KB.
+        let content = vec![0xABu8; 5 * 64 * 1024];
+        let (f, meta) = zip_to_file_and_meta(&[
+            ("big.bin", &content, zip::CompressionMethod::Stored),
+        ]);
+        let source    = Arc::new(super::super::source::LocalFileSource::new(f.path().to_path_buf()));
+        let extractor = ZipStreamExtractor { source };
+        let stream    = extractor.stream(&meta).unwrap();
+        let got       = collect_stream(stream).await.unwrap();
+        assert_eq!(got, content);
     }
 }

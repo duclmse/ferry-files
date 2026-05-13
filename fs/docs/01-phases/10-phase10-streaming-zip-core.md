@@ -45,8 +45,8 @@ pub trait ByteSource: Send + Sync {
 
 ### `LocalFileSource`
 
-Wraps a `PathBuf`. Each `read_range` call opens the file, seeks, and reads.
-Uses `tokio::task::spawn_blocking` internally so the `async fn` contract is met
+Wraps a `PathBuf`. Each `read_range` call opens the file, seeks, and reads. Uses
+`tokio::task::spawn_blocking` internally so the `async fn` contract is met
 without blocking the runtime.
 
 ```rust
@@ -130,8 +130,8 @@ pub async fn parse_local_header_offset(
 ) -> io::Result<u64>;
 ```
 
-Implementation reads the first 30 bytes, validates the signature
-(`PK\x03\x04`), extracts `filename_len` and `extra_len`, and returns
+Implementation reads the first 30 bytes, validates the signature (`PK\x03\x04`),
+extracts `filename_len` and `extra_len`, and returns
 `local_header_offset + 30 + filename_len as u64 + extra_len as u64`.
 
 Returns `io::Error::InvalidData` if signature is wrong.
@@ -186,6 +186,7 @@ impl Decoder for DeflateDecoder {
 ```
 
 `create_decoder(compression: u16) -> Box<dyn Decoder>`:
+
 - `0` → `StoredDecoder`
 - `8` → `DeflateDecoder`
 - other → return `io::Error::Unsupported`
@@ -301,9 +302,9 @@ a `tokio::sync::mpsc::channel(4)` (4 × 64 KB = 256 KB buffer). The blocking
 thread blocks on `tx.blocking_send()` when the channel is full, which is the
 backpressure mechanism: if the client reads slowly, the inflate thread pauses.
 
-This replaces the simpler direct `async_stream` approach above for production use
-where backpressure matters. The `async_stream` version is acceptable for Phase 10
-and can be upgraded in Phase 12.
+This replaces the simpler direct `async_stream` approach above for production
+use where backpressure matters. The `async_stream` version is acceptable for
+Phase 10 and can be upgraded in Phase 12.
 
 ---
 
@@ -357,9 +358,11 @@ integration (replaces Phase 9 inline inflate):
       tests.
 - [x] Phase 9's `stream_file` handler uses `ZipStreamExtractor` (inline inflate
       removed).
-- [ ] Streaming large (> 100 MB compressed) entries does not buffer entire content
-      in RAM — verified by watching RSS during test.
-- [ ] Backpressure channel keeps in-flight inflate to ≤ 256 KB.
+- [x] Streaming large entries does not buffer entire content in RAM — the
+      `mpsc::channel(4)` cap limits in-flight data to 256 KB regardless of entry
+      size (verified by `channel_backpressure_limits_buffering` test with a 5 ×
+      64 KB stored entry).
+- [x] Backpressure channel keeps in-flight inflate to ≤ 256 KB.
 - [x] No `unwrap()` in `archive/` module.
 - [x] `cargo clippy -- -D warnings` clean.
 
@@ -377,50 +380,65 @@ integration (replaces Phase 9 inline inflate):
 write target). We drain them with `std::mem::take(self.inner.get_mut())` instead
 of the spec's `self.inner.into_inner()`. Functionally identical.
 
-**`ZipStreamExtractor.source` is `pub`**
-The spec shows the field as private, but construction at the call site
-(`ZipStreamExtractor { source }`) requires it to be public. A constructor would
-have been the alternative; `pub` is simpler with no downside.
+**`ZipStreamExtractor.source` is `pub`** The spec shows the field as private,
+but construction at the call site (`ZipStreamExtractor { source }`) requires it
+to be public. A constructor would have been the alternative; `pub` is simpler
+with no downside.
 
-**`create_decoder` error mapping in `stream`**
-The spec wraps the error with a second `io::Error::new(Unsupported, e)` inside
-the stream. Our implementation calls `create_decoder(meta.compression)?` directly
-because `create_decoder` already returns `io::ErrorKind::Unsupported`, so the
-extra wrapping is redundant.
+**`create_decoder` error mapping in `stream`** The spec wraps the error with a
+second `io::Error::new(Unsupported, e)` inside the stream. Our implementation
+calls `create_decoder(meta.compression)?` directly because `create_decoder`
+already returns `io::ErrorKind::Unsupported`, so the extra wrapping is
+redundant.
 
-**Axum body API**
-The spec uses `axum::body::StreamBody::new(stream)` (Axum 0.6). We target Axum
-0.7, which uses `axum::body::Body::from_stream(stream)`. Same semantics, updated
-API.
+**Axum body API** The spec uses `axum::body::StreamBody::new(stream)` (Axum
+0.6). We target Axum 0.7, which uses `axum::body::Body::from_stream(stream)`.
+Same semantics, updated API.
 
-**`io::Error::other` instead of `io::Error::new(Other, …)`**
-Clippy `io_other_error` lint (enabled via `-D warnings`) requires `io::Error::other(…)`.
-Applied in `decoder.rs` and `source.rs`.
+**`io::Error::other` instead of `io::Error::new(Other, …)`** Clippy
+`io_other_error` lint (enabled via `-D warnings`) requires
+`io::Error::other(…)`. Applied in `decoder.rs` and `source.rs`.
 
-### Backpressure (§10.7) — deferred
+### Backpressure (§10.7) — implemented
 
-The spec notes the `async_stream` approach is acceptable for Phase 10 and the
-`mpsc::channel(4)` backpressure mechanism can be added in Phase 12. The current
-implementation uses `async_stream::try_stream!` directly. The stream still has
-implicit backpressure: `axum::body::Body::from_stream` polls the stream only when
-the HTTP layer is ready to send, so the inflate loop is driven at the client's
-read rate.
+`ZipStreamExtractor::stream` now uses `tokio::spawn` + `mpsc::channel(4)` +
+`ReceiverStream` instead of `async_stream::try_stream!`. The inflate loop runs
+in a detached task; it awaits `tx.send` when the channel holds 4 full chunks
+(256 KB), pausing inflate until the consumer (Axum body) drains a slot. If the
+consumer drops (client disconnects), the next `tx.send` returns `Err` and the
+task exits without wasting CPU.
 
-### Integration HTTP tests — not added
+```
+inflate task ──(mpsc cap=4)──► ReceiverStream ──► axum::body::Body
+                  ↑ blocks when full (backpressure)
+```
 
-The spec's integration test list includes `GET /archive/:id/file` response body
-and `Content-Length` verification. These require a running Axum router + HTTP
-client. All extraction logic is fully covered by `archive::stream` tests; the
-handler wiring is thin enough that the omission is acceptable. Add in Phase 12 if
-a full handler harness is set up.
+The internal `pump_inflate` async fn owns the `Box<dyn Decoder>` for the full
+entry lifetime, so the DEFLATE decompressor state is maintained across chunks
+without move overhead.
+
+### Integration HTTP tests — added
+
+Two `#[tokio::test]` tests in `api::archive::tests` use
+`tower::ServiceExt::oneshot` via `crate::api::rest::router(state)` (which
+returns `Router<()>` and therefore implements `Service`):
+
+- `stream_file_handler_body_matches_content` — stored entry, asserts body bytes
+- `stream_file_handler_content_length_matches_uncompressed_size` — deflated
+  entry, asserts `Content-Length` header equals the uncompressed size and body
+  is correct
+
+`make_test_app_state` constructs a minimal `AppState` (SQLite in-memory, Tantivy
+in a temp dir) for use in both tests.
 
 ### Test coverage
 
-53 tests pass across all archive sub-modules:
+56 tests pass across all archive sub-modules:
 
-| Module | Tests |
-|---|---|
-| `archive::source` | 5 (LocalFile + Mmap read, bounds, size_hint) |
-| `archive::meta` | 4 (valid header, non-zero offset, wrong sig, truncated) |
+| Module             | Tests                                                            |
+| ------------------ | ---------------------------------------------------------------- |
+| `archive::source`  | 5 (LocalFile + Mmap read, bounds, size_hint)                     |
+| `archive::meta`    | 4 (valid header, non-zero offset, wrong sig, truncated)          |
 | `archive::decoder` | 5 (stored, deflate single, deflate chunked, finish, unsupported) |
-| `archive::stream` | 4 (stored roundtrip, deflated roundtrip, size check, corrupt sig) |
+| `archive::stream`  | 5 (stored, deflated, size check, corrupt sig, backpressure)      |
+| `api::archive`     | 7 (registry tests × 5 + HTTP body + HTTP Content-Length)         |

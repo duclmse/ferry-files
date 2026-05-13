@@ -546,4 +546,131 @@ mod tests {
         assert!(r.index("any").is_none());
     }
 
+    // ----- integration: GET /archive/:id/file via full Axum router ----------
+
+    fn make_test_app_state(dir: &TempDir, registry: Arc<ArchiveRegistry>) -> AppState {
+        use crate::config::{
+            ApiConfig, ArchiveIndexConfig, ArchiveServiceConfig, ContentConfig,
+            ExclusionConfig, IndexerConfig, MacroConfig, SearchConfig, StoreConfig,
+        };
+        use crate::indexer::crawler::IndexMetrics;
+        use crate::store::{FileStore, sqlite_store::SqliteStore, tantivy_store::TantivyStore};
+
+        let tantivy_dir = dir.path().join("tantivy");
+        std::fs::create_dir_all(&tantivy_dir).unwrap();
+
+        let config = crate::config::Config {
+            watch_paths:     vec![],
+            data_dir:        dir.path().to_path_buf(),
+            log_dir:         dir.path().to_path_buf(),
+            exclusions:      ExclusionConfig::default(),
+            content:         ContentConfig::default(),
+            api:             ApiConfig::default(),
+            search:          SearchConfig::default(),
+            indexer:         IndexerConfig::default(),
+            archive_index:   ArchiveIndexConfig::default(),
+            macros:          MacroConfig::default(),
+            archive_service: ArchiveServiceConfig::default(),
+            store:           StoreConfig::default(),
+        };
+
+        AppState {
+            sqlite:           Arc::new(FileStore::Sqlite(Arc::new(
+                SqliteStore::new(std::path::Path::new(":memory:")).unwrap(),
+            ))),
+            tantivy:          Arc::new(TantivyStore::new(&tantivy_dir).unwrap()),
+            config:           Arc::new(tokio::sync::RwLock::new(config)),
+            metrics:          IndexMetrics::new(),
+            reindex_tx:       tokio::sync::watch::channel(false).0,
+            archive_registry: registry,
+        }
+    }
+
+    #[tokio::test]
+    async fn stream_file_handler_body_matches_content() {
+        use tower::ServiceExt;
+
+        let dir     = TempDir::new().unwrap();
+        let content = b"hello from the HTTP handler";
+        let (zip_path, registry) = make_registry_with_zip(&dir, &[("hello.txt", content)]);
+        let id      = archive_id(&zip_path);
+
+        let idx     = registry.index(&id).unwrap();
+        let node_id = idx.children(0).next().unwrap().unwrap();
+
+        let state = make_test_app_state(&dir, registry);
+        // rest::router returns Router<()> which implements Service.
+        let app   = crate::api::rest::router(state);
+
+        let request = axum::http::Request::builder()
+            .uri(format!("/archive/{id}/file?node={node_id}"))
+            .body(axum::body::Body::empty())
+            .unwrap();
+
+        let response = app.oneshot(request).await.unwrap();
+        assert_eq!(response.status(), StatusCode::OK);
+
+        let body = axum::body::to_bytes(response.into_body(), usize::MAX)
+            .await
+            .unwrap();
+        assert_eq!(&body[..], content as &[u8]);
+    }
+
+    #[tokio::test]
+    async fn stream_file_handler_content_length_matches_uncompressed_size() {
+        use tower::ServiceExt;
+
+        let dir     = TempDir::new().unwrap();
+        let content = b"content length test ".repeat(20);
+
+        // Deflated so compressed_size != uncompressed_size.
+        let zip_bytes = {
+            let mut buf = std::io::Cursor::new(Vec::new());
+            let mut zw  = zip::ZipWriter::new(&mut buf);
+            let opts    = zip::write::FileOptions::<()>::default()
+                .compression_method(zip::CompressionMethod::Deflated);
+            zw.start_file("data.bin", opts).unwrap();
+            zw.write_all(&content).unwrap();
+            zw.finish().unwrap();
+            buf.into_inner()
+        };
+
+        let zip_path = dir.path().join("cl_test.zip");
+        let zidx_dir = dir.path().join("zidx");
+        std::fs::create_dir_all(&zidx_dir).unwrap();
+        std::fs::write(&zip_path, &zip_bytes).unwrap();
+        ZidxBuilder::build(&zip_path, &zidx_path_for(&zidx_dir, &zip_path)).unwrap();
+        let registry = Arc::new(ArchiveRegistry::new(zidx_dir, 256));
+        registry.register(zip_path.clone());
+
+        let id      = archive_id(&zip_path);
+        let idx     = registry.index(&id).unwrap();
+        let node_id = idx.children(0).next().unwrap().unwrap();
+        let node    = idx.node(node_id).unwrap();
+
+        let state = make_test_app_state(&dir, registry);
+        let app   = crate::api::rest::router(state);
+
+        let request = axum::http::Request::builder()
+            .uri(format!("/archive/{id}/file?node={node_id}"))
+            .body(axum::body::Body::empty())
+            .unwrap();
+
+        let response = app.oneshot(request).await.unwrap();
+        assert_eq!(response.status(), StatusCode::OK);
+
+        let content_length: u64 = response
+            .headers()
+            .get(header::CONTENT_LENGTH)
+            .and_then(|v| v.to_str().ok())
+            .and_then(|s| s.parse().ok())
+            .expect("Content-Length header must be present");
+        assert_eq!(content_length, node.uncompressed_size as u64);
+
+        let body = axum::body::to_bytes(response.into_body(), usize::MAX)
+            .await
+            .unwrap();
+        assert_eq!(&body[..], content.as_slice());
+    }
+
 }

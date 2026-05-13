@@ -15,7 +15,9 @@
       "WebSearch",
       "WebFetch(domain:crates.io)",
       "Bash(echo \"EXIT: $?\")",
-      "Bash(echo \"EXIT:$?\")"
+      "Bash(echo \"EXIT:$?\")",
+      "Bash(cargo metadata *)",
+      "Bash(python -c \"import json,sys; d=json.load\\(sys.stdin\\); pkgs=[p for p in d['packages'] if p['name'] in \\('axum','http-body-util','tower'\\)]; [print\\(p['name'], p['version']\\) for p in pkgs]\")"
     ]
   }
 }
