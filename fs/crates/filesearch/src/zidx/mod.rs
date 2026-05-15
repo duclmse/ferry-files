@@ -1,14 +1,15 @@
 //! `.zidx` index builder and mmap-backed reader.
 //!
-//! # Binary format
+//! # Binary format (version 2)
 //!
 //! ```text
 //! [Header — 20 bytes]
-//! [Node Table — node_count × 40 bytes]
+//! [Node Table — node_count × 48 bytes]
 //! [String Pool — string_bytes bytes, UTF-8]
 //! ```
 //!
-//! All integers are little-endian on disk.
+//! All integers are little-endian on disk.  Version 1 (40-byte nodes with
+//! u32 sizes) is rejected at open time; rebuild with the current builder.
 
 pub mod builder;
 pub mod reader;

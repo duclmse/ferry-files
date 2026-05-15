@@ -7,23 +7,24 @@
 //!   GET  /archive/:id/file?node=<u32> — stream file content
 //!   GET  /archive/:id/search?q=&limit=&offset= — archive-scoped search
 
-use std::num::NonZeroUsize;
 use std::path::{Path, PathBuf};
-use std::sync::{Arc, Mutex};
+use std::sync::Arc;
 
 use axum::{
+    body::Body,
     extract::{Path as AxumPath, Query, State},
-    http::{header, StatusCode},
+    http::{header, Response, StatusCode},
     response::IntoResponse,
     Json, Router,
     routing::get,
 };
 use dashmap::DashMap;
-use lru::LruCache;
 use serde::{Deserialize, Serialize};
+use tokio_util::io::ReaderStream;
 
 use crate::api::rest::AppState;
 use crate::query::{evaluator, parser};
+use crate::query::ast::{Expr, Function, Modifiers, Predicate, PredicateKind};
 use crate::archive::StreamExtractor;
 use crate::zidx::{ZidxIndex, zidx_path_for};
 
@@ -46,6 +47,9 @@ pub fn archive_id(zip_path: &Path) -> String {
 struct RegistryEntry {
     zip_path:  PathBuf,
     zidx_path: PathBuf,
+    /// Weak validator for `ETag:` — derived from file mtime+size at register
+    /// time, O(1) stat only.  Stale after rebuild but that also re-registers.
+    etag:      String,
 }
 
 pub struct ArchiveSummary {
@@ -59,27 +63,41 @@ pub struct ArchiveSummary {
 
 pub struct ArchiveRegistry {
     entries:     DashMap<String, RegistryEntry>,
-    index_cache: Mutex<LruCache<String, Arc<ZidxIndex>>>,
+    /// Per-shard concurrent cache — no global lock on the hot read path.
+    /// `index_cache_size` from config is retained in the struct for future
+    /// bounded-eviction support but not enforced here; ZidxIndex is mmap-backed
+    /// and holds negligible memory beyond the OS page cache.
+    index_cache: DashMap<String, Arc<ZidxIndex>>,
     zidx_dir:    PathBuf,
     enabled:     bool,
 }
 
+/// Compute a cheap ETag from file mtime + size — one stat syscall, O(1).
+fn zidx_etag(path: &Path) -> String {
+    use std::time::UNIX_EPOCH;
+    std::fs::metadata(path)
+        .ok()
+        .and_then(|m| {
+            let secs = m.modified().ok()?.duration_since(UNIX_EPOCH).ok()?.as_secs();
+            Some(format!("{secs:016x}-{:016x}", m.len()))
+        })
+        .unwrap_or_else(|| "unknown".into())
+}
+
 impl ArchiveRegistry {
-    pub fn new(zidx_dir: PathBuf, cache_size: usize) -> Self {
-        let cap = NonZeroUsize::new(cache_size.max(1)).unwrap();
+    pub fn new(zidx_dir: PathBuf, _cache_size: usize) -> Self {
         Self {
             entries:     DashMap::new(),
-            index_cache: Mutex::new(LruCache::new(cap)),
+            index_cache: DashMap::new(),
             zidx_dir,
             enabled:     true,
         }
     }
 
     pub fn disabled() -> Self {
-        let cap = NonZeroUsize::new(1).unwrap();
         Self {
             entries:     DashMap::new(),
-            index_cache: Mutex::new(LruCache::new(cap)),
+            index_cache: DashMap::new(),
             zidx_dir:    PathBuf::new(),
             enabled:     false,
         }
@@ -92,7 +110,11 @@ impl ArchiveRegistry {
         if !self.enabled { return; }
         let id        = archive_id(&zip_path);
         let zidx_path = zidx_path_for(&self.zidx_dir, &zip_path);
-        self.entries.insert(id, RegistryEntry { zip_path, zidx_path });
+        let etag      = zidx_etag(&zidx_path);
+        // Invalidate any cached index for this id so the next request re-opens
+        // the freshly rebuilt file.
+        self.index_cache.remove(&id);
+        self.entries.insert(id, RegistryEntry { zip_path, zidx_path, etag });
     }
 
     /// Remove a ZIP from the registry. Called when the ZIP is deleted.
@@ -100,33 +122,28 @@ impl ArchiveRegistry {
         if !self.enabled { return; }
         let id = archive_id(zip_path);
         self.entries.remove(&id);
-        // Let the LRU evict the cached index naturally; stale entries never
-        // surface because we check entries before the cache in index().
+        self.index_cache.remove(&id);
     }
 
     /// Open (or return a cached) ZidxIndex for the given archive ID.
     /// Returns None if the ID is unknown or the .zidx file is missing/corrupt.
     pub fn index(&self, id: &str) -> Option<Arc<ZidxIndex>> {
         if !self.enabled { return None; }
-        // Check registration first — this is a fast DashMap lookup.
-        let zidx_path = {
-            let entry = self.entries.get(id)?;
-            entry.zidx_path.clone()
-        };
-        // Return from cache if present.
-        {
-            let mut cache = self.index_cache.lock().unwrap();
-            if let Some(idx) = cache.get(id) {
-                return Some(Arc::clone(idx));
-            }
+        // Fast path: warm cache — DashMap shard lock, no blocking I/O.
+        if let Some(idx) = self.index_cache.get(id) {
+            return Some(Arc::clone(&*idx));
         }
-        // Cache miss — open the file (may involve a syscall for mmap).
+        // Verify the archive is registered before opening the file.
+        let zidx_path = self.entries.get(id)?.zidx_path.clone();
+        // Open the file outside any lock.
         match ZidxIndex::open(&zidx_path) {
             Ok(idx) => {
                 let idx = Arc::new(idx);
-                let mut cache = self.index_cache.lock().unwrap();
-                cache.put(id.to_string(), Arc::clone(&idx));
-                Some(idx)
+                // or_insert avoids overwriting a concurrent winner.
+                let stored = self.index_cache
+                    .entry(id.to_string())
+                    .or_insert_with(|| Arc::clone(&idx));
+                Some(Arc::clone(&*stored))
             }
             Err(e) => {
                 tracing::warn!("failed to open .zidx for archive {id}: {e}");
@@ -232,33 +249,31 @@ async fn get_index(
     State(state): State<AppState>,
     AxumPath(id): AxumPath<String>,
 ) -> impl IntoResponse {
-    let entry = match state.archive_registry.entries.get(&id) {
-        Some(e) => e,
+    let (zidx_path, etag) = match state.archive_registry.entries.get(&id) {
+        Some(e) => (e.zidx_path.clone(), e.etag.clone()),
         None    => return err_not_found(&id).into_response(),
     };
-    let zidx_path = entry.zidx_path.clone();
-    drop(entry);
 
-    let bytes = match tokio::fs::read(&zidx_path).await {
-        Ok(b)  => b,
+    let file = match tokio::fs::File::open(&zidx_path).await {
+        Ok(f)  => f,
         Err(_) => return err_not_found(&id).into_response(),
     };
-
-    let etag = {
-        let hex = blake3::hash(&bytes).to_hex();
-        hex[..16].to_string()
+    let len = match file.metadata().await {
+        Ok(m)  => m.len(),
+        Err(e) => return err_internal(e.to_string()).into_response(),
     };
 
-    (
-        StatusCode::OK,
-        [
-            (header::CONTENT_TYPE,  "application/octet-stream"),
-            (header::CACHE_CONTROL, "private, max-age=3600"),
-            (header::ETAG,          &etag as &str),
-        ],
-        bytes,
-    )
-        .into_response()
+    match Response::builder()
+        .status(StatusCode::OK)
+        .header(header::CONTENT_TYPE,   "application/octet-stream")
+        .header(header::CACHE_CONTROL,  "private, max-age=3600")
+        .header(header::CONTENT_LENGTH, len)
+        .header(header::ETAG,           &etag)
+        .body(Body::from_stream(ReaderStream::new(file)))
+    {
+        Ok(r)  => r.into_response(),
+        Err(e) => err_internal(e.to_string()).into_response(),
+    }
 }
 
 // ---------------------------------------------------------------------------
@@ -320,13 +335,13 @@ async fn list_dir(
         let (kind, compressed_size, compression) = if child.kind == 1 {
             ("dir", None, None)
         } else {
-            ("file", Some(child.compressed_size as u64), Some(child.compression))
+            ("file", Some(child.compressed_size), Some(child.compression))
         };
         entries.push(DirEntry {
             id:   child_id,
             name,
             kind,
-            size: child.uncompressed_size as u64,
+            size: child.uncompressed_size,
             compressed_size,
             compression,
         });
@@ -367,11 +382,14 @@ async fn stream_file(
 
     let meta = crate::archive::EntryMeta {
         compression:         node.compression,
-        compressed_size:     node.compressed_size as u64,
-        uncompressed_size:   node.uncompressed_size as u64,
+        compressed_size:     node.compressed_size,
+        uncompressed_size:   node.uncompressed_size,
         local_header_offset: node.local_header_offset,
     };
-    let source    = Arc::new(crate::archive::LocalFileSource::new(zip_path));
+    let source = match crate::archive::LocalFileSource::new(zip_path) {
+        Ok(s)  => Arc::new(s),
+        Err(e) => return err_internal(e.to_string()).into_response(),
+    };
     let extractor = crate::archive::ZipStreamExtractor { source };
     let stream    = match extractor.stream(&meta) {
         Ok(s)  => s,
@@ -412,18 +430,26 @@ async fn search_archive(
 
     let q = params.q.unwrap_or_default();
 
-    // Prepend archiveof: filter so results are scoped to this archive.
-    let zip_str = zip_path.to_string_lossy().replace('\\', "/");
-    let augmented = format!("archiveof:{zip_str} {q}");
-
     let (macros, default_limit) = {
         let cfg = state.config.read().await;
         (cfg.macros.clone(), cfg.search.default_limit)
     };
 
-    let expr = match parser::parse(&augmented, &macros) {
-        Ok(e)  => e,
-        Err(e) => return err_internal(e.to_string()).into_response(),
+    // Build the archiveof: predicate directly from the PathBuf so spaces and
+    // special characters in the path never corrupt the query string.
+    let zip_str = zip_path.to_string_lossy().replace('\\', "/");
+    let archive_pred = Expr::Predicate(Predicate {
+        kind:      PredicateKind::Function(Function::ArchiveOf(zip_str)),
+        modifiers: Modifiers::default(),
+    });
+
+    let expr = if q.is_empty() {
+        archive_pred
+    } else {
+        match parser::parse(&q, &macros) {
+            Ok(user_expr) => Expr::And(Box::new(archive_pred), Box::new(user_expr)),
+            Err(e)        => return err_internal(e.to_string()).into_response(),
+        }
     };
 
     let mut plan = match evaluator::plan(&expr, &Default::default()) {
@@ -665,7 +691,7 @@ mod tests {
             .and_then(|v| v.to_str().ok())
             .and_then(|s| s.parse().ok())
             .expect("Content-Length header must be present");
-        assert_eq!(content_length, node.uncompressed_size as u64);
+        assert_eq!(content_length, node.uncompressed_size);
 
         let body = axum::body::to_bytes(response.into_body(), usize::MAX)
             .await

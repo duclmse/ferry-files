@@ -7,8 +7,8 @@ provides regression protection for all archive service throughput targets.
 
 **Estimated scope:** ~600 lines of Rust + benchmarks.
 
-**Depends on:** Phase 10 (streaming ZIP core, `Decoder` trait),
-Phase 11 (`.dzx` block reader), Phase 12 (scheduler).
+**Depends on:** Phase 10 (streaming ZIP core, `Decoder` trait), Phase 11 (`.dzx`
+block reader), Phase 12 (scheduler).
 
 **Design source:** `docs/00/simd and benchmark.md`.
 
@@ -16,12 +16,12 @@ Phase 11 (`.dzx` block reader), Phase 12 (scheduler).
 
 ## 13.1 Where SIMD Helps (and Where It Doesn't)
 
-| Stage | SIMD impact | Reason |
-|-------|------------|--------|
-| Huffman decode | Low | Bit-level, branchy, data-dependent |
-| LZ77 match copy | **Very high** | Wide stores on long back-references |
-| Decoder control flow | None | Serial by nature |
-| Output formatting / chunking | Medium | Memcpy-class operations |
+| Stage                        | SIMD impact   | Reason                              |
+| ---------------------------- | ------------- | ----------------------------------- |
+| Huffman decode               | Low           | Bit-level, branchy, data-dependent  |
+| LZ77 match copy              | **Very high** | Wide stores on long back-references |
+| Decoder control flow         | None          | Serial by nature                    |
+| Output formatting / chunking | Medium        | Memcpy-class operations             |
 
 The strategy: **scalar Huffman decode → SIMD match-copy engine**. Touching
 Huffman decoding is not worth the complexity. The match-copy loop is where CPU
@@ -131,8 +131,8 @@ pub fn copy_simd(dst: &mut Vec<u8>, src: &[u8], len: usize) {
 ```
 
 Use `#[cfg(target_feature = "avx2")]` for compile-time dispatch; runtime
-detection is not required because release builds on the target hardware will have
-AVX2 available. Document the required CPU feature in `VERSIONS.md`.
+detection is not required because release builds on the target hardware will
+have AVX2 available. Document the required CPU feature in `VERSIONS.md`.
 
 ### Fast Huffman Table
 
@@ -190,8 +190,8 @@ impl Decoder for SimdDeflateDecoder {
 > events. To intercept match-copy operations, one of these approaches is needed:
 > (a) Use a lower-level zlib/miniz binding that exposes token-level output; or
 > (b) Use `flate2::Decompress::decompress_vec()` in 64-byte chunks and apply
-> SIMD only to copy segments detected by comparing output positions across calls;
-> or (c) Link `libdeflate` which provides a callback-based API.
+> SIMD only to copy segments detected by comparing output positions across
+> calls; or (c) Link `libdeflate` which provides a callback-based API.
 >
 > For Phase 13, **approach (b)** is recommended: decompress into a temporary
 > Vec, then re-scan the output for long runs and copy them into the ring buffer
@@ -273,7 +273,8 @@ fn bench_scheduler_dispatch(c: &mut Criterion) {
 
 ## 13.6 Stage Instrumentation
 
-For non-criterion production profiling, add atomic counters to `SimdDeflateDecoder`:
+For non-criterion production profiling, add atomic counters to
+`SimdDeflateDecoder`:
 
 ```rust
 thread_local! {
@@ -296,14 +297,14 @@ var is set. Do not add overhead in production builds without this env var.
 
 ## 13.7 KPI Targets
 
-| Metric | Target |
-|--------|--------|
-| Inflate throughput (SIMD, per core) | ≥ 400 MB/s |
-| Inflate throughput (scalar baseline) | ≥ 200 MB/s |
-| SIMD speedup over scalar | ≥ 1.5× (realistic for match-copy-heavy data) |
-| Range read latency (p95, local SSD, 1 MB entry) | < 5 ms |
-| Scheduler dispatch overhead | < 5% of total CPU |
-| Scheduler dispatch (1000 tasks) | < 100 µs |
+| Metric                                          | Target                                       |
+| ----------------------------------------------- | -------------------------------------------- |
+| Inflate throughput (SIMD, per core)             | ≥ 400 MB/s                                   |
+| Inflate throughput (scalar baseline)            | ≥ 200 MB/s                                   |
+| SIMD speedup over scalar                        | ≥ 1.5× (realistic for match-copy-heavy data) |
+| Range read latency (p95, local SSD, 1 MB entry) | < 5 ms                                       |
+| Scheduler dispatch overhead                     | < 5% of total CPU                            |
+| Scheduler dispatch (1000 tasks)                 | < 100 µs                                     |
 
 ---
 

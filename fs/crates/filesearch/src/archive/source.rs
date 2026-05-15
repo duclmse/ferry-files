@@ -1,6 +1,6 @@
 use std::io::{self, Seek, SeekFrom};
 use std::path::PathBuf;
-use std::sync::Arc;
+use std::sync::{Arc, Mutex};
 
 use async_trait::async_trait;
 use bytes::Bytes;
@@ -22,25 +22,34 @@ pub trait ByteSource: Send + Sync {
 // LocalFileSource
 // ---------------------------------------------------------------------------
 
-/// Opens the file on each `read_range` call, seeks to the offset, and reads
-/// `len` bytes. `spawn_blocking` keeps the blocking syscalls off the Tokio runtime.
+/// Holds an open file descriptor and serves byte ranges via seek+read inside
+/// `spawn_blocking`.  Each `read_range` call calls `try_clone()` on the inner
+/// `File` (a cheap OS-level `dup`) so the blocking read does not hold the
+/// Mutex for its duration — concurrent reads proceed in parallel.
 pub struct LocalFileSource {
-    path: PathBuf,
+    file: Mutex<std::fs::File>,
+    size: u64,
 }
 
 impl LocalFileSource {
-    pub fn new(path: PathBuf) -> Self {
-        Self { path }
+    pub fn new(path: PathBuf) -> io::Result<Self> {
+        let file = std::fs::File::open(&path)?;
+        let size = file.metadata()?.len();
+        Ok(Self { file: Mutex::new(file), size })
     }
 }
 
 #[async_trait]
 impl ByteSource for LocalFileSource {
     async fn read_range(&self, offset: u64, len: usize) -> io::Result<Bytes> {
-        let path = self.path.clone();
+        // dup the fd while holding the lock for only this one call, then release.
+        let cloned = self.file
+            .lock()
+            .map_err(|_| io::Error::other("LocalFileSource lock poisoned"))?
+            .try_clone()?;
         tokio::task::spawn_blocking(move || {
             use std::io::Read;
-            let mut f = std::fs::File::open(&path)?;
+            let mut f = cloned;
             f.seek(SeekFrom::Start(offset))?;
             let mut buf = vec![0u8; len];
             f.read_exact(&mut buf)?;
@@ -51,7 +60,7 @@ impl ByteSource for LocalFileSource {
     }
 
     fn size_hint(&self) -> Option<u64> {
-        std::fs::metadata(&self.path).ok().map(|m| m.len())
+        Some(self.size)
     }
 }
 
@@ -106,7 +115,7 @@ mod tests {
     async fn local_read_range_correct_bytes() {
         let data = b"hello world this is a test";
         let f    = write_temp(data);
-        let src  = LocalFileSource::new(f.path().to_path_buf());
+        let src  = LocalFileSource::new(f.path().to_path_buf()).unwrap();
         let got  = src.read_range(6, 5).await.unwrap();
         assert_eq!(&got[..], b"world");
     }
@@ -115,7 +124,7 @@ mod tests {
     async fn local_read_range_start() {
         let data = b"abcdefgh";
         let f    = write_temp(data);
-        let src  = LocalFileSource::new(f.path().to_path_buf());
+        let src  = LocalFileSource::new(f.path().to_path_buf()).unwrap();
         let got  = src.read_range(0, 4).await.unwrap();
         assert_eq!(&got[..], b"abcd");
     }
@@ -124,7 +133,7 @@ mod tests {
     async fn local_read_range_out_of_bounds_is_error() {
         let data = b"short";
         let f    = write_temp(data);
-        let src  = LocalFileSource::new(f.path().to_path_buf());
+        let src  = LocalFileSource::new(f.path().to_path_buf()).unwrap();
         assert!(src.read_range(100, 4).await.is_err());
     }
 
@@ -132,7 +141,7 @@ mod tests {
     async fn local_size_hint_matches_file_length() {
         let data = b"0123456789";
         let f    = write_temp(data);
-        let src  = LocalFileSource::new(f.path().to_path_buf());
+        let src  = LocalFileSource::new(f.path().to_path_buf()).unwrap();
         assert_eq!(src.size_hint(), Some(10));
     }
 

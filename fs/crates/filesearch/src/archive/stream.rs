@@ -145,7 +145,7 @@ mod tests {
         let (f, meta) = zip_to_file_and_meta(&[
             ("file.txt", content, zip::CompressionMethod::Stored),
         ]);
-        let source    = Arc::new(super::super::source::LocalFileSource::new(f.path().to_path_buf()));
+        let source    = Arc::new(super::super::source::LocalFileSource::new(f.path().to_path_buf()).unwrap());
         let extractor = ZipStreamExtractor { source };
         let stream    = extractor.stream(&meta).unwrap();
         let got       = collect_stream(stream).await.unwrap();
@@ -158,7 +158,7 @@ mod tests {
         let (f, meta) = zip_to_file_and_meta(&[
             ("data.bin", &content, zip::CompressionMethod::Deflated),
         ]);
-        let source    = Arc::new(super::super::source::LocalFileSource::new(f.path().to_path_buf()));
+        let source    = Arc::new(super::super::source::LocalFileSource::new(f.path().to_path_buf()).unwrap());
         let extractor = ZipStreamExtractor { source };
         let stream    = extractor.stream(&meta).unwrap();
         let got       = collect_stream(stream).await.unwrap();
@@ -171,7 +171,7 @@ mod tests {
         let (f, meta) = zip_to_file_and_meta(&[
             ("check.bin", &content, zip::CompressionMethod::Deflated),
         ]);
-        let source    = Arc::new(super::super::source::LocalFileSource::new(f.path().to_path_buf()));
+        let source    = Arc::new(super::super::source::LocalFileSource::new(f.path().to_path_buf()).unwrap());
         let extractor = ZipStreamExtractor { source };
         let stream    = extractor.stream(&meta).unwrap();
         let got       = collect_stream(stream).await.unwrap();
@@ -217,7 +217,7 @@ mod tests {
         let (f, meta) = zip_to_file_and_meta(&[
             ("big.bin", &content, zip::CompressionMethod::Stored),
         ]);
-        let source    = Arc::new(super::super::source::LocalFileSource::new(f.path().to_path_buf()));
+        let source    = Arc::new(super::super::source::LocalFileSource::new(f.path().to_path_buf()).unwrap());
         let extractor = ZipStreamExtractor { source };
         let stream    = extractor.stream(&meta).unwrap();
         let got       = collect_stream(stream).await.unwrap();

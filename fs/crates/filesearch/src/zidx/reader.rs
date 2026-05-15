@@ -5,11 +5,12 @@ use memmap2::Mmap;
 use crate::zidx::ZidxError;
 
 // ---------------------------------------------------------------------------
-// On-disk constants
+// On-disk constants (format version 2)
 // ---------------------------------------------------------------------------
 
 const HEADER_SIZE: usize = 20;
-const NODE_SIZE:   usize = 40;
+const NODE_SIZE:   usize = 48;
+const FORMAT_VERSION: u32 = 2;
 
 // ---------------------------------------------------------------------------
 // Decoded node (in-memory representation after from_le_bytes decoding)
@@ -25,8 +26,8 @@ pub struct NodeData {
     /// 0 = file, 1 = dir
     pub kind:                u8,
     pub compression:         u16,
-    pub compressed_size:     u32,
-    pub uncompressed_size:   u32,
+    pub compressed_size:     u64,
+    pub uncompressed_size:   u64,
     pub local_header_offset: u64,
 }
 
@@ -97,8 +98,10 @@ impl ZidxIndex {
             return Err(ZidxError::Corrupt("invalid magic bytes".into()));
         }
         let version = u32::from_le_bytes(mmap[4..8].try_into().unwrap());
-        if version != 1 {
-            return Err(ZidxError::Corrupt(format!("unknown version {version}")));
+        if version != FORMAT_VERSION {
+            return Err(ZidxError::Corrupt(format!(
+                "unsupported .zidx version {version} (expected {FORMAT_VERSION}); rebuild the index"
+            )));
         }
         let node_count   = u32::from_le_bytes(mmap[8..12].try_into().unwrap());
         let string_bytes = u32::from_le_bytes(mmap[12..16].try_into().unwrap());
@@ -126,6 +129,19 @@ impl ZidxIndex {
             return Err(ZidxError::Corrupt(format!("node {id} out of range")));
         }
         let b = &self.mmap[base..base + NODE_SIZE];
+        // Layout v2 (48 bytes):
+        //  0.. 4  parent         u32
+        //  4.. 8  first_child    u32
+        //  8..12  next_sibling   u32
+        // 12..16  name_off       u32
+        // 16..18  name_len       u16
+        // 18      kind           u8
+        // 19      _pad
+        // 20..22  compression    u16
+        // 22..24  _pad2
+        // 24..32  compressed_size   u64  ← was u32 in v1
+        // 32..40  uncompressed_size u64  ← was u32 in v1
+        // 40..48  local_header_offset u64
         Ok(NodeData {
             parent:              u32::from_le_bytes(b[0..4].try_into().unwrap()),
             first_child:         u32::from_le_bytes(b[4..8].try_into().unwrap()),
@@ -133,12 +149,12 @@ impl ZidxIndex {
             name_off:            u32::from_le_bytes(b[12..16].try_into().unwrap()),
             name_len:            u16::from_le_bytes(b[16..18].try_into().unwrap()),
             kind:                b[18],
-            // b[19] = _pad (skip)
+            // b[19] = _pad
             compression:         u16::from_le_bytes(b[20..22].try_into().unwrap()),
-            // b[22..24] = _pad2 (skip)
-            compressed_size:     u32::from_le_bytes(b[24..28].try_into().unwrap()),
-            uncompressed_size:   u32::from_le_bytes(b[28..32].try_into().unwrap()),
-            local_header_offset: u64::from_le_bytes(b[32..40].try_into().unwrap()),
+            // b[22..24] = _pad2
+            compressed_size:     u64::from_le_bytes(b[24..32].try_into().unwrap()),
+            uncompressed_size:   u64::from_le_bytes(b[32..40].try_into().unwrap()),
+            local_header_offset: u64::from_le_bytes(b[40..48].try_into().unwrap()),
         })
     }
 

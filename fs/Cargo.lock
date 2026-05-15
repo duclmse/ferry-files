@@ -1471,7 +1471,6 @@ dependencies = [
  "humansize",
  "hyper 1.9.0",
  "ignore",
- "lru",
  "memchr",
  "memmap2",
  "nix 0.28.0",

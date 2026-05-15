@@ -16,8 +16,8 @@ struct BuildNode {
     kind:                NodeKind,
     children:            BTreeMap<String, BuildNode>,
     compression:         u16,
-    compressed_size:     u32,
-    uncompressed_size:   u32,
+    compressed_size:     u64,
+    uncompressed_size:   u64,
     local_header_offset: u64,
 }
 
@@ -27,8 +27,8 @@ struct FlatNode {
     kind:                NodeKind,
     children:            Vec<u32>,
     compression:         u16,
-    compressed_size:     u32,
-    uncompressed_size:   u32,
+    compressed_size:     u64,
+    uncompressed_size:   u64,
     local_header_offset: u64,
     // filled in the linking phase
     first_child:         u32,
@@ -102,8 +102,8 @@ fn insert(
     parts:               &[&str],
     is_dir:              bool,
     compression:         u16,
-    compressed_size:     u32,
-    uncompressed_size:   u32,
+    compressed_size:     u64,
+    uncompressed_size:   u64,
     local_header_offset: u64,
 ) {
     if parts.is_empty() {
@@ -166,7 +166,7 @@ fn flatten(node: &BuildNode, parent_id: u32, out: &mut Vec<FlatNode>) -> u32 {
 
 fn write_header(w: &mut impl Write, node_count: u32, string_bytes: u32) -> std::io::Result<()> {
     w.write_all(b"ZIDX")?;
-    w.write_all(&1u32.to_le_bytes())?;         // version
+    w.write_all(&2u32.to_le_bytes())?;         // version 2: u64 sizes
     w.write_all(&node_count.to_le_bytes())?;
     w.write_all(&string_bytes.to_le_bytes())?;
     w.write_all(&0u32.to_le_bytes())?;          // root_node = 0
@@ -174,18 +174,18 @@ fn write_header(w: &mut impl Write, node_count: u32, string_bytes: u32) -> std::
 }
 
 fn write_node(w: &mut impl Write, n: &FlatNode) -> std::io::Result<()> {
-    w.write_all(&n.parent.to_le_bytes())?;
-    w.write_all(&n.first_child.to_le_bytes())?;
-    w.write_all(&n.next_sibling.to_le_bytes())?;
-    w.write_all(&n.name_off.to_le_bytes())?;
-    w.write_all(&n.name_len.to_le_bytes())?;
+    w.write_all(&n.parent.to_le_bytes())?;           //  0.. 4  u32
+    w.write_all(&n.first_child.to_le_bytes())?;      //  4.. 8  u32
+    w.write_all(&n.next_sibling.to_le_bytes())?;     //  8..12  u32
+    w.write_all(&n.name_off.to_le_bytes())?;         // 12..16  u32
+    w.write_all(&n.name_len.to_le_bytes())?;         // 16..18  u16
     let kind_byte: u8 = if n.kind == NodeKind::Dir { 1 } else { 0 };
-    w.write_all(&[kind_byte, 0])?;              // kind + _pad
-    w.write_all(&n.compression.to_le_bytes())?;
-    w.write_all(&[0u8; 2])?;                   // _pad2
-    w.write_all(&n.compressed_size.to_le_bytes())?;
-    w.write_all(&n.uncompressed_size.to_le_bytes())?;
-    w.write_all(&n.local_header_offset.to_le_bytes())?;
+    w.write_all(&[kind_byte, 0])?;                   // 18 kind + 19 _pad
+    w.write_all(&n.compression.to_le_bytes())?;      // 20..22  u16
+    w.write_all(&[0u8; 2])?;                         // 22..24  _pad2
+    w.write_all(&n.compressed_size.to_le_bytes())?;  // 24..32  u64
+    w.write_all(&n.uncompressed_size.to_le_bytes())?;// 32..40  u64
+    w.write_all(&n.local_header_offset.to_le_bytes())?; // 40..48 u64
     Ok(())
 }
 
@@ -223,9 +223,8 @@ impl ZidxBuilder {
             // zip 2.x exposes CompressionMethod as an opaque struct with no
             // public From<..> impl; map known constants to their ZIP spec values.
             let compression         = compression_method_to_u16(entry.compression());
-            // Clamp to u32 (ZIP64 can exceed u32 but our format stores u32).
-            let compressed_size     = entry.compressed_size().min(u32::MAX as u64) as u32;
-            let uncompressed_size   = entry.size().min(u32::MAX as u64) as u32;
+            let compressed_size     = entry.compressed_size();
+            let uncompressed_size   = entry.size();
             let local_header_offset = entry.header_start();
             drop(entry);
 
