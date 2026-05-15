@@ -1,5 +1,6 @@
 pub mod archive;
 pub mod dto;
+pub mod fs;
 pub mod grpc;
 pub mod ipc_client;
 pub mod ipc_protocol;
