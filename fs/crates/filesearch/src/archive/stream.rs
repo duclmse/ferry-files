@@ -58,9 +58,10 @@ async fn pump_inflate<S: ByteSource>(
 ) -> io::Result<()> {
     let data_start = parse_local_header_offset(source.as_ref(), meta.local_header_offset).await?;
 
-    let mut remaining = meta.compressed_size;
-    let mut offset    = data_start;
-    let mut decoder   = create_decoder(meta.compression)?;
+    let mut remaining          = meta.compressed_size;
+    let mut offset             = data_start;
+    let mut decoder            = create_decoder(meta.compression)?;
+    let mut decompressed_total = 0u64;
 
     while remaining > 0 {
         let chunk_size = remaining.min(64 * 1024) as usize;
@@ -69,14 +70,26 @@ async fn pump_inflate<S: ByteSource>(
         remaining -= chunk_size as u64;
 
         let decoded = decoder.feed(&compressed)?;
+        decompressed_total += decoded.len() as u64;
         if !decoded.is_empty() && tx.send(Ok(decoded)).await.is_err() {
             return Ok(());
         }
     }
 
     let tail = decoder.finish()?;
+    decompressed_total += tail.len() as u64;
     if !tail.is_empty() {
         tx.send(Ok(tail)).await.ok();
+    }
+
+    if decompressed_total != meta.uncompressed_size {
+        return Err(io::Error::new(
+            io::ErrorKind::InvalidData,
+            format!(
+                "decompressed size mismatch: expected {} bytes, got {}",
+                meta.uncompressed_size, decompressed_total,
+            ),
+        ));
     }
 
     Ok(())

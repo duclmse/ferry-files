@@ -110,7 +110,8 @@ pub fn router(state: AppState) -> Router {
         .route("/reindex", post(reindex_handler))
         .route("/health",  get(health_handler))
         .route("/file",    get(file_handler))
-        .route("/open",    post(open_handler));
+        .route("/open",    post(open_handler))
+        .merge(crate::api::fs::router(state.clone()));
 
     if state.archive_registry.is_enabled() {
         r = r.merge(crate::api::archive::router(state.clone()));

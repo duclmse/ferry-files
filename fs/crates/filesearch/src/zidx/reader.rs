@@ -1,3 +1,4 @@
+use std::collections::HashMap;
 use std::path::Path;
 
 use memmap2::Mmap;
@@ -69,17 +70,20 @@ impl<'a> Iterator for ChildIter<'a> {
 pub struct ZidxIndex {
     mmap:           Mmap,
     pub node_count: u32,
-    nodes_offset:   usize, // = 20
-    strings_offset: usize, // = 20 + node_count * 40
+    nodes_offset:   usize, // = HEADER_SIZE (20)
+    strings_offset: usize, // = HEADER_SIZE + node_count * NODE_SIZE (48)
     #[allow(dead_code)]
     string_bytes:   u32,
+    /// O(1) lookup accelerator: (parent_id, name) → child_id.
+    /// Built once in `open`; avoids linear child scans in `lookup`.
+    lookup_index:   HashMap<(u32, Box<str>), u32>,
 }
 
 impl std::fmt::Debug for ZidxIndex {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         f.debug_struct("ZidxIndex")
             .field("node_count", &self.node_count)
-            .finish()
+            .finish_non_exhaustive()
     }
 }
 
@@ -119,7 +123,29 @@ impl ZidxIndex {
         let nodes_offset   = HEADER_SIZE;
         let strings_offset = HEADER_SIZE + node_count as usize * NODE_SIZE;
 
-        Ok(Self { mmap, node_count, nodes_offset, strings_offset, string_bytes })
+        let mut this = Self {
+            mmap,
+            node_count,
+            nodes_offset,
+            strings_offset,
+            string_bytes,
+            lookup_index: HashMap::with_capacity(node_count as usize),
+        };
+
+        // Build the (parent_id, name) → child_id map so lookup() is O(depth)
+        // rather than O(depth × max_children_per_dir).
+        let mut entries = Vec::with_capacity(node_count as usize);
+        for id in 0..node_count {
+            let node = this.node(id)?;
+            let name: Box<str> = this.name(&node)?.into();
+            entries.push((node.parent, name, id));
+        }
+        this.lookup_index = entries
+            .into_iter()
+            .map(|(parent, name, id)| ((parent, name), id))
+            .collect();
+
+        Ok(this)
     }
 
     /// Decode node `id` from the mmap. Returns `Err(Corrupt)` for out-of-range IDs.
@@ -181,22 +207,15 @@ impl ZidxIndex {
 
     /// Walk from root to find the node for `path`. Returns `Ok(None)` when the
     /// path is not found; `Err` only for corrupt index data.
+    ///
+    /// Uses the pre-built `lookup_index` for O(depth) resolution rather than
+    /// scanning all children at each level.
     pub fn lookup(&self, path: &str) -> Result<Option<u32>, ZidxError> {
-        let parts: Vec<&str> = path.split('/').filter(|s| !s.is_empty()).collect();
         let mut current_id = 0u32; // start at root
-        for part in parts {
-            let mut found = None;
-            for child_result in self.children(current_id) {
-                let child_id   = child_result?;
-                let child_node = self.node(child_id)?;
-                if self.name(&child_node)? == part {
-                    found = Some(child_id);
-                    break;
-                }
-            }
-            match found {
-                Some(id) => current_id = id,
-                None     => return Ok(None),
+        for part in path.split('/').filter(|s| !s.is_empty()) {
+            match self.lookup_index.get(&(current_id, part.into())) {
+                Some(&child_id) => current_id = child_id,
+                None            => return Ok(None),
             }
         }
         Ok(Some(current_id))

@@ -10,12 +10,12 @@
 //! Building a `.zidx` is CPU-bound (zip central-directory parse + tree build +
 //! write).  Measured single-threaded on an NVMe SSD:
 //!
-//!   | Entries  | Expected build time |
-//!   |----------|---------------------|
-//!   |    1 000 |  < 5 ms             |
-//!   |   10 000 |  < 30 ms            |
-//!   |  100 000 |  < 300 ms           |
-//!   | 1 000 000|  < 3 s              |
+//!   | Entries   | Expected build time |
+//!   |-----------|---------------------|
+//!   |     1 000 |  < 5 ms             |
+//!   |    10 000 |  < 30 ms            |
+//!   |   100 000 |  < 300 ms           |
+//!   | 1 000 000 |  < 3 s              |
 //!
 //! ## LocalFileSource read throughput
 //!
@@ -32,11 +32,11 @@
 //!   - `crawl_threads` / `content_threads` at default (CPU count / 2)
 //!
 //!   | Drive size | Est. files | Crawl (NVMe) | Crawl (HDD) |
-//!   |------------|-----------|--------------|-------------|
-//!   |  1 TB      |   500 000 |   ~10 s      |  ~100 s     |
-//!   |  2 TB      | 1 000 000 |   ~20 s      |  ~200 s     |
-//!   |  5 TB      | 2 500 000 |   ~50 s      |  ~500 s     |
-//!   | 10 TB      | 5 000 000 |  ~100 s      | ~1 000 s    |
+//!   |------------|------------|--------------|-------------|
+//!   |       1 TB |    500 000 |        ~10 s |      ~100 s |
+//!   |       2 TB |  1 000 000 |        ~20 s |      ~200 s |
+//!   |       5 TB |  2 500 000 |        ~50 s |      ~500 s |
+//!   |      10 TB |  5 000 000 |       ~100 s |    ~1 000 s |
 //!
 //! The bottleneck on HDD is directory enumeration (random I/O); on NVMe it is
 //! SQLite commit frequency and Tantivy segment merging.  Tuning:
@@ -46,7 +46,6 @@
 
 use std::io::Write as _;
 use std::path::PathBuf;
-use std::sync::Arc;
 
 use criterion::{criterion_group, criterion_main, BenchmarkId, Criterion, Throughput};
 

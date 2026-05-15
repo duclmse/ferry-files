@@ -1,6 +1,6 @@
-use std::io::{self, Seek, SeekFrom};
+use std::io;
 use std::path::PathBuf;
-use std::sync::{Arc, Mutex};
+use std::sync::Arc;
 
 use async_trait::async_trait;
 use bytes::Bytes;
@@ -22,12 +22,15 @@ pub trait ByteSource: Send + Sync {
 // LocalFileSource
 // ---------------------------------------------------------------------------
 
-/// Holds an open file descriptor and serves byte ranges via seek+read inside
-/// `spawn_blocking`.  Each `read_range` call calls `try_clone()` on the inner
-/// `File` (a cheap OS-level `dup`) so the blocking read does not hold the
-/// Mutex for its duration — concurrent reads proceed in parallel.
+/// Holds an open file descriptor and serves byte ranges via positional reads
+/// inside `spawn_blocking`.
+///
+/// Uses `pread` (Unix) / `seek_read` (Windows) so concurrent `read_range`
+/// calls never contend: positional reads do not modify the file's seek
+/// position, eliminating the need for a Mutex or dup().  Only an
+/// `Arc::clone` (one atomic increment) is needed per call.
 pub struct LocalFileSource {
-    file: Mutex<std::fs::File>,
+    file: Arc<std::fs::File>,
     size: u64,
 }
 
@@ -35,24 +38,17 @@ impl LocalFileSource {
     pub fn new(path: PathBuf) -> io::Result<Self> {
         let file = std::fs::File::open(&path)?;
         let size = file.metadata()?.len();
-        Ok(Self { file: Mutex::new(file), size })
+        Ok(Self { file: Arc::new(file), size })
     }
 }
 
 #[async_trait]
 impl ByteSource for LocalFileSource {
     async fn read_range(&self, offset: u64, len: usize) -> io::Result<Bytes> {
-        // dup the fd while holding the lock for only this one call, then release.
-        let cloned = self.file
-            .lock()
-            .map_err(|_| io::Error::other("LocalFileSource lock poisoned"))?
-            .try_clone()?;
+        let file = Arc::clone(&self.file);
         tokio::task::spawn_blocking(move || {
-            use std::io::Read;
-            let mut f = cloned;
-            f.seek(SeekFrom::Start(offset))?;
             let mut buf = vec![0u8; len];
-            f.read_exact(&mut buf)?;
+            pread(&file, &mut buf, offset)?;
             Ok(Bytes::from(buf))
         })
         .await
@@ -62,6 +58,24 @@ impl ByteSource for LocalFileSource {
     fn size_hint(&self) -> Option<u64> {
         Some(self.size)
     }
+}
+
+/// Positional read: read exactly `buf.len()` bytes from `file` at `offset`
+/// without modifying the file's seek position.
+#[cfg(unix)]
+fn pread(file: &std::fs::File, buf: &mut [u8], offset: u64) -> io::Result<()> {
+    use std::os::unix::fs::FileExt;
+    file.read_exact_at(buf, offset)
+}
+
+#[cfg(windows)]
+fn pread(file: &std::fs::File, buf: &mut [u8], offset: u64) -> io::Result<()> {
+    use std::os::windows::fs::FileExt;
+    let n = file.seek_read(buf, offset)?;
+    if n < buf.len() {
+        return Err(io::Error::new(io::ErrorKind::UnexpectedEof, "seek_read returned fewer bytes than requested"));
+    }
+    Ok(())
 }
 
 // ---------------------------------------------------------------------------

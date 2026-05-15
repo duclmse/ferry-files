@@ -30,12 +30,6 @@ pub async fn parse_local_header_offset(
     let header: Bytes = source.read_range(local_header_offset, 30).await
         .map_err(|e| io::Error::new(io::ErrorKind::UnexpectedEof, e))?;
 
-    if header.len() < 30 {
-        return Err(io::Error::new(
-            io::ErrorKind::UnexpectedEof,
-            "local file header truncated",
-        ));
-    }
     if &header[0..4] != b"PK\x03\x04" {
         return Err(io::Error::new(
             io::ErrorKind::InvalidData,

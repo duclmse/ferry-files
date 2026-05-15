@@ -25,7 +25,7 @@ use tokio_util::io::ReaderStream;
 use crate::api::rest::AppState;
 use crate::query::{evaluator, parser};
 use crate::query::ast::{Expr, Function, Modifiers, Predicate, PredicateKind};
-use crate::archive::StreamExtractor;
+use crate::archive::{LocalFileSource, StreamExtractor};
 use crate::zidx::{ZidxIndex, zidx_path_for};
 
 // ---------------------------------------------------------------------------
@@ -58,18 +58,23 @@ pub struct ArchiveSummary {
 }
 
 // ---------------------------------------------------------------------------
+
+// ---------------------------------------------------------------------------
 // ArchiveRegistry
 // ---------------------------------------------------------------------------
 
 pub struct ArchiveRegistry {
-    entries:     DashMap<String, RegistryEntry>,
+    entries:      DashMap<String, RegistryEntry>,
     /// Per-shard concurrent cache — no global lock on the hot read path.
     /// `index_cache_size` from config is retained in the struct for future
     /// bounded-eviction support but not enforced here; ZidxIndex is mmap-backed
     /// and holds negligible memory beyond the OS page cache.
-    index_cache: DashMap<String, Arc<ZidxIndex>>,
-    zidx_dir:    PathBuf,
-    enabled:     bool,
+    index_cache:  DashMap<String, Arc<ZidxIndex>>,
+    /// Cached open file handle per archive — avoids an open()+fstat() syscall
+    /// on every streaming request.  Evicted (along with index_cache) on rebuild.
+    source_cache: DashMap<String, Arc<LocalFileSource>>,
+    zidx_dir:     PathBuf,
+    enabled:      bool,
 }
 
 /// Compute a cheap ETag from file mtime + size — one stat syscall, O(1).
@@ -87,19 +92,21 @@ fn zidx_etag(path: &Path) -> String {
 impl ArchiveRegistry {
     pub fn new(zidx_dir: PathBuf, _cache_size: usize) -> Self {
         Self {
-            entries:     DashMap::new(),
-            index_cache: DashMap::new(),
+            entries:      DashMap::new(),
+            index_cache:  DashMap::new(),
+            source_cache: DashMap::new(),
             zidx_dir,
-            enabled:     true,
+            enabled:      true,
         }
     }
 
     pub fn disabled() -> Self {
         Self {
-            entries:     DashMap::new(),
-            index_cache: DashMap::new(),
-            zidx_dir:    PathBuf::new(),
-            enabled:     false,
+            entries:      DashMap::new(),
+            index_cache:  DashMap::new(),
+            source_cache: DashMap::new(),
+            zidx_dir:     PathBuf::new(),
+            enabled:      false,
         }
     }
 
@@ -111,9 +118,9 @@ impl ArchiveRegistry {
         let id        = archive_id(&zip_path);
         let zidx_path = zidx_path_for(&self.zidx_dir, &zip_path);
         let etag      = zidx_etag(&zidx_path);
-        // Invalidate any cached index for this id so the next request re-opens
-        // the freshly rebuilt file.
+        // Invalidate caches so the next request re-opens the freshly rebuilt file.
         self.index_cache.remove(&id);
+        self.source_cache.remove(&id);
         self.entries.insert(id, RegistryEntry { zip_path, zidx_path, etag });
     }
 
@@ -123,6 +130,7 @@ impl ArchiveRegistry {
         let id = archive_id(zip_path);
         self.entries.remove(&id);
         self.index_cache.remove(&id);
+        self.source_cache.remove(&id);
     }
 
     /// Open (or return a cached) ZidxIndex for the given archive ID.
@@ -156,6 +164,29 @@ impl ArchiveRegistry {
     pub fn zip_path(&self, id: &str) -> Option<PathBuf> {
         if !self.enabled { return None; }
         self.entries.get(id).map(|e| e.zip_path.clone())
+    }
+
+    /// Return a cached (or freshly opened) `LocalFileSource` for `id`.
+    /// Returns `None` if the archive is unknown or the file cannot be opened.
+    pub fn source(&self, id: &str) -> Option<Arc<LocalFileSource>> {
+        if !self.enabled { return None; }
+        if let Some(src) = self.source_cache.get(id) {
+            return Some(Arc::clone(&*src));
+        }
+        let zip_path = self.entries.get(id)?.zip_path.clone();
+        match LocalFileSource::new(zip_path) {
+            Ok(src) => {
+                let src     = Arc::new(src);
+                let stored  = self.source_cache
+                    .entry(id.to_string())
+                    .or_insert_with(|| Arc::clone(&src));
+                Some(Arc::clone(&*stored))
+            }
+            Err(e) => {
+                tracing::warn!("failed to open source for archive {id}: {e}");
+                None
+            }
+        }
     }
 
     /// List all registered archives.
@@ -248,11 +279,21 @@ async fn list_archives(State(state): State<AppState>) -> impl IntoResponse {
 async fn get_index(
     State(state): State<AppState>,
     AxumPath(id): AxumPath<String>,
+    req_headers:  axum::http::HeaderMap,
 ) -> impl IntoResponse {
     let (zidx_path, etag) = match state.archive_registry.entries.get(&id) {
         Some(e) => (e.zidx_path.clone(), e.etag.clone()),
         None    => return err_not_found(&id).into_response(),
     };
+
+    // Conditional GET: skip re-reading the file when client has a fresh copy.
+    if req_headers.get(header::IF_NONE_MATCH).map(|v| v.as_bytes()) == Some(etag.as_bytes()) {
+        return axum::http::Response::builder()
+            .status(StatusCode::NOT_MODIFIED)
+            .body(Body::empty())
+            .unwrap()
+            .into_response();
+    }
 
     let file = match tokio::fs::File::open(&zidx_path).await {
         Ok(f)  => f,
@@ -366,11 +407,6 @@ async fn stream_file(
         None    => return err_not_found(&id).into_response(),
     };
 
-    let zip_path = match state.archive_registry.zip_path(&id) {
-        Some(p) => p,
-        None    => return err_not_found(&id).into_response(),
-    };
-
     let node = match idx.node(node_id) {
         Ok(n)  => n,
         Err(_) => return err_bad_node("node out of range", node_id).into_response(),
@@ -386,9 +422,9 @@ async fn stream_file(
         uncompressed_size:   node.uncompressed_size,
         local_header_offset: node.local_header_offset,
     };
-    let source = match crate::archive::LocalFileSource::new(zip_path) {
-        Ok(s)  => Arc::new(s),
-        Err(e) => return err_internal(e.to_string()).into_response(),
+    let source = match state.archive_registry.source(&id) {
+        Some(s) => s,
+        None    => return err_not_found(&id).into_response(),
     };
     let extractor = crate::archive::ZipStreamExtractor { source };
     let stream    = match extractor.stream(&meta) {
@@ -448,7 +484,10 @@ async fn search_archive(
     } else {
         match parser::parse(&q, &macros) {
             Ok(user_expr) => Expr::And(Box::new(archive_pred), Box::new(user_expr)),
-            Err(e)        => return err_internal(e.to_string()).into_response(),
+            Err(e)        => return (
+                StatusCode::BAD_REQUEST,
+                Json(ErrorBody { error: e.to_string(), id: None, node: None }),
+            ).into_response(),
         }
     };
 

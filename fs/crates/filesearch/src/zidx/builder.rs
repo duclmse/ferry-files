@@ -135,29 +135,41 @@ fn insert(
 // DFS flatten — preorder so parent ID is always lower than children's IDs
 // ---------------------------------------------------------------------------
 
-fn flatten(node: &BuildNode, parent_id: u32, out: &mut Vec<FlatNode>) -> u32 {
-    let id = out.len() as u32;
-    out.push(FlatNode {
-        parent:              parent_id,
-        name:                node.name.clone(),
-        kind:                node.kind,
-        children:            Vec::new(),
-        compression:         node.compression,
-        compressed_size:     node.compressed_size,
-        uncompressed_size:   node.uncompressed_size,
-        local_header_offset: node.local_header_offset,
-        first_child:         u32::MAX,
-        next_sibling:        u32::MAX,
-        name_off:            0,
-        name_len:            0,
-    });
-    let mut child_ids = Vec::new();
-    for child in node.children.values() {
-        let cid = flatten(child, id, out);
-        child_ids.push(cid);
+// Iterative preorder DFS using an explicit stack so arbitrarily deep ZIP
+// directory trees cannot overflow the call stack.
+fn flatten(root: &BuildNode, out: &mut Vec<FlatNode>) {
+    // Each entry: (node_ref, parent_id).  Root is its own parent (sentinel 0).
+    let mut stack: Vec<(&BuildNode, u32)> = vec![(root, 0)];
+
+    while let Some((node, parent_id)) = stack.pop() {
+        let id = out.len() as u32;
+        out.push(FlatNode {
+            parent:              parent_id,
+            name:                node.name.clone(),
+            kind:                node.kind,
+            children:            Vec::new(),
+            compression:         node.compression,
+            compressed_size:     node.compressed_size,
+            uncompressed_size:   node.uncompressed_size,
+            local_header_offset: node.local_header_offset,
+            first_child:         u32::MAX,
+            next_sibling:        u32::MAX,
+            name_off:            0,
+            name_len:            0,
+        });
+
+        // Record this node as a direct child of its parent (skip root→itself).
+        if id != parent_id {
+            out[parent_id as usize].children.push(id);
+        }
+
+        // Push children in reverse sorted order so the first (alphabetically
+        // lowest) child is at the top of the stack and processed next, giving
+        // the same left-to-right preorder as the previous recursive version.
+        for child in node.children.values().rev() {
+            stack.push((child, id));
+        }
     }
-    out[id as usize].children = child_ids;
-    id
 }
 
 // ---------------------------------------------------------------------------
@@ -235,7 +247,7 @@ impl ZidxBuilder {
 
         // ── Step 3: DFS flatten (preorder → parent ID < children IDs) ─────
         let mut flat: Vec<FlatNode> = Vec::new();
-        flatten(&root, 0, &mut flat);
+        flatten(&root, &mut flat);
 
         let node_count = flat.len();
         if node_count > u32::MAX as usize {
@@ -243,9 +255,11 @@ impl ZidxBuilder {
         }
 
         // ── Step 4: convert children vec → first_child / next_sibling ─────
-        // Collect all child ID lists first to avoid simultaneous mutable borrows.
+        // Take ownership of the children vecs to avoid simultaneous mutable
+        // borrows when writing first_child/next_sibling back.  After this
+        // step the .children fields are empty and no longer used.
         let child_lists: Vec<Vec<u32>> =
-            flat.iter().map(|n| n.children.clone()).collect();
+            flat.iter_mut().map(|n| std::mem::take(&mut n.children)).collect();
 
         for (i, children) in child_lists.iter().enumerate() {
             flat[i].first_child = children.first().copied().unwrap_or(u32::MAX);
