@@ -7,13 +7,15 @@
 //!   GET  /archive/:id/file?node=<u32> — stream file content
 //!   GET  /archive/:id/search?q=&limit=&offset= — archive-scoped search
 
+use std::net::{IpAddr, SocketAddr};
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
 use axum::{
     body::Body,
-    extract::{Path as AxumPath, Query, State},
-    http::{header, Response, StatusCode},
+    extract::{ConnectInfo, Path as AxumPath, Query, State},
+    http::{header, Request, Response, StatusCode},
+    middleware::Next,
     response::IntoResponse,
     Json, Router,
     routing::get,
@@ -210,7 +212,43 @@ pub fn router(state: AppState) -> Router<AppState> {
         .route("/archive/:id/dir",    get(list_dir))
         .route("/archive/:id/file",   get(stream_file))
         .route("/archive/:id/search", get(search_archive))
+        .layer(axum::middleware::from_fn_with_state(
+            state.clone(),
+            rate_limit_middleware,
+        ))
         .with_state(state)
+}
+
+// ---------------------------------------------------------------------------
+// Rate-limit middleware (Step 2)
+// ---------------------------------------------------------------------------
+
+async fn rate_limit_middleware(
+    State(state): State<AppState>,
+    req:          Request<Body>,
+    next:         Next,
+) -> axum::response::Response {
+    let enabled = {
+        let cfg = state.config.read().await;
+        cfg.archive_service.scheduler.rate_limit_enabled
+    };
+    if !enabled {
+        return next.run(req).await;
+    }
+
+    let ip = req
+        .extensions()
+        .get::<ConnectInfo<SocketAddr>>()
+        .map(|ci| ci.0.ip())
+        .unwrap_or(IpAddr::from([127, 0, 0, 1]));
+
+    if state.rate_limiter.check(ip, 1).is_err() {
+        state.scheduler_metrics.inc_rejected();
+        return (StatusCode::TOO_MANY_REQUESTS, "rate limit exceeded")
+            .into_response();
+    }
+
+    next.run(req).await
 }
 
 // ---------------------------------------------------------------------------
@@ -426,6 +464,10 @@ async fn stream_file(
         Some(s) => s,
         None    => return err_not_found(&id).into_response(),
     };
+
+    // ── Per-archive concurrency limit (semaphore) ─────────────────────────
+    let _permit = state.archive_semaphores.acquire(&id).await;
+
     let extractor = crate::archive::ZipStreamExtractor { source };
     let stream    = match extractor.stream(&meta) {
         Ok(s)  => s,
@@ -640,14 +682,17 @@ mod tests {
         };
 
         AppState {
-            sqlite:           Arc::new(FileStore::Sqlite(Arc::new(
+            sqlite:              Arc::new(FileStore::Sqlite(Arc::new(
                 SqliteStore::new(std::path::Path::new(":memory:")).unwrap(),
             ))),
-            tantivy:          Arc::new(TantivyStore::new(&tantivy_dir).unwrap()),
-            config:           Arc::new(tokio::sync::RwLock::new(config)),
-            metrics:          IndexMetrics::new(),
-            reindex_tx:       tokio::sync::watch::channel(false).0,
-            archive_registry: registry,
+            tantivy:             Arc::new(TantivyStore::new(&tantivy_dir).unwrap()),
+            config:              Arc::new(tokio::sync::RwLock::new(config)),
+            metrics:             IndexMetrics::new(),
+            reindex_tx:          tokio::sync::watch::channel(false).0,
+            archive_registry:    registry,
+            archive_semaphores:  crate::scheduler::ArchiveSemaphores::new(4),
+            scheduler_metrics:   crate::scheduler::SchedulerMetrics::new(),
+            rate_limiter:        Arc::new(crate::scheduler::ClientRateLimiter::new(100, 200)),
         }
     }
 

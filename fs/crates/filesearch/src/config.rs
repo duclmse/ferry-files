@@ -263,6 +263,9 @@ pub struct ArchiveServiceConfig {
     /// Max ZidxIndex instances to hold open in the LRU cache.
     #[serde(default = "default_index_cache_size")]
     pub index_cache_size: usize,
+    /// Scheduler and multi-tenant isolation config.
+    #[serde(default)]
+    pub scheduler: crate::scheduler::SchedulerConfig,
 }
 
 fn default_index_cache_size() -> usize { 256 }

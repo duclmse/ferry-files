@@ -1301,14 +1301,17 @@ mod tests {
         };
 
         AppState {
-            sqlite:           Arc::new(FileStore::Sqlite(Arc::new(
+            sqlite:              Arc::new(FileStore::Sqlite(Arc::new(
                 SqliteStore::new(std::path::Path::new(":memory:")).unwrap(),
             ))),
-            tantivy:          Arc::new(TantivyStore::new(&tantivy_dir).unwrap()),
-            config:           Arc::new(tokio::sync::RwLock::new(config)),
-            metrics:          IndexMetrics::new(),
-            reindex_tx:       tokio::sync::watch::channel(false).0,
-            archive_registry: Arc::new(ArchiveRegistry::disabled()),
+            tantivy:             Arc::new(TantivyStore::new(&tantivy_dir).unwrap()),
+            config:              Arc::new(tokio::sync::RwLock::new(config)),
+            metrics:             IndexMetrics::new(),
+            reindex_tx:          tokio::sync::watch::channel(false).0,
+            archive_registry:    Arc::new(ArchiveRegistry::disabled()),
+            archive_semaphores:  crate::scheduler::ArchiveSemaphores::new(4),
+            scheduler_metrics:   crate::scheduler::SchedulerMetrics::new(),
+            rate_limiter:        Arc::new(crate::scheduler::ClientRateLimiter::new(100, 200)),
         }
     }
 }

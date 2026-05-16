@@ -25,6 +25,7 @@ use crate::api::archive::ArchiveRegistry;
 use crate::config::Config;
 use crate::indexer::crawler::IndexMetrics;
 use crate::query::{evaluator, parser};
+use crate::scheduler::{ArchiveSemaphores, ClientRateLimiter, SchedulerMetrics};
 use crate::store::{FileStore, tantivy_store::TantivyStore, FileRecord};
 
 use super::dto::archive_entry_opt;
@@ -35,12 +36,15 @@ use super::dto::archive_entry_opt;
 
 #[derive(Clone)]
 pub struct AppState {
-    pub sqlite:            Arc<FileStore>,
-    pub tantivy:           Arc<TantivyStore>,
-    pub config:            Arc<RwLock<Config>>,
-    pub metrics:           Arc<IndexMetrics>,
-    pub reindex_tx:        watch::Sender<bool>,
-    pub archive_registry:  Arc<ArchiveRegistry>,
+    pub sqlite:               Arc<FileStore>,
+    pub tantivy:              Arc<TantivyStore>,
+    pub config:               Arc<RwLock<Config>>,
+    pub metrics:              Arc<IndexMetrics>,
+    pub reindex_tx:           watch::Sender<bool>,
+    pub archive_registry:     Arc<ArchiveRegistry>,
+    pub archive_semaphores:   Arc<ArchiveSemaphores>,
+    pub scheduler_metrics:    Arc<SchedulerMetrics>,
+    pub rate_limiter:         Arc<ClientRateLimiter>,
 }
 
 // ---------------------------------------------------------------------------
@@ -109,6 +113,7 @@ pub fn router(state: AppState) -> Router {
         .route("/stats",   get(stats_handler))
         .route("/reindex", post(reindex_handler))
         .route("/health",  get(health_handler))
+        .route("/metrics", get(metrics_handler))
         .route("/file",    get(file_handler))
         .route("/open",    post(open_handler))
         .merge(crate::api::fs::router(state.clone()));
@@ -207,6 +212,15 @@ async fn reindex_handler(
 
 async fn health_handler() -> impl IntoResponse {
     Json(HealthResponse { status: "ok" })
+}
+
+async fn metrics_handler(State(state): State<AppState>) -> impl IntoResponse {
+    use axum::http::header::CONTENT_TYPE;
+    let body = state.scheduler_metrics.prometheus_text();
+    axum::response::Response::builder()
+        .header(CONTENT_TYPE, "text/plain; version=0.0.4; charset=utf-8")
+        .body(axum::body::Body::from(body))
+        .unwrap()
 }
 
 #[derive(Deserialize)]

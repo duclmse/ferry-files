@@ -18,6 +18,7 @@ use crate::api::rest::AppState;
 use crate::config;
 use crate::error::AppError;
 use crate::indexer::crawler::{full_crawl, process_event, IndexEvent, IndexMetrics};
+use crate::scheduler::{ArchiveSemaphores, ClientRateLimiter, SchedulerMetrics};
 use crate::store::{FileStore, tantivy_store::TantivyStore};
 use crate::watcher;
 use crate::zidx::zidx_path_for;
@@ -227,13 +228,25 @@ pub async fn run_with_shutdown(
     {
         let api_cfg = shared_cfg.read().await.api.clone();
         if api_cfg.rest_enabled {
+            let (sched_max_per_archive, rate_per_client, burst_per_client) = {
+                let cfg = shared_cfg.read().await;
+                let s   = &cfg.archive_service.scheduler;
+                (s.max_per_archive, s.rate_per_client, s.burst_per_client)
+            };
+            let scheduler_metrics  = SchedulerMetrics::new();
+            let archive_semaphores = ArchiveSemaphores::new(sched_max_per_archive);
+            let rate_limiter       = Arc::new(ClientRateLimiter::new(rate_per_client, burst_per_client));
+
             let app_state = AppState {
-                sqlite:           Arc::clone(&sqlite),
-                tantivy:          Arc::clone(&tantivy),
-                config:           Arc::clone(&shared_cfg),
-                metrics:          Arc::clone(&metrics),
-                reindex_tx:       reindex_tx.clone(),
-                archive_registry: Arc::clone(&archive_registry),
+                sqlite:              Arc::clone(&sqlite),
+                tantivy:             Arc::clone(&tantivy),
+                config:              Arc::clone(&shared_cfg),
+                metrics:             Arc::clone(&metrics),
+                reindex_tx:          reindex_tx.clone(),
+                archive_registry:    Arc::clone(&archive_registry),
+                archive_semaphores,
+                scheduler_metrics,
+                rate_limiter,
             };
             let shutdown_c = shutdown.clone();
             let rest_port  = api_cfg.rest_port;
