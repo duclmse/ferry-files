@@ -42,11 +42,15 @@ pub struct DeflateDecoder {
 }
 
 impl DeflateDecoder {
-    fn new() -> Self {
+    pub fn new() -> Self {
         Self {
             inner: flate2::write::DeflateDecoder::new(Vec::new()),
         }
     }
+}
+
+impl Default for DeflateDecoder {
+    fn default() -> Self { Self::new() }
 }
 
 impl Decoder for DeflateDecoder {
@@ -74,9 +78,10 @@ impl Decoder for DeflateDecoder {
 /// Create the right decoder for a ZIP compression method code.
 /// Returns `io::Error` with `ErrorKind::Unsupported` for unknown methods.
 pub fn create_decoder(compression: u16) -> io::Result<Box<dyn Decoder>> {
+    use super::inflate::SimdDeflateDecoder;
     match compression {
         0 => Ok(Box::new(StoredDecoder)),
-        8 => Ok(Box::new(DeflateDecoder::new())),
+        8 => Ok(Box::new(SimdDeflateDecoder::new())),
         m => Err(io::Error::new(
             io::ErrorKind::Unsupported,
             format!("unsupported ZIP compression method {m}"),

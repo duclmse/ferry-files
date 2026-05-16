@@ -122,3 +122,15 @@ harness = false
 [[bench]]
 name    = "archive"
 harness = false
+
+[[bench]]
+name    = "archive_inflate"
+harness = false
+
+[[bench]]
+name    = "archive_range"
+harness = false
+
+[[bench]]
+name    = "scheduler_load"
+harness = false

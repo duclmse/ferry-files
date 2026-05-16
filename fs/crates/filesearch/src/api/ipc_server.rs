@@ -412,7 +412,7 @@ mod tests {
         assert_eq!(decode_err_code(&DecodeError::BadMagic(*b"XXXX")), "BAD_MAGIC");
         assert_eq!(decode_err_code(&DecodeError::VersionMismatch(99)), "VERSION_MISMATCH");
         assert_eq!(decode_err_code(&DecodeError::Io(
-            std::io::Error::new(std::io::ErrorKind::Other, "io")
+            std::io::Error::other("io")
         )), "IO_ERROR");
     }
 

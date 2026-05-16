@@ -612,7 +612,7 @@ mod tests {
         FileRecord {
             id:              None,
             path:            path.to_owned(),
-            name:            path.split('/').last().unwrap_or(path).to_owned(),
+            name:            path.split('/').next_back().unwrap_or(path).to_owned(),
             extension:       Some("rs".into()),
             size_bytes:      1024,
             mtime:           1_000_000,
