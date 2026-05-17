@@ -76,7 +76,10 @@ impl ClientRateLimiter {
             (Mutex::new(TokenBucket::new(self.rate, self.burst)), Instant::now())
         });
 
-        let mut bucket = entry.0.lock().unwrap_or_else(|e| e.into_inner());
+        let mut bucket = entry.0.lock().unwrap_or_else(|e| {
+            tracing::warn!("rate-limiter bucket mutex poisoned for {ip} — recovering");
+            e.into_inner()
+        });
         if bucket.try_consume(cost, now) { Ok(()) } else { Err(StatusCode::TOO_MANY_REQUESTS) }
     }
 

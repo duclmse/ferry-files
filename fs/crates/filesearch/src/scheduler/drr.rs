@@ -113,12 +113,17 @@ impl ClientQueue {
     }
 
     fn enqueue(&mut self, task: Task) {
-        let id = task.archive.clone();
-        if !self.archives.contains_key(&id) {
-            self.archives.insert(id.clone(), ArchiveQueue::new(self.archive_quantum, self.archive_concurrency));
-            self.rr_keys.push(id.clone());
+        // Fast path (existing archive): zero String allocations, one lookup.
+        if let Some(aq) = self.archives.get_mut(&task.archive) {
+            aq.push(task);
+            return;
         }
-        self.archives.get_mut(&id).unwrap().push(task);
+        // Slow path (new archive): two String allocations (map key + rr_keys).
+        let id = task.archive.clone();
+        self.archives.insert(id.clone(), ArchiveQueue::new(self.archive_quantum, self.archive_concurrency));
+        self.rr_keys.push(id);
+        // Unwrap safe: we just inserted the entry above.
+        self.archives.get_mut(&task.archive).unwrap().push(task);
     }
 
     fn total_len(&self) -> usize {

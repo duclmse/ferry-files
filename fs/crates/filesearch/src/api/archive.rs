@@ -466,7 +466,14 @@ async fn stream_file(
     };
 
     // ── Per-archive concurrency limit (semaphore) ─────────────────────────
-    let _permit = state.archive_semaphores.acquire(&id).await;
+    // 30 s timeout: avoids a slow upstream holding permits forever.
+    let _permit = match tokio::time::timeout(
+        std::time::Duration::from_secs(30),
+        state.archive_semaphores.acquire(&id),
+    ).await {
+        Ok(p)  => p,
+        Err(_) => return (StatusCode::SERVICE_UNAVAILABLE, "semaphore timeout").into_response(),
+    };
 
     let extractor = crate::archive::ZipStreamExtractor { source };
     let stream    = match extractor.stream(&meta) {

@@ -360,9 +360,9 @@ fn row_to_job(row: &rusqlite::Row<'_>) -> rusqlite::Result<Job> {
     let dests_json: String = row.get(5)?;
 
     let status = Status::from_str(&status_str)
-        .unwrap_or(Status::Failed);
+        .map_err(|_| rusqlite::Error::InvalidColumnType(3, format!("unknown status '{status_str}'"), rusqlite::types::Type::Text))?;
     let strategy = Strategy::from_str(&strategy_str)
-        .unwrap_or(Strategy::Disk);
+        .map_err(|_| rusqlite::Error::InvalidColumnType(4, format!("unknown strategy '{strategy_str}'"), rusqlite::types::Type::Text))?;
     let destinations: Vec<String> =
         serde_json::from_str(&dests_json).unwrap_or_default();
 

@@ -57,19 +57,24 @@ impl Default for RingBuffer {
 
 /// Copy exactly `len` bytes from `src` into `dst` (appending).
 /// Uses 256-bit AVX2 stores when compiled with `+avx2`; falls back to
-/// `copy_from_slice` otherwise (the compiler will still auto-vectorise).
+/// `extend_from_slice` otherwise (the compiler will still auto-vectorise).
+/// Does NOT zero-fill before writing — avoids the double-write that
+/// `Vec::resize` + overwrite would produce.
 pub fn copy_simd(dst: &mut Vec<u8>, src: &[u8], len: usize) {
     debug_assert_eq!(src.len(), len);
-    let start = dst.len();
-    dst.resize(start + len, 0);
-    let out = &mut dst[start..];
 
     #[cfg(all(target_arch = "x86_64", target_feature = "avx2"))]
-    // SAFETY: length checked above; src/dst non-overlapping (dst is a Vec).
-    unsafe { copy_simd_avx2(out.as_mut_ptr(), src.as_ptr(), len); }
+    // SAFETY: `reserve` ensures capacity; `set_len` is valid because
+    // `copy_simd_avx2` initialises every byte in [start, start+len).
+    unsafe {
+        dst.reserve(len);
+        let start = dst.len();
+        copy_simd_avx2(dst.as_mut_ptr().add(start), src.as_ptr(), len);
+        dst.set_len(start + len);
+    }
 
     #[cfg(not(all(target_arch = "x86_64", target_feature = "avx2")))]
-    out.copy_from_slice(src);
+    dst.extend_from_slice(src);
 }
 
 #[cfg(all(target_arch = "x86_64", target_feature = "avx2"))]
@@ -243,15 +248,16 @@ impl Decoder for SimdDeflateDecoder {
 
         let decode_ns = stats_elapsed(t0);
 
-        // SIMD copy accumulated output to caller-owned buffer, then reuse buf.
-        let t1  = stats_now();
-        let mut out = Vec::with_capacity(self.out_buf.len());
-        copy_simd(&mut out, &self.out_buf, self.out_buf.len());
-        let copy_ns = stats_elapsed(t1);
+        // Swap out_buf with a fresh Vec to hand the data to the caller with
+        // zero copies. The replacement retains the same capacity so the next
+        // feed call does not need to reallocate.
+        let t1       = stats_now();
+        let cap      = self.out_buf.capacity();
+        let out_data = std::mem::replace(&mut self.out_buf, Vec::with_capacity(cap));
+        let copy_ns  = stats_elapsed(t1);
 
-        record_stats(decode_ns, copy_ns, out.len() as u64);
-        self.out_buf.clear();
-        Ok(Bytes::from(out))
+        record_stats(decode_ns, copy_ns, out_data.len() as u64);
+        Ok(Bytes::from(out_data))
     }
 
     fn finish(mut self: Box<Self>) -> io::Result<Bytes> {
