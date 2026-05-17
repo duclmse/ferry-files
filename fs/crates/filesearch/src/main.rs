@@ -27,6 +27,8 @@ enum Command {
     ValidateConfig,
     /// Search the index (requires daemon to be running)
     Search {
+        /// Name pattern or query expression; omit to match all (combine with filter flags)
+        #[arg(default_value = "")]
         query: String,
         #[arg(short, long, default_value = "100")]
         limit: u32,
@@ -34,6 +36,42 @@ enum Command {
         offset: u32,
         #[arg(long)]
         json: bool,
+        /// Filter by extension(s). Repeat or comma-separate: --ext rs,toml
+        #[arg(short = 'e', long = "ext", value_delimiter = ',')]
+        ext: Vec<String>,
+        /// Filter by path prefix (e.g. --path C:/projects)
+        #[arg(long)]
+        path: Option<String>,
+        /// Filter by parent directory name or path
+        #[arg(long)]
+        parent: Option<String>,
+        /// Filter by file size (e.g. >1mb, <=500kb, large)
+        #[arg(long)]
+        size: Option<String>,
+        /// Filter by date modified (e.g. today, last7days, 2024-01-01)
+        #[arg(long)]
+        modified: Option<String>,
+        /// Filter by date created (e.g. thismonth, 2024-01-01)
+        #[arg(long)]
+        created: Option<String>,
+        /// Full-text content search
+        #[arg(long)]
+        content: Option<String>,
+        /// Fuzzy filename match (nucleo scorer)
+        #[arg(long)]
+        fuzzy: Option<String>,
+        /// Filter by regex pattern applied to the full path
+        #[arg(long)]
+        regex: Option<String>,
+        /// Return only files (exclude directories)
+        #[arg(long)]
+        files_only: bool,
+        /// Return only directories
+        #[arg(long)]
+        dirs_only: bool,
+        /// Return only inner archive entries
+        #[arg(long)]
+        archive_only: bool,
     },
     /// Show index statistics
     Stats,
@@ -134,8 +172,14 @@ async fn main() {
                 std::process::exit(1);
             }
         }
-        Command::Search { query, limit, offset, json } => {
-            if let Err(e) = run_search(cli.config, query, limit, offset, json).await {
+        Command::Search {
+            query, limit, offset, json,
+            ext, path, parent, size, modified, created,
+            content, fuzzy, regex, files_only, dirs_only, archive_only,
+        } => {
+            let opts = SearchOpts { ext, path, parent, size, modified, created,
+                                    content, fuzzy, regex, files_only, dirs_only, archive_only };
+            if let Err(e) = run_search(cli.config, query, limit, offset, json, opts).await {
                 eprintln!("search error: {e}");
                 std::process::exit(1);
             }
@@ -181,13 +225,54 @@ async fn ipc_client_for(
         .map_err(|e| anyhow::anyhow!("ipc connect: {e}"))
 }
 
+struct SearchOpts {
+    ext:         Vec<String>,
+    path:        Option<String>,
+    parent:      Option<String>,
+    size:        Option<String>,
+    modified:    Option<String>,
+    created:     Option<String>,
+    content:     Option<String>,
+    fuzzy:       Option<String>,
+    regex:       Option<String>,
+    files_only:  bool,
+    dirs_only:   bool,
+    archive_only: bool,
+}
+
 async fn run_search(
     config_path: std::path::PathBuf,
     query:       String,
     limit:       u32,
     offset:      u32,
     json:        bool,
+    opts:        SearchOpts,
 ) -> anyhow::Result<()> {
+    let mut clauses: Vec<String> = Vec::new();
+
+    if !opts.ext.is_empty() {
+        clauses.push(format!("ext:{}", opts.ext.join(";")));
+    }
+    if let Some(p) = opts.path     { clauses.push(format!("path:{p}")); }
+    if let Some(p) = opts.parent   { clauses.push(format!("parent:{p}")); }
+    if let Some(s) = opts.size     { clauses.push(format!("size:{s}")); }
+    if let Some(d) = opts.modified { clauses.push(format!("dm:{d}")); }
+    if let Some(d) = opts.created  { clauses.push(format!("dc:{d}")); }
+    if let Some(c) = opts.content  { clauses.push(format!("content:{c}")); }
+    if let Some(f) = opts.fuzzy    { clauses.push(format!("fuzzy:{f}")); }
+    if let Some(r) = opts.regex    { clauses.push(format!("regex:{r}")); }
+    // Modifier flags: inject a dummy `*` term so the modifier emits its SQL condition
+    if opts.files_only   { clauses.push("file: *".into()); }
+    if opts.dirs_only    { clauses.push("folder: *".into()); }
+    if opts.archive_only { clauses.push("archive: *".into()); }
+
+    let query = match (query.is_empty(), clauses.is_empty()) {
+        (true, true)   => anyhow::bail!("specify a query or at least one filter flag"),
+        (true, false)  => clauses.join(" "),
+        (false, true)  => query,
+        (false, false) => format!("{query} {}", clauses.join(" ")),
+    };
+
     let mut client = ipc_client_for(config_path).await?;
     let resp = client
         .request(IpcRequest::Search { query, limit, offset })
