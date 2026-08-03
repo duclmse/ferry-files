@@ -115,7 +115,11 @@ pub async fn full_crawl(
             // Metrics are incremented here (not in the walker) so that
             // `total_files` reflects rows actually committed to SQLite — tests
             // and the REST /stats endpoint use it as a crawl-completion signal.
-            const BATCH_SIZE: usize = 500;
+            // Benchmarked (scripts/bench.sh) against a 615k-file / 88k-dir tree:
+            // 500 -> ~40s, 4000 -> ~21s, 10000 -> ~18s, 25000+ -> ~16s (plateau,
+            // walker/stat-syscall-bound). 10000 captures most of the win while
+            // keeping the per-crash replay window (unwritten buffered rows) small.
+            const BATCH_SIZE: usize = 10000;
             let (tx, rx) = mpsc::sync_channel::<(FileRecord, String)>(2048);
             let writer_thread = {
                 let sqlite_b  = Arc::clone(&sqlite_w);

@@ -1,0 +1,143 @@
+#!/usr/bin/env bash
+# End-to-end crawl benchmark: builds (if needed), runs a real daemon against a
+# real directory tree in an isolated scratch config, times the initial full
+# crawl via GET /stats, and reports throughput.
+#
+# Usage:
+#   scripts/bench.sh [TARGET_DIR] [--with-content]
+#
+# TARGET_DIR defaults to the repo root. --with-content turns on full-text
+# content extraction for common source extensions; by default it's off, which
+# isolates pure filesystem-crawl throughput (stat + SQLite upsert only).
+# Archive-inner-file indexing is always off, so results are comparable across
+# runs regardless of how many archives happen to live under TARGET_DIR.
+set -euo pipefail
+
+cd "$(dirname "${BASH_SOURCE[0]}")/.."
+REPO_ROOT="$(pwd)"
+
+TARGET_DIR="$REPO_ROOT"
+WITH_CONTENT=0
+for arg in "$@"; do
+    case "$arg" in
+        --with-content) WITH_CONTENT=1 ;;
+        -*) echo "unknown flag: $arg" >&2; exit 1 ;;
+        *)  TARGET_DIR="$arg" ;;
+    esac
+done
+TARGET_DIR="$(cd "$TARGET_DIR" && pwd)"
+
+if [ ! -x "target/release/filesearch" ]; then
+    echo "==> Building release binary first"
+    ./scripts/build.sh
+fi
+BIN="$REPO_ROOT/target/release/filesearch"
+
+WORKDIR="$(mktemp -d)"
+CONFIG="$WORKDIR/config.toml"
+mkdir -p "$WORKDIR/data" "$WORKDIR/logs"
+
+REST_PORT=17700
+GRPC_PORT=17701
+
+CONTENT_TOML=""
+if [ "$WITH_CONTENT" -eq 1 ]; then
+    CONTENT_TOML='
+[content.extension_limits]
+rs = 524288
+py = 524288
+js = 262144
+ts = 262144
+go = 524288
+md = 131072
+txt = 131072
+"*" = 32768
+'
+fi
+
+cat > "$CONFIG" <<EOF
+watch_paths = ["$TARGET_DIR"]
+data_dir    = "$WORKDIR/data"
+log_dir     = "$WORKDIR/logs"
+
+[archive_index]
+enabled = false
+
+[api]
+rest_port    = $REST_PORT
+grpc_port    = $GRPC_PORT
+grpc_enabled = false
+ipc_enabled  = false
+$CONTENT_TOML
+EOF
+
+echo "==> Validating config"
+"$BIN" --config "$CONFIG" validate-config
+
+DAEMON_PID=""
+cleanup() {
+    if [ -n "$DAEMON_PID" ] && kill -0 "$DAEMON_PID" 2>/dev/null; then
+        kill -TERM "$DAEMON_PID" 2>/dev/null || true
+        wait "$DAEMON_PID" 2>/dev/null || true
+    fi
+    rm -rf "$WORKDIR"
+}
+trap cleanup EXIT INT TERM
+
+echo "==> Target:  $TARGET_DIR"
+echo "==> Content: $([ "$WITH_CONTENT" -eq 1 ] && echo enabled || echo disabled)"
+echo "==> Starting daemon"
+
+START_EPOCH=$(date +%s)
+"$BIN" --config "$CONFIG" daemon > "$WORKDIR/daemon.log" 2>&1 &
+DAEMON_PID=$!
+
+for _ in $(seq 1 50); do
+    if curl -s -o /dev/null "http://127.0.0.1:$REST_PORT/health"; then
+        break
+    fi
+    sleep 0.2
+done
+
+echo "==> Waiting for full crawl to finish (timeout 600s)"
+STATS=""
+LAST_CRAWL=0
+for _ in $(seq 1 600); do
+    if ! kill -0 "$DAEMON_PID" 2>/dev/null; then
+        echo "daemon exited unexpectedly; log follows:" >&2
+        cat "$WORKDIR/daemon.log" >&2
+        exit 1
+    fi
+    STATS="$(curl -s "http://127.0.0.1:$REST_PORT/stats")"
+    LAST_CRAWL="$(printf '%s' "$STATS" | sed -n 's/.*"last_crawl_secs":\([0-9]*\).*/\1/p')"
+    if [ -n "$LAST_CRAWL" ] && [ "$LAST_CRAWL" != "0" ]; then
+        break
+    fi
+    sleep 1
+done
+
+if [ -z "$LAST_CRAWL" ] || [ "$LAST_CRAWL" = "0" ]; then
+    echo "crawl did not finish within timeout" >&2
+    exit 1
+fi
+
+ELAPSED=$((LAST_CRAWL - START_EPOCH))
+[ "$ELAPSED" -lt 1 ] && ELAPSED=1
+
+TOTAL_FILES="$(printf '%s' "$STATS" | sed -n 's/.*"total_files":\([0-9]*\).*/\1/p')"
+TOTAL_DIRS="$(printf '%s' "$STATS" | sed -n 's/.*"total_dirs":\([0-9]*\).*/\1/p')"
+CONTENT_INDEXED="$(printf '%s' "$STATS" | sed -n 's/.*"content_indexed":\([0-9]*\).*/\1/p')"
+
+FILES_PER_SEC=$(( TOTAL_FILES / ELAPSED ))
+ENTRIES_PER_SEC=$(( (TOTAL_FILES + TOTAL_DIRS) / ELAPSED ))
+
+echo ""
+echo "==================== Benchmark Results ===================="
+echo "Target directory:   $TARGET_DIR"
+echo "Content extraction: $([ "$WITH_CONTENT" -eq 1 ] && echo enabled || echo disabled)"
+echo "Elapsed:            ${ELAPSED}s"
+echo "Files indexed:      $TOTAL_FILES"
+echo "Dirs indexed:       $TOTAL_DIRS"
+echo "Content indexed:    $CONTENT_INDEXED"
+echo "Throughput:         ${FILES_PER_SEC} files/sec, ${ENTRIES_PER_SEC} entries/sec"
+echo "=============================================================="
