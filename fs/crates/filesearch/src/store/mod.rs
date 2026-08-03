@@ -326,10 +326,10 @@ impl FileStore {
         }
     }
 
-    pub fn upsert_archive_batch(&self, records: &[FileRecord]) -> Result<()> {
+    pub fn upsert_archive_batch(&self, records: &[FileRecord], tag: Option<(&str, i64)>) -> Result<()> {
         match self {
-            FileStore::Sqlite(s) => s.upsert_archive_batch(records),
-            FileStore::Memory(m) => { m.upsert_archive_batch(records); Ok(()) }
+            FileStore::Sqlite(s) => s.upsert_archive_batch(records, tag),
+            FileStore::Memory(m) => { m.upsert_archive_batch(records, tag); Ok(()) }
         }
     }
 
@@ -376,6 +376,13 @@ impl FileStore {
         match self {
             FileStore::Sqlite(s) => s.has_child(parent_path, name_pattern),
             FileStore::Memory(m) => m.has_child(parent_path, name_pattern),
+        }
+    }
+
+    pub fn children_of(&self, parent_path: &str) -> Result<Vec<String>> {
+        match self {
+            FileStore::Sqlite(s) => s.children_of(parent_path),
+            FileStore::Memory(m) => m.children_of(parent_path),
         }
     }
 

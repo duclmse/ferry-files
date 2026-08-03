@@ -345,7 +345,7 @@ benchmarks (smoke test only, not perf assertion):
 - [x] `SimdDeflateDecoder::feed` produces byte-identical output to `flate2`
       scalar decoder on the same input (golden-file test).
 - [x] `cargo bench -p filesearch` runs without errors.
-- [ ] SIMD inflate throughput ≥ 400 MB/s on target hardware (measured with
+- [x] SIMD inflate throughput ≥ 400 MB/s on target hardware (measured with
       criterion).
 - [ ] Scheduler dispatch of 1000 tasks < 100 µs (criterion).
 - [x] Stage instrumentation disabled in release builds without env var.
@@ -357,6 +357,18 @@ benchmarks (smoke test only, not perf assertion):
 ## 13.10 Implementation Notes
 
 **Implemented:** 2026-05-16
+
+**Measured:** 2026-08-03 (`cargo bench -p filesearch`, `archive_inflate` and
+`scheduler_load` benches)
+
+- `inflate/simd_1mb`: ~287 µs/iter, ~3.39 GiB/s (~3,470 MB/s) — well above the
+  400 MB/s target.
+- `scheduler/dispatch_1000_tasks`: ~311 µs/iter — above the 100 µs target.
+  The DRR dispatch loop does a `DashMap` lookup + `VecDeque` pop per task;
+  at 1000 tasks that's dominated by per-task bookkeeping overhead rather than
+  any single hot loop, so hitting 100 µs would need batching dispatch instead
+  of a per-task async hop. Left as a known gap rather than a regression to
+  chase for this phase.
 
 ### Module Layout (as built)
 

@@ -74,6 +74,22 @@ fn batch_to_events(
                     });
                 }
             }
+            EventKind::Modify(notify::event::ModifyKind::Name(
+                notify::event::RenameMode::From,
+            )) => {
+                // The debouncer couldn't pair this with a matching `To` event
+                // (no tracker cookie / file-id match — routine on macOS's
+                // FSEvents backend). The path is gone, so treat it as a
+                // delete: falling through to the generic `Modify` arm below
+                // would call `process_event`'s Created/Modified handler,
+                // whose `fs::metadata` read fails on a vanished path and
+                // silently no-ops, leaving the stale row in the index forever.
+                if is_archive_ext(&path, formats) {
+                    out.push(IndexEvent::ArchiveDeleted(path));
+                } else {
+                    out.push(IndexEvent::Deleted(path));
+                }
+            }
             EventKind::Modify(_) => {
                 if is_archive_ext(&path, formats) {
                     out.push(IndexEvent::ArchiveModified(path));

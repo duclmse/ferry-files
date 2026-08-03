@@ -1,9 +1,8 @@
-use std::path::{Path, PathBuf};
+use std::path::PathBuf;
 use std::sync::{
-    atomic::{AtomicU64, Ordering},
+    atomic::Ordering,
     mpsc, Arc,
 };
-use std::time::{SystemTime, UNIX_EPOCH};
 
 use ignore::WalkBuilder;
 use tokio::sync::RwLock;
@@ -18,251 +17,21 @@ use crate::store::{
     tantivy_store::TantivyStore,
 };
 
-use super::archive::{ArchiveCrawler, archive_entry_to_record};
+use super::archive::ArchiveCrawler;
 use super::content::{content_limit, extract_content};
 use super::exclusions::ExclusionEngine;
 
-// ---------------------------------------------------------------------------
-// IndexMetrics
-// ---------------------------------------------------------------------------
+mod dzx_sidecars;
+mod metrics;
+mod fsmeta;
+mod crawl;
+#[cfg(test)]
+mod tests;
 
-pub struct IndexMetrics {
-    pub total_files:             AtomicU64,
-    pub total_dirs:              AtomicU64,
-    pub content_indexed:         AtomicU64,
-    pub last_crawl_secs:         AtomicU64,
-    pub events_processed:        AtomicU64,
-    pub archive_entries_indexed: AtomicU64,
-    pub archives_crawled:        AtomicU64,
-}
+pub use metrics::{IndexEvent, IndexMetrics};
 
-impl IndexMetrics {
-    pub fn new() -> Arc<Self> {
-        Arc::new(Self {
-            total_files:             AtomicU64::new(0),
-            total_dirs:              AtomicU64::new(0),
-            content_indexed:         AtomicU64::new(0),
-            last_crawl_secs:         AtomicU64::new(0),
-            events_processed:        AtomicU64::new(0),
-            archive_entries_indexed: AtomicU64::new(0),
-            archives_crawled:        AtomicU64::new(0),
-        })
-    }
-}
-
-impl Default for IndexMetrics {
-    fn default() -> Self {
-        Self {
-            total_files:             AtomicU64::new(0),
-            total_dirs:              AtomicU64::new(0),
-            content_indexed:         AtomicU64::new(0),
-            last_crawl_secs:         AtomicU64::new(0),
-            events_processed:        AtomicU64::new(0),
-            archive_entries_indexed: AtomicU64::new(0),
-            archives_crawled:        AtomicU64::new(0),
-        }
-    }
-}
-
-// ---------------------------------------------------------------------------
-// IndexEvent
-// ---------------------------------------------------------------------------
-
-#[derive(Debug)]
-pub enum IndexEvent {
-    Created(PathBuf),
-    Modified(PathBuf),
-    Deleted(PathBuf),
-    Renamed { from: PathBuf, to: PathBuf },
-    ArchiveModified(PathBuf),
-    ArchiveDeleted(PathBuf),
-}
-
-// ---------------------------------------------------------------------------
-// Platform helpers
-// ---------------------------------------------------------------------------
-
-pub fn unix_now() -> i64 {
-    SystemTime::now()
-        .duration_since(UNIX_EPOCH)
-        .map(|d| d.as_secs() as i64)
-        .unwrap_or(0)
-}
-
-pub fn is_hidden_name(path: &Path) -> bool {
-    path.file_name()
-        .and_then(|n| n.to_str())
-        .map(|n| n.starts_with('.'))
-        .unwrap_or(false)
-}
-
-/// Build platform-specific attribute bitmask from filesystem metadata.
-#[cfg_attr(windows, allow(unused_variables))]
-pub fn attrib_from_metadata(meta: &std::fs::Metadata, path: &Path) -> u32 {
-    #[cfg(windows)]
-    {
-        use std::os::windows::fs::MetadataExt;
-        use crate::store::{
-            ATTRIB_ARCHIVE, ATTRIB_COMPRESSED, ATTRIB_DIRECTORY, ATTRIB_ENCRYPTED,
-            ATTRIB_HIDDEN, ATTRIB_NORMAL, ATTRIB_OFFLINE, ATTRIB_READONLY,
-            ATTRIB_REPARSE_POINT, ATTRIB_SPARSE, ATTRIB_SYSTEM, ATTRIB_TEMPORARY,
-        };
-        let a = meta.file_attributes();
-        let mut m: u32 = 0;
-        if a & 0x0020 != 0 { m |= ATTRIB_ARCHIVE; }
-        if a & 0x0800 != 0 { m |= ATTRIB_COMPRESSED; }
-        if a & 0x0010 != 0 { m |= ATTRIB_DIRECTORY; }
-        if a & 0x4000 != 0 { m |= ATTRIB_ENCRYPTED; }
-        if a & 0x0002 != 0 { m |= ATTRIB_HIDDEN; }
-        if a & 0x0400 != 0 { m |= ATTRIB_REPARSE_POINT; }
-        if a & 0x0080 != 0 { m |= ATTRIB_NORMAL; }
-        if a & 0x1000 != 0 { m |= ATTRIB_OFFLINE; }
-        if a & 0x0200 != 0 { m |= ATTRIB_SPARSE; }
-        if a & 0x0001 != 0 { m |= ATTRIB_READONLY; }
-        if a & 0x0004 != 0 { m |= ATTRIB_SYSTEM; }
-        if a & 0x0100 != 0 { m |= ATTRIB_TEMPORARY; }
-        return m;
-    }
-
-    #[cfg(unix)]
-    {
-        use std::os::unix::fs::MetadataExt;
-        use crate::store::{ATTRIB_HIDDEN, ATTRIB_READONLY};
-        let mut m: u32 = 0;
-        if path
-            .file_name()
-            .and_then(|n| n.to_str())
-            .map(|n| n.starts_with('.'))
-            .unwrap_or(false)
-        {
-            m |= ATTRIB_HIDDEN;
-        }
-        if meta.mode() & 0o200 == 0 {
-            m |= ATTRIB_READONLY;
-        }
-        return m;
-    }
-
-    #[allow(unreachable_code)]
-    {
-        use crate::store::{ATTRIB_HIDDEN, ATTRIB_READONLY};
-        let _ = (meta, path, ATTRIB_HIDDEN, ATTRIB_READONLY);
-        0
-    }
-}
-
-fn build_file_record(path: &Path, meta: &std::fs::Metadata, is_hidden: bool, now: i64) -> FileRecord {
-    let mtime = meta
-        .modified()
-        .ok()
-        .and_then(|t| t.duration_since(UNIX_EPOCH).ok())
-        .map(|d| d.as_secs() as i64)
-        .unwrap_or(0);
-
-    let ctime = {
-        #[cfg(unix)]
-        { use std::os::unix::fs::MetadataExt; meta.ctime() }
-        #[cfg(windows)]
-        {
-            meta.created()
-                .ok()
-                .and_then(|t| t.duration_since(UNIX_EPOCH).ok())
-                .map(|d| d.as_secs() as i64)
-                .unwrap_or(mtime)
-        }
-        #[cfg(not(any(unix, windows)))]
-        { mtime }
-    };
-
-    let is_dir    = meta.is_dir();
-    let is_symlink = meta.file_type().is_symlink();
-    let size_bytes = if is_dir { 0 } else { meta.len() };
-    let name       = path.file_name().and_then(|n| n.to_str()).unwrap_or("").to_owned();
-    let extension  = if is_dir {
-        None
-    } else {
-        path.extension().and_then(|e| e.to_str()).map(|e| e.to_lowercase())
-    };
-
-    FileRecord {
-        id:              None,
-        path:            path.to_string_lossy().into_owned(),
-        name,
-        extension,
-        size_bytes,
-        mtime,
-        ctime,
-        is_dir,
-        is_hidden,
-        is_symlink,
-        attrib_bitmask:  attrib_from_metadata(meta, path),
-        content_indexed: false,
-        tantivy_id:      None,
-        indexed_at:      now,
-        archive_path:    None,
-    }
-}
-
-// ---------------------------------------------------------------------------
-// crawl_archive — wraps all inner upserts in a single SQLite transaction
-// ---------------------------------------------------------------------------
-
-fn crawl_archive_sync(
-    archive_path: &Path,
-    crawler:      &ArchiveCrawler<'_>,
-    store:        &FileStore,
-    tantivy:      &TantivyStore,
-    metrics:      &IndexMetrics,
-    zidx_dir:     Option<&Path>,
-    registry:     Option<&ArchiveRegistry>,
-) -> Result<()> {
-    let archive_str = archive_path.to_str().unwrap_or_default();
-    store.remove_archive_entries(archive_str)?;
-
-    let mut records_batch: Vec<FileRecord>         = Vec::new();
-    let mut content_batch: Vec<(FileRecord, String)> = Vec::new();
-
-    for entry_result in crawler.crawl(archive_path, 0)? {
-        let entry = match entry_result {
-            Ok(e)  => e,
-            Err(e) => {
-                tracing::warn!("archive entry error in {}: {e}", archive_path.display());
-                continue;
-            }
-        };
-        let record = archive_entry_to_record(&entry);
-        if let Some(content) = entry.content {
-            let mut r = record.clone();
-            r.content_indexed = true;
-            content_batch.push((r, content));
-        }
-        records_batch.push(record);
-        metrics.archive_entries_indexed.fetch_add(1, Ordering::Relaxed);
-    }
-
-    store.upsert_archive_batch(&records_batch)?;
-
-    for (record, content) in &content_batch {
-        if let Err(e) = tantivy.upsert(record, Some(content)) {
-            tracing::warn!("tantivy upsert error: {e}");
-        }
-        metrics.content_indexed.fetch_add(1, Ordering::Relaxed);
-    }
-
-    metrics.archives_crawled.fetch_add(1, Ordering::Relaxed);
-
-    // Build .zidx sidecar when archive-service indexing is enabled.
-    if let Some(zidx_dir) = zidx_dir {
-        let idx_path = crate::zidx::zidx_path_for(zidx_dir, archive_path);
-        if let Err(e) = crate::zidx::ZidxBuilder::build(archive_path, &idx_path) {
-            tracing::warn!("zidx build failed for {}: {e}", archive_path.display());
-        } else if let Some(reg) = registry {
-            reg.register(archive_path.to_path_buf());
-        }
-    }
-
-    Ok(())
-}
+use crawl::{crawl_archive_sync, SidecarConfig};
+use fsmeta::{build_file_record, is_hidden_name, unix_now};
 
 // ---------------------------------------------------------------------------
 // full_crawl
@@ -289,6 +58,16 @@ pub async fn full_crawl(
             None
         }
     );
+    let dzx_dir: Arc<Option<PathBuf>> = Arc::new(
+        if cfg.archive_service.enabled {
+            Some(cfg.archive_service.dzx_dir.clone()
+                .unwrap_or_else(|| cfg.data_dir.join("dzx")))
+        } else {
+            None
+        }
+    );
+    let dzx_min_entry_bytes       = cfg.archive_service.dzx_min_entry_bytes;
+    let dzx_max_concurrent_builds = cfg.archive_service.dzx_max_concurrent_builds;
 
     // One generation per full crawl. Each upserted row is marked with the
     // watch_root it was found under and this generation. After each root
@@ -303,6 +82,7 @@ pub async fn full_crawl(
     let arc_cfg_w   = Arc::clone(&archive_cfg);
     let cnt_cfg_w   = Arc::new(cfg.content.clone());
     let zidx_dir_w  = Arc::clone(&zidx_dir);
+    let dzx_dir_w   = Arc::clone(&dzx_dir);
     let registry_w  = Arc::clone(&registry);
     let shutdown_w  = shutdown.clone();
 
@@ -326,6 +106,7 @@ pub async fn full_crawl(
             let arc_cfg   = Arc::clone(&arc_cfg_w);
             let cnt_cfg   = Arc::clone(&cnt_cfg_w);
             let zidx_dir  = Arc::clone(&zidx_dir_w);
+            let dzx_dir   = Arc::clone(&dzx_dir_w);
             let registry  = Arc::clone(&registry_w);
             let root_str  = watch_root.clone();
 
@@ -384,6 +165,7 @@ pub async fn full_crawl(
                 let arc_cfg   = Arc::clone(&arc_cfg);
                 let cnt_cfg   = Arc::clone(&cnt_cfg);
                 let zidx_dir  = Arc::clone(&zidx_dir);
+                let dzx_dir   = Arc::clone(&dzx_dir);
                 let registry  = Arc::clone(&registry);
                 let root_str  = root_str.clone();
 
@@ -445,8 +227,12 @@ pub async fn full_crawl(
                             let crawler = ArchiveCrawler::new(&arc_cfg, &cnt_cfg);
                             if let Err(e) = crawl_archive_sync(
                                 path, &crawler, sqlite.as_ref(), &tantivy, &metrics,
-                                zidx_dir.as_deref(),
-                                Some(&registry),
+                                SidecarConfig {
+                                    zidx_dir: zidx_dir.as_deref(),
+                                    registry: Some(&registry),
+                                    dzx:      dzx_dir.as_deref().map(|d| (d, dzx_min_entry_bytes, dzx_max_concurrent_builds)),
+                                },
+                                Some((root_str.as_str(), generation)),
                             ) {
                                 tracing::warn!("archive crawl error for {}: {e}", path.display());
                             }
@@ -516,6 +302,34 @@ pub async fn process_event(
                 return;
             }
 
+            // Stale-sibling reconciliation. notify-debouncer-full's FSEvents
+            // rename pairing can silently swallow the "old path" side of a
+            // rename entirely (its was_created() heuristic misfires when
+            // FSEvents replays the file's original creation flags alongside
+            // the rename-from flag), so a renamed-away file's row can be left
+            // in the store forever with no Deleted/Renamed event ever firing
+            // for it. Piggyback on every Created/Modified event to sweep
+            // recorded siblings under the same parent that no longer exist
+            // on disk, using the existing indexed `parent` column.
+            if let Some(parent) = path.parent() {
+                let parent_str = parent.to_string_lossy().into_owned();
+                if let Ok(siblings) = sqlite.children_of(&parent_str) {
+                    for sibling in siblings {
+                        if sibling == record.path {
+                            continue;
+                        }
+                        if std::fs::symlink_metadata(&sibling).is_err() {
+                            if let Err(e) = sqlite.remove_file(&sibling) {
+                                tracing::warn!("process_event stale-sibling remove: {e}");
+                            }
+                            if let Err(e) = tantivy.remove(&sibling) {
+                                tracing::warn!("process_event stale-sibling tantivy remove: {e}");
+                            }
+                        }
+                    }
+                }
+            }
+
             // Content
             let climit = content_limit(&path, &cfg.content);
             if let Some(max_bytes) = climit {
@@ -580,13 +394,25 @@ pub async fn process_event(
                     } else {
                         None
                     };
+                    let dzx_dir = if cfg.archive_service.enabled {
+                        Some(cfg.archive_service.dzx_dir.clone()
+                            .unwrap_or_else(|| cfg.data_dir.join("dzx")))
+                    } else {
+                        None
+                    };
+                    let dzx_min_entry_bytes       = cfg.archive_service.dzx_min_entry_bytes;
+                    let dzx_max_concurrent_builds = cfg.archive_service.dzx_max_concurrent_builds;
                     let to2 = to.clone();
                     tokio::task::spawn_blocking(move || {
                         let crawler = ArchiveCrawler::new(&arc_cfg, &cnt_cfg);
                         let _ = crawl_archive_sync(
                             &to2, &crawler, sqlite2.as_ref(), &tantivy2, &metrics2,
-                            zidx_dir.as_deref(),
-                            Some(&registry2),
+                            SidecarConfig {
+                                zidx_dir: zidx_dir.as_deref(),
+                                registry: Some(&registry2),
+                                dzx:      dzx_dir.as_deref().map(|d| (d, dzx_min_entry_bytes, dzx_max_concurrent_builds)),
+                            },
+                            None,
                         );
                     });
                 }
@@ -607,12 +433,24 @@ pub async fn process_event(
             } else {
                 None
             };
+            let dzx_dir = if cfg.archive_service.enabled {
+                Some(cfg.archive_service.dzx_dir.clone()
+                    .unwrap_or_else(|| cfg.data_dir.join("dzx")))
+            } else {
+                None
+            };
+            let dzx_min_entry_bytes       = cfg.archive_service.dzx_min_entry_bytes;
+            let dzx_max_concurrent_builds = cfg.archive_service.dzx_max_concurrent_builds;
             tokio::task::spawn_blocking(move || {
                 let crawler = ArchiveCrawler::new(&arc_cfg, &cnt_cfg);
                 if let Err(e) = crawl_archive_sync(
                     &path, &crawler, sqlite2.as_ref(), &tantivy2, &metrics2,
-                    zidx_dir.as_deref(),
-                    Some(&registry2),
+                    SidecarConfig {
+                        zidx_dir: zidx_dir.as_deref(),
+                        registry: Some(&registry2),
+                        dzx:      dzx_dir.as_deref().map(|d| (d, dzx_min_entry_bytes, dzx_max_concurrent_builds)),
+                    },
+                    None,
                 ) {
                     tracing::warn!("ArchiveModified crawl error: {e}");
                 }
@@ -634,133 +472,5 @@ pub async fn process_event(
             }
             metrics.events_processed.fetch_add(1, Ordering::Relaxed);
         }
-    }
-}
-
-// ---------------------------------------------------------------------------
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-    use tempfile::TempDir;
-
-    fn make_store(dir: &TempDir) -> Arc<FileStore> {
-        use crate::store::sqlite_store::SqliteStore;
-        Arc::new(FileStore::Sqlite(Arc::new(
-            SqliteStore::new(&dir.path().join("test.db")).unwrap()
-        )))
-    }
-
-    fn make_tantivy(_dir: &TempDir) -> Arc<TantivyStore> {
-        Arc::new(TantivyStore::new(Path::new(":memory:")).unwrap())
-    }
-
-    fn make_config(watch: &Path) -> Arc<RwLock<Config>> {
-        use crate::config::*;
-        Arc::new(RwLock::new(Config {
-            watch_paths: vec![watch.to_path_buf()],
-            data_dir: watch.join("data"),
-            log_dir: watch.join("logs"),
-            exclusions: ExclusionConfig::default(),
-            content: ContentConfig { extension_limits: [("txt".to_string(), 65536)].into() },
-            api: ApiConfig::default(),
-            search: SearchConfig::default(),
-            indexer: IndexerConfig::default(),
-            archive_index: ArchiveIndexConfig::default(),
-            macros: MacroConfig::default(),
-            archive_service: ArchiveServiceConfig::default(),
-            store: StoreConfig::default(),
-        }))
-    }
-
-    #[tokio::test]
-    async fn full_crawl_indexes_all_files() {
-        let dir = TempDir::new().unwrap();
-        for i in 0..5 {
-            std::fs::write(dir.path().join(format!("{i}.txt")), b"hello").unwrap();
-        }
-        let store   = make_store(&dir);
-        let tantivy = make_tantivy(&dir);
-        let metrics = IndexMetrics::new();
-        let config  = make_config(dir.path());
-        let token   = CancellationToken::new();
-
-        let registry = Arc::new(ArchiveRegistry::disabled());
-        full_crawl(config, store.clone(), tantivy, metrics, registry, token).await.unwrap();
-
-        let total = store.total_files().unwrap();
-        assert!(total >= 5, "expected ≥5 files, got {total}");
-    }
-
-    #[tokio::test]
-    async fn excluded_pattern_not_indexed() {
-        let dir = TempDir::new().unwrap();
-        std::fs::write(dir.path().join("skip.log"), b"should be excluded").unwrap();
-        std::fs::write(dir.path().join("keep.txt"), b"should be indexed").unwrap();
-
-        use crate::config::*;
-        let config = Arc::new(RwLock::new(Config {
-            watch_paths: vec![dir.path().to_path_buf()],
-            data_dir: dir.path().join("data"),
-            log_dir: dir.path().join("logs"),
-            exclusions: ExclusionConfig {
-                path_patterns: vec!["**/*.log".into()],
-                exclude_hidden: false,
-                max_content_size_bytes: 0,
-                skip_network_content: false,
-            },
-            content: ContentConfig { extension_limits: Default::default() },
-            api: ApiConfig::default(),
-            search: SearchConfig::default(),
-            indexer: IndexerConfig::default(),
-            archive_index: ArchiveIndexConfig::default(),
-            macros: MacroConfig::default(),
-            archive_service: ArchiveServiceConfig::default(),
-            store: StoreConfig::default(),
-        }));
-
-        let tmpdir2 = TempDir::new().unwrap();
-        let store    = make_store(&tmpdir2);
-        let tantivy  = make_tantivy(&tmpdir2);
-        let metrics  = IndexMetrics::new();
-        let registry = Arc::new(ArchiveRegistry::disabled());
-        let token    = CancellationToken::new();
-
-        full_crawl(config, store.clone(), tantivy, metrics, registry, token).await.unwrap();
-
-        let skip_path = dir.path().join("skip.log").to_string_lossy().into_owned();
-        assert!(store.get_by_path(&skip_path).unwrap().is_none(), "excluded file should not be indexed");
-    }
-
-    #[tokio::test]
-    async fn delete_event_removes_record() {
-        let dir = TempDir::new().unwrap();
-        let file = dir.path().join("victim.txt");
-        std::fs::write(&file, b"bye").unwrap();
-
-        let tmpdir2 = TempDir::new().unwrap();
-        let store   = make_store(&tmpdir2);
-        let tantivy = make_tantivy(&tmpdir2);
-        let metrics = IndexMetrics::new();
-        let config  = make_config(dir.path());
-
-        // Insert the record manually
-        let meta = std::fs::metadata(&file).unwrap();
-        let record = build_file_record(&file, &meta, false, unix_now());
-        store.upsert_file(&record).unwrap();
-
-        // Now fire Delete event
-        let registry = Arc::new(ArchiveRegistry::disabled());
-        process_event(
-            IndexEvent::Deleted(file.clone()),
-            config,
-            store.clone(),
-            tantivy,
-            metrics,
-            registry,
-        ).await;
-
-        let path_str = file.to_string_lossy().into_owned();
-        assert!(store.get_by_path(&path_str).unwrap().is_none());
     }
 }

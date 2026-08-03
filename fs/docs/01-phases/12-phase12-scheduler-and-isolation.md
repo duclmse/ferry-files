@@ -364,7 +364,7 @@ metrics:
 - [x] `cargo test -p filesearch scheduler` passes all tests.
 - [x] No `unwrap()` in `scheduler/` module.
 - [x] `cargo clippy -- -D warnings` clean.
-- [ ] A 1-client / 1-archive load test with `max_per_archive=2` shows ≤ 2
+- [x] A 1-client / 1-archive load test with `max_per_archive=2` shows ≤ 2
       concurrent inflates at any moment (verified via `inflight` metric).
 
 ---
@@ -423,3 +423,13 @@ pub rate_limiter:       Arc<ClientRateLimiter>,
 `ArchiveServiceConfig.scheduler: SchedulerConfig` — TOML section
 `[archive_service.scheduler]` with keys: `max_per_archive`, `rate_limit_enabled`,
 `rate_per_client`, `burst_per_client`, `drr_enabled`, `max_queue_depth`.
+
+**Measured:** 2026-08-03 — `stream_file` (Step 1 semaphore path) now calls
+`scheduler_metrics.inc_inflight()`/`dec_inflight()` around the permit, tied to
+the same `on_finish` callback that releases the permit once the decode task
+actually exits (not when the handler function returns — the response body
+streams from a task spawned inside `stream()`, after the handler has already
+returned). `api/archive/tests.rs::stream_file_handler_limits_concurrent_inflight_per_archive`
+fires 8 concurrent requests against `max_per_archive=2`, polls the `inflight`
+gauge throughout, and asserts it never exceeds 2 — `cargo test -p filesearch
+--lib api::archive::` passes (9/9).

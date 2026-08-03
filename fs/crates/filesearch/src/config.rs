@@ -263,19 +263,49 @@ pub struct ArchiveServiceConfig {
     /// Max ZidxIndex instances to hold open in the LRU cache.
     #[serde(default = "default_index_cache_size")]
     pub index_cache_size: usize,
+    /// Root directory for `.dzx` sidecar files.
+    /// Defaults to `{data_dir}/dzx` when absent.
+    #[serde(default)]
+    pub dzx_dir: Option<PathBuf>,
+    /// Minimum uncompressed entry size (bytes) a deflate entry must have to
+    /// get a `.dzx` sidecar built for it. `0` disables `.dzx` generation.
+    #[serde(default = "default_dzx_min_entry_bytes")]
+    pub dzx_min_entry_bytes: u64,
+    /// Max concurrent `.dzx` builds, process-wide (throttles CPU/IO).
+    #[serde(default = "default_dzx_max_concurrent_builds")]
+    pub dzx_max_concurrent_builds: usize,
     /// Scheduler and multi-tenant isolation config.
     #[serde(default)]
     pub scheduler: crate::scheduler::SchedulerConfig,
 }
 
 fn default_index_cache_size() -> usize { 256 }
+fn default_dzx_min_entry_bytes() -> u64 { 10 * 1024 * 1024 }
+fn default_dzx_max_concurrent_builds() -> usize { 2 }
 
 // ---------------------------------------------------------------------------
 
 /// Load config from a TOML file.
 pub fn load(path: &Path) -> Result<Config> {
     let text = std::fs::read_to_string(path).map_err(AppError::Io)?;
-    toml::from_str(&text).map_err(|e| AppError::Config(e.to_string()))
+    let mut cfg: Config = toml::from_str(&text).map_err(|e| AppError::Config(e.to_string()))?;
+
+    // Canonicalize watch roots so the crawler's on-disk paths and the fs
+    // watcher's reported event paths agree byte-for-byte. On macOS, FSEvents
+    // resolves symlinked components (e.g. `/var` -> `/private/var`) in every
+    // event path; if watch_paths were left un-resolved, a file created right
+    // after startup could race the initial crawl (which discovers it under
+    // the un-resolved root) against the watcher (whose event carries the
+    // resolved root), producing two distinct `path` strings — and thus two
+    // rows — for the same file. Left as-is if the path doesn't exist yet;
+    // `validate()` reports that separately.
+    for p in &mut cfg.watch_paths {
+        if let Ok(canon) = p.canonicalize() {
+            *p = canon;
+        }
+    }
+
+    Ok(cfg)
 }
 
 /// Validate config. Returns a list of error strings; empty means valid.

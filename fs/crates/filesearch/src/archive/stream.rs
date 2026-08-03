@@ -14,7 +14,17 @@ use super::source::ByteSource;
 /// Streaming entry extractor.
 pub trait StreamExtractor: Send {
     type Stream: Stream<Item = io::Result<Bytes>> + Send;
-    fn stream(&self, meta: &EntryMeta) -> io::Result<Self::Stream>;
+
+    /// `on_finish`, if given, runs once the decode task exits — on success,
+    /// decode error, or early consumer drop — never before. Callers use this
+    /// to release a concurrency permit only once the CPU work it guards has
+    /// actually finished, instead of when the handler function returns (which
+    /// happens before the spawned decode task completes).
+    fn stream(
+        &self,
+        meta: &EntryMeta,
+        on_finish: Option<Box<dyn FnOnce() + Send>>,
+    ) -> io::Result<Self::Stream>;
 }
 
 // ---------------------------------------------------------------------------
@@ -32,7 +42,11 @@ pub struct ZipStreamExtractor<S: ByteSource> {
 impl<S: ByteSource + 'static> StreamExtractor for ZipStreamExtractor<S> {
     type Stream = Pin<Box<dyn Stream<Item = io::Result<Bytes>> + Send>>;
 
-    fn stream(&self, meta: &EntryMeta) -> io::Result<Self::Stream> {
+    fn stream(
+        &self,
+        meta: &EntryMeta,
+        on_finish: Option<Box<dyn FnOnce() + Send>>,
+    ) -> io::Result<Self::Stream> {
         let source = Arc::clone(&self.source);
         let meta   = meta.clone();
         // 4 × 64 KB = 256 KB max in-flight between inflate and HTTP send.
@@ -41,6 +55,9 @@ impl<S: ByteSource + 'static> StreamExtractor for ZipStreamExtractor<S> {
         tokio::spawn(async move {
             if let Err(e) = pump_inflate(source, meta, &tx).await {
                 tx.send(Err(e)).await.ok();
+            }
+            if let Some(f) = on_finish {
+                f();
             }
         });
 
@@ -160,7 +177,7 @@ mod tests {
         ]);
         let source    = Arc::new(super::super::source::LocalFileSource::new(f.path().to_path_buf()).unwrap());
         let extractor = ZipStreamExtractor { source };
-        let stream    = extractor.stream(&meta).unwrap();
+        let stream    = extractor.stream(&meta, None).unwrap();
         let got       = collect_stream(stream).await.unwrap();
         assert_eq!(got, content);
     }
@@ -173,7 +190,7 @@ mod tests {
         ]);
         let source    = Arc::new(super::super::source::LocalFileSource::new(f.path().to_path_buf()).unwrap());
         let extractor = ZipStreamExtractor { source };
-        let stream    = extractor.stream(&meta).unwrap();
+        let stream    = extractor.stream(&meta, None).unwrap();
         let got       = collect_stream(stream).await.unwrap();
         assert_eq!(got, content);
     }
@@ -186,7 +203,7 @@ mod tests {
         ]);
         let source    = Arc::new(super::super::source::LocalFileSource::new(f.path().to_path_buf()).unwrap());
         let extractor = ZipStreamExtractor { source };
-        let stream    = extractor.stream(&meta).unwrap();
+        let stream    = extractor.stream(&meta, None).unwrap();
         let got       = collect_stream(stream).await.unwrap();
         assert_eq!(got.len() as u64, meta.uncompressed_size);
     }
@@ -217,7 +234,7 @@ mod tests {
 
         let source    = Arc::new(MmapSource::new(Arc::new(mmap)));
         let extractor = ZipStreamExtractor { source };
-        let stream    = extractor.stream(&meta).unwrap();
+        let stream    = extractor.stream(&meta, None).unwrap();
         let result    = collect_stream(stream).await;
         assert!(result.is_err(), "expected error for corrupt signature");
     }
@@ -232,8 +249,40 @@ mod tests {
         ]);
         let source    = Arc::new(super::super::source::LocalFileSource::new(f.path().to_path_buf()).unwrap());
         let extractor = ZipStreamExtractor { source };
-        let stream    = extractor.stream(&meta).unwrap();
+        let stream    = extractor.stream(&meta, None).unwrap();
         let got       = collect_stream(stream).await.unwrap();
         assert_eq!(got, content);
+    }
+
+    #[tokio::test]
+    async fn on_finish_runs_after_stream_fully_drains() {
+        use std::sync::atomic::{AtomicBool, Ordering};
+
+        let content = vec![0xCDu8; 5 * 64 * 1024];
+        let (f, meta) = zip_to_file_and_meta(&[
+            ("big.bin", &content, zip::CompressionMethod::Stored),
+        ]);
+        let source    = Arc::new(super::super::source::LocalFileSource::new(f.path().to_path_buf()).unwrap());
+        let extractor = ZipStreamExtractor { source };
+
+        let finished        = Arc::new(AtomicBool::new(false));
+        let finished_writer = Arc::clone(&finished);
+        let on_finish: Option<Box<dyn FnOnce() + Send>> = Some(Box::new(move || {
+            finished_writer.store(true, Ordering::SeqCst);
+        }));
+
+        let stream = extractor.stream(&meta, on_finish).unwrap();
+        let got    = collect_stream(stream).await.unwrap();
+        assert_eq!(got, content);
+
+        // The decode task's on_finish call races the channel's last `send`
+        // completing this `.await`; give the spawned task a moment to run.
+        for _ in 0..100 {
+            if finished.load(Ordering::SeqCst) {
+                break;
+            }
+            tokio::time::sleep(std::time::Duration::from_millis(1)).await;
+        }
+        assert!(finished.load(Ordering::SeqCst), "on_finish must run once the decode task exits");
     }
 }
