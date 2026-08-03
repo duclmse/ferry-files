@@ -429,8 +429,13 @@ Tests:
 
 ```rust
 pub fn parse_date_value(s: &str) -> Result<DateExpr, QueryError>
-pub fn resolve_date_constant(c: &DateConstant, now: NaiveDateTime) -> (i64, i64)
+pub fn resolve_date_constant(c: &DateConstant, now: DateTime<FixedOffset>) -> (i64, i64)
 ```
+
+`now` carries the caller's UTC offset (e.g. `Local::now().fixed_offset()`) so
+day/week/month boundaries resolve against the caller's local calendar day
+while still returning real UTC epoch seconds comparable against stored
+mtimes.
 
 `resolve_date_constant` examples:
 - `Today` → midnight..23:59:59 of current local day

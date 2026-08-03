@@ -1,4 +1,4 @@
-use chrono::{Datelike, Duration, NaiveDate, NaiveDateTime};
+use chrono::{DateTime, Datelike, Duration, FixedOffset, NaiveDate, NaiveDateTime, TimeZone};
 
 use crate::error::{AppError, Result};
 use crate::store::CmpOp;
@@ -94,11 +94,25 @@ pub fn parse_date_value(s: &str) -> Result<DateExpr> {
 }
 
 /// Resolve a `DateConstant` to a `(lo, hi)` inclusive Unix-second range.
-/// `now` is passed in so callers can substitute a fixed time in tests.
-pub fn resolve_date_constant(c: &DateConstant, now: NaiveDateTime) -> (i64, i64) {
-    let today   = now.date();
-    let day_s   = |d: NaiveDate| d.and_hms_opt(0, 0, 0).expect("infallible: 0,0,0 always valid").and_utc().timestamp();
-    let day_e   = |d: NaiveDate| d.and_hms_opt(23, 59, 59).expect("infallible: 23,59,59 always valid").and_utc().timestamp();
+///
+/// `now` carries both the wall-clock instant and the timezone offset it was
+/// observed in, so "today"/"thisweek"/etc. resolve to the caller's local
+/// calendar day while still producing real (offset-corrected) Unix
+/// timestamps comparable against mtimes, which are always stored as UTC
+/// epoch seconds. Passing a fixed `DateTime<FixedOffset>` lets callers
+/// substitute a deterministic time (and offset) in tests.
+pub fn resolve_date_constant(c: &DateConstant, now: DateTime<FixedOffset>) -> (i64, i64) {
+    let today  = now.date_naive();
+    let offset = *now.offset();
+    let at = |d: NaiveDate, h: u32, m: u32, s: u32| {
+        offset
+            .from_local_datetime(&d.and_hms_opt(h, m, s).expect("infallible: valid h/m/s always given"))
+            .single()
+            .expect("infallible: FixedOffset has no DST gaps/ambiguity")
+            .timestamp()
+    };
+    let day_s = |d: NaiveDate| at(d, 0, 0, 0);
+    let day_e = |d: NaiveDate| at(d, 23, 59, 59);
 
     match c {
         DateConstant::Today => (day_s(today), day_e(today)),
@@ -139,26 +153,11 @@ pub fn resolve_date_constant(c: &DateConstant, now: NaiveDateTime) -> (i64, i64)
             let end   = NaiveDate::from_ymd_opt(y, 12, 31).expect("infallible: Dec 31 always valid");
             (day_s(start), day_e(end))
         }
-        DateConstant::LastNDays(n) => {
-            let lo = now.and_utc().timestamp() - (*n as i64) * 86400;
-            (lo, now.and_utc().timestamp())
-        }
-        DateConstant::LastNHours(n) => {
-            let lo = now.and_utc().timestamp() - (*n as i64) * 3600;
-            (lo, now.and_utc().timestamp())
-        }
-        DateConstant::LastNMinutes(n) => {
-            let lo = now.and_utc().timestamp() - (*n as i64) * 60;
-            (lo, now.and_utc().timestamp())
-        }
-        DateConstant::LastNWeeks(n) => {
-            let lo = now.and_utc().timestamp() - (*n as i64) * 7 * 86400;
-            (lo, now.and_utc().timestamp())
-        }
-        DateConstant::LastNMonths(n) => {
-            let lo = now.and_utc().timestamp() - (*n as i64) * 30 * 86400;
-            (lo, now.and_utc().timestamp())
-        }
+        DateConstant::LastNDays(n) => (now.timestamp() - (*n as i64) * 86400, now.timestamp()),
+        DateConstant::LastNHours(n) => (now.timestamp() - (*n as i64) * 3600, now.timestamp()),
+        DateConstant::LastNMinutes(n) => (now.timestamp() - (*n as i64) * 60, now.timestamp()),
+        DateConstant::LastNWeeks(n) => (now.timestamp() - (*n as i64) * 7 * 86400, now.timestamp()),
+        DateConstant::LastNMonths(n) => (now.timestamp() - (*n as i64) * 30 * 86400, now.timestamp()),
         DateConstant::Month(m) => {
             let start = NaiveDate::from_ymd_opt(now.year(), *m, 1).expect("infallible: day 1 always valid");
             let end   = month_end(now.year(), *m);
@@ -266,12 +265,21 @@ mod tests {
     use super::*;
     use chrono::NaiveDate;
 
-    fn fixed_now() -> NaiveDateTime {
-        // 2024-03-15 12:00:00 (Friday)
-        NaiveDate::from_ymd_opt(2024, 3, 15)
+    fn fixed_now_at(offset_hours: i32) -> DateTime<FixedOffset> {
+        // 2024-03-15 12:00:00 (Friday), observed at the given UTC offset.
+        let offset = FixedOffset::east_opt(offset_hours * 3600).unwrap();
+        offset
+            .from_local_datetime(
+                &NaiveDate::from_ymd_opt(2024, 3, 15)
+                    .unwrap()
+                    .and_hms_opt(12, 0, 0)
+                    .unwrap(),
+            )
             .unwrap()
-            .and_hms_opt(12, 0, 0)
-            .unwrap()
+    }
+
+    fn fixed_now() -> DateTime<FixedOffset> {
+        fixed_now_at(0)
     }
 
     #[test]
@@ -282,6 +290,19 @@ mod tests {
         let end   = NaiveDate::from_ymd_opt(2024, 3, 15).unwrap().and_hms_opt(23, 59, 59).unwrap().and_utc().timestamp();
         assert_eq!(lo, start);
         assert_eq!(hi, end);
+    }
+
+    #[test]
+    fn today_range_respects_offset() {
+        // At UTC+7, local midnight of 2024-03-15 is 2024-03-14 17:00:00 UTC,
+        // not 2024-03-15 00:00:00 UTC. A file whose mtime is a few hours
+        // before local midnight-in-UTC-digits must still fall inside "today".
+        let now = fixed_now_at(7);
+        let (lo, hi) = resolve_date_constant(&DateConstant::Today, now);
+        let expected_lo = NaiveDate::from_ymd_opt(2024, 3, 14).unwrap().and_hms_opt(17, 0, 0).unwrap().and_utc().timestamp();
+        let expected_hi = NaiveDate::from_ymd_opt(2024, 3, 15).unwrap().and_hms_opt(16, 59, 59).unwrap().and_utc().timestamp();
+        assert_eq!(lo, expected_lo);
+        assert_eq!(hi, expected_hi);
     }
 
     #[test]
@@ -296,7 +317,7 @@ mod tests {
     #[test]
     fn last7days_range() {
         let now = fixed_now();
-        let now_ts = now.and_utc().timestamp();
+        let now_ts = now.timestamp();
         let (lo, hi) = resolve_date_constant(&DateConstant::LastNDays(7), now);
         assert_eq!(hi, now_ts);
         assert_eq!(lo, now_ts - 7 * 86400);

@@ -138,7 +138,7 @@ fn emit_predicate(pred: &Predicate, mods: &Modifiers, p: &mut QueryPlan) -> Resu
         None => {}
     }
 
-    let now = Local::now().naive_local();
+    let now = Local::now().fixed_offset();
 
     match &pred.kind {
         PredicateKind::Term(s) => {
@@ -204,7 +204,7 @@ fn emit_function(
     func:   &Function,
     _mods:  &Modifiers,
     p:      &mut QueryPlan,
-    now:    chrono::NaiveDateTime,
+    now:    chrono::DateTime<chrono::FixedOffset>,
 ) -> Result<()> {
     match func {
         Function::DateModified(de) => {
@@ -278,7 +278,7 @@ fn emit_function(
 // Date helpers
 // ---------------------------------------------------------------------------
 
-fn date_expr_to_range(de: &DateExpr, now: chrono::NaiveDateTime) -> (i64, i64) {
+fn date_expr_to_range(de: &DateExpr, now: chrono::DateTime<chrono::FixedOffset>) -> (i64, i64) {
     match de {
         DateExpr::Constant(c)        => resolve_date_constant(c, now),
         DateExpr::Range(lo, hi)      => (*lo, *hi),
