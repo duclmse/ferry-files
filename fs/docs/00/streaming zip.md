@@ -129,7 +129,7 @@ impl<S: ByteSource> StreamExtractor for ZipStreamExtractor<S> {
         let source = self.source.clone();
 
         Ok(Box::pin(async_stream::try_stream! {
-            // 1. read local header (note .await — read_range is async)
+            // 1. read local header (note .await - read_range is async)
             let header = source.read_range(entry.local_header_offset, 64).await?;
 
             let data_offset = parse_local_header(&header)?;

@@ -5,9 +5,9 @@ archive processing.
 
 | Crate        | Binary       | Purpose                                                                                                            |
 | ------------ | ------------ | ------------------------------------------------------------------------------------------------------------------ |
-| `filesearch` | `filesearch` | Cross-platform file-search daemon — indexes 1–10M files, exposes REST/gRPC/IPC APIs with < 50ms search latency     |
-| `rar2zip`    | `rar2zip`    | Windows service — watches a folder, converts RAR/7Z/TAR archives to ZIP, and transfers them to remote SFTP servers |
-| `common`     | —            | Shared logger, error types, and constants                                                                          |
+| `filesearch` | `filesearch` | Cross-platform file-search daemon - indexes 1–10M files, exposes REST/gRPC/IPC APIs with < 50ms search latency     |
+| `rar2zip`    | `rar2zip`    | Windows service - watches a folder, converts RAR/7Z/TAR archives to ZIP, and transfers them to remote SFTP servers |
+| `common`     | - | Shared logger, error types, and constants                                                                          |
 
 ---
 
@@ -110,7 +110,7 @@ GET  /health
 
 ### gRPC
 
-Proto at `crates/filesearch/proto/filesearch.proto`. Reflection enabled —
+Proto at `crates/filesearch/proto/filesearch.proto`. Reflection enabled - 
 compatible with `grpcurl`.
 
 ---
@@ -123,7 +123,7 @@ compatible with `grpcurl`.
 
 1. Watches an input folder for RAR, 7Z, TAR, TAR.GZ, and TAR.BZ2 archives.
 2. Verifies archive integrity before processing.
-3. Converts archives to ZIP via streaming (entry-by-entry, 64 KB chunks — never
+3. Converts archives to ZIP via streaming (entry-by-entry, 64 KB chunks - never
    loads the full file).
 4. Transfers the resulting ZIP to one or more remote SFTP servers.
 5. Handles multi-part RAR groups (both `.part1.rar` and legacy `.r00`/`.r01`
@@ -185,7 +185,7 @@ rar2zip validate-config --config config.toml
 ### Dashboard
 
 When metrics are enabled, the dashboard is available at
-`http://localhost:9090/dashboard` — queue stats, recent jobs (last 20), and
+`http://localhost:9090/dashboard` - queue stats, recent jobs (last 20), and
 transfer stats with 5-second auto-refresh.
 
 ---

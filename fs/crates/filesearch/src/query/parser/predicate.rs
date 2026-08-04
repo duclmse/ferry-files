@@ -90,7 +90,7 @@ pub(super) fn build_predicate(kw: &str, val: &str, mods: Modifiers) -> Result<Ex
         "endwith"   | "endswith"   => Function::EndWith(val.to_owned()),
         "archiveof" => Function::ArchiveOf(val.to_owned()),
         _ => {
-            // Unknown keyword — treat "keyword:value" as a literal term
+            // Unknown keyword - treat "keyword:value" as a literal term
             return Ok(Expr::Predicate(Predicate {
                 kind:      PredicateKind::Term(format!("{kw}:{val}")),
                 modifiers: mods,

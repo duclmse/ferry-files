@@ -175,7 +175,7 @@ All persistent state lives under the single `data_dir` set in config.
 
 ```
 {data_dir}/
-  index.db          SQLite — file records, index metadata (WAL mode)
+  index.db          SQLite - file records, index metadata (WAL mode)
   tantivy/          Tantivy full-text index segments and meta files
   filesearch.pid    PID file written on startup, removed on clean exit (Unix only)
   zidx/             .zidx sidecar files (only when archive_service.enabled = true)
@@ -190,7 +190,7 @@ All persistent state lives under the single `data_dir` set in config.
 
 **Tantivy directory** (`tantivy/`): managed entirely by the Tantivy library. Do not
 modify files inside it manually. The daemon holds an exclusive writer lock on this
-directory — only one daemon instance may run against the same `data_dir` at a time
+directory - only one daemon instance may run against the same `data_dir` at a time
 (enforced by a PID file on Unix and a named mutex on Windows).
 
 ---
@@ -219,7 +219,7 @@ When `filesearch daemon` is invoked the following steps execute in order inside
 12. Spawn: gRPC server (Tonic + reflection, 0.0.0.0:{grpc_port})
 13. Spawn: Tantivy commit loop (every commit_interval_secs)
 14. Conditional: initial full crawl (skipped if last_crawl_time present in index_meta)
-15. Main event loop — select! on:
+15. Main event loop - select! on:
     ├─ IndexEvent from watcher  → process_event (semaphore: max 16 concurrent tasks)
     ├─ reindex_rx watch channel → spawn_crawl (deduped via crawl_active AtomicBool)
     └─ shutdown token cancelled → break
@@ -303,9 +303,9 @@ filesearch search "*.rs" --limit 500 --offset 0
 | `size:tiny`                 | Size named constant                                                                  |
 | `size:>10mb`                | Size comparison                                                                      |
 | `size:1kb..10mb`            | Size range                                                                           |
-| `dm:today`                  | Date modified — named constant                                                       |
-| `dm:2024-01-15`             | Date modified — absolute                                                             |
-| `dm:2024-01-01..2024-12-31` | Date modified — range                                                                |
+| `dm:today`                  | Date modified - named constant                                                       |
+| `dm:2024-01-15`             | Date modified - absolute                                                             |
+| `dm:2024-01-01..2024-12-31` | Date modified - range                                                                |
 | `dc:thisweek`               | Date created                                                                         |
 | `archive: <query>`          | Only inner-archive entries                                                           |
 | `noarchive: <query>`        | Exclude inner-archive entries                                                        |

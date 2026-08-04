@@ -1,4 +1,4 @@
-# Phase 11 — Deflate Random Access (`.dzx` Block Index)
+# Phase 11 - Deflate Random Access (`.dzx` Block Index)
 
 **Goal:** Enable O(1) seeks within large compressed ZIP entries. A one-time
 post-processing pass inflates each entry, recording decoder state at 64 KB block
@@ -9,7 +9,7 @@ Range requests by decoding only the relevant block, not the full entry.
 
 **Depends on:** Phase 10 (streaming ZIP core, `ByteSource`, `Decoder` traits).
 
-**Design source:** `docs/00/deflate random access.md` (Option B — post-process
+**Design source:** `docs/00/deflate random access.md` (Option B - post-process
 existing ZIP, preserves original compressed bytes).
 
 > **Why Option B only:** Option A requires re-compressing the entry with forced
@@ -37,9 +37,9 @@ All integer fields are **little-endian** on disk.
 ### Layout
 
 ```text
-[Header — 32 bytes]
-[Block Table — block_count × 56 bytes]
-[Window Snapshots — block_count × 32768 bytes]
+[Header - 32 bytes]
+[Block Table - block_count × 56 bytes]
+[Window Snapshots - block_count × 32768 bytes]
 ```
 
 ### Header
@@ -102,7 +102,7 @@ decode back-references that cross the boundary.
 
 ---
 
-## 11.3 `DzxBuilder` — Index Construction
+## 11.3 `DzxBuilder` - Index Construction
 
 ```rust
 pub struct DzxBuilder {
@@ -146,7 +146,7 @@ output position. Use `flate2::Decompress::decompress()` in a loop, recording the
 
 ---
 
-## 11.4 `DzxIndex` — mmap-backed Reader
+## 11.4 `DzxIndex` - mmap-backed Reader
 
 ```rust
 pub struct DzxIndex {
@@ -272,7 +272,7 @@ subject to a `Semaphore(dzx_max_concurrent_builds)`.
 
 ---
 
-## 11.8 Tests — Phase 11
+## 11.8 Tests - Phase 11
 
 ```
 builder:
@@ -309,23 +309,23 @@ interchangeable:
 | ------------------------ | -------------------------------------------------------------- | ---------------------------------------------------------------------- |
 | **One per**              | ZIP file                                                       | ZIP entry (one per large deflated entry)                               |
 | **Answers**              | "What nodes (files/dirs) are inside this ZIP?"                 | "How do I seek to byte N inside this specific entry's deflate stream?" |
-| **Built by reading**     | Central directory only — no decompression                      | Full inflation pass through the entry                                  |
+| **Built by reading**     | Central directory only - no decompression                      | Full inflation pass through the entry                                  |
 | **Indexed by**           | `blake3(zip_path).zidx`                                        | `blake3(zip_path + "#" + local_header_offset).dzx`                     |
 | **Runtime cost to open** | O(1) mmap, pointer arithmetic                                  | O(log n) block lookup, then O(block_size) decompress                   |
-| **Storage per unit**     | ~40 bytes/node + string pool                                   | header + **32 KB/block** — can exceed the compressed data size         |
-| **Used for**             | Directory listing, file lookup, locating `local_header_offset` | HTTP `Range:` requests — partial reads without full inflation          |
+| **Storage per unit**     | ~40 bytes/node + string pool                                   | header + **32 KB/block** - can exceed the compressed data size         |
+| **Used for**             | Directory listing, file lookup, locating `local_header_offset` | HTTP `Range:` requests - partial reads without full inflation          |
 
 The two are also sequenced: `.zidx` is built first (Phase 8, during the archive
 crawl). `.dzx` is built afterwards (Phase 11, as a post-processing step) using
 the `local_header_offset` that `.zidx` already recorded. If `.zidx` does not
-exist for a ZIP, there is no `.dzx` for its entries either — the daemon builds
+exist for a ZIP, there is no `.dzx` for its entries either - the daemon builds
 `.dzx` only after a successful `.zidx` pass.
 
 ---
 
 ## 11.10 Hard Parts and Implementation Traps
 
-### 1. `resume_decoder` — correct `flate2` sequence
+### 1. `resume_decoder` - correct `flate2` sequence
 
 The document says "seed sliding window via `set_dictionary()`". The exact
 sequence matters:
@@ -390,7 +390,7 @@ simplification means you can only place a block boundary where the inflater has
 consumed a whole number of input bytes.
 
 In practice: **deflate block boundaries are always byte-aligned**. Each deflate
-block (`BTYPE=00/01/02`) ends with its last byte fully consumed — there are no
+block (`BTYPE=00/01/02`) ends with its last byte fully consumed - there are no
 pending bits that straddle the boundary between deflate blocks. The issue is
 that `flate2::Decompress` does not expose "am I at a deflate block boundary
 right now?"
@@ -401,18 +401,18 @@ Practical approach:
 - After each `decompress()` call, check `total_out`. If
   `total_out >= next_boundary`:
   - Record `comp_offset = total_in` (bytes consumed from the compressed stream).
-  - `bit_count = 0`, `bit_buffer = 0` — always, because we only place boundaries
+  - `bit_count = 0`, `bit_buffer = 0` - always, because we only place boundaries
     at positions where `total_in` advances to a byte boundary (guaranteed when
     `flate2` has no partial-byte look-ahead pending).
 - Advance `next_boundary += block_size`.
 
 **Why this is safe:** `flate2::Decompress::decompress()` with `MZFlush::None`
-consumes input bytes completely before returning partial output — it does not
+consumes input bytes completely before returning partial output - it does not
 hold back partial input bytes in a bit buffer that is invisible to the caller.
 The `total_in` counter reflects fully consumed bytes. So
 `comp_offset = total_in` after a `decompress()` return is always byte-aligned.
 
-### 4. `DzxBlock` on-disk size — fix the inconsistency
+### 4. `DzxBlock` on-disk size - fix the inconsistency
 
 The block entry comment in §11.2 incorrectly computes 36 bytes and then says
 "pad to 56". The canonical layout is:
@@ -472,7 +472,7 @@ blocks    = ceil(100 MB / 64 KB) ≈ 1 600
 snapshots = 1 600 × 32 768 = 52 MB
 ```
 
-The `.dzx` file for this entry is ~52 MB — larger than many compressed streams.
+The `.dzx` file for this entry is ~52 MB - larger than many compressed streams.
 This is expected and acceptable because:
 
 - `.dzx` is only built for entries above `dzx_min_entry_bytes` (default 10 MB).
@@ -483,14 +483,14 @@ This is expected and acceptable because:
 
 If storage is a concern, a future optimisation is snapshot compression (each 32
 KB window is highly compressible because it's raw text/binary output). Phase 11
-does not implement snapshot compression — leave `flags` bit 1 reserved for it.
+does not implement snapshot compression - leave `flags` bit 1 reserved for it.
 
 ---
 
 ## 11.11 Implementation Reasoning
 
 This section records the chain of thought behind the design decisions. It is not
-prescriptive — §11.10 is. Read this when a decision looks arbitrary or when
+prescriptive - §11.10 is. Read this when a decision looks arbitrary or when
 something fails in an unexpected way.
 
 ### Why deflate random access requires two things, not one
@@ -498,17 +498,17 @@ something fails in an unexpected way.
 The intuition is: "just seek to byte N in the compressed stream and start
 decompressing." This fails for two independent reasons.
 
-**Reason 1 — LZ77 history.** Deflate is LZ77 + Huffman. LZ77 back-references say
+**Reason 1 - LZ77 history.** Deflate is LZ77 + Huffman. LZ77 back-references say
 "emit the bytes from 12345 bytes ago, length 5." If you start mid-stream, you
 don't have those previous bytes, so back-references that reach before your start
 point produce garbage. The fix is the 32 KB window snapshot: replay the last
 32768 bytes of output as the LZ77 history before decompressing.
 
-**Reason 2 — bit-stream alignment.** The compressed byte stream is a packed
+**Reason 2 - bit-stream alignment.** The compressed byte stream is a packed
 sequence of bits. Huffman codes and length/distance codes are not byte-aligned.
 If you start decompressing from a byte that is mid-code, the inflater reads the
 wrong bit pattern and produces garbage immediately. The fix is to only start
-from a position where the inflater's internal bit buffer is empty — i.e., where
+from a position where the inflater's internal bit buffer is empty - i.e., where
 the compressed stream is byte-aligned. `DzxBlock.bit_count = 0` encodes this
 guarantee.
 
@@ -532,7 +532,7 @@ the inflater has no pending bits.
 
 The question is when this is true:
 
-- **STORED blocks (BTYPE=00):** always byte-aligned — the spec requires padding
+- **STORED blocks (BTYPE=00):** always byte-aligned - the spec requires padding
   bits after the block header to reach a byte boundary before the length fields.
 - **After Z_SYNC_FLUSH:** zlib emits padding + an empty stored block, leaving
   the stream byte-aligned. Compressed streams produced with SYNC_FLUSH between
@@ -563,7 +563,7 @@ limit.
 wrapper, `windowBits = -15` in zlib terms). The `set_dictionary()` method maps
 to zlib's `inflateSetDictionary()`. The zlib spec allows calling
 `inflateSetDictionary` on a raw stream as a way to pre-populate the 32 KB
-history buffer — it works because the history buffer is an implementation detail
+history buffer - it works because the history buffer is an implementation detail
 of the LZ77 decoder, independent of whether the stream has a zlib header.
 
 The constraint is timing: `set_dictionary` must be called before any
@@ -573,7 +573,7 @@ with `DataError`. The implementation must enforce `d.total_out() == 0` before
 calling `set_dictionary`.
 
 This is also why `resume_decoder` cannot share a `Decompress` instance across
-multiple `read_range` calls — each call needs a fresh instance with the window
+multiple `read_range` calls - each call needs a fresh instance with the window
 loaded before any decompression.
 
 ### Why O(1) `find_block`, not O(log n) binary search
@@ -581,7 +581,7 @@ loaded before any decompression.
 Because blocks are fixed-size (`block_size` uncompressed bytes), the block
 containing `uncomp_offset` is exactly `uncomp_offset / block_size` (integer
 division), clamped to `block_count - 1` for the last block which may be smaller.
-No search is needed. The doc comment in §11.4 says "O(log n)" — that comment is
+No search is needed. The doc comment in §11.4 says "O(log n)" - that comment is
 wrong. The implementation
 `(target / self.block_size as u64).min(self.block_count - 1)` is O(1).
 
@@ -590,7 +590,7 @@ is the last block, which has `uncomp_size <= block_size`. The clamp handles it.
 
 ### Why a ring buffer for the sliding window
 
-During `DzxBuilder::build`, the full uncompressed output is never needed — only
+During `DzxBuilder::build`, the full uncompressed output is never needed - only
 the last 32768 bytes. A `Vec<u8>` growing to the full uncompressed size would
 consume O(entry_size) memory, which for a 1 GB entry is 1 GB just for the build
 pass.
@@ -605,7 +605,7 @@ The edge case: before the buffer has been fully written once (`!filled`), the
 bytes from `head` to end of buffer are uninitialized (or zeroed from `Box`
 allocation). The snapshot in that case is the written prefix padded with zeros.
 This matches zlib's behavior when `inflateSetDictionary` receives fewer than
-32768 bytes — it still works, the history is just shorter.
+32768 bytes - it still works, the history is just shorter.
 
 ### Why the storage cost is acceptable despite exceeding the compressed size
 
@@ -616,9 +616,9 @@ The uncompressed entry is 100 MB, the compressed entry might be 30 MB. The
 The trade-off is still correct:
 
 - Without `.dzx`, a Range request for the last 1 KB of a 100 MB entry reads and
-  inflates all 30 MB of compressed data — bounded by I/O and CPU.
+  inflates all 30 MB of compressed data - bounded by I/O and CPU.
 - With `.dzx`, the same request reads 32 KB (one snapshot) + ~64 KB (one block)
-  = ~96 KB — two orders of magnitude less I/O.
+  = ~96 KB - two orders of magnitude less I/O.
 - The 52 MB `.dzx` is written once and read at most one 32 KB slice per request.
   The OS page cache makes repeated Range requests on the same block essentially
   free after the first.
@@ -643,7 +643,7 @@ counter and no stack growth.
 - [ ] `cargo test -p filesearch archive::dzx` passes all tests.
 - [ ] `GET /archive/:id/file` with `Range:` header returns `206 Partial Content`
       using the `.dzx` path when available.
-- [ ] `.dzx` build is gated by `dzx_min_entry_bytes` — small entries are not
+- [ ] `.dzx` build is gated by `dzx_min_entry_bytes` - small entries are not
       indexed.
 - [ ] Resume from window snapshot produces byte-identical output vs. full
       inflate.

@@ -261,11 +261,11 @@ scrape_configs:
 ```
 
 Available metrics:
-- `rar2zip_files_processed_total` — counter
-- `rar2zip_bytes_transferred_total` — counter
-- `rar2zip_conversion_failures_total` — counter
-- `rar2zip_transfer_failures_total` — counter
-- `rar2zip_queue_depth` — gauge
+- `rar2zip_files_processed_total` - counter
+- `rar2zip_bytes_transferred_total` - counter
+- `rar2zip_conversion_failures_total` - counter
+- `rar2zip_transfer_failures_total` - counter
+- `rar2zip_queue_depth` - gauge
 
 ### Dashboard
 

@@ -73,7 +73,7 @@ impl TantivyStore {
         })
     }
 
-    /// Delete-then-add upsert. Does NOT commit — call `commit()` separately.
+    /// Delete-then-add upsert. Does NOT commit - call `commit()` separately.
     pub fn upsert(&self, record: &FileRecord, content: Option<&str>) -> Result<()> {
         let term = tantivy::Term::from_field_text(self.f_path, &record.path);
         let w = self.writer.lock().map_err(|e| AppError::Index(e.to_string()))?;

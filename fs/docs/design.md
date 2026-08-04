@@ -1,4 +1,4 @@
-Great scope — full Everything clone, cross-platform, Windows-first. Here's a
+Great scope - full Everything clone, cross-platform, Windows-first. Here's a
 comprehensive implementation plan:
 
 ---
@@ -21,12 +21,12 @@ lets you swap backends cleanly.
 
 ## Crate-by-Crate Plan
 
-### `core` — Index, Search, Persistence
+### `core` - Index, Search, Persistence
 
 **Data model:**
 
 ```rust
-// Compact record — target ~64 bytes per entry
+// Compact record - target ~64 bytes per entry
 pub struct FileRecord {
     pub id: u64,          // MFT record number (Windows) or inode (Linux/Mac)
     pub parent_id: u64,
@@ -43,12 +43,12 @@ pub struct NameRef {
 ```
 
 Store records in a `Vec<FileRecord>` (flat array, cache-friendly). Names go into
-a separate `Vec<u8>` arena — one big contiguous string pool. At 1M files this is
+a separate `Vec<u8>` arena - one big contiguous string pool. At 1M files this is
 roughly 80–120 MB total, matching Everything's footprint.
 
 **Path reconstruction:**
 
-Don't store full paths — reconstruct on demand by walking `parent_id` up the
+Don't store full paths - reconstruct on demand by walking `parent_id` up the
 chain to a root sentinel. Cache a `HashMap<u64, u32>` (id → index) for O(1)
 parent lookups.
 
@@ -70,7 +70,7 @@ pub fn search<'a>(
 
 **Persistence:**
 
-Use a simple custom binary format rather than SQLite — it's faster to mmap on
+Use a simple custom binary format rather than SQLite - it's faster to mmap on
 load:
 
 ```
@@ -85,7 +85,7 @@ time for 1M records.
 
 ---
 
-### `platform` — Scanner + Watcher Backends
+### `platform` - Scanner + Watcher Backends
 
 Define a trait that both Windows and Linux/macOS backends implement:
 
@@ -121,7 +121,7 @@ pub enum ChangeEvent {
 The trickiest part. You'll need `windows-rs` (Microsoft's official Rust
 bindings).
 
-_Initial scan — MFT enumeration:_
+_Initial scan - MFT enumeration:_
 
 ```rust
 // Open volume with FILE_READ_DATA on the root
@@ -130,7 +130,7 @@ let vol = CreateFileW(r"\\.\C:", FILE_READ_DATA, ...);
 // Get volume data to find MFT location
 DeviceIoControl(vol, FSCTL_GET_NTFS_VOLUME_DATA, ...);
 
-// Enumerate via USN_RECORD_V2 — much simpler than raw MFT parsing
+// Enumerate via USN_RECORD_V2 - much simpler than raw MFT parsing
 DeviceIoControl(vol, FSCTL_ENUM_USN_DATA, ...);
 // yields USN_RECORD_V2 records: FileReferenceNumber, ParentFileReferenceNumber, FileName
 ```
@@ -138,7 +138,7 @@ DeviceIoControl(vol, FSCTL_ENUM_USN_DATA, ...);
 `FSCTL_ENUM_USN_DATA` gives you exactly the fields you need without parsing raw
 MFT structures. Much safer than reading `$MFT` directly.
 
-_Change watching — USN journal:_
+_Change watching - USN journal:_
 
 ```rust
 DeviceIoControl(vol, FSCTL_READ_USN_JOURNAL, &READ_USN_JOURNAL_DATA {
@@ -155,7 +155,7 @@ notifications; the journal is a ring buffer NTFS maintains regardless.
 **Linux backend:**
 
 Use `inotify` (via the `inotify` crate) or `fanotify` for recursive watching.
-Initial scan is a standard `walkdir` traversal — no special privileges needed.
+Initial scan is a standard `walkdir` traversal - no special privileges needed.
 The `notify` crate (which you've already used) abstracts both and gives you a
 unified `Event` stream, so you could lean on that here.
 
@@ -163,14 +163,14 @@ unified `Event` stream, so you could lean on that here.
 
 ---
 
-### `ipc` — Service Protocol
+### `ipc` - Service Protocol
 
 The daemon holds the index in memory; CLI queries talk to it over:
 
 - **Windows:** Named pipe (`\\.\pipe\everything-rs`)
 - **Linux/macOS:** Unix domain socket (`/run/everything-rs.sock`)
 
-Keep the protocol simple — length-prefixed messages, serialized with `bincode`
+Keep the protocol simple - length-prefixed messages, serialized with `bincode`
 or `postcard`:
 
 ```rust
@@ -199,7 +199,7 @@ crate). On Linux, it's a systemd unit or a simple background process.
 
 ---
 
-### `cli` — User-Facing Binary
+### `cli` - User-Facing Binary
 
 Two subcommands:
 
@@ -257,24 +257,24 @@ This keeps platform deps from bleeding into non-target builds.
 
 ## Recommended Build Order
 
-1. **`core`** — `FileRecord`, arena, flat index, linear search, binary
+1. **`core`** - `FileRecord`, arena, flat index, linear search, binary
    persistence. Fully testable with synthetic data on any OS.
-2. **`platform/windows`** — MFT scan via `FSCTL_ENUM_USN_DATA`, USN journal
+2. **`platform/windows`** - MFT scan via `FSCTL_ENUM_USN_DATA`, USN journal
    watcher.
-3. **Wire them together** — index builder that feeds `RawEntry` from scanner
+3. **Wire them together** - index builder that feeds `RawEntry` from scanner
    into `core::Index`.
-4. **`cli`** — basic `search` subcommand, no daemon yet. Scan → index → query in
+4. **`cli`** - basic `search` subcommand, no daemon yet. Scan → index → query in
    one process.
-5. **`ipc` + daemon** — split into service + client, add persistence so the
+5. **`ipc` + daemon** - split into service + client, add persistence so the
    daemon survives restarts.
-6. **`platform/linux` + `platform/macos`** — drop-in via the trait.
+6. **`platform/linux` + `platform/macos`** - drop-in via the trait.
 
 ---
 
 ## Gotchas to Plan For
 
 - **MFT record number width:** The high 16 bits of `FileReferenceNumber` are a
-  sequence number — mask them off with `& 0x0000_FFFF_FFFF_FFFF` to get the
+  sequence number - mask them off with `& 0x0000_FFFF_FFFF_FFFF` to get the
   actual record number.
 - **Elevation on Windows:** MFT access requires admin. Build in a clear error
   message and a `--install-service` path early.
@@ -290,5 +290,5 @@ This keeps platform deps from bleeding into non-target builds.
 ---
 
 This gives you a solid, layered foundation. Want me to dive into any specific
-layer — for example, the actual MFT enumeration code, the index data structures,
+layer - for example, the actual MFT enumeration code, the index data structures,
 or the IPC protocol?

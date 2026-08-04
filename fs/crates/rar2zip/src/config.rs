@@ -245,7 +245,7 @@ pub async fn watch_config(
                                 tracing::info!("config reloaded from {}", path.display());
                             } else {
                                 tracing::warn!(
-                                    "config reload rejected — validation errors: {:?}", errs
+                                    "config reload rejected - validation errors: {:?}", errs
                                 );
                             }
                         }
@@ -309,7 +309,7 @@ compression_level = 6
     #[test]
     fn validate_compression_level_out_of_range() {
         let dir = tempfile::tempdir().unwrap();
-        // Use forward slashes — TOML quoted strings treat \ as an escape.
+        // Use forward slashes - TOML quoted strings treat \ as an escape.
         let d = dir.path().to_string_lossy().replace('\\', "/");
         let f = write_config(&format!(
             "watch_folder=\"{d}\"\nfailed_folder=\"{d}/f\"\ndestinations=[]\n\
@@ -361,7 +361,7 @@ compression_level = 6
         tokio::time::sleep(Duration::from_millis(200)).await;
 
         {
-            // Write a complete replacement config — do NOT append to the
+            // Write a complete replacement config - do NOT append to the
             // existing one, as that would create a duplicate [conversion]
             // section and fail TOML parsing.
             let watch = dir.path().to_string_lossy().replace('\\', "/");

@@ -1,4 +1,4 @@
-# Phase 10 — Streaming ZIP Core
+# Phase 10 - Streaming ZIP Core
 
 **Goal:** Replace the ad-hoc inline inflate in Phase 9's file handler with a
 composable, trait-driven streaming pipeline. The `ByteSource` trait decouples
@@ -159,7 +159,7 @@ Wraps `flate2::read::DeflateDecoder<Cursor<&[u8]>>`. Each `feed` call creates a
 fresh cursor over the input slice, reads all available output, and returns it.
 
 > **Note:** `flate2`'s streaming API is stateful; for multi-chunk feeds, wrap a
-> single `DeflateDecoder<ReadBuf>` and write each chunk in — do not reconstruct
+> single `DeflateDecoder<ReadBuf>` and write each chunk in - do not reconstruct
 > the decoder on every call. Use `flate2::read::DeflateDecoder` wrapping a
 > `VecDeque<u8>` or the equivalent `write`-side API
 > (`flate2::write::DeflateDecoder`).
@@ -320,7 +320,7 @@ futures       = "0.3"
 
 ---
 
-## 10.9 Tests — Phase 10
+## 10.9 Tests - Phase 10
 
 ```
 source:
@@ -358,7 +358,7 @@ integration (replaces Phase 9 inline inflate):
       tests.
 - [x] Phase 9's `stream_file` handler uses `ZipStreamExtractor` (inline inflate
       removed).
-- [x] Streaming large entries does not buffer entire content in RAM — the
+- [x] Streaming large entries does not buffer entire content in RAM - the
       `mpsc::channel(4)` cap limits in-flight data to 256 KB regardless of entry
       size (verified by `channel_backpressure_limits_buffering` test with a 5 ×
       64 KB stored entry).
@@ -374,7 +374,7 @@ integration (replaces Phase 9 inline inflate):
 
 ### Deviations from spec
 
-**`DeflateDecoder::finish` — no `into_inner`**
+**`DeflateDecoder::finish` - no `into_inner`**
 `flate2::write::DeflateDecoder<W>` does not expose `into_inner()`. After
 `try_finish()` the remaining decompressed bytes are in the inner `Vec<u8>` (the
 write target). We drain them with `std::mem::take(self.inner.get_mut())` instead
@@ -399,7 +399,7 @@ Same semantics, updated API.
 `io_other_error` lint (enabled via `-D warnings`) requires
 `io::Error::other(…)`. Applied in `decoder.rs` and `source.rs`.
 
-### Backpressure (§10.7) — implemented
+### Backpressure (§10.7) - implemented
 
 `ZipStreamExtractor::stream` now uses `tokio::spawn` + `mpsc::channel(4)` +
 `ReceiverStream` instead of `async_stream::try_stream!`. The inflate loop runs
@@ -417,14 +417,14 @@ The internal `pump_inflate` async fn owns the `Box<dyn Decoder>` for the full
 entry lifetime, so the DEFLATE decompressor state is maintained across chunks
 without move overhead.
 
-### Integration HTTP tests — added
+### Integration HTTP tests - added
 
 Two `#[tokio::test]` tests in `api::archive::tests` use
 `tower::ServiceExt::oneshot` via `crate::api::rest::router(state)` (which
 returns `Router<()>` and therefore implements `Service`):
 
-- `stream_file_handler_body_matches_content` — stored entry, asserts body bytes
-- `stream_file_handler_content_length_matches_uncompressed_size` — deflated
+- `stream_file_handler_body_matches_content` - stored entry, asserts body bytes
+- `stream_file_handler_content_length_matches_uncompressed_size` - deflated
   entry, asserts `Content-Length` header equals the uncompressed size and body
   is correct
 

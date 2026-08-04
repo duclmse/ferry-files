@@ -1,12 +1,12 @@
 //! SIMD-accelerated inflate pipeline (Phase 13).
 //!
 //! Architecture:
-//!   `RingBuffer`         — double-buffer sliding window (2 × 32 KB), contiguous `slice_at`
-//!   `copy_simd`          — AVX2 bulk copy when compiled with target-feature=avx2; scalar otherwise
-//!   `copy_match`         — LZ77 overlap-safe copy built on `copy_simd`
-//!   `HuffmanTable`       — 9-bit fast lookup for the DEFLATE fixed literal/length tree
-//!   `SimdDeflateDecoder` — `Decoder` impl: flate2 parses tokens, SIMD copies output bytes
-//!   `InflateStats`       — per-thread counters gated by `FILESEARCH_INFLATE_STATS=1`
+//!   `RingBuffer` - double-buffer sliding window (2 × 32 KB), contiguous `slice_at`
+//!   `copy_simd` - AVX2 bulk copy when compiled with target-feature=avx2; scalar otherwise
+//!   `copy_match` - LZ77 overlap-safe copy built on `copy_simd`
+//!   `HuffmanTable` - 9-bit fast lookup for the DEFLATE fixed literal/length tree
+//!   `SimdDeflateDecoder` - `Decoder` impl: flate2 parses tokens, SIMD copies output bytes
+//!   `InflateStats` - per-thread counters gated by `FILESEARCH_INFLATE_STATS=1`
 
 use std::io;
 use bytes::Bytes;
@@ -14,7 +14,7 @@ use bytes::Bytes;
 use super::decoder::Decoder;
 
 // ---------------------------------------------------------------------------
-// RingBuffer — 2 × 32 KB double-buffer sliding window
+// RingBuffer - 2 × 32 KB double-buffer sliding window
 // ---------------------------------------------------------------------------
 
 const WINDOW: usize = 32 * 1024;
@@ -52,13 +52,13 @@ impl Default for RingBuffer {
 }
 
 // ---------------------------------------------------------------------------
-// copy_simd — SIMD bulk memcpy (AVX2 when available, scalar fallback)
+// copy_simd - SIMD bulk memcpy (AVX2 when available, scalar fallback)
 // ---------------------------------------------------------------------------
 
 /// Copy exactly `len` bytes from `src` into `dst` (appending).
 /// Uses 256-bit AVX2 stores when compiled with `+avx2`; falls back to
 /// `extend_from_slice` otherwise (the compiler will still auto-vectorise).
-/// Does NOT zero-fill before writing — avoids the double-write that
+/// Does NOT zero-fill before writing - avoids the double-write that
 /// `Vec::resize` + overwrite would produce.
 pub fn copy_simd(dst: &mut Vec<u8>, src: &[u8], len: usize) {
     debug_assert_eq!(src.len(), len);
@@ -96,7 +96,7 @@ unsafe fn copy_simd_avx2(dst: *mut u8, src: *const u8, len: usize) {
 }
 
 // ---------------------------------------------------------------------------
-// copy_match — overlap-safe LZ77 back-reference copy
+// copy_match - overlap-safe LZ77 back-reference copy
 // ---------------------------------------------------------------------------
 
 /// Copy a back-reference of `len` bytes at distance `dist` from `ring` into `dst`.
@@ -119,7 +119,7 @@ pub fn copy_match(dst: &mut Vec<u8>, ring: &RingBuffer, dist: usize, len: usize)
 }
 
 // ---------------------------------------------------------------------------
-// HuffmanTable — 9-bit fast lookup (DEFLATE fixed literal/length tree)
+// HuffmanTable - 9-bit fast lookup (DEFLATE fixed literal/length tree)
 // ---------------------------------------------------------------------------
 
 /// 9-bit fast Huffman table. Each entry encodes `(symbol << 4) | code_len`
@@ -201,7 +201,7 @@ fn reverse_bits(val: u32, len: u8) -> u32 {
 }
 
 // ---------------------------------------------------------------------------
-// SimdDeflateDecoder — approach (b): flate2 + SIMD output copy
+// SimdDeflateDecoder - approach (b): flate2 + SIMD output copy
 // ---------------------------------------------------------------------------
 
 /// SIMD-accelerated deflate decoder. Uses `flate2::Decompress` for Huffman
@@ -234,7 +234,7 @@ impl Decoder for SimdDeflateDecoder {
 
         while pos < input.len() {
             // Reserve output headroom so decompress_vec is never blocked by a
-            // full buffer — compressed data can expand by 10× or more.
+            // full buffer - compressed data can expand by 10× or more.
             self.out_buf.reserve(65_536);
 
             let before = self.inner.total_in();
@@ -275,7 +275,7 @@ impl Decoder for SimdDeflateDecoder {
 }
 
 // ---------------------------------------------------------------------------
-// InflateStats — thread-local counters, zero cost when env var is unset
+// InflateStats - thread-local counters, zero cost when env var is unset
 // ---------------------------------------------------------------------------
 
 #[derive(Default, Clone, Debug)]

@@ -82,7 +82,7 @@ fn pread(file: &std::fs::File, buf: &mut [u8], offset: u64) -> io::Result<()> {
 // MmapSource
 // ---------------------------------------------------------------------------
 
-/// Serves byte ranges from an already-mapped file — zero-copy, zero syscalls
+/// Serves byte ranges from an already-mapped file - zero-copy, zero syscalls
 /// per read. Used by the `.zidx` reader and any pre-mapped archive case.
 pub struct MmapSource {
     mmap: Arc<Mmap>,

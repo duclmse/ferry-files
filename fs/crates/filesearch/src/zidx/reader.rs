@@ -33,7 +33,7 @@ pub struct NodeData {
 }
 
 // ---------------------------------------------------------------------------
-// ChildIter — lazy linked-list walk over direct children
+// ChildIter - lazy linked-list walk over direct children
 // ---------------------------------------------------------------------------
 
 pub struct ChildIter<'a> {

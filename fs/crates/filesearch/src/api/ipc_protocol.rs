@@ -60,7 +60,7 @@ pub enum IpcResponse {
 }
 
 // ---------------------------------------------------------------------------
-// Response DTOs — smaller than full FileRecord
+// Response DTOs - smaller than full FileRecord
 // ---------------------------------------------------------------------------
 
 /// Compact search hit sent over IPC; does not carry internal DB ids.

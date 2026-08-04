@@ -1,7 +1,7 @@
-# Phase 1 — Workspace & Foundation
+# Phase 1 - Workspace & Foundation
 
 **Goal:** Cargo workspace scaffolding, `crates/common` shared library, error
-types, config structs, and logging. No business logic yet — just the skeleton
+types, config structs, and logging. No business logic yet - just the skeleton
 that every later phase builds on. After this phase all three crates compile
 cleanly with `cargo check`.
 
@@ -225,13 +225,13 @@ Both `watch_config()` functions follow the same pattern:
 
 1. Set up a `notify` watcher on the config file path.
 2. On `Modify` event: re-parse and re-validate the file.
-3. If valid: `*config.write() = new_config;` — atomically swap.
+3. If valid: `*config.write() = new_config;` - atomically swap.
 4. If invalid: log the error, keep current config.
 5. On `shutdown` cancel: exit cleanly.
 
 ---
 
-## 1.8 `rar2zip` Config Addition — `multipart_timeout_hours`
+## 1.8 `rar2zip` Config Addition - `multipart_timeout_hours`
 
 ```rust
 #[derive(Debug, Clone, Deserialize)]
@@ -251,7 +251,7 @@ multipart_timeout_hours = 24
 
 ---
 
-## 1.9 Tests — Phase 1
+## 1.9 Tests - Phase 1
 
 ### `crates/filesearch/src/config.rs` tests
 
@@ -321,15 +321,15 @@ lines. Store it in `main()`'s outermost scope.
 tokio-util = { version = "0.7" }
 ```
 
-Note: `tokio-util 0.7` does **not** have a `"sync"` feature flag —
+Note: `tokio-util 0.7` does **not** have a `"sync"` feature flag - 
 `CancellationToken` is included in the default feature set.
 
 ### C. `multipart_timeout_hours` lives in `ConversionConfig`, not a separate `IndexerConfig`
 
 The phase 1 spec draft described an `IndexerConfig` struct for rar2zip that held
 only `multipart_timeout_hours`. The reference doc (`03-ref-rar2zip-modules.md`)
-places this field — plus `stream_to_transfer_threshold_mb` and
-`archive_password` — inside `ConversionConfig`, which is the authoritative
+places this field - plus `stream_to_transfer_threshold_mb` and
+`archive_password` - inside `ConversionConfig`, which is the authoritative
 layout. No `IndexerConfig` struct exists in `rar2zip`.
 
 ### D. `ArchiveIndexConfig` is a top-level section of `filesearch::Config`

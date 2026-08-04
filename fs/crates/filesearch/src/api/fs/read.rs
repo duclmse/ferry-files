@@ -17,7 +17,7 @@ use super::common::{
 };
 
 // ---------------------------------------------------------------------------
-// HEAD /fs/read?path=  — file metadata as headers, empty body
+// HEAD /fs/read?path= - file metadata as headers, empty body
 // ---------------------------------------------------------------------------
 
 pub(super) async fn head_handler(
@@ -60,7 +60,7 @@ pub(super) async fn head_handler(
 }
 
 // ---------------------------------------------------------------------------
-// GET /fs/read?path=  — stream file; honours Range header
+// GET /fs/read?path= - stream file; honours Range header
 // ---------------------------------------------------------------------------
 
 pub(super) async fn read_handler(
@@ -148,7 +148,7 @@ pub(super) async fn read_handler(
 }
 
 // ---------------------------------------------------------------------------
-// Directory listing helper — called by read_handler when path is a dir
+// Directory listing helper - called by read_handler when path is a dir
 // ---------------------------------------------------------------------------
 
 async fn list_dir(path: &Path) -> Response {

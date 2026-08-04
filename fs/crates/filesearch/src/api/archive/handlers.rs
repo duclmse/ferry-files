@@ -1,4 +1,4 @@
-//! Archive Service REST handlers — list/index/dir/file/search endpoints.
+//! Archive Service REST handlers - list/index/dir/file/search endpoints.
 
 use super::*;
 

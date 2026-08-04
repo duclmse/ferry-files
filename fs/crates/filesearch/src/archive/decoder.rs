@@ -15,7 +15,7 @@ pub trait Decoder: Send {
 }
 
 // ---------------------------------------------------------------------------
-// StoredDecoder — compression method 0 (no compression)
+// StoredDecoder - compression method 0 (no compression)
 // ---------------------------------------------------------------------------
 
 pub struct StoredDecoder;
@@ -31,7 +31,7 @@ impl Decoder for StoredDecoder {
 }
 
 // ---------------------------------------------------------------------------
-// DeflateDecoder — compression method 8
+// DeflateDecoder - compression method 8
 // ---------------------------------------------------------------------------
 
 /// Wraps `flate2::write::DeflateDecoder<Vec<u8>>`. Writing compressed bytes

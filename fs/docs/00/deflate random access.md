@@ -106,7 +106,7 @@ struct Snapshot {
 
 # 4) Building the index
 
-## Option A (flush-based, requires recompression — NOT for existing archives)
+## Option A (flush-based, requires recompression - NOT for existing archives)
 
 During compression or a deliberate re-pack step:
 
@@ -122,7 +122,7 @@ No snapshot needed, but the ZIP entry's **compressed bytes change**. This means
 the original archive is replaced or a new copy is produced. Use this only when
 the service owns the archive artifact end-to-end and can produce an optimized
 copy at ingest time. **Do not use Option A on archives received from external
-producers** — the re-compression invalidates checksums, modifies the archive, and
+producers** - the re-compression invalidates checksums, modifies the archive, and
 breaks round-trip integrity. For unmodified existing ZIPs, Option B is the only
 viable strategy.
 

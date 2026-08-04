@@ -29,7 +29,7 @@ pub async fn run(config: Config, shutdown: CancellationToken) -> Result<()> {
     // Expire any multipart groups whose assembly window lapsed while we were down
     expire_multipart(&queue, &config);
 
-    // Task tracker — lets us wait for all spawned process_job tasks to finish
+    // Task tracker - lets us wait for all spawned process_job tasks to finish
     // before fully exiting (up to 30 s).
     let tracker = TaskTracker::new();
 
@@ -86,7 +86,7 @@ pub async fn run(config: Config, shutdown: CancellationToken) -> Result<()> {
         });
     }
 
-    // Multipart expiry task — runs once per hour
+    // Multipart expiry task - runs once per hour
     {
         let q        = Arc::clone(&queue);
         let cfg      = config.clone();
@@ -102,7 +102,7 @@ pub async fn run(config: Config, shutdown: CancellationToken) -> Result<()> {
         });
     }
 
-    // Queue-depth alert task — runs every 60 s
+    // Queue-depth alert task - runs every 60 s
     {
         let q        = Arc::clone(&queue);
         let cfg      = config.clone();

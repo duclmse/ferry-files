@@ -36,7 +36,7 @@ fn walk(expr: &Expr, inherited: &Modifiers, p: &mut QueryPlan) -> Result<()> {
             walk(r, inherited, p)?;
         }
         Expr::Or(l, r) => {
-            // OR across two branches — both sides add conditions.
+            // OR across two branches - both sides add conditions.
             // For SQL we approximate OR as an OR'd LIKE by wrapping conditions.
             // A simple but correct approach: collect each branch's conditions
             // and OR them together in a single SqlCondition.
@@ -132,7 +132,7 @@ fn emit_predicate(pred: &Predicate, mods: &Modifiers, p: &mut QueryPlan) -> Resu
     match mods.archive_only {
         Some(true)  => p.sql_conditions.push(SqlCondition::IsArchiveEntry),
         Some(false) => {
-            // archive_path IS NULL — not directly representable; use post-filter
+            // archive_path IS NULL - not directly representable; use post-filter
             p.post_filters.push(PostFilter::ArchiveExclude);
         }
         None => {}
@@ -179,7 +179,7 @@ fn emit_predicate(pred: &Predicate, mods: &Modifiers, p: &mut QueryPlan) -> Resu
         PredicateKind::Regex(pattern) => {
             let case_sensitive = mods.case_sensitive.unwrap_or(false);
             let re = build_regex(pattern, case_sensitive)?;
-            // No SQL narrowing — regex must be applied post-fetch
+            // No SQL narrowing - regex must be applied post-fetch
             p.post_filters.push(PostFilter::Regex(re, case_sensitive));
         }
 
@@ -216,7 +216,7 @@ fn emit_function(
             p.sql_conditions.push(SqlCondition::CtimeRange(lo, hi));
         }
         Function::DateAccessed(de) => {
-            // No `atime` column — approximate with mtime
+            // No `atime` column - approximate with mtime
             let (lo, hi) = date_expr_to_range(de, now);
             p.sql_conditions.push(SqlCondition::MtimeRange(lo, hi));
         }

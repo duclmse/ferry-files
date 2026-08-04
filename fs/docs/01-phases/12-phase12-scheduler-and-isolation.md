@@ -1,4 +1,4 @@
-# Phase 12 — Scheduler & Multi-tenant Isolation
+# Phase 12 - Scheduler & Multi-tenant Isolation
 
 **Goal:** Prevent any single client or archive from monopolising CPU or I/O in
 the archive service. Implement fair resource sharing through a layered strategy:
@@ -36,7 +36,7 @@ Build in three steps that can each ship independently:
 
 | Step | What | When to activate |
 |------|------|-----------------|
-| 1 | Per-archive semaphore | Phase 12 baseline — always on |
+| 1 | Per-archive semaphore | Phase 12 baseline - always on |
 | 2 | Per-client token bucket | When `scheduler.rate_limit_enabled = true` |
 | 3 | Two-level DRR | When `scheduler.drr_enabled = true` |
 
@@ -44,7 +44,7 @@ Tests verify each step independently and then together.
 
 ---
 
-## 12.3 Step 1 — Per-archive Semaphore
+## 12.3 Step 1 - Per-archive Semaphore
 
 The simplest isolation primitive: each archive gets a bounded permit pool. An
 inflate task must acquire a permit before starting. This prevents a single large
@@ -79,7 +79,7 @@ max_per_archive = min(num_cpus / active_archives.len().max(1), 4).max(1)
 
 ---
 
-## 12.4 Step 2 — Per-client Token Bucket
+## 12.4 Step 2 - Per-client Token Bucket
 
 Rate-limits incoming requests by client IP. Each IP gets a `TokenBucket` with a
 configured `rate` (tokens/second) and `burst` capacity.
@@ -129,7 +129,7 @@ impl ClientRateLimiter {
 Cost model: each file stream request costs `compressed_size / 4096 + 1` tokens.
 Directory listing and index requests cost 1 token.
 
-Axum middleware layer — insert before archive routes:
+Axum middleware layer - insert before archive routes:
 
 ```rust
 let archive_router = Router::new()
@@ -142,7 +142,7 @@ let archive_router = Router::new()
 
 ---
 
-## 12.5 Step 3 — Two-level Deficit Round Robin
+## 12.5 Step 3 - Two-level Deficit Round Robin
 
 Full hierarchical scheduler when both per-archive semaphores and client token
 buckets are insufficient under sustained multi-client load.
@@ -197,7 +197,7 @@ pub struct ArchiveScheduler {
 impl ArchiveScheduler {
     /// Pick the next task to execute, or return None if all queues are empty.
     /// Borrow structure: pick_client returns ClientId (Copy), borrow ends before
-    /// the subsequent get_mut — required for borrow checker correctness.
+    /// the subsequent get_mut - required for borrow checker correctness.
     pub fn dispatch(&mut self, now_ns: u64) -> Option<Task>;
 
     pub fn enqueue(&mut self, task: Task);
@@ -320,7 +320,7 @@ Add `pub scheduler: SchedulerConfig` to `ArchiveServiceConfig`.
 
 ---
 
-## 12.8 Tests — Phase 12
+## 12.8 Tests - Phase 12
 
 ```
 token bucket:
@@ -385,22 +385,22 @@ crates/filesearch/src/scheduler/
 
 ### Key Deviations from Spec
 
-- **`TokenBucket::try_consume` returns `bool` (not `Result<(), ()>`)** — Clippy
+- **`TokenBucket::try_consume` returns `bool` (not `Result<(), ()>`)** - Clippy
   `result_unit_err` forbids `Result<_, ()>`; `bool` is cleaner and sufficient.
 
 - **`TokenBucket::with_now(rate, burst, now_ns)`** constructor added alongside
   `new()` for test determinism; tests that use fixed timestamps must call
   `with_now` to avoid `saturating_sub` returning 0 for timestamps in the past.
 
-- **`write_dzx` params wrapped in `WriteDzxParams<'_>` struct** (Phase 11 fix) —
+- **`write_dzx` params wrapped in `WriteDzxParams<'_>` struct** (Phase 11 fix) - 
   Clippy `too_many_arguments` limit is 7; the 8-arg function was wrapped.
 
-- **Rate-limiter stored in `AppState.rate_limiter`** — the middleware creates one
+- **Rate-limiter stored in `AppState.rate_limiter`** - the middleware creates one
   instance per `AppState`, not per request. `ClientRateLimiter` holds
   `Arc<DashMap<IpAddr, …>>` so `Clone` on `AppState` shares state correctly.
 
 - **DRR scheduler (`ArchiveScheduler`) is unit-testable but not yet wired to a
-  worker loop** — the spec §12.5 worker loop requires a long-running task with
+  worker loop** - the spec §12.5 worker loop requires a long-running task with
   channels; this is a separate wiring concern. The scheduler logic itself is
   fully implemented and tested. Wire it into a background task when
   `drr_enabled = true` in a future step.
@@ -420,16 +420,16 @@ pub rate_limiter:       Arc<ClientRateLimiter>,
 
 ### Config
 
-`ArchiveServiceConfig.scheduler: SchedulerConfig` — TOML section
+`ArchiveServiceConfig.scheduler: SchedulerConfig` - TOML section
 `[archive_service.scheduler]` with keys: `max_per_archive`, `rate_limit_enabled`,
 `rate_per_client`, `burst_per_client`, `drr_enabled`, `max_queue_depth`.
 
-**Measured:** 2026-08-03 — `stream_file` (Step 1 semaphore path) now calls
+**Measured:** 2026-08-03 - `stream_file` (Step 1 semaphore path) now calls
 `scheduler_metrics.inc_inflight()`/`dec_inflight()` around the permit, tied to
 the same `on_finish` callback that releases the permit once the decode task
-actually exits (not when the handler function returns — the response body
+actually exits (not when the handler function returns - the response body
 streams from a task spawned inside `stream()`, after the handler has already
 returned). `api/archive/tests.rs::stream_file_handler_limits_concurrent_inflight_per_archive`
 fires 8 concurrent requests against `max_per_archive=2`, polls the `inflight`
-gauge throughout, and asserts it never exceeds 2 — `cargo test -p filesearch
+gauge throughout, and asserts it never exceeds 2 - `cargo test -p filesearch
 --lib api::archive::` passes (9/9).

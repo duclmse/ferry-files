@@ -12,7 +12,7 @@ impl SqliteStore {
     /// Replaces the former pattern of calling `get_conn()` + `upsert_file_conn()` in a loop.
     ///
     /// `tag`, when set to `(watch_root, generation)`, stamps every row with the
-    /// enclosing full crawl's generation — see `upsert_archive_entry_conn` for
+    /// enclosing full crawl's generation - see `upsert_archive_entry_conn` for
     /// why this matters. Event-driven archive (re)indexing outside a crawl
     /// (rename, ArchiveModified) passes `None`, matching how per-event file
     /// upserts also leave these columns NULL.

@@ -2,9 +2,9 @@
 
 You have two competing goals at shutdown time:
 
-- **Write speed** — you may have only a few seconds before the OS force-kills
+- **Write speed** - you may have only a few seconds before the OS force-kills
   processes
-- **Load speed** — next startup should be near-instant, not "re-parsing a 500MB
+- **Load speed** - next startup should be near-instant, not "re-parsing a 500MB
   file"
 
 ---
@@ -14,7 +14,7 @@ You have two competing goals at shutdown time:
 ### 1. Custom Memory-Mapped Binary File ✅ Best fit
 
 Exactly what Everything itself uses. The idea: your in-memory
-`Vec<FileRecord>` + string arena are already contiguous blobs — just write them
+`Vec<FileRecord>` + string arena are already contiguous blobs - just write them
 straight to disk.
 
 ```rust
@@ -29,8 +29,8 @@ let records: &[FileRecord] = bytemuck::cast_slice(&mmap);
 
 **Pros:**
 
-- Save: essentially one `memcpy` to disk — completes in ~200ms for 1M records
-- Load: `mmap` means the OS pages it in lazily — perceived startup is near-zero
+- Save: essentially one `memcpy` to disk - completes in ~200ms for 1M records
+- Load: `mmap` means the OS pages it in lazily - perceived startup is near-zero
 - No dependency, no schema, no query planner overhead
 
 **Cons:**
@@ -62,7 +62,7 @@ write_txn.commit()?;
 
 **Pros:**
 
-- Transactional — safe against partial writes on sudden shutdown
+- Transactional - safe against partial writes on sudden shutdown
 - You can do partial updates (only flush changed records, not the whole index)
 - Good fit if you later add metadata, tags, or user annotations
 
@@ -124,7 +124,7 @@ index.redb       ← USN checkpoint + user metadata + search history
 | User tags, bookmarks   | `redb`                            |
 
 On **clean shutdown** (Windows `SERVICE_CONTROL_PRESHUTDOWN` or `SIGTERM`):
-write the binary dump. You have roughly 5 seconds in `PRESHUTDOWN` — a 1M-record
+write the binary dump. You have roughly 5 seconds in `PRESHUTDOWN` - a 1M-record
 dump takes ~200ms, plenty of margin.
 
 On **dirty shutdown** (power loss, kill -9): at startup, check the USN journal
@@ -152,11 +152,11 @@ when registering your service controls.
 
 ---
 
-**Short answer:** start with a custom mmap binary file — it's the fastest
+**Short answer:** start with a custom mmap binary file - it's the fastest
 possible save/load path and matches what Everything does internally. Add `redb`
 alongside it only when you need transactional or partial-update semantics.
 
-Good follow-up — each platform has its own shutdown notification mechanism with
+Good follow-up - each platform has its own shutdown notification mechanism with
 different time budgets and reliability guarantees.
 
 ---
@@ -197,7 +197,7 @@ You can also use the `sd-notify` crate to tell systemd you're actively stopping:
 
 ```rust
 sd_notify::notify(false, &[NotifyState::Stopping])?;
-// now flush — systemd won't SIGKILL until TimeoutStopSec elapses
+// now flush - systemd won't SIGKILL until TimeoutStopSec elapses
 ```
 
 **Time budget:** whatever you set in `TimeoutStopSec`. 10–20s is reasonable,
@@ -209,7 +209,7 @@ well within your ~200ms flush window.
 
 These all ultimately send `SIGTERM` → wait → `SIGKILL`. The time budget varies
 by init system (runit gives you 7s by default, OpenRC is configurable), but
-`SIGTERM` handling is universal — the same Tokio signal handler above works
+`SIGTERM` handling is universal - the same Tokio signal handler above works
 everywhere.
 
 ---
@@ -230,14 +230,14 @@ This ensures the stop script runs before filesystems are torn down.
 
 ## macOS
 
-### `SIGTERM` — works but with caveats
+### `SIGTERM` - works but with caveats
 
 macOS sends `SIGTERM` to processes during logout/shutdown, so the same Tokio
-signal handler works. However the time budget is short and not guaranteed — if
+signal handler works. However the time budget is short and not guaranteed - if
 the system decides you're taking too long, it moves on.
 
 ```rust
-// Same handler as Linux — SIGTERM works on macOS too
+// Same handler as Linux - SIGTERM works on macOS too
 let mut sigterm = signal(SignalKind::terminate())?;
 sigterm.recv().await;
 flush_index().await?;
@@ -337,5 +337,5 @@ tokio::select! {
 | macOS (manual)  | `SIGTERM`                     | Short, not guaranteed        | ⚠️ Best effort   |
 
 The dirty-shutdown recovery path (replay USN/inotify delta on next start)
-remains your safety net for all platforms — power loss and `SIGKILL` can't be
+remains your safety net for all platforms - power loss and `SIGKILL` can't be
 caught by anyone.

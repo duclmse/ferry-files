@@ -78,7 +78,7 @@ fn batch_to_events(
                 notify::event::RenameMode::From,
             )) => {
                 // The debouncer couldn't pair this with a matching `To` event
-                // (no tracker cookie / file-id match — routine on macOS's
+                // (no tracker cookie / file-id match - routine on macOS's
                 // FSEvents backend). The path is gone, so treat it as a
                 // delete: falling through to the generic `Modify` arm below
                 // would call `process_event`'s Created/Modified handler,

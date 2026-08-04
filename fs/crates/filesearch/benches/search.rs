@@ -11,7 +11,7 @@
 //!   Exact search,  1M files  < 10 ms
 //!   Fuzzy search,  1M files  < 50 ms
 //!   Regex search,  1M files  < 200 ms
-//!   Content search           < 100 ms (Tantivy — not benchmarked here)
+//!   Content search           < 100 ms (Tantivy - not benchmarked here)
 
 use std::sync::Arc;
 

@@ -1,4 +1,4 @@
-# filesearch — example configuration
+# filesearch - example configuration
 # Copy to your preferred location and edit before starting the daemon.
 # Run `filesearch --config /path/to/config.toml validate-config` to verify.
 

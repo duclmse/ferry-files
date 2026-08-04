@@ -1,4 +1,4 @@
-# Resolved Crate Versions — rar2zip
+# Resolved Crate Versions - rar2zip
 
 Generated at implementation time. Update whenever a dep is added or changed.
 

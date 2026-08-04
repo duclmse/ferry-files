@@ -63,7 +63,7 @@ pub mod windows {
 
         let status_handle = service_control_handler::register(SERVICE_NAME, move |control| {
             match control {
-                // PRESHUTDOWN fires first and gives ~20s — enough to flush the index.
+                // PRESHUTDOWN fires first and gives ~20s - enough to flush the index.
                 // Cancelling the token triggers daemon graceful shutdown (flush + commit).
                 ServiceControl::Preshutdown
                 | ServiceControl::Stop

@@ -15,8 +15,8 @@ use super::source::ByteSource;
 pub trait StreamExtractor: Send {
     type Stream: Stream<Item = io::Result<Bytes>> + Send;
 
-    /// `on_finish`, if given, runs once the decode task exits — on success,
-    /// decode error, or early consumer drop — never before. Callers use this
+    /// `on_finish`, if given, runs once the decode task exits - on success,
+    /// decode error, or early consumer drop - never before. Callers use this
     /// to release a concurrency permit only once the CPU work it guards has
     /// actually finished, instead of when the handler function returns (which
     /// happens before the spawned decode task completes).
@@ -34,7 +34,7 @@ pub trait StreamExtractor: Send {
 /// Channel capacity 4 (= 256 KB) provides backpressure: the inflate task
 /// awaits `tx.send` when the channel is full, so the consumer (Axum body)
 /// drives the read rate.  If the consumer drops, the inflate task exits on
-/// the next send — no CPU is wasted on data nobody will read.
+/// the next send - no CPU is wasted on data nobody will read.
 pub struct ZipStreamExtractor<S: ByteSource> {
     pub source: Arc<S>,
 }

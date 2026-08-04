@@ -1,4 +1,4 @@
-# Phase 7 — Final Testing, Docs & Release
+# Phase 7 - Final Testing, Docs & Release
 
 **Goal:** Full integration testing, benchmark verification, README writing, and
 release build validation for both projects. After this phase both projects
@@ -94,7 +94,7 @@ Verify performance targets using `criterion` benchmarks in
 | Benchmark                 | Target  | How to verify                          |
 | ------------------------- | ------- | -------------------------------------- |
 | Exact search, 1M files    | < 10ms  | `criterion` bench                      |
-| `fuzzy:` search, 1M files | < 50ms  | `criterion` bench — nucleo SIMD scorer |
+| `fuzzy:` search, 1M files | < 50ms  | `criterion` bench - nucleo SIMD scorer |
 | Regex search, 1M files    | < 200ms | `criterion` bench                      |
 | Content search            | < 100ms | `criterion` bench                      |
 
@@ -115,22 +115,22 @@ Manual verification (no automated bench):
 
 Covers all 10 sections from spec section 25:
 
-1. **Overview** — what it does, architecture ASCII diagram.
-2. **Prerequisites** — Rust 1.78+, platform-specific notes:
+1. **Overview** - what it does, architecture ASCII diagram.
+2. **Prerequisites** - Rust 1.78+, platform-specific notes:
    - Linux: `sysctl fs.inotify.max_user_watches=524288`
    - macOS: no per-file watch limit
    - Windows: Named Pipes, no `unrar.dll` required
-3. **Build** — `cargo build --release`
-4. **Configuration** — full table of every `config.toml` field with type,
+3. **Build** - `cargo build --release`
+4. **Configuration** - full table of every `config.toml` field with type,
    default, description.
-5. **Running the Daemon** — `filesearch daemon`, background/service setup per
+5. **Running the Daemon** - `filesearch daemon`, background/service setup per
    OS.
-6. **Searching** — all CLI examples, full query syntax reference table.
-7. **APIs** — REST endpoint reference, gRPC with `grpcurl` examples, IPC
+6. **Searching** - all CLI examples, full query syntax reference table.
+7. **APIs** - REST endpoint reference, gRPC with `grpcurl` examples, IPC
    protocol.
-8. **TUI** — keybindings reference.
-9. **Performance Tuning** — inotify limits, crawl threads, commit interval.
-10. **Troubleshooting** — common errors:
+8. **TUI** - keybindings reference.
+9. **Performance Tuning** - inotify limits, crawl threads, commit interval.
+10. **Troubleshooting** - common errors:
     - inotify limit hit
     - port in use
     - socket permission denied
@@ -142,17 +142,17 @@ Covers all 10 sections from spec section 25:
 
 Covers all 8 sections from spec section 18:
 
-1. **Overview** — what the tool does, architecture diagram (ASCII).
+1. **Overview** - what the tool does, architecture diagram (ASCII).
 2. **Prerequisites**:
    - Rust 1.78+
    - `unrar.dll` on PATH (from WinRAR installation)
    - SSH key pair installed on remote
    - `sha256sum` available on remote (standard on Linux)
-3. **Build** — `cargo build --release`
-4. **Configuration** — full table of every `config.toml` field.
-5. **Running** — CLI usage for all subcommands with examples.
-6. **Windows Service** — install/uninstall with `install-service.ps1`.
-7. **Monitoring** — Prometheus scrape config snippet, dashboard URL.
+3. **Build** - `cargo build --release`
+4. **Configuration** - full table of every `config.toml` field.
+5. **Running** - CLI usage for all subcommands with examples.
+6. **Windows Service** - install/uninstall with `install-service.ps1`.
+7. **Monitoring** - Prometheus scrape config snippet, dashboard URL.
 8. **Troubleshooting**:
    - `unrar.dll not found`
    - SSH auth failure
@@ -222,14 +222,14 @@ spec Definitions of Done (spec sections 20 and 24).
 
 ### 7.1 Integration Tests
 
-#### filesearch — `crates/filesearch/tests/integration.rs`
+#### filesearch - `crates/filesearch/tests/integration.rs`
 
 | Test                               | Status | Notes                                                                        |
 | ---------------------------------- | ------ | ---------------------------------------------------------------------------- |
-| `test_full_crawl_and_search`       | ✅     | 10 files (6 .rs + 4 .toml); spec said 50 — functionally equivalent           |
+| `test_full_crawl_and_search`       | ✅     | 10 files (6 .rs + 4 .toml); spec said 50 - functionally equivalent           |
 | `test_incremental_update`          | ✅     | Create + delete covered. **Rename step (spec step 4) not implemented.**      |
 | `test_content_search`              | ✅     | Waits on `content_indexed >= 1` then Tantivy commit sleep                    |
-| `test_everything_query_acceptance` | ✅     | All spec query forms return HTTP 200; `dir:src` fixed (was 400 — parser gap) |
+| `test_everything_query_acceptance` | ✅     | All spec query forms return HTTP 200; `dir:src` fixed (was 400 - parser gap) |
 | `test_zip_inner_file_search`       | ✅     | All 8 steps implemented.                                                     |
 
 **Parallelism fix applied:** `tokio::sync::Semaphore` (1 permit) in `OnceLock`
@@ -249,14 +249,14 @@ crawl.
 `Function::Parent` instead of being consumed as a `FoldersOnly` modifier (which
 produced an Eof parse error).
 
-#### rar2zip — `crates/rar2zip/tests/integration.rs`
+#### rar2zip - `crates/rar2zip/tests/integration.rs`
 
 | Test                              | Status | Notes                                                  |
 | --------------------------------- | ------ | ------------------------------------------------------ |
 | `test_end_to_end_disk_strategy`   | ⚠️     | Implemented. Skips when `TEST_SFTP_*` env vars absent. |
 | `test_end_to_end_stream_strategy` | ⚠️     | Implemented. Skips when `TEST_SFTP_*` env vars absent. |
 
-### 7.2 Benchmarks — `crates/filesearch/benches/search.rs`
+### 7.2 Benchmarks - `crates/filesearch/benches/search.rs`
 
 | Benchmark                | Status | Notes                                                                 |
 | ------------------------ | ------ | --------------------------------------------------------------------- |
@@ -280,7 +280,7 @@ The benchmark comment documents the spec targets.
 | `crates/filesearch/VERSIONS.md`                   | ✅     |
 | `crates/rar2zip/VERSIONS.md`                      | ✅     |
 
-### 7.6 Release Checklist — Known Gaps
+### 7.6 Release Checklist - Known Gaps
 
 | Item                                     | Status | Notes                                                                                                                                                                                                                                                                                                       |
 | ---------------------------------------- | ------ | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
@@ -289,7 +289,7 @@ The benchmark comment documents the spec targets.
 | `cargo clippy -D warnings` clean         | ✅     |                                                                                                                                                                                                                                                                                                             |
 | `cargo doc --no-deps` clean              | ✅     |                                                                                                                                                                                                                                                                                                             |
 | No `unwrap()` in production paths        | ✅     |                                                                                                                                                                                                                                                                                                             |
-| `#[allow(dead_code)]` in production code | ⚠️     | `rar2zip/src/intake.rs` — `OldStylePart.part_num` field. Field is constructed and verified in tests but not read in production match arms. Attribute moved from variant-level to field-level (`OldStylePart { base: String, #[allow(dead_code)] part_num: u32 }`). This is the minimal correct suppression. |
+| `#[allow(dead_code)]` in production code | ⚠️     | `rar2zip/src/intake.rs` - `OldStylePart.part_num` field. Field is constructed and verified in tests but not read in production match arms. Attribute moved from variant-level to field-level (`OldStylePart { base: String, #[allow(dead_code)] part_num: u32 }`). This is the minimal correct suppression. |
 | `filesearch validate-config`             | ✅     | `Command::ValidateConfig` in `main.rs`                                                                                                                                                                                                                                                                      |
 | `POST /open` endpoint                    | ✅     | `open_handler` + `extract_and_open` in `api/rest.rs`                                                                                                                                                                                                                                                        |
 | rar2zip integration test (Disk + Stream) | ⚠️     | Skeleton in `crates/rar2zip/tests/integration.rs` behind `cfg(feature = "integration")`. Skips gracefully without `TEST_SFTP_*` env vars. Requires live SFTP server for full pass.                                                                                                                          |

@@ -1,4 +1,4 @@
-# Reference: rar2zip — Module Specifications
+# Reference: rar2zip - Module Specifications
 
 > Production-grade Windows service written in Rust. Watches a folder for
 > archive files, converts them to `.zip` via a streaming pipeline, and
@@ -38,7 +38,7 @@ crates/rar2zip/
     └── error.rs                 ← unified AppError type
 ```
 
-> **Note:** There is no `logger.rs` — logging initialisation is provided by
+> **Note:** There is no `logger.rs` - logging initialisation is provided by
 > `common::logger::init()` from `crates/common`.
 
 ---
@@ -393,7 +393,7 @@ pub fn select_strategy(file_size_bytes: u64, threshold_mb: u64) -> Strategy {
 
 ```rust
 /// Convert archive at job.file_path to a .zip file in the same directory.
-/// Returns path of the produced .zip. Uses streaming pipeline — never writes
+/// Returns path of the produced .zip. Uses streaming pipeline - never writes
 /// extracted entries to disk.
 pub async fn convert(job: &Job, config: &ConversionConfig) -> Result<PathBuf>;
 ```
@@ -435,7 +435,7 @@ fn convert_tar<R: Read>(reader: R, dst: &Path, cfg: &ConversionConfig) -> Result
 ### 7.5 Streaming Conversion (Strategy::Stream)
 
 ```rust
-/// Convert and transfer simultaneously — no .zip file on disk.
+/// Convert and transfer simultaneously - no .zip file on disk.
 /// Uses tokio::io::duplex(256*1024) as in-memory pipe.
 pub async fn stream_convert_and_transfer(
     src:      &Path,
@@ -466,7 +466,7 @@ Returns `AppError::Conversion("integrity check failed: ...")` on failure.
 
 ### 7.7 Multi-part RAR
 
-Pass `archive.part1.rar` base path to `unrar` — it auto-discovers subsequent
+Pass `archive.part1.rar` base path to `unrar` - it auto-discovers subsequent
 parts. Caller (`app.rs`) handles deleting all parts after success.
 
 ### 7.8 Cleanup Contract
@@ -608,7 +608,7 @@ Re-reads config from `Arc<RwLock<Config>>` on each event.
 pub async fn run(config: Arc<RwLock<Config>>, shutdown: CancellationToken) -> Result<()>;
 ```
 
-1. `JobQueue::new()` — open/migrate SQLite.
+1. `JobQueue::new()` - open/migrate SQLite.
 2. Re-enqueue stale jobs (`queue.get_stale_jobs()`).
 2b. If `multipart_timeout_hours > 0`: call `queue.get_expired_groups()`,
     move each expired group's parts to `failed/`, call `queue.clear_parts()`.
@@ -624,7 +624,7 @@ pub async fn run(config: Arc<RwLock<Config>>, shutdown: CancellationToken) -> Re
 watcher sends PathBuf → intake::process() → enqueues job → tokio::spawn(process_job)
 ```
 
-`process_job(job)` — Strategy::Disk path:
+`process_job(job)` - Strategy::Disk path:
 1. `queue.set_status(id, Converting)`
 2. `convert::convert(job, cfg)` → zip_path
 3. On error: `queue.set_status(id, Failed, error)`, increment metrics, alert; return
@@ -638,7 +638,7 @@ watcher sends PathBuf → intake::process() → enqueues job → tokio::spawn(pr
 7. On failure: zip_path already moved to `failed/` by `transfer.rs`;
    `queue.set_status(id, Failed, error)`; fire alert
 
-`process_job(job)` — Strategy::Stream path:
+`process_job(job)` - Strategy::Stream path:
 1. `queue.set_status(id, Transferring)` ← no Converting step
 2. `transfer::stream_all(src_path, ...)`
 3. On success:
@@ -702,9 +702,9 @@ pub fn render(queue: &JobQueue, metrics: &Metrics) -> String;
 ```
 
 Self-contained inline HTML, no external deps. Sections:
-1. Queue Stats — pending / converting / transferring / done / failed counts.
-2. Recent Jobs — last 20 jobs: id (truncated), filename, status, retries, error.
-3. Transfer Stats — bytes transferred, files processed, failure counts.
+1. Queue Stats - pending / converting / transferring / done / failed counts.
+2. Recent Jobs - last 20 jobs: id (truncated), filename, status, retries, error.
+3. Transfer Stats - bytes transferred, files processed, failure counts.
 
 Auto-refresh every 5 seconds via `setTimeout(() => location.reload(), 5000)`.
 Dark background, monospace font, coloured status badges.
@@ -721,14 +721,14 @@ pub struct AlertPayload {
     pub job_id:  Option<String>,
 }
 
-/// Non-blocking — errors are logged but not propagated.
+/// Non-blocking - errors are logged but not propagated.
 pub async fn notify(payload: AlertPayload, config: &ObservabilityConfig,
                     smtp: &Option<SmtpConfig>);
 ```
 
-**Webhook** — POST to `webhook_url` with JSON body; `ureq`, timeout 5s.
+**Webhook** - POST to `webhook_url` with JSON body; `ureq`, timeout 5s.
 
-**Email** — `lettre` with `AsyncSmtpTransport<Tokio1Executor>`.
+**Email** - `lettre` with `AsyncSmtpTransport<Tokio1Executor>`.
 
 Alert triggers:
 - Job exhausts all retries → `AlertLevel::Error`

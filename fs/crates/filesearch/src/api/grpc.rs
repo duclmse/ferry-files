@@ -1,4 +1,4 @@
-//! gRPC API server — Tonic implementation of the `FileSearch` service.
+//! gRPC API server - Tonic implementation of the `FileSearch` service.
 
 use std::sync::{atomic::Ordering, Arc};
 
@@ -133,7 +133,7 @@ impl FileSearchService {
         limit:     usize,
         offset:    usize,
     ) -> Result<(Vec<SearchResult>, usize, u64), Status> {
-        // Single config lock — reads macros then releases.
+        // Single config lock - reads macros then releases.
         let macros = self.config.read().await.macros.clone();
         let expr = parser::parse(query_str, &macros)
             .map_err(|e| Status::invalid_argument(e.to_string()))?;
@@ -152,7 +152,7 @@ impl FileSearchService {
         .await
         .map_err(|e| Status::internal(e.to_string()))?;
 
-        // Consume hits by value — moves Strings rather than cloning them.
+        // Consume hits by value - moves Strings rather than cloning them.
         let results = result.hits.into_iter().map(file_record_into_result).collect();
         Ok((results, result.total, result.took_ms))
     }

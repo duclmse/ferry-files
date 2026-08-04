@@ -16,7 +16,7 @@ fn deflate(data: &[u8]) -> Vec<u8> {
 
 /// Compress `data` with Z_SYNC_FLUSH every `flush_every` uncompressed bytes.
 /// Each flush emits a SYNC_FLUSH trailer (00 00 FF FF) making those stream
-/// positions valid raw-deflate restart points — required by DZX block indexing.
+/// positions valid raw-deflate restart points - required by DZX block indexing.
 fn deflate_with_sync_flush(data: &[u8], flush_every: usize) -> Vec<u8> {
     use flate2::write::DeflateEncoder;
     let mut enc = DeflateEncoder::new(Vec::new(), flate2::Compression::default());

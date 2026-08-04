@@ -1,8 +1,8 @@
-# Phase 9 — Archive Service API
+# Phase 9 - Archive Service API
 
 **Goal:** Expose a REST API that turns indexed ZIP files into a navigable
 virtual filesystem. Clients can list directories, stream individual files, fetch
-the raw `.zidx` binary, and search within an archive — without any client-side
+the raw `.zidx` binary, and search within an archive - without any client-side
 ZIP parsing. The archive service routes are mounted on the existing Axum server.
 
 **Estimated scope:** ~800 lines of Rust.
@@ -141,7 +141,7 @@ pub struct AppState {
 
 ## 9.5 Endpoint Specifications
 
-### `GET /archive` — List Archives
+### `GET /archive` - List Archives
 
 Returns all registered archives.
 
@@ -156,7 +156,7 @@ Returns all registered archives.
 
 ---
 
-### `GET /archive/:id/index` — Binary `.zidx`
+### `GET /archive/:id/index` - Binary `.zidx`
 
 Returns the raw `.zidx` binary for efficient client-side mmap.
 
@@ -173,15 +173,15 @@ Cache-Control: private, max-age=3600
 
 **Errors:**
 
-- `404` — archive ID unknown or `.zidx` file missing.
+- `404` - archive ID unknown or `.zidx` file missing.
 
 ---
 
-### `GET /archive/:id/dir?node=<u32>` — Directory Listing
+### `GET /archive/:id/dir?node=<u32>` - Directory Listing
 
 **Query params:**
 
-- `node` — node ID from the `.zidx` tree. Defaults to `0` (root).
+- `node` - node ID from the `.zidx` tree. Defaults to `0` (root).
 
 **Response (200):**
 
@@ -201,8 +201,8 @@ Cache-Control: private, max-age=3600
 
 **Errors:**
 
-- `404` — archive ID unknown.
-- `400` — `node` is out of range or not a directory.
+- `404` - archive ID unknown.
+- `400` - `node` is out of range or not a directory.
 
 **Implementation:** open `ZidxIndex` from registry, call `index.children(node)`,
 build response JSON. All work is O(children count) pointer traversal; no disk
@@ -210,17 +210,17 @@ I/O beyond the initial mmap.
 
 ---
 
-### `GET /archive/:id/file?node=<u32>` — Stream File Content
+### `GET /archive/:id/file?node=<u32>` - Stream File Content
 
 Decompresses and streams the entry's content to the client.
 
 **Query params:**
 
-- `node` — node ID of the file entry.
+- `node` - node ID of the file entry.
 
 **Optional headers:**
 
-- `Range: bytes=N-M` — partial read (requires Phase 11 `.dzx` index; 416 if not
+- `Range: bytes=N-M` - partial read (requires Phase 11 `.dzx` index; 416 if not
   yet indexed).
 
 **Response (200 or 206):**
@@ -246,22 +246,22 @@ The blocking seek-read-inflate path runs in `spawn_blocking`:
 
 **Errors:**
 
-- `404` — archive ID unknown or node out of range.
-- `400` — node is a directory, not a file.
-- `500` — ZIP file missing from disk or decompression error.
+- `404` - archive ID unknown or node out of range.
+- `400` - node is a directory, not a file.
+- `500` - ZIP file missing from disk or decompression error.
 
 ---
 
-### `GET /archive/:id/search?q=<query>` — Archive-scoped Search
+### `GET /archive/:id/search?q=<query>` - Archive-scoped Search
 
 Delegates to the existing `filesearch` query engine with an implicit
 `archiveof:<zip_path>` filter added to the parsed AST.
 
 **Query params:**
 
-- `q` — Everything-compatible query string.
-- `limit` — Default 100.
-- `offset` — Default 0.
+- `q` - Everything-compatible query string.
+- `limit` - Default 100.
+- `offset` - Default 0.
 
 **Response:** Same JSON format as `GET /search`.
 
@@ -330,7 +330,7 @@ Use `(StatusCode, Json<ErrorBody>)` as the handler return type.
 
 ---
 
-## 9.8 Tests — Phase 9
+## 9.8 Tests - Phase 9
 
 ```
 registry:
@@ -386,7 +386,7 @@ handlers (axum::test::TestClient or similar):
 | --------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | `crates/filesearch/Cargo.toml`                | Added `lru = "0.12"`, `flate2 = "1"`                                                                                                                                                                                                                |
 | `crates/filesearch/src/config.rs`             | Added `index_cache_size: usize` (default 256) to `ArchiveServiceConfig`                                                                                                                                                                             |
-| `crates/filesearch/src/store/sqlite_store.rs` | Added `list_archive_paths()` — queries ZIP files for startup population                                                                                                                                                                             |
+| `crates/filesearch/src/store/sqlite_store.rs` | Added `list_archive_paths()` - queries ZIP files for startup population                                                                                                                                                                             |
 | `crates/filesearch/src/api/mod.rs`            | Added `pub mod archive;`                                                                                                                                                                                                                            |
 | `crates/filesearch/src/api/rest.rs`           | Added `archive_registry: Arc<ArchiveRegistry>` to `AppState`; conditionally merges archive routes                                                                                                                                                   |
 | `crates/filesearch/src/indexer/crawler.rs`    | `full_crawl` and `process_event` gain `registry: Arc<ArchiveRegistry>` param; `crawl_archive_sync` gains `registry: Option<&ArchiveRegistry>` and calls `register()` after successful `.zidx` build; `ArchiveDeleted` calls `registry.unregister()` |
@@ -394,26 +394,26 @@ handlers (axum::test::TestClient or similar):
 
 ### Implementation notes
 
-**`ArchiveRegistry` uses `std::sync::Mutex<LruCache>`** — the lock is only held
+**`ArchiveRegistry` uses `std::sync::Mutex<LruCache>`** - the lock is only held
 briefly (Arc clone from cache, or insert after file open). The file open for
 cache misses happens outside the lock, so there is no lock-contention during IO.
 
-**`get_index` accesses `registry.entries` directly** — the handler lives in the
+**`get_index` accesses `registry.entries` directly** - the handler lives in the
 same module as `ArchiveRegistry`, so the private DashMap field is accessible.
 This avoids adding an accessor that only the handler needs.
 
-**`stream_file` uses `extract_entry_bytes`** — a synchronous function called
+**`stream_file` uses `extract_entry_bytes`** - a synchronous function called
 from `spawn_blocking`. It seeks to `local_header_offset`, parses the 30-byte
 local file header (signature, `fname_len` at [26..28], `extra_len` at [28..30]),
 skips variable-length fields, reads `compressed_size` bytes, and either passes
 them through (stored, method=0) or deflates them via
 `flate2::read::DeflateDecoder` (method=8).
 
-**Archive routes are merged** — `axum::Router::merge` is used so the archive
+**Archive routes are merged** - `axum::Router::merge` is used so the archive
 sub-router's state type matches `AppState`. Routes are not added at all when
 `archive_service.enabled = false`.
 
-**Startup population** — `daemon.rs` calls `sqlite.list_archive_paths()` to get
+**Startup population** - `daemon.rs` calls `sqlite.list_archive_paths()` to get
 all ZIP paths in the index, then for each one checks if the computed `.zidx`
 exists and registers it. This restores the registry state after a restart
 without requiring a full re-crawl.

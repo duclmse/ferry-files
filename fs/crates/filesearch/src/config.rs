@@ -296,8 +296,8 @@ pub fn load(path: &Path) -> Result<Config> {
     // event path; if watch_paths were left un-resolved, a file created right
     // after startup could race the initial crawl (which discovers it under
     // the un-resolved root) against the watcher (whose event carries the
-    // resolved root), producing two distinct `path` strings — and thus two
-    // rows — for the same file. Left as-is if the path doesn't exist yet;
+    // resolved root), producing two distinct `path` strings - and thus two
+    // rows - for the same file. Left as-is if the path doesn't exist yet;
     // `validate()` reports that separately.
     for p in &mut cfg.watch_paths {
         if let Ok(canon) = p.canonicalize() {
@@ -356,7 +356,7 @@ pub fn validate(cfg: &Config) -> Vec<String> {
 
     if cfg.archive_index.max_nesting_depth > 1 {
         tracing::warn!(
-            "archive_index.max_nesting_depth={} — nested ZIP indexing can be slow",
+            "archive_index.max_nesting_depth={} - nested ZIP indexing can be slow",
             cfg.archive_index.max_nesting_depth
         );
     }
@@ -413,7 +413,7 @@ pub async fn watch_config(
                                 *config.write().await = new_cfg;
                                 tracing::info!("config reloaded from {}", path.display());
                             } else {
-                                tracing::warn!("config reload rejected — validation errors: {:?}", errs);
+                                tracing::warn!("config reload rejected - validation errors: {:?}", errs);
                             }
                         }
                         Err(e) => tracing::warn!("config reload parse error: {e}"),

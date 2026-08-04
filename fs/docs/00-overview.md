@@ -1,4 +1,4 @@
-# Project Overview — zipfs
+# Project Overview - zipfs
 
 ## What This Is
 
@@ -14,17 +14,17 @@ built inside `filesearch` (Phases 8–13):
 The **archive service** (Phases 8–13) extends `filesearch` with a network-backed
 virtual filesystem over ZIP. It adds:
 
-- **`.zidx` binary index** — mmap-friendly inode tree built once per ZIP;
+- **`.zidx` binary index** - mmap-friendly inode tree built once per ZIP;
   zero-cost directory listing and O(1) node lookup at request time.
-- **Archive Service API** — REST routes (`/archive/:id/dir`, `/file`, `/index`,
+- **Archive Service API** - REST routes (`/archive/:id/dir`, `/file`, `/index`,
   `/search`) served by the existing Axum server.
-- **Streaming ZIP core** — `ByteSource` / `StreamExtractor` traits decouple data
+- **Streaming ZIP core** - `ByteSource` / `StreamExtractor` traits decouple data
   acquisition from inflate; clients receive chunked, backpressure-aware output.
-- **Deflate random access** — `.dzx` sidecar index captures 64 KB block
+- **Deflate random access** - `.dzx` sidecar index captures 64 KB block
   checkpoints, enabling HTTP `Range` requests without full re-inflate.
-- **Scheduler** — per-archive semaphores → per-client token buckets → two-level
+- **Scheduler** - per-archive semaphores → per-client token buckets → two-level
   Deficit Round Robin; prevents any single client or archive from monopolising CPU.
-- **SIMD inflate pipeline** — scalar Huffman decode + AVX2 match-copy engine;
+- **SIMD inflate pipeline** - scalar Huffman decode + AVX2 match-copy engine;
   criterion benchmark suite with per-stage timing.
 
 ---
@@ -70,7 +70,7 @@ zipfs/
 
 - **Dual store:** SQLite for metadata (name, size, mtime, extension, path,
   attrib_bitmask), Tantivy for full-text content search.
-- **Query language:** voidtools Everything-compatible syntax — same queries
+- **Query language:** voidtools Everything-compatible syntax - same queries
   users already know. Hand-written recursive-descent parser; no
   parser-generator.
 - **`fuzzy:<term>`** is a first-class query function (filesearch extension, not
@@ -87,7 +87,7 @@ zipfs/
 ### rar2zip
 
 - **Streaming pipeline:** archives are converted to ZIP entry-by-entry in 64 KB
-  chunks — no full extraction to disk.
+  chunks - no full extraction to disk.
 - **Two transfer strategies:**
   - `Disk`: zip written to disk first, then SFTP'd. Source archive is the only
     local file until transfer completes.
@@ -108,7 +108,7 @@ zipfs/
 | # | Decision |
 |---|----------|
 | AS1 | `.zidx` format: little-endian, flat node table + string pool; `kind` field distinguishes dirs from files (not `first_child == u32::MAX` heuristic) |
-| AS2 | Archive ID: blake3 hex (first 24 chars) of zip path — stable across restarts |
+| AS2 | Archive ID: blake3 hex (first 24 chars) of zip path - stable across restarts |
 | AS3 | Deflate random access: **Option B only** (snapshot-based sidecar); Option A requires re-compression and is not used on external archives |
 | AS4 | Scheduler rollout: semaphore → token bucket → DRR; each step independently toggled via config |
 | AS5 | SIMD: compile-time AVX2 dispatch (`target_feature`); runtime detection not required for known target hardware |
@@ -123,6 +123,6 @@ zipfs/
 | Q1  | Single Cargo workspace with three crates under `crates/`                                                                            |
 | Q2  | `exact.rs`, `fuzzy.rs`, `regex_search.rs` do **not** exist; logic is internal to `evaluator.rs`; `fuzzy:` is a first-class function |
 | Q3  | Latest stable crate versions; deviations recorded in `VERSIONS.md`                                                                  |
-| Q4  | `Strategy::Stream` = source archive piped directly into SFTP — no zip on disk                                                       |
+| Q4  | `Strategy::Stream` = source archive piped directly into SFTP - no zip on disk                                                       |
 | Q5  | `crates/common` first, then both other crates in parallel phases                                                                    |
 | Q6  | `multipart_timeout_hours` config field (default 24h); periodic expiry check in `app.rs`                                             |

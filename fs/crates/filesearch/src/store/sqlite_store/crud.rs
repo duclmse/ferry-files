@@ -94,7 +94,7 @@ impl SqliteStore {
 
     /// Upsert a batch of crawl records in a single transaction.
     /// Combines the former `upsert_file` + `mark_seen` into one SQL round-trip per
-    /// record, and wraps the whole batch in a single BEGIN/COMMIT — turning 2N
+    /// record, and wraps the whole batch in a single BEGIN/COMMIT - turning 2N
     /// individual transactions into ⌈N/batch_size⌉ transactions.
     pub fn batch_upsert_crawl(
         &self,

@@ -1,4 +1,4 @@
-# Phase 13 — SIMD Inflate Pipeline & Benchmarks
+# Phase 13 - SIMD Inflate Pipeline & Benchmarks
 
 **Goal:** Replace the scalar `flate2` inflate path in the streaming extractor
 with a SIMD-accelerated match-copy engine, and establish a criterion benchmark
@@ -76,7 +76,7 @@ impl RingBuffer {
 ```
 
 The double-buffer trick (writing each byte at `pos` and `pos + WINDOW`) means
-`slice_at` always returns a contiguous slice — no wrap-around handling.
+`slice_at` always returns a contiguous slice - no wrap-around handling.
 
 ### Overlap-safe SIMD Copy
 
@@ -152,7 +152,7 @@ impl HuffmanTable {
 }
 ```
 
-The fallback canonical decode is the existing `flate2` path — only triggered for
+The fallback canonical decode is the existing `flate2` path - only triggered for
 the rare long-code symbols.
 
 ---
@@ -308,7 +308,7 @@ var is set. Do not add overhead in production builds without this env var.
 
 ---
 
-## 13.8 Tests — Phase 13
+## 13.8 Tests - Phase 13
 
 ```
 SIMD copy engine:
@@ -361,9 +361,9 @@ benchmarks (smoke test only, not perf assertion):
 **Measured:** 2026-08-03 (`cargo bench -p filesearch`, `archive_inflate` and
 `scheduler_load` benches)
 
-- `inflate/simd_1mb`: ~287 µs/iter, ~3.39 GiB/s (~3,470 MB/s) — well above the
+- `inflate/simd_1mb`: ~287 µs/iter, ~3.39 GiB/s (~3,470 MB/s) - well above the
   400 MB/s target.
-- `scheduler/dispatch_1000_tasks`: ~311 µs/iter — above the 100 µs target.
+- `scheduler/dispatch_1000_tasks`: ~311 µs/iter - above the 100 µs target.
   The DRR dispatch loop does a `DashMap` lookup + `VecDeque` pop per task;
   at 1000 tasks that's dominated by per-task bookkeeping overhead rather than
   any single hot loop, so hitting 100 µs would need batching dispatch instead
@@ -385,12 +385,12 @@ crates/filesearch/benches/
 
 ### Key Deviations from Spec
 
-- **`SimdDeflateDecoder` has no `ring: RingBuffer` field** — approach (b) uses
+- **`SimdDeflateDecoder` has no `ring: RingBuffer` field** - approach (b) uses
   `flate2::Decompress` for all Huffman and LZ77 work; a separate ring buffer
   tracking is pure overhead in this design. `RingBuffer` is still exported as a
   standalone type for potential future use with approach (a) or (c).
 
-- **`decompress_vec` output buffer growth** — `flate2::Decompress::decompress_vec`
+- **`decompress_vec` output buffer growth** - `flate2::Decompress::decompress_vec`
   only writes as many bytes as fit in the Vec's *currently available capacity*
   (`capacity - len`). For highly compressible data (10:1 ratio), a single 64 KB
   compressed chunk expands to ~640 KB. The inner loop calls
@@ -399,17 +399,17 @@ crates/filesearch/benches/
   silently truncated output to the initial 65 536-byte capacity.
 
 - **`HuffmanTable` is constructed but not integrated into `SimdDeflateDecoder`**
-  — approach (b) delegates all Huffman work to `flate2`, so the `HuffmanTable`
+  approach (b) delegates all Huffman work to `flate2`, so the `HuffmanTable`
   is available for future approach (a/c) integration. It is fully tested via the
   §13.8 unit tests.
 
-- **Scalar vs SIMD inflate benchmark removed** — `DeflateDecoder::new()` was
+- **Scalar vs SIMD inflate benchmark removed** - `DeflateDecoder::new()` was
   private and only accessible within `decoder.rs`. Rather than exposing
   implementation internals for a benchmark, `bench_inflate_scalar` was replaced
   with a chunked-feed variant of `SimdDeflateDecoder` that exercises the same
   code path at different granularities.
 
-- **`DeflateDecoder` retained and exported** — kept as a fallback/testing
+- **`DeflateDecoder` retained and exported** - kept as a fallback/testing
   primitive; `pub fn new()` added and `Default` derived to satisfy Clippy
   `new_without_default`. The `create_decoder` factory now routes method 8 to
   `SimdDeflateDecoder`.

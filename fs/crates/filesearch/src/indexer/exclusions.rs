@@ -32,7 +32,7 @@ impl ExclusionEngine {
 }
 
 // ---------------------------------------------------------------------------
-// Network mount detection — platform-specific
+// Network mount detection - platform-specific
 // ---------------------------------------------------------------------------
 
 #[cfg(target_os = "linux")]

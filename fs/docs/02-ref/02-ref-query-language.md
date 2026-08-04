@@ -1,4 +1,4 @@
-# Reference: filesearch — Everything-Compatible Query Language
+# Reference: filesearch - Everything-Compatible Query Language
 
 > Implements the full voidtools Everything search syntax plus `fuzzy:` and
 > archive-scope extensions. This document specifies the `query/` module in
@@ -6,7 +6,7 @@
 
 ---
 
-## 1. Everything Syntax — Complete Reference
+## 1. Everything Syntax - Complete Reference
 
 ### 1.1 Boolean Operators
 
@@ -245,7 +245,7 @@ pub enum PredicateKind {
     Regex(String),          // regex: modifier
     Function(Function),     // dm:, size:, ext:, etc.
     TypeMacro(TypeMacro),   // audio:, zip:, doc:, etc.
-    Fuzzy(String),          // fuzzy:<term> — filesearch extension
+    Fuzzy(String),          // fuzzy:<term> - filesearch extension
 }
 
 pub struct Modifiers {
@@ -257,8 +257,8 @@ pub struct Modifiers {
     pub whole_word:        Option<bool>,
     pub ignore_diacritics: Option<bool>,   // None = true (default)
     /// None  = include both real files and inner archive entries.
-    /// Some(true)  = archive: modifier — inner entries only.
-    /// Some(false) = noarchive: modifier — real filesystem files only.
+    /// Some(true)  = archive: modifier - inner entries only.
+    /// Some(false) = noarchive: modifier - real filesystem files only.
     pub archive_only:      Option<bool>,
 }
 
@@ -369,7 +369,7 @@ pub enum QueryError {
     InvalidRegex(String),
     #[error("Unknown function: {0}")]
     UnknownFunction(String),
-    #[error("Invalid value for {function}: {value} — {reason}")]
+    #[error("Invalid value for {function}: {value} - {reason}")]
     InvalidValue { function: String, value: String, reason: String },
     #[error("Unmatched grouping character")]
     UnmatchedGrouping,
@@ -586,8 +586,8 @@ voidtools Everything.
 5. Apply `limit` / `offset`.
 
 Compatible with all other query functions:
-- `fuzzy:config ext:toml` — only `.toml` files, fuzzy-matched against "config"
-- `fuzzy:readm size:<100kb` — small files, fuzzy-matched against "readm"
+- `fuzzy:config ext:toml` - only `.toml` files, fuzzy-matched against "config"
+- `fuzzy:readm size:<100kb` - small files, fuzzy-matched against "readm"
 
 ### 5.4 Execution Strategies
 
@@ -783,8 +783,8 @@ video: size:>1gb !<backup|temp>
 | Feature | Everything | filesearch | Reason |
 |---------|-----------|------------|--------|
 | `content:` | Unindexed, slow | Indexed via Tantivy | Core feature |
-| `~` prefix | Fuzzy match | Not supported — use `fuzzy:` | Replaced by first-class function |
-| `/` prefix | Regex | Not supported — use `regex:` | Replaced by modifier |
+| `~` prefix | Fuzzy match | Not supported - use `fuzzy:` | Replaced by first-class function |
+| `/` prefix | Regex | Not supported - use `regex:` | Replaced by modifier |
 | ID3/FLAC tag functions | Supported | Not in v1 | Out of scope |
 | Image dimension functions | Supported | Not in v1 | Out of scope |
 | `frn:` / `fsi:` | NTFS-specific | Not supported | Not cross-platform |
@@ -795,7 +795,7 @@ video: size:>1gb !<backup|temp>
 
 | Feature | Description |
 |---------|-------------|
-| `fuzzy:` | Nucleo SIMD fuzzy match — first-class query function |
+| `fuzzy:` | Nucleo SIMD fuzzy match - first-class query function |
 | `archive:` / `noarchive:` | Scope queries to inner ZIP entries or real files |
 | `archiveof:` | Find all inner files of a specific ZIP |
 | `content:` indexing | Tantivy-backed, < 100ms |

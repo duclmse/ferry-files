@@ -4,7 +4,7 @@
 
 ---
 
-# Part 1 — SIMD-friendly Deflate Pipeline
+# Part 1 - SIMD-friendly Deflate Pipeline
 
 ## Reality check (important)
 
@@ -196,7 +196,7 @@ Deflate is mostly sequential, but you can:
 
 ---
 
-# Part 2 — Benchmarking Framework
+# Part 2 - Benchmarking Framework
 
 You cannot optimize blindly. You need **stage-level visibility**.
 
@@ -387,7 +387,7 @@ In order:
 - SIMD helps, but **only in the right place (copy stage)**
 - Architecture (streaming + scheduling) gives bigger gains than
   instruction-level tricks
-- Benchmarking is non-negotiable—most “optimizations” don’t matter without it
+- Benchmarking is non-negotiable - most “optimizations” don’t matter without it
 
 ---
 

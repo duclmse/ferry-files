@@ -142,7 +142,7 @@ struct ConnCtx {
 }
 
 // ---------------------------------------------------------------------------
-// Connection handler — platform-agnostic over any AsyncRead+AsyncWrite
+// Connection handler - platform-agnostic over any AsyncRead+AsyncWrite
 // ---------------------------------------------------------------------------
 
 async fn handle_connection<S>(mut stream: S, ctx: ConnCtx)

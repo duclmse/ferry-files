@@ -2,7 +2,7 @@ use std::path::Path;
 use std::sync::Arc;
 
 // ---------------------------------------------------------------------------
-// `.dzx` build throttle — process-wide, sized from the first archive crawled.
+// `.dzx` build throttle - process-wide, sized from the first archive crawled.
 // `dzx_max_concurrent_builds` is not expected to change at hot-reload time.
 // ---------------------------------------------------------------------------
 

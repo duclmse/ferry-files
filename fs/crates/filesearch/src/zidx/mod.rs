@@ -3,9 +3,9 @@
 //! # Binary format (version 2)
 //!
 //! ```text
-//! [Header — 20 bytes]
-//! [Node Table — node_count × 48 bytes]
-//! [String Pool — string_bytes bytes, UTF-8]
+//! [Header - 20 bytes]
+//! [Node Table - node_count × 48 bytes]
+//! [String Pool - string_bytes bytes, UTF-8]
 //! ```
 //!
 //! All integers are little-endian on disk.  Version 1 (40-byte nodes with

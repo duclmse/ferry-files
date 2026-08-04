@@ -60,7 +60,7 @@ fn default_burst_per_client() -> i64   { 200 }
 fn default_max_queue_depth()  -> usize { 50 }
 
 // ---------------------------------------------------------------------------
-// ArchiveSemaphores — Step 1 isolation
+// ArchiveSemaphores - Step 1 isolation
 // ---------------------------------------------------------------------------
 
 /// Per-archive bounded permit pool. An inflate task must acquire a permit
@@ -112,7 +112,7 @@ mod tests {
         // Spawn the fifth acquire in the background; it must wait.
         let sems2 = Arc::clone(&sems);
         let handle = tokio::spawn(async move { sems2.acquire("z.zip").await });
-        // Drop the first permit — the waiting task should now get through.
+        // Drop the first permit - the waiting task should now get through.
         drop(permit);
         let _second = tokio::time::timeout(
             std::time::Duration::from_millis(100),

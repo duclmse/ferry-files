@@ -1,4 +1,4 @@
-# CLAUDE.md — fs
+# CLAUDE.md - fs
 
 ## Build commands
 
@@ -21,7 +21,7 @@ cargo clippy --workspace -- -D warnings
 cargo doc --no-deps --workspace
 ```
 
-`rar2zip` is Windows-only — it will not compile on Linux/macOS. `filesearch` is
+`rar2zip` is Windows-only - it will not compile on Linux/macOS. `filesearch` is
 cross-platform.
 
 ## Test commands
@@ -83,7 +83,7 @@ is only acceptable in tests and `const` contexts.
 
 **No `println!`.** Use `tracing::{info, warn, error, debug, trace}` everywhere.
 
-**No comments that describe what the code does.** Only comment WHY — hidden
+**No comments that describe what the code does.** Only comment WHY - hidden
 constraints, workarounds, non-obvious invariants.
 
 **CPU-bound work goes in `spawn_blocking`.** Rayon walks, archive conversion,
@@ -97,22 +97,22 @@ disk. The commit loop in `daemon.rs` runs every `commit_interval_secs`.
 
 ## Dependency notes
 
-- `notify` / `notify-debouncer-full` — filesystem watcher. Debounce is 500ms in
+- `notify` / `notify-debouncer-full` - filesystem watcher. Debounce is 500ms in
   filesearch, 5s min-age gate in rar2zip.
-- `tantivy` — full-text index. Schema is defined once in `tantivy_store.rs`; do
+- `tantivy` - full-text index. Schema is defined once in `tantivy_store.rs`; do
   not add fields without migrating existing indices.
-- `nucleo` — SIMD fuzzy matcher (used for `fuzzy:` queries). Called from rayon
+- `nucleo` - SIMD fuzzy matcher (used for `fuzzy:` queries). Called from rayon
   threads via `spawn_blocking`.
-- `ssh2` — libssh2 bindings for SFTP. Public-key auth only; no password auth.
-- `windows-service` — Windows SCM integration. Only compiled on Windows
+- `ssh2` - libssh2 bindings for SFTP. Public-key auth only; no password auth.
+- `windows-service` - Windows SCM integration. Only compiled on Windows
   (`#[cfg(target_os = "windows")]`).
-- `tonic` / `prost` — gRPC. Proto changes require `protoc` on PATH; stubs
+- `tonic` / `prost` - gRPC. Proto changes require `protoc` on PATH; stubs
   regenerate during `cargo build` via `build.rs`.
 
 ## Gotchas
 
 - Virtual ZIP paths use `!/` as separator (`archive.zip!/inner/file`). String
-  operations that split paths must handle this separator — do not use
+  operations that split paths must handle this separator - do not use
   `std::path::Path` on virtual paths.
 - The `archive_path` column is `NULL` for real files and non-null for ZIP inner
   files. Queries that should exclude inner files must filter

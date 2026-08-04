@@ -196,7 +196,7 @@ Accessing “remote” memory:
 
 ## Solution: shard by NUMA node
 
-### Step 1 — detect topology
+### Step 1 - detect topology
 
 Use:
 
@@ -205,7 +205,7 @@ Use:
 
 ---
 
-### Step 2 — partition archives
+### Step 2 - partition archives
 
 ```rust
 struct NumaShard {
@@ -222,7 +222,7 @@ archive_id % numa_nodes → shard
 
 ---
 
-### Step 3 — pin threads
+### Step 3 - pin threads
 
 ```rust
 use core_affinity;

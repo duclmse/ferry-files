@@ -272,32 +272,32 @@ Acceptance checks:
   snapshot-style test.
 - Invalid frame length and invalid protocol version return controlled errors.
 
-#### Implementation notes (phase 6 — 2026-05-08)
+#### Implementation notes (phase 6 - 2026-05-08)
 
 Files created:
 
-- `crates/filesearch/src/api/ipc_protocol.rs` — `IpcEnvelope`, `IpcMessage`,
+- `crates/filesearch/src/api/ipc_protocol.rs` - `IpcEnvelope`, `IpcMessage`,
   `IpcRequest`, `IpcResponse`, `SearchHitDto`, `SearchResponse`, `StatsResponse`,
   `encode_frame`, `decode_payload`, `DecodeError`. Magic `b"ZFS1"`, version 1,
   max frame 16 MiB.
-- `crates/filesearch/src/api/ipc_server.rs` — daemon listener. Unix: binds
+- `crates/filesearch/src/api/ipc_server.rs` - daemon listener. Unix: binds
   `UnixListener`, removes stale socket on startup and shutdown. Windows: named
   pipe via `tokio::net::windows::named_pipe::ServerOptions`. Each connection is
   handled in its own task; requests are dispatched to `search_handler`,
   `stats_handler`, `reindex_handler`, `open_handler`.
-- `crates/filesearch/src/api/ipc_client.rs` — CLI client. Connects to the
+- `crates/filesearch/src/api/ipc_client.rs` - CLI client. Connects to the
   daemon socket, sends a single `IpcRequest`, reads back the `IpcResponse`.
   Request IDs are generated from an `AtomicU64` counter cast to `u128`.
-- `crates/filesearch/src/api/mod.rs` — re-exports the three sub-modules.
+- `crates/filesearch/src/api/mod.rs` - re-exports the three sub-modules.
 
 Changes to existing files:
 
-- `Cargo.toml` — added `postcard = { version = "1", features = ["alloc"] }`.
-- `src/lib.rs` — added `pub mod api`.
-- `src/main.rs` — IPC server spawned inside `run_daemon`; `Command::Search`,
+- `Cargo.toml` - added `postcard = { version = "1", features = ["alloc"] }`.
+- `src/lib.rs` - added `pub mod api`.
+- `src/main.rs` - IPC server spawned inside `run_daemon`; `Command::Search`,
   `Command::Stats`, `Command::Reindex`, `Command::Open` now connect via
   `IpcClient` and print results. `Command::Tui` still deferred to Phase 7.
-- `src/indexer/crawler.rs` — moved platform-specific `store::ATTRIB_*` imports
+- `src/indexer/crawler.rs` - moved platform-specific `store::ATTRIB_*` imports
   inside their respective `#[cfg]` blocks to pass `clippy -D warnings` on
   non-Windows targets.
 
@@ -305,7 +305,7 @@ Design decisions:
 
 - `request_id: u128` kept in the wire type for future cross-process correlation;
   the client counter uses `AtomicU64` (stable) cast to `u128`.
-- `SearchHitDto` does not carry internal `id` or `tantivy_id` fields — smaller
+- `SearchHitDto` does not carry internal `id` or `tantivy_id` fields - smaller
   on the wire and avoids leaking store internals to the CLI.
 - `Reindex` and `Open` handlers accept the request and return an acknowledged
   response; full daemon signalling for reindex is deferred to Phase 7.

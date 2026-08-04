@@ -5,10 +5,10 @@
 //! when the required environment variables are absent.
 //!
 //! Required env vars:
-//!   TEST_SFTP_HOST        — hostname or IP of the SFTP server
-//!   TEST_SFTP_USER        — SSH username
-//!   TEST_SFTP_REMOTE_PATH — absolute remote directory for uploads
-//!   TEST_SFTP_KEY         — path to the private key file
+//!   TEST_SFTP_HOST - hostname or IP of the SFTP server
+//!   TEST_SFTP_USER - SSH username
+//!   TEST_SFTP_REMOTE_PATH - absolute remote directory for uploads
+//!   TEST_SFTP_KEY - path to the private key file
 //!
 //! Run with:
 //!   cargo test -p rar2zip --features integration --test integration
@@ -121,13 +121,13 @@ mod tests {
     }
 
     // -----------------------------------------------------------------------
-    // Test: Disk strategy — small archive → ZIP created locally, then uploaded.
+    // Test: Disk strategy - small archive → ZIP created locally, then uploaded.
     // -----------------------------------------------------------------------
 
     #[tokio::test]
     async fn test_end_to_end_disk_strategy() {
         let Some(sftp) = sftp_env() else {
-            eprintln!("SKIP test_end_to_end_disk_strategy — TEST_SFTP_* env vars not set");
+            eprintln!("SKIP test_end_to_end_disk_strategy - TEST_SFTP_* env vars not set");
             return;
         };
 
@@ -162,13 +162,13 @@ mod tests {
     }
 
     // -----------------------------------------------------------------------
-    // Test: Stream strategy — large archive → no local ZIP created.
+    // Test: Stream strategy - large archive → no local ZIP created.
     // -----------------------------------------------------------------------
 
     #[tokio::test]
     async fn test_end_to_end_stream_strategy() {
         let Some(sftp) = sftp_env() else {
-            eprintln!("SKIP test_end_to_end_stream_strategy — TEST_SFTP_* env vars not set");
+            eprintln!("SKIP test_end_to_end_stream_strategy - TEST_SFTP_* env vars not set");
             return;
         };
 

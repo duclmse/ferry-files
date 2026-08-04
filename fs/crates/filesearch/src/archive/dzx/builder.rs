@@ -35,8 +35,8 @@ impl Window {
         let mut out = [0u8; WINDOW_SIZE];
         if !self.filled {
             // Back-references measure distance from the *end* of the fed
-            // preamble, so the real (short) history must sit at the tail —
-            // matching the filled case's "newest byte last" layout — with
+            // preamble, so the real (short) history must sit at the tail - 
+            // matching the filled case's "newest byte last" layout - with
             // zero padding at the front. A match can never reach past `head`
             // bytes back anyway, so the padding is never addressed.
             out[WINDOW_SIZE - self.head..].copy_from_slice(&self.buf[..self.head]);
@@ -90,7 +90,7 @@ impl DzxBuilder {
 }
 
 // ---------------------------------------------------------------------------
-// Blocking build helper — runs inside spawn_blocking
+// Blocking build helper - runs inside spawn_blocking
 // ---------------------------------------------------------------------------
 
 struct RawBlock {
@@ -125,7 +125,7 @@ fn build_blocking(
 
     // Feed one compressed byte per `decompress()` call. `flate2` parses ahead
     // into a following block's header/Huffman table whenever input is
-    // available, since that needs no output space — handing it the whole
+    // available, since that needs no output space - handing it the whole
     // remaining buffer (as this loop used to) lets `total_in` overshoot past
     // the true boundary byte by an unpredictable amount, corrupting the
     // recorded `comp_offset`. Restricting `avail_in` to one byte at a time
@@ -197,7 +197,7 @@ fn build_blocking(
 
 /// Verify that the block most recently completed in `raw_blocks` can be
 /// reproduced by feeding just its own compressed bytes and window snapshot
-/// through `decompress_block` — the exact function `read_range` uses at
+/// through `decompress_block` - the exact function `read_range` uses at
 /// request time. A mismatch means the recorded boundary is not a genuine
 /// deflate resync point (e.g. the entry is one continuous Huffman block with
 /// no `SYNC_FLUSH` markers); building `.dzx` for it would silently corrupt
@@ -229,14 +229,14 @@ fn verify_block_boundary(
 
 /// The block most recently pushed onto `raw_blocks` gets its `comp_offset`
 /// from the *previous* boundary crossing, at which point verifying it just
-/// means "does the stream decode continuously from the start up to here" —
+/// means "does the stream decode continuously from the start up to here" - 
 /// trivially true for almost any candidate (it's not a restart, just a
 /// continuation), so that check provides no real signal that the position is
 /// a genuine resync point. The real test happens one block later, when
 /// `verify_block_boundary` tries to decode that block *in isolation* via the
 /// STORED-block preamble trick. If that fails, the recorded `comp_offset` is
 /// still sitting inside the Z_SYNC_FLUSH tail-padding + empty-stored-block
-/// marker (BFINAL=0, LEN=0000, NLEN=FFFF), which produces no output — so
+/// marker (BFINAL=0, LEN=0000, NLEN=FFFF), which produces no output - so
 /// shift it forward a byte and retry, capped so genuinely non-flushed entries
 /// (no resync points at all) still fail fast rather than scanning forever.
 fn verify_boundary_with_retry(
@@ -280,7 +280,7 @@ fn write_dzx(p: WriteDzxParams<'_>) -> Result<(), DzxError> {
     use io::Write as _;
     let mut f = std::fs::File::create(out_path)?;
 
-    // Header — 32 bytes
+    // Header - 32 bytes
     let mut hdr = [0u8; HEADER_SIZE];
     hdr[0..4].copy_from_slice(MAGIC);
     hdr[4..8].copy_from_slice(&VERSION.to_le_bytes());
@@ -290,7 +290,7 @@ fn write_dzx(p: WriteDzxParams<'_>) -> Result<(), DzxError> {
     hdr[24..32].copy_from_slice(&block_count.to_le_bytes());
     f.write_all(&hdr)?;
 
-    // Block table — block_count × 56 bytes
+    // Block table - block_count × 56 bytes
     for (i, rb) in raw_blocks.iter().enumerate() {
         let next        = raw_blocks.get(i + 1);
         let comp_size   = (next.map_or(total_in,  |nb| nb.comp_offset)  - rb.comp_offset)  as u32;
@@ -301,13 +301,13 @@ fn write_dzx(p: WriteDzxParams<'_>) -> Result<(), DzxError> {
         entry[8..16].copy_from_slice(&rb.uncomp_offset.to_le_bytes());
         entry[16..20].copy_from_slice(&comp_size.to_le_bytes());
         entry[20..24].copy_from_slice(&uncomp_size.to_le_bytes());
-        // [24] bit_count=0, [25..28] _pad=0, [28..32] bit_buffer=0 — all zero by default
+        // [24] bit_count=0, [25..28] _pad=0, [28..32] bit_buffer=0 - all zero by default
         entry[32..36].copy_from_slice(&rb.snapshot_idx.to_le_bytes());
-        // [36..56] _pad2=0 — already zeroed
+        // [36..56] _pad2=0 - already zeroed
         f.write_all(&entry)?;
     }
 
-    // Window snapshots — block_count × 32768 bytes
+    // Window snapshots - block_count × 32768 bytes
     for snap in snap_data {
         f.write_all(snap.as_ref())?;
     }

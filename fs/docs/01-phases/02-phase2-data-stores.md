@@ -1,4 +1,4 @@
-# Phase 2 — Data Stores
+# Phase 2 - Data Stores
 
 **Goal:** Implement both persistent storage backends used by `filesearch`
 (SQLite metadata store + Tantivy full-text store) and the SQLite job queue used
@@ -9,7 +9,7 @@ logic touches it.
 
 ---
 
-## 2.1 filesearch — SQLite Metadata Store (`store/sqlite_store.rs`)
+## 2.1 filesearch - SQLite Metadata Store (`store/sqlite_store.rs`)
 
 ### Schema
 
@@ -43,7 +43,7 @@ CREATE INDEX IF NOT EXISTS idx_files_name      ON files(name);
 CREATE INDEX IF NOT EXISTS idx_files_extension ON files(extension);
 CREATE INDEX IF NOT EXISTS idx_files_mtime     ON files(mtime);
 CREATE INDEX IF NOT EXISTS idx_files_size      ON files(size_bytes);
-CREATE INDEX IF NOT EXISTS idx_files_parent    ON files(parent);  -- NB: was ON files(path) — fixed
+CREATE INDEX IF NOT EXISTS idx_files_parent    ON files(parent);  -- NB: was ON files(path) - fixed
 CREATE INDEX IF NOT EXISTS idx_files_attrib    ON files(attrib_bitmask);
 CREATE INDEX IF NOT EXISTS idx_files_archive   ON files(archive_path)
     WHERE archive_path IS NOT NULL;
@@ -105,7 +105,7 @@ Sparse=256, ReadOnly=512, System=1024, Temporary=2048
 
 ---
 
-## 2.2 filesearch — Tantivy Full-Text Store (`store/tantivy_store.rs`)
+## 2.2 filesearch - Tantivy Full-Text Store (`store/tantivy_store.rs`)
 
 ### Schema Fields
 
@@ -124,7 +124,7 @@ Since Tantivy has no native upsert:
 
 1. Delete existing document(s) matching `path` term.
 2. Add new document.
-3. Do NOT commit immediately — batch commits via background task.
+3. Do NOT commit immediately - batch commits via background task.
 
 ### Commit Strategy
 
@@ -147,7 +147,7 @@ excerpts (wrap matches in `<mark>...</mark>`).
 
 ---
 
-## 2.3 rar2zip — Job Queue (`queue.rs`)
+## 2.3 rar2zip - Job Queue (`queue.rs`)
 
 ### Schema
 
@@ -221,7 +221,7 @@ let pool = r2d2::Pool::builder()
 
 ---
 
-## 2.5 Tests — Phase 2
+## 2.5 Tests - Phase 2
 
 ### filesearch SqliteStore tests
 
@@ -279,9 +279,9 @@ let pool = r2d2::Pool::builder()
 
 ## 2.7 Implementation Notes _(added during Phase 2 implementation)_
 
-### A. SQL typo in phase 2 spec — use ref doc schema
+### A. SQL typo in phase 2 spec - use ref doc schema
 
-The phase 2 spec (§2.1) has `idx_files_size ON files(size_bytes))` — one extra
+The phase 2 spec (§2.1) has `idx_files_size ON files(size_bytes))` - one extra
 closing parenthesis. The ref doc (`01-ref-filesearch-modules.md §6.1`) is
 correct. The implementation uses the ref doc version.
 
@@ -292,7 +292,7 @@ correct. The implementation uses the ref doc version.
 rather than just the ones needed for Phase 2. This prevents breaking changes to
 the store's public API when the Phase 5 query evaluator is wired up.
 
-### C. `:memory:` SQLite is connection-private — use real temp files for concurrent tests
+### C. `:memory:` SQLite is connection-private - use real temp files for concurrent tests
 
 `SqliteConnectionManager::file(":memory:")` creates a separate in-memory
 database per connection. With an r2d2 pool of 16 connections, threads picking up
@@ -314,7 +314,7 @@ retrieved document.
 `tantivy::directory::MmapDirectory::open(path)` returns
 `Result<MmapDirectory, OpenDirectoryError>`. Since `AppError` has
 `#[from] tantivy::TantivyError` (not `#[from] OpenDirectoryError`), the
-conversion requires `.map_err(|e| AppError::Tantivy(e.into()))` — the extra
+conversion requires `.map_err(|e| AppError::Tantivy(e.into()))` - the extra
 `.into()` converts `OpenDirectoryError` to `TantivyError` via its blanket impl.
 
 ### F. `store/mod.rs` module layout
@@ -322,4 +322,4 @@ conversion requires `.map_err(|e| AppError::Tantivy(e.into()))` — the extra
 Shared types (`FileRecord`, `SearchHit`, `MetaFilters`, `DupeKind`,
 `SqlCondition`, `CmpOp`, bitmask constants) live in `store/mod.rs`. Both
 `sqlite_store` and `tantivy_store` import from `super::*`. `lib.rs` exposes
-`pub mod store;` — the two sub-modules are re-exported through it.
+`pub mod store;` - the two sub-modules are re-exported through it.

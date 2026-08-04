@@ -14,7 +14,7 @@ use super::dzx_sidecars::build_dzx_sidecars;
 use super::metrics::IndexMetrics;
 
 // ---------------------------------------------------------------------------
-// crawl_archive — wraps all inner upserts in a single SQLite transaction
+// crawl_archive - wraps all inner upserts in a single SQLite transaction
 // ---------------------------------------------------------------------------
 
 /// Sidecar-index build config, grouped to keep `crawl_archive_sync`'s
@@ -27,7 +27,7 @@ pub(super) struct SidecarConfig<'a> {
 }
 
 /// `tag` is `Some((watch_root, generation))` when called from a full crawl
-/// walk — it stamps the inserted archive-entry rows with the current
+/// walk - it stamps the inserted archive-entry rows with the current
 /// generation so `remove_stale_for_root` doesn't sweep them away right after
 /// this same crawl inserts them. It is `None` for event-driven archive
 /// (re)indexing (rename, ArchiveModified), which happens outside any crawl

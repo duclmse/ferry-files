@@ -1,4 +1,4 @@
-# Phase 4 — Archive Conversion & Transfer (rar2zip)
+# Phase 4 - Archive Conversion & Transfer (rar2zip)
 
 **Goal:** Implement the streaming archive conversion pipeline and the SFTP
 transfer engine for `rar2zip`. After this phase, the core function of the
@@ -72,7 +72,7 @@ Wrap reader in `GzDecoder` or `BzDecoder` before passing to
 
 When `job.file_path` is `archive.part1.rar`:
 
-- Pass base path to `unrar` — it auto-discovers subsequent parts in the same
+- Pass base path to `unrar` - it auto-discovers subsequent parts in the same
   folder.
 - Caller (`app.rs`) deletes all parts after confirmed success.
 
@@ -155,7 +155,7 @@ Before each retry (except first): delete partial remote file.
 
 ---
 
-## 4.3 Stream Strategy — `stream_convert_and_transfer()`
+## 4.3 Stream Strategy - `stream_convert_and_transfer()`
 
 ### Strategy Selection
 
@@ -224,12 +224,12 @@ On any failure (task error or checksum mismatch):
 
 1. Call `delete_remote_file()` to remove the partial upload.
 2. Re-run `stream_convert_and_transfer()` from step 1. The source archive is
-   still present — no intermediate state to restore.
+   still present - no intermediate state to restore.
 3. Apply exponential backoff between retries.
 4. After `max_retries` exhausted: move **source archive** (not a zip) to
    `failed/` folder, update job status to `Failed`.
 
-### `stream_all()` — multi-destination fan-out
+### `stream_all()` - multi-destination fan-out
 
 ```rust
 /// Fan out stream_convert_and_transfer to all destinations concurrently.
@@ -322,7 +322,7 @@ pub async fn notify(
 )
 ```
 
-Non-blocking — errors are logged but not propagated.
+Non-blocking - errors are logged but not propagated.
 
 **Webhook:** POST JSON `{"text": "[rar2zip] ERROR: ...", "job_id": "..."}` via
 `ureq`. Timeout: 5 seconds.
@@ -338,7 +338,7 @@ with From/To/Subject/Body from config.
 
 ---
 
-## 4.7 Tests — Phase 4
+## 4.7 Tests - Phase 4
 
 ### convert.rs (unit + fixture tests)
 
@@ -350,7 +350,7 @@ with From/To/Subject/Body from config.
 - multi-part .rar → all entries present in output .zip
 ```
 
-### transfer.rs (unit tests only — no mock SSH server)
+### transfer.rs (unit tests only - no mock SSH server)
 
 ```
 - bandwidth throttle: given limit_kbps=100 and 200KB sent in 0.5s →
@@ -372,7 +372,7 @@ with From/To/Subject/Body from config.
 
 The original plan used `ssh2` (libssh2 C bindings). On Windows, `libssh2-sys`
 requires OpenSSL to be available (vendored or system). Vendored build invokes
-`openssl-src`, which calls `perl ./Configure` — the MSYS2/Git-Bash Perl that
+`openssl-src`, which calls `perl ./Configure` - the MSYS2/Git-Bash Perl that
 ships with Git for Windows lacks `Locale::Maketext::Simple` and aborts.
 WinCNG (`features = ["wincng"]`) does not exist in libssh2-sys 0.3.x.
 
@@ -402,11 +402,11 @@ pipe-based stream.
 
 ### unrar 0.5 typestate API
 
-`unrar 0.5` uses a typestate pattern — `Archive<S>` does not exist; the correct
+`unrar 0.5` uses a typestate pattern - `Archive<S>` does not exist; the correct
 types are:
 - `unrar::Archive` (non-generic, used only for construction)
-- `OpenArchive<Process, CursorBeforeHeader>` — returned by `open_for_processing()`
-- `OpenArchive<Process, CursorBeforeFile>` — returned by `read_header()` on success
+- `OpenArchive<Process, CursorBeforeHeader>` - returned by `open_for_processing()`
+- `OpenArchive<Process, CursorBeforeFile>` - returned by `read_header()` on success
 
 These types are not named in function signatures because naming them requires
 importing private type-state markers. The archive is opened inline and the loop
@@ -459,31 +459,31 @@ inside the closure: `.map_err(Box::new)`.
 
 ### Missing tests implemented
 
-**`crates/rar2zip/src/convert.rs`** — 6 new tests:
+**`crates/rar2zip/src/convert.rs`** - 6 new tests:
 
-- `tar_to_zip_entry_and_content` — creates a `.tar` programmatically, converts to zip,
+- `tar_to_zip_entry_and_content` - creates a `.tar` programmatically, converts to zip,
   verifies entry name and byte content match.
-- `tar_to_zip_multiple_entries_all_present` — 2-entry tar → zip, checks all names present.
-- `tar_gz_to_zip_entry` — programmatic `.tar.gz` → zip, entry name check.
-- `tar_bz2_to_zip_entry` — programmatic `.tar.bz2` → zip, entry name check.
-- `corrupt_rar_returns_conversion_error` — garbage bytes in `.rar` → `Err` with
+- `tar_to_zip_multiple_entries_all_present` - 2-entry tar → zip, checks all names present.
+- `tar_gz_to_zip_entry` - programmatic `.tar.gz` → zip, entry name check.
+- `tar_bz2_to_zip_entry` - programmatic `.tar.bz2` → zip, entry name check.
+- `corrupt_rar_returns_conversion_error` - garbage bytes in `.rar` → `Err` with
   descriptive message.
-- `corrupt_7z_returns_conversion_error` — garbage bytes in `.7z` → `Err`.
+- `corrupt_7z_returns_conversion_error` - garbage bytes in `.7z` → `Err`.
 
 Helper functions added in the test module: `make_tar_bytes`, `make_tar_gz_bytes`,
 `make_tar_bz2_bytes`, `zip_entry_names`. These build test archives using the same
 crates (`tar`, `flate2`, `bzip2`) used in production, without needing external
 fixture files on disk.
 
-**`crates/rar2zip/src/transfer.rs`** — pure `throttle_delay` extracted + 3 new tests:
+**`crates/rar2zip/src/transfer.rs`** - pure `throttle_delay` extracted + 3 new tests:
 
 - `throttle_delay` pure function extracts the sleep-duration computation from
   `throttle_async` so it can be tested synchronously. `throttle_async` now delegates
   to it.
-- `throttle_delay_200kb_in_half_second_at_100kbps` — spec test case: rate=102 400 B/s,
+- `throttle_delay_200kb_in_half_second_at_100kbps` - spec test case: rate=102 400 B/s,
   200 KB sent in 0.5 s → 1.5 s sleep (± 10 ms).
-- `throttle_delay_within_budget_returns_none` — no sleep when bytes_sent < allowed.
-- `throttle_delay_zero_limit_returns_none` — `limit_kbps=0` always returns `None`.
+- `throttle_delay_within_budget_returns_none` - no sleep when bytes_sent < allowed.
+- `throttle_delay_zero_limit_returns_none` - `limit_kbps=0` always returns `None`.
 
 ### Verification
 

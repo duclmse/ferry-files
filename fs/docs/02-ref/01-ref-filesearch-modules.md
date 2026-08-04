@@ -1,4 +1,4 @@
-# Reference: filesearch — Module Specifications
+# Reference: filesearch - Module Specifications
 
 > Cross-platform file search daemon (Windows, Linux, macOS). Indexes 1–10M
 > files including filenames, metadata, and full-text content. Exposes REST,
@@ -88,7 +88,7 @@ crates/filesearch/
 
 > **Note:** `query/exact.rs`, `query/fuzzy.rs`, and `query/regex_search.rs`
 > do **not** exist. All search logic lives in `evaluator.rs`. The `~` and `/`
-> prefix syntax from the base spec is **not supported** — use the
+> prefix syntax from the base spec is **not supported** - use the
 > `fuzzy:` and `regex:` query modifiers instead.
 
 ---
@@ -500,7 +500,7 @@ impl SqliteStore {
 ```
 path        TEXT STORED INDEXED   (dedup key)
 name        TEXT STORED INDEXED   (tokenised)
-content     TEXT INDEXED only     (NOT stored — retrieve from disk/archive on hit)
+content     TEXT INDEXED only     (NOT stored - retrieve from disk/archive on hit)
 extension   TEXT STORED INDEXED
 mtime       U64 STORED FAST
 size_bytes  U64 STORED FAST
@@ -675,7 +675,7 @@ Algorithm:
 6. `sqlite.upsert_file(record)` then `sqlite.mark_seen(path, watch_root, generation)`.
 7. If `content_limit(path, cfg).is_some()`: extract content and call `tantivy.upsert()`.
 8. If entry is a ZIP and `archive_index.enabled`: call `crawl_archive()`.
-9. After each watch root finishes: `sqlite.remove_stale_for_root(watch_root, generation)` — deletes stale rows in SQL, no path list in Rust memory.
+9. After each watch root finishes: `sqlite.remove_stale_for_root(watch_root, generation)` - deletes stale rows in SQL, no path list in Rust memory.
 10. Final Tantivy commit, update `index_meta.last_crawl_time`.
 
 ```rust
@@ -705,8 +705,8 @@ pub enum IndexEvent {
     Modified(PathBuf),
     Deleted(PathBuf),
     Renamed { from: PathBuf, to: PathBuf },
-    ArchiveModified(PathBuf),  // ZIP changed — re-index entries
-    ArchiveDeleted(PathBuf),   // ZIP deleted — remove all entries
+    ArchiveModified(PathBuf),  // ZIP changed - re-index entries
+    ArchiveDeleted(PathBuf),   // ZIP deleted - remove all entries
 }
 ```
 
@@ -912,7 +912,7 @@ For inner archive entries, `archive_path` and `archive_entry` are non-null.
 ### Open File Endpoint
 
 ```rust
-// For real filesystem paths — platform dispatch:
+// For real filesystem paths - platform dispatch:
 // Linux:   Command::new("xdg-open").arg(path)
 // macOS:   Command::new("open").arg(path)
 // Windows: Command::new("cmd").args(["/C", "start", "", path])
@@ -1178,7 +1178,7 @@ log  = 0
 ### Windows
 
 - IPC uses Named Pipes: `\\.\pipe\filesearch`
-- No PID file — use named mutex (`CreateMutexW`) to detect duplicates.
+- No PID file - use named mutex (`CreateMutexW`) to detect duplicates.
 - `is_network_mount` uses `GetDriveTypeW` returning `DRIVE_REMOTE`.
 
 ---

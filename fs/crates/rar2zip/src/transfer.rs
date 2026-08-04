@@ -39,7 +39,7 @@ impl client::Handler for SshHandler {
 }
 
 // ---------------------------------------------------------------------------
-// Disk strategy — zip already on disk, upload to all destinations
+// Disk strategy - zip already on disk, upload to all destinations
 // ---------------------------------------------------------------------------
 
 /// Upload `zip_path` to every destination. Returns `Ok(())` only when all
@@ -163,7 +163,7 @@ async fn upload_bytes_to_dest(
 }
 
 // ---------------------------------------------------------------------------
-// Stream strategy — convert in memory, upload, no zip on disk
+// Stream strategy - convert in memory, upload, no zip on disk
 // ---------------------------------------------------------------------------
 
 /// Convert `src` directly into SFTP without writing a zip file to disk.

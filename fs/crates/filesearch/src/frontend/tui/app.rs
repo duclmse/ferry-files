@@ -53,12 +53,12 @@ impl Mode {
 }
 
 // ---------------------------------------------------------------------------
-// Pre-computed row — built once when hits arrive, read many times per frame
+// Pre-computed row - built once when hits arrive, read many times per frame
 // ---------------------------------------------------------------------------
 
 pub(super) struct HitRow {
     pub(super) path:       String,
-    // Pre-formatted "  1.2KB  rs" — avoids format! in every render frame.
+    // Pre-formatted "  1.2KB  rs" - avoids format! in every render frame.
     pub(super) meta:       String,
     pub(super) is_archive: bool,
 }
@@ -70,7 +70,7 @@ pub(super) struct HitRow {
 pub(super) struct App {
     pub(super) input:          String,
     pub(super) mode:           Mode,
-    // Rendered representation of each hit — separate from the raw DTO so
+    // Rendered representation of each hit - separate from the raw DTO so
     // render only borrows strings without allocation.
     pub(super) rows:           Vec<HitRow>,
     pub(super) total_hits:     u64,

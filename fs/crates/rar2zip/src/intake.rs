@@ -14,13 +14,13 @@ use crate::queue::{JobQueue, Strategy};
 
 #[derive(Debug)]
 enum MultipartClass {
-    /// `archive.partN.rar` — new-style volume N (1-based)
+    /// `archive.partN.rar` - new-style volume N (1-based)
     NewStylePart { base: String, part_num: u32 },
-    /// `archive.rar` — old-style main (always first/only old-style file)
+    /// `archive.rar` - old-style main (always first/only old-style file)
     OldStyleMain { base: String },
-    /// `archive.rNN` — old-style continuation part (0-based NN, so part_num = NN + 1)
+    /// `archive.rNN` - old-style continuation part (0-based NN, so part_num = NN + 1)
     OldStylePart { base: String, #[allow(dead_code)] part_num: u32 },
-    /// Single archive — not part of any multi-part set
+    /// Single archive - not part of any multi-part set
     Single,
 }
 
@@ -198,7 +198,7 @@ impl IntakeProcessor {
                 let group_id = format!("{}/{}", dir.display(), base);
                 self.queue.add_part(&group_id, &path)?;
 
-                // Only check completeness when we've seen at least part2 — part1 alone
+                // Only check completeness when we've seen at least part2 - part1 alone
                 // is ambiguous (we can't tell if more parts are still being downloaded).
                 if part_num >= 2 && new_style_complete(dir, &base, part_num) {
                     let main = dir.join(format!("{base}.part1.rar"));
@@ -381,14 +381,14 @@ mod tests {
         let config = make_config(dir.path());
         let proc   = IntakeProcessor::new(Arc::clone(&queue), config);
 
-        // Only part1 arrives — part2 not yet on disk
+        // Only part1 arrives - part2 not yet on disk
         let p1 = write_file(&dir, "movie.part1.rar");
         proc.process(p1).await.unwrap();
 
         let depth = queue.queue_depth().unwrap();
         assert_eq!(depth.values().sum::<i64>(), 0, "should not enqueue until complete");
 
-        // part2 arrives — now complete (no part3 on disk)
+        // part2 arrives - now complete (no part3 on disk)
         let _p2 = write_file(&dir, "movie.part2.rar");
         // Re-process part2 path (simulating watcher event)
         let p2 = dir.path().join("movie.part2.rar");

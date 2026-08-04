@@ -63,7 +63,7 @@ mod tests {
 
     #[test]
     fn archive_entry_missing_separator_returns_empty() {
-        // archive_path set but virtual path has no !/ — defensive fallback
+        // archive_path set but virtual path has no !/ - defensive fallback
         let r = zip_record("/a/archive.zip", "/a/archive.zip");
         assert_eq!(archive_entry(&r), "");
     }

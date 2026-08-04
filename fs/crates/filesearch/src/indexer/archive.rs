@@ -27,7 +27,7 @@ pub struct ArchiveEntry {
 }
 
 // ---------------------------------------------------------------------------
-// Streaming iterator — processes one ZIP entry at a time, never allocates a
+// Streaming iterator - processes one ZIP entry at a time, never allocates a
 // full entry vector proportional to the archive size.
 // ---------------------------------------------------------------------------
 
@@ -234,7 +234,7 @@ fn read_encrypted<R: Read + std::io::Seek>(
 ) -> Option<String> {
     if passwords.is_empty() {
         tracing::warn!(
-            "encrypted entry {entry_name} in {archive_str} — no passwords configured, skipping"
+            "encrypted entry {entry_name} in {archive_str} - no passwords configured, skipping"
         );
         return None;
     }
@@ -248,7 +248,7 @@ fn read_encrypted<R: Read + std::io::Seek>(
         }
     }
     tracing::warn!(
-        "encrypted entry {entry_name} in {archive_str} — all {} passwords failed",
+        "encrypted entry {entry_name} in {archive_str} - all {} passwords failed",
         passwords.len()
     );
     None

@@ -1,4 +1,4 @@
-//! REST API server — Axum 0.7 + tower-http.
+//! REST API server - Axum 0.7 + tower-http.
 //!
 //! Routes:
 //!   GET  /search?q=&limit=&offset=
@@ -146,7 +146,7 @@ async fn search_handler(
             .into_response(),
     };
 
-    // Single config lock — reads both macros and search limits in one pass.
+    // Single config lock - reads both macros and search limits in one pass.
     let (macros, default_limit) = {
         let cfg = state.config.read().await;
         (cfg.macros.clone(), cfg.search.default_limit)
@@ -182,7 +182,7 @@ async fn search_handler(
 }
 
 async fn stats_handler(State(state): State<AppState>) -> impl IntoResponse {
-    // All fields read from in-process atomics — no DB round-trip.
+    // All fields read from in-process atomics - no DB round-trip.
     let m = &state.metrics;
     Json(StatsApiResponse {
         total_files:             m.total_files.load(Ordering::Relaxed),

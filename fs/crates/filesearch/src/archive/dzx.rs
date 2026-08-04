@@ -1,11 +1,11 @@
-//! Deflate random-access index (`.dzx`) — block builder and mmap-backed reader.
+//! Deflate random-access index (`.dzx`) - block builder and mmap-backed reader.
 //!
 //! # Binary format
 //!
 //! ```text
-//! [Header — 32 bytes]
-//! [Block Table — block_count × 56 bytes]
-//! [Window Snapshots — block_count × 32768 bytes]
+//! [Header - 32 bytes]
+//! [Block Table - block_count × 56 bytes]
+//! [Window Snapshots - block_count × 32768 bytes]
 //! ```
 //!
 //! All integers are little-endian. See `docs/01-phases/11-phase11-deflate-random-access.md`.

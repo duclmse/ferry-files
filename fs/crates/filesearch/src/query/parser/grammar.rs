@@ -47,7 +47,7 @@ impl Parser {
         Ok(left)
     }
 
-    // and_expr = not_expr (not_expr)*  — space is AND
+    // and_expr = not_expr (not_expr)* - space is AND
     fn parse_and(&mut self) -> Result<Expr> {
         let mut left = self.parse_not()?;
         while !self.at_group_end() && !matches!(self.peek(), Token::Pipe) {
@@ -115,7 +115,7 @@ impl Parser {
                 let kw      = tok[..colon].to_ascii_lowercase();
                 let raw_val = tok[colon + 1..].to_owned();
 
-                // Modifier keyword — accumulate and loop
+                // Modifier keyword - accumulate and loop
                 if let Some(m) = modifier_from_kw(&kw, &raw_val) {
                     apply_modifier(&mut mods, m);
                     continue;
@@ -129,11 +129,11 @@ impl Parser {
                     raw_val
                 };
 
-                // Function or type macro — build expression and return
+                // Function or type macro - build expression and return
                 return build_predicate(&kw, &val, mods);
             }
 
-            // Plain word — Term predicate
+            // Plain word - Term predicate
             return Ok(Expr::Predicate(Predicate {
                 kind:      PredicateKind::Term(tok),
                 modifiers: mods,

@@ -1,4 +1,4 @@
-# Phase 8 — `.zidx` Index Builder
+# Phase 8 - `.zidx` Index Builder
 
 **Goal:** Implement the binary `.zidx` index format and its builder. The builder
 reads a ZIP's central directory once and emits a flat, mmap-friendly inode tree
@@ -33,14 +33,14 @@ pub mod zidx;
 ## 8.2 Binary Format
 
 All integer fields are **little-endian** on disk. Never write raw Rust struct
-bytes — use `to_le_bytes()` for each field. This is the stable on-disk contract.
+bytes - use `to_le_bytes()` for each field. This is the stable on-disk contract.
 
 ### Layout
 
 ```text
-[Header — 20 bytes]
-[Node Table — node_count × 40 bytes]
-[String Pool — string_bytes bytes, UTF-8]
+[Header - 20 bytes]
+[Node Table - node_count × 40 bytes]
+[String Pool - string_bytes bytes, UTF-8]
 ```
 
 ### Header
@@ -87,7 +87,7 @@ struct Node {
 ```text
 ZIP → enumerate entries (zip crate)
     → normalise paths
-    → insert into BuildNode tree (BTreeMap children — sorted)
+    → insert into BuildNode tree (BTreeMap children - sorted)
     → flatten tree with preorder DFS → Vec<FlatNode>
     → compute first_child / next_sibling linked-list links
     → intern all names into StringPool (deduplicated)
@@ -246,7 +246,7 @@ Use a `BufWriter` wrapping the output `File` (256 KB buffer).
 
 ---
 
-## 8.6 `ZidxIndex` — mmap-backed Reader
+## 8.6 `ZidxIndex` - mmap-backed Reader
 
 ```rust
 pub struct ZidxIndex {
@@ -340,7 +340,7 @@ blake3   = { workspace = true }
 
 ---
 
-## 8.10 Tests — Phase 8
+## 8.10 Tests - Phase 8
 
 ```
 builder:
@@ -376,7 +376,7 @@ integration:
 - [x] `cargo test -p filesearch zidx` passes all builder and reader tests.
 - [x] `.zidx` files are written to `zidx_dir` during `full_crawl()` when
       `archive_service.enabled = true`.
-- [x] All write paths use `to_le_bytes()` — no transmute/raw casts.
+- [x] All write paths use `to_le_bytes()` - no transmute/raw casts.
 - [x] `ZidxIndex::open()` rejects malformed files with `ZidxError::Corrupt`.
 - [x] Deterministic: rebuilding the same ZIP produces byte-identical output.
 - [x] No `unwrap()` in `zidx/` module code.
@@ -406,19 +406,19 @@ integration:
 
 ### Implementation notes
 
-**`compression_method_to_u16`** — zip 2.x exposes `CompressionMethod` as a non-exhaustive enum
+**`compression_method_to_u16`** - zip 2.x exposes `CompressionMethod` as a non-exhaustive enum
 (not a struct with public field, and no `From<CompressionMethod> for u16` impl). A `match` on
 `Stored` (→ 0) / `Deflated` (→ 8) / `_` (→ 0) covers all cases seen in practice.
 
-**`ZidxIndex::Debug`** — `memmap2::Mmap` does not implement `Debug`, so `ZidxIndex` has a hand-written
+**`ZidxIndex::Debug`** - `memmap2::Mmap` does not implement `Debug`, so `ZidxIndex` has a hand-written
 impl that only shows `node_count`.
 
-**`zidx_path_for`** — uses `blake3::hash(zip_path_as_bytes).to_hex()` as the stem so sidecar files
+**`zidx_path_for`** - uses `blake3::hash(zip_path_as_bytes).to_hex()` as the stem so sidecar files
 never collide regardless of ZIP directory depth, and they live entirely under `zidx_dir` (not in
 the watched directory tree).
 
-**Crawler integration** — `crawl_archive_sync` is already in a blocking context (`rayon` walk thread
-or `tokio::task::spawn_blocking`), so `ZidxBuilder::build()` is called synchronously — no extra
+**Crawler integration** - `crawl_archive_sync` is already in a blocking context (`rayon` walk thread
+or `tokio::task::spawn_blocking`), so `ZidxBuilder::build()` is called synchronously - no extra
 `spawn_blocking` needed. Failures are logged as warnings and do not abort the archive crawl.
 
 **Test count after Phase 8:** 165 filesearch unit (was 148 + 17 new zidx) + 5 integration + 67 rar2zip = 237 total.

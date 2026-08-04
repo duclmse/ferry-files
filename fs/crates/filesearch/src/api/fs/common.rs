@@ -87,7 +87,7 @@ pub(super) fn validate_path(raw: &str) -> Result<PathBuf, String> {
 }
 
 // ---------------------------------------------------------------------------
-// Helpers — mime, etag, range
+// Helpers - mime, etag, range
 // ---------------------------------------------------------------------------
 
 pub(super) fn mime_for_path(path: &Path) -> &'static str {
@@ -141,7 +141,7 @@ pub(crate) fn parse_range(range: &str, file_size: u64) -> Option<(u64, u64)> {
 }
 
 // ---------------------------------------------------------------------------
-// Helpers — metadata extraction
+// Helpers - metadata extraction
 // ---------------------------------------------------------------------------
 
 pub(super) struct FileMeta {

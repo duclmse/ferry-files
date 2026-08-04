@@ -1,13 +1,13 @@
 //! Filesystem operations API.
 //!
 //! Routes:
-//!   HEAD   /fs/read?path=             — file metadata as response headers
-//!   GET    /fs/read?path=             — stream file; `Range:` header → 206 Partial Content
-//!   PUT    /fs/write?path=            — write/overwrite file content (request body → file)
-//!   POST   /fs/copy[?stream=true]     — copy file or directory { "from", "to" }
-//!   POST   /fs/move[?stream=true]     — move / rename          { "from", "to" }
-//!   DELETE /fs/delete?path=[&stream=true] — delete file or directory
-//!   POST   /fs/mkdir?path=            — create directory (with parents)
+//!   HEAD   /fs/read?path= - file metadata as response headers
+//!   GET    /fs/read?path= - stream file; `Range:` header → 206 Partial Content
+//!   PUT    /fs/write?path= - write/overwrite file content (request body → file)
+//!   POST   /fs/copy[?stream=true] - copy file or directory { "from", "to" }
+//!   POST   /fs/move[?stream=true] - move / rename          { "from", "to" }
+//!   DELETE /fs/delete?path=[&stream=true] - delete file or directory
+//!   POST   /fs/mkdir?path= - create directory (with parents)
 //!
 //! **Streaming progress** (`?stream=true`): copy/move/delete return
 //! `text/event-stream` (SSE).  Each event is a JSON object:

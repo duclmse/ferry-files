@@ -59,7 +59,7 @@ pub struct SearchHit {
 }
 
 // ---------------------------------------------------------------------------
-// MetaFilters — dynamic WHERE clause builder
+// MetaFilters - dynamic WHERE clause builder
 // ---------------------------------------------------------------------------
 
 /// Optional filters applied on top of a primary query predicate.
@@ -143,7 +143,7 @@ pub enum DupeKind {
 }
 
 // ---------------------------------------------------------------------------
-// CmpOp — comparison operators for numeric SqlConditions
+// CmpOp - comparison operators for numeric SqlConditions
 // ---------------------------------------------------------------------------
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -168,7 +168,7 @@ impl CmpOp {
 }
 
 // ---------------------------------------------------------------------------
-// SqlCondition — typed SQL predicates (used by query evaluator, Phase 5)
+// SqlCondition - typed SQL predicates (used by query evaluator, Phase 5)
 // ---------------------------------------------------------------------------
 
 /// A typed SQL predicate that can be passed to store methods.
@@ -278,7 +278,7 @@ pub fn build_conditions(
 }
 
 // ---------------------------------------------------------------------------
-// FileStore — dispatch enum over concrete store backends
+// FileStore - dispatch enum over concrete store backends
 // ---------------------------------------------------------------------------
 
 use crate::error::Result;

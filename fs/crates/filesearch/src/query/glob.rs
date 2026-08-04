@@ -1,6 +1,6 @@
 /// Convert an Everything-style wildcard pattern to a SQLite GLOB pattern.
 ///
-/// Everything uses `*` (zero or more chars) and `?` (one char) — identical
+/// Everything uses `*` (zero or more chars) and `?` (one char) - identical
 /// to SQLite GLOB, so no character translation is needed.
 ///
 /// `whole_filename = false` wraps with `*...*` so that the pattern matches

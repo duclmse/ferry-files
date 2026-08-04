@@ -24,8 +24,8 @@ C:\data\archive.zip!/reports/q1.xlsx
 ```
 
 Rules:
-- `<outer_archive_path>` — real, absolute filesystem path of the ZIP.
-- `<entry_path_within_archive>` — entry name exactly as stored in the ZIP
+- `<outer_archive_path>` - real, absolute filesystem path of the ZIP.
+- `<entry_path_within_archive>` - entry name exactly as stored in the ZIP
   central directory, normalised to forward slashes.
 - The separator is always `!/` regardless of OS path separator.
 - Virtual paths are **not** valid filesystem paths. They exist only in the
@@ -333,8 +333,8 @@ Add to `Modifiers`:
 
 ```rust
 /// None  = include both real files and inner archive entries.
-/// Some(true)  = archive: modifier — inner entries only.
-/// Some(false) = noarchive: modifier — real filesystem files only.
+/// Some(true)  = archive: modifier - inner entries only.
+/// Some(false) = noarchive: modifier - real filesystem files only.
 pub archive_only: Option<bool>,
 ```
 
@@ -385,7 +385,7 @@ archive_path GLOB '*.zip'
 path LIKE '/data/docs.zip!/src/%' AND path NOT LIKE '/data/docs.zip!/src/%/%'
 ```
 
-No special handling needed — `ParentPath` SQL already generates this.
+No special handling needed - `ParentPath` SQL already generates this.
 
 ### 7.4 `depth:` with Virtual Paths
 
@@ -396,7 +396,7 @@ separator. No special handling needed.
 
 ## 8. API Changes
 
-### 8.1 REST API — SearchHit Response
+### 8.1 REST API - SearchHit Response
 
 ```json
 {

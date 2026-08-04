@@ -1,4 +1,4 @@
-# Resolved Crate Versions — filesearch
+# Resolved Crate Versions - filesearch
 
 Generated at implementation time. Update whenever a dep is added or changed.
 

@@ -17,7 +17,7 @@ use super::{FileRecord, MemoryStore};
 // Version 2 (current):
 //   [4 bytes]  magic:          b"FSID"
 //   [2 bytes]  version:        2u16 LE
-//   [8 bytes]  usn_checkpoint: u64 LE  — USN/inotify journal position for dirty-shutdown recovery
+//   [8 bytes]  usn_checkpoint: u64 LE - USN/inotify journal position for dirty-shutdown recovery
 //   [8 bytes]  data_len:       u64 LE
 //   [data_len] postcard-encoded Vec<FileRecord>
 // ---------------------------------------------------------------------------
@@ -148,7 +148,7 @@ impl MemoryStore {
         n
     }
 
-    /// `tag`, when set, stamps every row with the current crawl's generation —
+    /// `tag`, when set, stamps every row with the current crawl's generation - 
     /// mirrors `SqliteStore::upsert_archive_batch`'s reasoning: without it,
     /// `remove_stale_for_root`'s `None => true` fallback deletes archive
     /// entries right after the walk that just inserted them finishes.

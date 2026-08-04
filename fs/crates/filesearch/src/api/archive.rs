@@ -1,11 +1,11 @@
-//! Archive Service API — REST handlers and ArchiveRegistry.
+//! Archive Service API - REST handlers and ArchiveRegistry.
 //!
 //! Routes (mounted only when archive_service.enabled = true):
-//!   GET  /archive                   — list all registered archives
-//!   GET  /archive/:id/index         — raw .zidx binary
-//!   GET  /archive/:id/dir?node=<u32>  — directory listing
-//!   GET  /archive/:id/file?node=<u32> — stream file content
-//!   GET  /archive/:id/search?q=&limit=&offset= — archive-scoped search
+//!   GET  /archive - list all registered archives
+//!   GET  /archive/:id/index - raw .zidx binary
+//!   GET  /archive/:id/dir?node=<u32> - directory listing
+//!   GET  /archive/:id/file?node=<u32> - stream file content
+//!   GET  /archive/:id/search?q=&limit=&offset= - archive-scoped search
 
 use std::net::{IpAddr, SocketAddr};
 

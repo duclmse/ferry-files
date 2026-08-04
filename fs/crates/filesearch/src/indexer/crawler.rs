@@ -71,7 +71,7 @@ pub async fn full_crawl(
 
     // One generation per full crawl. Each upserted row is marked with the
     // watch_root it was found under and this generation. After each root
-    // finishes, rows with an older generation are stale and deleted in SQL —
+    // finishes, rows with an older generation are stale and deleted in SQL - 
     // no full path list is materialised in Rust memory.
     let generation = sqlite.begin_crawl_generation()?;
 
@@ -113,7 +113,7 @@ pub async fn full_crawl(
             // Dedicated writer thread batches upserts in groups of 500
             // inside a single BEGIN/COMMIT, reducing write transactions to ⌈N/500⌉.
             // Metrics are incremented here (not in the walker) so that
-            // `total_files` reflects rows actually committed to SQLite — tests
+            // `total_files` reflects rows actually committed to SQLite - tests
             // and the REST /stats endpoint use it as a crawl-completion signal.
             // Benchmarked (scripts/bench.sh) against a 615k-file / 88k-dir tree:
             // 500 -> ~40s, 4000 -> ~21s, 10000 -> ~18s, 25000+ -> ~16s (plateau,
@@ -201,7 +201,7 @@ pub async fn full_crawl(
 
                     let _ = tx_w.send((record.clone(), root_str.clone()));
 
-                    // Content indexing — sync read for small files (≤1MB) in the walk closure
+                    // Content indexing - sync read for small files (≤1MB) in the walk closure
                     if !meta.is_dir() {
                         if let Some(max_bytes) = content_limit(path, &cnt_cfg) {
                             if meta.len() <= 1024 * 1024 {
@@ -219,7 +219,7 @@ pub async fn full_crawl(
                         }
                     }
 
-                    // Archive indexing — has its own BEGIN/COMMIT, stays inline.
+                    // Archive indexing - has its own BEGIN/COMMIT, stays inline.
                     if !meta.is_dir() && arc_cfg.enabled {
                         let is_archive = path
                             .extension()
@@ -252,7 +252,7 @@ pub async fn full_crawl(
             drop(tx);
             let _ = writer_thread.join();
 
-            // Remove stale rows for this watch root in SQL — no Rust Vec of paths.
+            // Remove stale rows for this watch root in SQL - no Rust Vec of paths.
             let removed = sqlite_w.remove_stale_for_root(&watch_root, generation)?;
             if removed > 0 {
                 tracing::info!("reconcile: removed {removed} stale entries under {watch_root}");
@@ -281,7 +281,7 @@ pub async fn full_crawl(
 }
 
 // ---------------------------------------------------------------------------
-// process_event — incremental update from watcher
+// process_event - incremental update from watcher
 // ---------------------------------------------------------------------------
 
 pub async fn process_event(

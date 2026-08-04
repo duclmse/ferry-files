@@ -228,11 +228,11 @@ fn parse_absolute_date_range(s: &str) -> Result<(i64, i64)> {
     }
     let len = s.len();
     if len == 10 || len == 8 {
-        // YYYY-MM-DD or YYYYMMDD — whole day
+        // YYYY-MM-DD or YYYYMMDD - whole day
         return Ok((lo, lo + 86400 - 1));
     }
     if len == 7 {
-        // YYYY-MM — whole month
+        // YYYY-MM - whole month
         let parts: Vec<&str> = s.splitn(2, '-').collect();
         if parts.len() == 2 {
             if let (Ok(y), Ok(m)) = (parts[0].parse::<i32>(), parts[1].parse::<u32>()) {
@@ -247,7 +247,7 @@ fn parse_absolute_date_range(s: &str) -> Result<(i64, i64)> {
         }
     }
     if len == 4 {
-        // YYYY — whole year
+        // YYYY - whole year
         if let Ok(y) = s.parse::<i32>() {
             let hi = NaiveDate::from_ymd_opt(y, 12, 31)
                 .map(|d| d.and_hms_opt(23, 59, 59).expect("infallible: 23,59,59 always valid").and_utc().timestamp())

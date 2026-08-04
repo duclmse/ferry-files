@@ -74,7 +74,7 @@ pub enum DateExpr {
     Constant(DateConstant),
     /// Absolute range of Unix seconds (lo, hi inclusive).
     Range(i64, i64),
-    /// `<op> timestamp` — open-ended comparison.
+    /// `<op> timestamp` - open-ended comparison.
     Comparison(CmpOp, i64),
 }
 

@@ -28,7 +28,7 @@ pub fn archive_id(zip_path: &Path) -> String {
 pub(super) struct RegistryEntry {
     pub(super) zip_path:  PathBuf,
     pub(super) zidx_path: PathBuf,
-    /// Weak validator for `ETag:` — derived from file mtime+size at register
+    /// Weak validator for `ETag:` - derived from file mtime+size at register
     /// time, O(1) stat only.  Stale after rebuild but that also re-registers.
     pub(super) etag:      String,
 }
@@ -46,19 +46,19 @@ pub struct ArchiveSummary {
 
 pub struct ArchiveRegistry {
     pub(super) entries: DashMap<String, RegistryEntry>,
-    /// Per-shard concurrent cache — no global lock on the hot read path.
+    /// Per-shard concurrent cache - no global lock on the hot read path.
     /// `index_cache_size` from config is retained in the struct for future
     /// bounded-eviction support but not enforced here; ZidxIndex is mmap-backed
     /// and holds negligible memory beyond the OS page cache.
     index_cache:  DashMap<String, Arc<ZidxIndex>>,
-    /// Cached open file handle per archive — avoids an open()+fstat() syscall
+    /// Cached open file handle per archive - avoids an open()+fstat() syscall
     /// on every streaming request.  Evicted (along with index_cache) on rebuild.
     source_cache: DashMap<String, Arc<LocalFileSource>>,
     zidx_dir:     PathBuf,
     enabled:      bool,
 }
 
-/// Compute a cheap ETag from file mtime + size — one stat syscall, O(1).
+/// Compute a cheap ETag from file mtime + size - one stat syscall, O(1).
 fn zidx_etag(path: &Path) -> String {
     use std::time::UNIX_EPOCH;
     std::fs::metadata(path)
@@ -118,7 +118,7 @@ impl ArchiveRegistry {
     /// Returns None if the ID is unknown or the .zidx file is missing/corrupt.
     pub fn index(&self, id: &str) -> Option<Arc<ZidxIndex>> {
         if !self.enabled { return None; }
-        // Fast path: warm cache — DashMap shard lock, no blocking I/O.
+        // Fast path: warm cache - DashMap shard lock, no blocking I/O.
         if let Some(idx) = self.index_cache.get(id) {
             return Some(Arc::clone(&*idx));
         }

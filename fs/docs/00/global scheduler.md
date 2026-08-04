@@ -4,7 +4,7 @@ This is future architecture research for a multi-tenant archive service. The
 Rust snippets are pseudocode for scheduling logic; production code must be
 structured to satisfy Rust borrowing rules and async cancellation/backpressure.
 
-You’re now designing the **control plane** of your system: who gets CPU, when, and how much—across tenants and archives—without destroying latency or throughput. The right model is a **hierarchical scheduler**:
+You’re now designing the **control plane** of your system: who gets CPU, when, and how much - across tenants and archives - without destroying latency or throughput. The right model is a **hierarchical scheduler**:
 
 * **Level 1:** Tenant fairness (protects users from each other)
 * **Level 2:** Archive fairness within a tenant (prevents noisy ZIPs)
@@ -88,7 +88,7 @@ cost ≈ compressed_bytes / 4KB  + small constant
 * small file preview: small
 * large inflate: large
 
-You don’t need perfect accuracy—just enough to avoid starvation.
+You don’t need perfect accuracy - just enough to avoid starvation.
 
 ---
 
@@ -165,7 +165,7 @@ fn pick_archive(t: &mut TenantQueue) -> Option<ArchiveId> {
 
 `pick_tenant` and `pick_archive` take `&mut` references and return only the ID
 (a `Copy` type). The mutable borrow from `pick_tenant(s)` ends before the next
-`s.tenants.get_mut()` call — this is required for the code to satisfy Rust's
+`s.tenants.get_mut()` call - this is required for the code to satisfy Rust's
 borrow checker. In production code ensure each function returns the ID and drops
 its borrow before the caller re-borrows `s`.
 

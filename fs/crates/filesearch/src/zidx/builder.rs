@@ -132,7 +132,7 @@ fn insert(
 }
 
 // ---------------------------------------------------------------------------
-// DFS flatten — preorder so parent ID is always lower than children's IDs
+// DFS flatten - preorder so parent ID is always lower than children's IDs
 // ---------------------------------------------------------------------------
 
 // Iterative preorder DFS using an explicit stack so arbitrarily deep ZIP
@@ -173,7 +173,7 @@ fn flatten(root: &BuildNode, out: &mut Vec<FlatNode>) {
 }
 
 // ---------------------------------------------------------------------------
-// Write helpers — all fields written individually with to_le_bytes()
+// Write helpers - all fields written individually with to_le_bytes()
 // ---------------------------------------------------------------------------
 
 fn write_header(w: &mut impl Write, node_count: u32, string_bytes: u32) -> std::io::Result<()> {

@@ -144,7 +144,7 @@ fn bench_local_file_read(c: &mut Criterion) {
     let data = vec![0xABu8; 4 * 1024 * 1024];
     std::fs::write(tmp.path(), &data).unwrap();
 
-    let chunk = 64 * 1024usize; // 64 KB — matches pump_inflate chunk size
+    let chunk = 64 * 1024usize; // 64 KB - matches pump_inflate chunk size
 
     g.throughput(Throughput::Bytes(chunk as u64));
     g.bench_function("64kb_chunk_sequential", |b| {
@@ -159,7 +159,7 @@ fn bench_local_file_read(c: &mut Criterion) {
         });
     });
 
-    // Throughput benchmark — 1 MB read in 64 KB chunks.
+    // Throughput benchmark - 1 MB read in 64 KB chunks.
     let total = 1024 * 1024usize;
     g.throughput(Throughput::Bytes(total as u64));
     g.bench_function("1mb_sequential", |b| {

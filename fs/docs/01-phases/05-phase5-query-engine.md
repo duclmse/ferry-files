@@ -1,7 +1,7 @@
-# Phase 5 — Query Engine (Everything-Compatible)
+# Phase 5 - Query Engine (Everything-Compatible)
 
 **Goal:** Implement the full voidtools Everything-compatible query language for
-`filesearch`. This is the heart of the product — the parser, AST, evaluator, and
+`filesearch`. This is the heart of the product - the parser, AST, evaluator, and
 all supporting sub-parsers. After this phase, every query in the acceptance test
 list (spec section 13) parses and executes correctly.
 
@@ -28,7 +28,7 @@ src/query/
 
 ## 5.2 AST (`ast.rs`)
 
-Core types (no logic — pure data):
+Core types (no logic - pure data):
 
 ```rust
 pub enum Expr {
@@ -48,7 +48,7 @@ pub enum PredicateKind {
     Regex(String),        // regex: modifier
     Function(Function),   // dm:, size:, ext:, etc.
     TypeMacro(TypeMacro), // audio:, zip:, doc:, etc.
-    Fuzzy(String),        // fuzzy:<term> — filesearch extension, not in Everything
+    Fuzzy(String),        // fuzzy:<term> - filesearch extension, not in Everything
 }
 
 pub struct Modifiers {
@@ -60,8 +60,8 @@ pub struct Modifiers {
     pub whole_word:        Option<bool>,
     pub ignore_diacritics: Option<bool>,
     /// None = include both real files and inner archive entries.
-    /// Some(true)  = `archive:` modifier — inner entries only.
-    /// Some(false) = `noarchive:` modifier — real filesystem files only.
+    /// Some(true)  = `archive:` modifier - inner entries only.
+    /// Some(false) = `noarchive:` modifier - real filesystem files only.
     pub archive_only:      Option<bool>,
 }
 ```
@@ -110,7 +110,7 @@ term       := modifier* (function | word_pattern)
 3. space AND
 4. `|` OR
 
-So `A|B C` = `A OR (B AND C)` — **right-to-left** for OR.
+So `A|B C` = `A OR (B AND C)` - **right-to-left** for OR.
 
 ### Modifier Resolution
 
@@ -248,9 +248,9 @@ Key dispatch rules:
 | `startwith:`              | `PostFilter::StartWith(text)`                        |
 | `endwith:`                | `PostFilter::EndWith(text)`                          |
 | TypeMacro                 | expand → `ExtIn`                                     |
-| `archive:` modifier       | `IsArchiveEntry(true)` — `archive_path IS NOT NULL`  |
-| `noarchive:` modifier     | `IsArchiveEntry(false)` — `archive_path IS NULL`     |
-| `archiveof:path`          | `ArchiveOf(path)` — `archive_path = ?` or GLOB       |
+| `archive:` modifier       | `IsArchiveEntry(true)` - `archive_path IS NOT NULL`  |
+| `noarchive:` modifier     | `IsArchiveEntry(false)` - `archive_path IS NULL`     |
+| `archiveof:path`          | `ArchiveOf(path)` - `archive_path = ?` or GLOB       |
 
 ### Execution Strategies
 
@@ -316,7 +316,7 @@ LIMIT ?;
 - `Size` → `size_bytes`
 - `DateModified` → `mtime`
 - `DateCreated` → `ctime`
-- `DateAccessed` → (not in SQLite schema — skip or return empty)
+- `DateAccessed` → (not in SQLite schema - skip or return empty)
 - `Attrib` → `attrib_bitmask`
 
 ---
@@ -364,8 +364,8 @@ Internal flow:
 
 **Compatible with all other query functions:**
 
-- `fuzzy:config ext:toml` — only `.toml` files, fuzzy-matched against "config"
-- `fuzzy:readm size:<100kb` — small files, fuzzy-matched against "readm"
+- `fuzzy:config ext:toml` - only `.toml` files, fuzzy-matched against "config"
+- `fuzzy:readm size:<100kb` - small files, fuzzy-matched against "readm"
 
 **`EvalStrategy::FuzzyFilter(term)`** is added to the evaluator:
 
@@ -381,12 +381,12 @@ pub enum EvalStrategy {
 
 > **Note:** `query/exact.rs`, `query/fuzzy.rs`, and `query/regex_search.rs` do
 > **not** exist. All logic lives in `evaluator.rs`. The `~` prefix and `/`
-> prefix from the base spec are **not supported** — use `fuzzy:` and `regex:`
+> prefix from the base spec are **not supported** - use `fuzzy:` and `regex:`
 > modifiers instead.
 
 ---
 
-## 5.9 Tests — Phase 5
+## 5.9 Tests - Phase 5
 
 ### parser.rs
 
@@ -462,7 +462,7 @@ Vec<SqlCondition>)` variant would allow proper SQL `(cond1) OR (cond2)`.
 `Word("*.rs")`. The parser consumes `archive:` as a modifier (sets
 `archive_only = Some(true)`) and attaches it to the following `*.rs` term.
 The result is a single `Predicate` with the modifier set, not `And(archive,
-wildcard)`. This is the correct interpretation — `archive:` scopes the *next*
+wildcard)`. This is the correct interpretation - `archive:` scopes the *next*
 predicate, just as `cs:` scopes the next term's case sensitivity.
 
 ### `noarchive:` as a post-filter
@@ -479,7 +479,7 @@ Conversion requires `Utf32Str::new(s: &str, buf: &mut Vec<char>)` which fills
 the buffer and returns a `Utf32Str<'_>` backed by it. The `Matcher` is not
 `Send` (it holds internal state), so each rayon worker constructs its own
 `Matcher::new(Config::DEFAULT)`. `fuzzy_match` returns `Option<u16>`, not
-`Option<u32>` — scores are normalised against 1 024 for the threshold
+`Option<u32>` - scores are normalised against 1 024 for the threshold
 comparison.
 
 ### `glob_to_sqlite` does not escape brackets

@@ -1,5 +1,5 @@
 // ---------------------------------------------------------------------------
-// Rendering — zero heap allocations for stable frames
+// Rendering - zero heap allocations for stable frames
 // ---------------------------------------------------------------------------
 
 use ratatui::{
@@ -25,7 +25,7 @@ pub(super) fn render(f: &mut Frame, app: &mut App) {
     // ── Search input ──────────────────────────────────────────────────────
     let search_block = Block::default()
         .borders(Borders::ALL)
-        // Borrows the pre-computed String — no allocation.
+        // Borrows the pre-computed String - no allocation.
         .title(app.mode_title.as_str());
     let input_para = Paragraph::new(app.input.as_str())
         .block(search_block)
@@ -41,7 +41,7 @@ pub(super) fn render(f: &mut Frame, app: &mut App) {
     );
 
     // ── Results list ─────────────────────────────────────────────────────
-    // Borrows pre-computed strings — no clone, no format! per row per frame.
+    // Borrows pre-computed strings - no clone, no format! per row per frame.
     let items: Vec<ListItem> = app.rows.iter().map(|row| {
         let zip_tag = if row.is_archive {
             Span::styled(" [zip]", Style::default().fg(Color::DarkGray).add_modifier(Modifier::DIM))

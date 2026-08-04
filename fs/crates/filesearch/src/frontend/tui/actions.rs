@@ -123,7 +123,7 @@ async fn handle_key(app: &mut App, key: KeyEvent) -> anyhow::Result<bool> {
 }
 
 // ---------------------------------------------------------------------------
-// IPC helpers — all go through app.send() for connection reuse
+// IPC helpers - all go through app.send() for connection reuse
 // ---------------------------------------------------------------------------
 
 async fn search(app: &mut App, query: String) {

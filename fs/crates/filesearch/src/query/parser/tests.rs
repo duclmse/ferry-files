@@ -43,7 +43,7 @@ fn or_lower_than_and() {
 
 #[test]
 fn angle_group() {
-    // "<c:|d:> *.mp3" — c: and d: are drive prefixes inside a group
+    // "<c:|d:> *.mp3" - c: and d: are drive prefixes inside a group
     let e = parse_ok("<c:|d:> *.mp3");
     assert!(matches!(e, Expr::And(_, _)));
 }
@@ -181,7 +181,7 @@ fn size_gt_1mb() {
 
 #[test]
 fn windows_drive_path_prefix() {
-    // "c:\users\" is a Windows path prefix — should produce a path: predicate
+    // "c:\users\" is a Windows path prefix - should produce a path: predicate
     // with match_path=true.
     let e = parse_ok(r"c:\users\");
     if let Expr::Predicate(p) = e {

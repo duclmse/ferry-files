@@ -1,4 +1,4 @@
-# AGENTS.md — zipfs Workspace
+# AGENTS.md - zipfs Workspace
 
 This document is for AI agents working on this codebase. It describes the
 architecture, module contracts, key invariants, and patterns you need to
@@ -10,15 +10,15 @@ understand before making changes.
 
 ```
 crates/
-  common/          # Shared foundation — always build this first
+  common/          # Shared foundation - always build this first
   filesearch/      # File-search daemon (cross-platform)
   rar2zip/         # Archive-transfer service (Windows only)
 ```
 
 `crates/common` is a library crate depended on by both binaries. It owns:
 
-- `error.rs` — `CommonError`, `ProjectError` trait
-- `logger.rs` — `tracing` init (JSON format, daily rolling file)
+- `error.rs` - `CommonError`, `ProjectError` trait
+- `logger.rs` - `tracing` init (JSON format, daily rolling file)
 
 ---
 
@@ -56,7 +56,7 @@ Filesystem events (notify-debouncer-full, 500ms debounce)
 - **Tantivy commits are batched.** Writes go to an in-memory segment; commits
   happen every `commit_interval_secs` (default 5s) and after each bulk crawl.
   Never call `commit()` inside a tight loop.
-- **Query plans** are one of four variants — `SqliteOnly`, `TantivyThenSqlite`,
+- **Query plans** are one of four variants - `SqliteOnly`, `TantivyThenSqlite`,
   `DupeSearch`, `FuzzyFilter`. The evaluator selects the plan; don't add
   cross-plan branching inside individual plan arms.
 - **`fuzzy:` is a first-class query function**, not a query mode switch. It maps
@@ -195,7 +195,7 @@ are not un-watched until restart). Do not assume config is static after startup.
 
 - Unit tests live in the same file as the code (`#[cfg(test)]` modules).
 - Integration tests that need real files use `tempfile::TempDir`.
-- No database mocks — tests hit real SQLite (in-memory via `":memory:"`
+- No database mocks - tests hit real SQLite (in-memory via `":memory:"`
   connection string).
 - Archive tests use fixture files checked into `tests/fixtures/`.
 

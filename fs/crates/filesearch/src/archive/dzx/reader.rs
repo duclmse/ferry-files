@@ -14,7 +14,7 @@ pub struct DzxBlockData {
 }
 
 // ---------------------------------------------------------------------------
-// DzxIndex — mmap-backed reader
+// DzxIndex - mmap-backed reader
 // ---------------------------------------------------------------------------
 
 fn read_le<const N: usize>(buf: &[u8], offset: usize) -> Result<[u8; N], DzxError> {
@@ -109,7 +109,7 @@ impl DzxIndex {
 }
 
 // ---------------------------------------------------------------------------
-// Random-access read (async, iterative — not recursive)
+// Random-access read (async, iterative - not recursive)
 // ---------------------------------------------------------------------------
 
 pub async fn read_range(
@@ -162,7 +162,7 @@ pub async fn read_range(
 }
 
 // ---------------------------------------------------------------------------
-// decompress_block — sync, called from spawn_blocking
+// decompress_block - sync, called from spawn_blocking
 // ---------------------------------------------------------------------------
 
 pub(super) fn decompress_block(
@@ -177,7 +177,7 @@ pub(super) fn decompress_block(
     let mut d       = Decompress::new(false); // raw deflate
     // Must be >= WINDOW_SIZE: with FlushDecompress::None, flate2 can consume the
     // whole synthetic STORED-block preamble into its internal window in one call
-    // while only copying what fits in `output` — it won't drain the rest on a
+    // while only copying what fits in `output` - it won't drain the rest on a
     // later call with empty input, so undersizing this stalls the preamble seed
     // partway through and desyncs the decoder from the real block data that follows.
     let mut tmp_buf = [0u8; WINDOW_SIZE];
@@ -192,7 +192,7 @@ pub(super) fn decompress_block(
         let preamble = make_stored_block(window);
         let mut pos   = 0usize;
         // flate2 may consume the whole STORED block into its internal window in
-        // one call while only copying one tmp_buf's worth into `output` — input
+        // one call while only copying one tmp_buf's worth into `output` - input
         // being exhausted does not mean the window is fully seeded yet, so keep
         // pumping (with empty input once `pos` reaches the end) until all of
         // `window` has actually been produced as output.

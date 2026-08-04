@@ -10,12 +10,12 @@
 //!   └──────────────────────────────────────────┘
 //!
 //! Keybindings:
-//!   Type       — update query (debounced 100 ms → IPC search)
-//!   ↑ / ↓     — navigate results
-//!   Enter      — open selected file via /open API
-//!   Tab        — cycle mode: exact → fuzzy: → regex: → content: → archive:
-//!   Ctrl+C/Esc — exit
-//!   F5         — force re-index
+//!   Type - update query (debounced 100 ms → IPC search)
+//!   ↑ / ↓ - navigate results
+//!   Enter - open selected file via /open API
+//!   Tab - cycle mode: exact → fuzzy: → regex: → content: → archive:
+//!   Ctrl+C/Esc - exit
+//!   F5 - force re-index
 
 mod app;
 mod actions;

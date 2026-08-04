@@ -2,7 +2,7 @@ use axum::{response::IntoResponse, Json};
 use serde::Serialize;
 
 // ---------------------------------------------------------------------------
-// GET /fs/drives  — enumerate logical drives (Windows) / stub (other platforms)
+// GET /fs/drives - enumerate logical drives (Windows) / stub (other platforms)
 // ---------------------------------------------------------------------------
 
 #[derive(Serialize)]

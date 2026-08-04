@@ -1,4 +1,4 @@
-# Phase 3 — Indexer & Watcher
+# Phase 3 - Indexer & Watcher
 
 **Goal:** Implement the `filesearch` indexer pipeline (exclusions, content
 extraction, parallel crawler) and the cross-platform filesystem watcher. After
@@ -12,7 +12,7 @@ detection, job enqueue).
 
 ---
 
-## 3.1 filesearch — Exclusion Engine (`indexer/exclusions.rs`)
+## 3.1 filesearch - Exclusion Engine (`indexer/exclusions.rs`)
 
 ```rust
 pub struct ExclusionEngine {
@@ -46,7 +46,7 @@ Used in content extraction (skip content on network mounts if
 
 ---
 
-## 3.2 filesearch — Content Extraction (`indexer/content.rs`)
+## 3.2 filesearch - Content Extraction (`indexer/content.rs`)
 
 ```rust
 pub fn content_limit(path: &Path, cfg: &ContentConfig) -> Option<u64>;
@@ -78,7 +78,7 @@ boundary to avoid splitting multi-byte chars.
 
 ---
 
-## 3.3 filesearch — Parallel Crawler (`indexer/crawler.rs`)
+## 3.3 filesearch - Parallel Crawler (`indexer/crawler.rs`)
 
 ### Full Crawl
 
@@ -92,7 +92,7 @@ pub async fn full_crawl(
 ) -> Result<()>
 ```
 
-Algorithm (mark-and-sweep reconciliation — no full path list in Rust memory):
+Algorithm (mark-and-sweep reconciliation - no full path list in Rust memory):
 
 1. Call `sqlite.begin_crawl_generation()` once at crawl start to get a new
    monotonically increasing generation counter.
@@ -108,7 +108,7 @@ Algorithm (mark-and-sweep reconciliation — no full path list in Rust memory):
       - If `content_limit(path, cfg).is_some()`: extract and index content.
       - If entry is a ZIP and `archive_index.enabled`: call `crawl_archive()`.
    d. After each watch root finishes:
-      `sqlite.remove_stale_for_root(watch_root, generation)` — deletes rows
+      `sqlite.remove_stale_for_root(watch_root, generation)` - deletes rows
       with an older or null generation entirely in SQL; no Vec of paths loaded.
 3. Final Tantivy commit.
 4. Update `index_meta` with `last_crawl_time` and `total_files`.
@@ -146,7 +146,7 @@ pub struct IndexMetrics {
 
 ---
 
-## 3.4 filesearch — Filesystem Watcher (`watcher/mod.rs`)
+## 3.4 filesearch - Filesystem Watcher (`watcher/mod.rs`)
 
 ```rust
 pub async fn run_watcher(
@@ -164,7 +164,7 @@ pub async fn run_watcher(
 
 ---
 
-## 3.5 rar2zip — Folder Watcher (`watcher.rs`)
+## 3.5 rar2zip - Folder Watcher (`watcher.rs`)
 
 ```rust
 pub async fn run_watcher(
@@ -184,7 +184,7 @@ Filter pipeline (applied in order for each `Create(File)` event):
 
 ---
 
-## 3.6 rar2zip — Intake (`intake.rs`)
+## 3.6 rar2zip - Intake (`intake.rs`)
 
 ### Responsibilities
 
@@ -211,7 +211,7 @@ Filter pipeline (applied in order for each `Create(File)` event):
 
 ---
 
-## 3.7 filesearch — Archive Entry Crawler (`indexer/archive.rs`)
+## 3.7 filesearch - Archive Entry Crawler (`indexer/archive.rs`)
 
 Full specification in `zip-inner-streaming-spec.md` sections 4–5.
 
@@ -269,7 +269,7 @@ pub fn select_strategy(file_size_bytes: u64, threshold_mb: u64) -> Strategy {
 
 ---
 
-## 3.7 Tests — Phase 3
+## 3.7 Tests - Phase 3
 
 ### filesearch Exclusion Engine
 
@@ -355,13 +355,13 @@ pub fn select_strategy(file_size_bytes: u64, threshold_mb: u64) -> Strategy {
 ### Key API Differences (zip 2.x)
 
 - `ZipFile::last_modified()` returns `Option<zip::DateTime>`, not
-  `zip::DateTime` — `dos_to_unix` must handle `None`.
+  `zip::DateTime` - `dos_to_unix` must handle `None`.
 - `by_index_decrypt(i, pw)` returns `ZipResult<ZipFile>` directly (no
   double-wrapping); pattern is `Ok(mut f)`.
 
 ### notify-debouncer-full 0.3
 
-- `Debouncer` has no `.watch()` method — use
+- `Debouncer` has no `.watch()` method - use
   `debouncer.watcher().watch(path, mode)`.
 - `use notify::Watcher;` must be in scope for the `watch()` method to resolve.
 - `DebouncedEvent.paths` is a `Vec`; iterate with `.iter().cloned()` when the
@@ -369,7 +369,7 @@ pub fn select_strategy(file_size_bytes: u64, threshold_mb: u64) -> Strategy {
 
 ### Multi-part RAR Completeness (new-style)
 
-Detection uses pure string ops (`strip_suffix`, byte-level digit scan) — no
+Detection uses pure string ops (`strip_suffix`, byte-level digit scan) - no
 regex. The key invariant: when only `part1` has arrived we cannot determine
 whether more parts are coming, so completeness is only checked when
 `part_num >= 2`. A genuine single-volume `.part1.rar`-only archive requires a
@@ -393,4 +393,4 @@ batch all inner-file upserts in a single SQLite transaction per archive.
 In `windows` 0.54 with the `Win32_Storage_FileSystem` feature, the
 `DRIVE_REMOTE` constant is not re-exported. Use
 `const DRIVE_REMOTE_VAL: u32 = 4` (stable Windows ABI constant). The return type
-is `u32`, not a newtype — no `.0` needed.
+is `u32`, not a newtype - no `.0` needed.

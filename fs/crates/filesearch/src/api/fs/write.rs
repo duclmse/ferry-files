@@ -269,7 +269,7 @@ pub(super) async fn mkdir_handler(
 }
 
 // ---------------------------------------------------------------------------
-// Blocking helpers — called only from spawn_blocking
+// Blocking helpers - called only from spawn_blocking
 // ---------------------------------------------------------------------------
 
 /// Count all files under `root` (directories not counted; they have no size

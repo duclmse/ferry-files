@@ -1,4 +1,4 @@
-# rar2zip — example configuration (Windows)
+# rar2zip - example configuration (Windows)
 # Copy to your preferred location and edit before starting the service.
 # Run `rar2zip --config config.toml validate-config` to verify.
 
@@ -36,7 +36,7 @@ user         = "deploy"
 remote_path  = "/srv/uploads/zips"
 ssh_key_path = 'C:\Users\service\.ssh\id_ed25519'
 
-# Second destination (optional — forces Disk strategy for all jobs)
+# Second destination (optional - forces Disk strategy for all jobs)
 # [[destinations]]
 # host         = "backup.example.com"
 # port         = 22
@@ -58,7 +58,7 @@ compression_level = 6
 stream_to_transfer_threshold_mb = 500
 
 # Expire incomplete multi-part archive groups after this many hours.
-# Set to 0 to never expire (not recommended — disk space will accumulate).
+# Set to 0 to never expire (not recommended - disk space will accumulate).
 multipart_timeout_hours = 24
 
 # ── Transfer ──────────────────────────────────────────────────────────────────
@@ -94,7 +94,7 @@ dashboard_port = 8080
 # Send an alert when the pending queue depth exceeds this value.
 alert_queue_depth_threshold = 50
 
-# ── SMTP (optional — required for email alerts) ───────────────────────────────
+# ── SMTP (optional - required for email alerts) ───────────────────────────────
 
 # [smtp]
 # host     = "smtp.example.com"

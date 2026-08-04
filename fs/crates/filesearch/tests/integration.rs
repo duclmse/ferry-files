@@ -24,7 +24,7 @@ use tokio::sync::{OwnedSemaphorePermit, Semaphore};
 use tokio_util::sync::CancellationToken;
 
 // ---------------------------------------------------------------------------
-// Concurrency gate — one daemon at a time to avoid resource starvation
+// Concurrency gate - one daemon at a time to avoid resource starvation
 // ---------------------------------------------------------------------------
 
 fn test_gate() -> Arc<Semaphore> {
@@ -107,7 +107,7 @@ txt  = 131072
 }
 
 // ---------------------------------------------------------------------------
-// TestDaemon — starts daemon, waits for /health, shuts down on drop
+// TestDaemon - starts daemon, waits for /health, shuts down on drop
 // ---------------------------------------------------------------------------
 
 struct TestDaemon {
@@ -424,7 +424,7 @@ async fn test_zip_inner_file_search() {
     let resp = daemon.search("archive: *.rs").await;
     assert_eq!(
         resp.result.len(), 3,
-        "expected 3 inner .rs entries, got {} — hits: {:?}",
+        "expected 3 inner .rs entries, got {} - hits: {:?}",
         resp.result.len(),
         resp.result.iter().map(|h| &h.path).collect::<Vec<_>>()
     );
@@ -498,7 +498,7 @@ async fn test_everything_query_acceptance() {
     let watch_dir = TempDir::new().unwrap();
 
     let daemon = TestDaemon::start(watch_dir.path(), dir).await;
-    // Wait for crawl (empty dir — very fast).
+    // Wait for crawl (empty dir - very fast).
     daemon
         .wait_until(Duration::from_secs(10), |s| s.total_files == 0)
         .await;

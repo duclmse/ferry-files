@@ -1,4 +1,4 @@
-//! Daemon lifecycle — startup, API server orchestration, graceful shutdown.
+//! Daemon lifecycle - startup, API server orchestration, graceful shutdown.
 
 use std::path::PathBuf;
 use std::sync::{
@@ -416,7 +416,7 @@ pub async fn run_with_shutdown(
 }
 
 // ---------------------------------------------------------------------------
-// Crawl spawner — deduplicates the "start a full crawl as a background task"
+// Crawl spawner - deduplicates the "start a full crawl as a background task"
 // pattern used both for the initial crawl and API-triggered reindexes.
 //
 // The `crawl_active` flag is set to `true` before calling this function by

@@ -1,4 +1,4 @@
-# Phase 6 — APIs, Service Layer & Orchestration
+# Phase 6 - APIs, Service Layer & Orchestration
 
 **Goal:** Wire up all the APIs for `filesearch` (REST, gRPC, IPC) and finish the
 `rar2zip-transfer` service layer (app.rs, service.rs, main.rs). After this
@@ -8,7 +8,7 @@ phase, both programs are fully functional end-to-end.
 
 ---
 
-## 6.1 filesearch — REST API (`api/rest.rs`)
+## 6.1 filesearch - REST API (`api/rest.rs`)
 
 Built with `axum 0.7` + `tower-http` for CORS and tracing.
 
@@ -61,24 +61,24 @@ error.
 
 Response `SearchHit` includes two new optional fields for inner archive entries:
 
-- `"archive_path"` — real outer ZIP path (`null` for filesystem files).
-- `"archive_entry"` — entry name within the archive (`null` for filesystem
+- `"archive_path"` - real outer ZIP path (`null` for filesystem files).
+- `"archive_entry"` - entry name within the archive (`null` for filesystem
   files).
 
 `/stats` response includes:
 
-- `"archive_entries_indexed"` — count of inner ZIP file records.
-- `"archives_crawled"` — count of ZIP files processed.
+- `"archive_entries_indexed"` - count of inner ZIP file records.
+- `"archives_crawled"` - count of ZIP files processed.
 
 ### Open File Endpoint
 
 ```rust
-// For real filesystem paths — platform dispatch:
+// For real filesystem paths - platform dispatch:
 // Linux:   Command::new("xdg-open").arg(path)
 // macOS:   Command::new("open").arg(path)
 // Windows: Command::new("cmd").args(["/C", "start", "", path])
 
-// For virtual archive paths (contains "!/") — extract then open:
+// For virtual archive paths (contains "!/") - extract then open:
 // 1. Split virtual path at "!/" → (archive_path, entry_name)
 // 2. Open outer ZIP, find entry by name
 // 3. Read entry bytes into a NamedTempFile (OS temp dir, original filename)
@@ -92,7 +92,7 @@ in the ZIP (archive changed since indexing).
 
 ---
 
-## 6.2 filesearch — gRPC API (`api/grpc.rs`)
+## 6.2 filesearch - gRPC API (`api/grpc.rs`)
 
 Implements the `FileSearch` service from `proto/filesearch.proto` using `tonic`
 (latest stable; record resolved version in `VERSIONS.md`).
@@ -133,7 +133,7 @@ fn main() {
 
 ---
 
-## 6.3 filesearch — IPC Server (`api/ipc.rs`)
+## 6.3 filesearch - IPC Server (`api/ipc.rs`)
 
 Newline-delimited JSON protocol over Unix socket / Windows Named Pipe.
 
@@ -174,7 +174,7 @@ Disconnect on client EOF or shutdown.
 
 ---
 
-## 6.4 filesearch — Daemon Orchestration (`daemon.rs`)
+## 6.4 filesearch - Daemon Orchestration (`daemon.rs`)
 
 ### Startup Sequence
 
@@ -212,7 +212,7 @@ On `CancellationToken` cancel:
 
 ---
 
-## 6.5 filesearch — CLI Frontend (`frontend/cli.rs`)
+## 6.5 filesearch - CLI Frontend (`frontend/cli.rs`)
 
 ### Non-interactive Mode
 
@@ -272,7 +272,7 @@ Keybindings:
 
 ---
 
-## 6.6 rar2zip — Core Run Loop (`app.rs`)
+## 6.6 rar2zip - Core Run Loop (`app.rs`)
 
 ### Startup Sequence
 
@@ -280,7 +280,7 @@ Keybindings:
 pub async fn run(config: Arc<RwLock<Config>>, shutdown: CancellationToken) -> Result<()>
 ```
 
-1. `JobQueue::new()` — open/migrate SQLite.
+1. `JobQueue::new()` - open/migrate SQLite.
 2. Re-enqueue stale jobs (`queue.get_stale_jobs()`). 2b. If
    `multipart_timeout_hours > 0`: call `queue.get_expired_groups()`, move each
    expired group's parts to `failed/`, call `queue.clear_parts()`.
@@ -343,7 +343,7 @@ On `CancellationToken` cancel:
 
 ---
 
-## 6.7 rar2zip — Windows Service (`service.rs`)
+## 6.7 rar2zip - Windows Service (`service.rs`)
 
 ```rust
 windows_service::define_windows_service!(ffi_service_main, service_main);
@@ -381,7 +381,7 @@ if ($Uninstall) {
 
 ---
 
-## 6.8 rar2zip — Main CLI (`main.rs`)
+## 6.8 rar2zip - Main CLI (`main.rs`)
 
 All four subcommands:
 
@@ -437,29 +437,29 @@ All four subcommands:
 ### Files created
 
 **Proto + build:**
-- `proto/filesearch.proto` — `FileSearch` service with `Search`, `SearchStream`,
+- `proto/filesearch.proto` - `FileSearch` service with `Search`, `SearchStream`,
   `GetStats`, `Reindex` RPCs; message definitions match section 14 of the ref
   doc.
-- `build.rs` — `tonic_build::configure().compile(...)` via `tonic-build 0.11`.
+- `build.rs` - `tonic_build::configure().compile(...)` via `tonic-build 0.11`.
   Generates server stubs into `OUT_DIR`. Client stubs are not generated
   (`build_client(false)`).
 
 **API layer:**
-- `src/api/rest.rs` — Axum 0.7 router. `AppState` holds `sqlite`, `tantivy`,
+- `src/api/rest.rs` - Axum 0.7 router. `AppState` holds `sqlite`, `tantivy`,
   `config`, `metrics`, and `reindex_tx: watch::Sender<bool>`. Routes: `GET
   /search`, `GET /stats`, `POST /reindex`, `GET /health`, `GET /file`, `POST
   /open`. The `/open` handler distinguishes real paths (platform dispatch via
   `xdg-open` / `open` / `cmd start`) from virtual archive paths (extracts the
   ZIP entry to a `NamedTempFile`, opens it, schedules deletion after 30 s).
-- `src/api/grpc.rs` — Tonic `FileSearch` service. `SearchStream` fans out
+- `src/api/grpc.rs` - Tonic `FileSearch` service. `SearchStream` fans out
   result records through a bounded `mpsc` channel wrapped in
   `ReceiverStream`. `Reindex` sends on `reindex_tx`. `GetStats` reads
   `IndexMetrics` atomics.
-- `src/api/mod.rs` — updated to export `grpc`, `ipc_client`, `ipc_protocol`,
+- `src/api/mod.rs` - updated to export `grpc`, `ipc_client`, `ipc_protocol`,
   `ipc_server`, `rest`.
 
 **Daemon:**
-- `src/daemon.rs` — `pub async fn run(config_path: PathBuf) -> Result<(), AppError>`.
+- `src/daemon.rs` - `pub async fn run(config_path: PathBuf) -> Result<(), AppError>`.
   Startup sequence: validate config → init logging → write PID file (Unix) →
   open stores → create `watch` channel for reindex signals → spawn Tantivy
   commit loop (interval from `indexer.commit_interval_secs`) → spawn config
@@ -471,8 +471,8 @@ All four subcommands:
   `tantivy.commit()`, removes PID file (Unix).
 
 **Frontend:**
-- `src/frontend/mod.rs` — re-exports `tui`.
-- `src/frontend/tui.rs` — `pub async fn run(ipc_path: &Path) -> anyhow::Result<()>`.
+- `src/frontend/mod.rs` - re-exports `tui`.
+- `src/frontend/tui.rs` - `pub async fn run(ipc_path: &Path) -> anyhow::Result<()>`.
   ratatui 0.26 + crossterm. Three-pane layout: search input (top, 3 rows),
   scrollable results list (middle, fills remaining), status bar (bottom, 1 row).
   Debounce: 100 ms after last keystroke before sending IPC `Search` request.
@@ -482,12 +482,12 @@ All four subcommands:
   { full: true }`.
 
 **Wiring:**
-- `src/lib.rs` — added `pub mod daemon` and `pub mod frontend`.
-- `src/main.rs` — `Command::Daemon` delegates to `daemon::run()`; `Command::Tui`
+- `src/lib.rs` - added `pub mod daemon` and `pub mod frontend`.
+- `src/main.rs` - `Command::Daemon` delegates to `daemon::run()`; `Command::Tui`
   calls `frontend::tui::run()`. All IPC-backed commands unchanged.
 
 **Dependency added:**
-- `tokio-stream = "0.1"` — required for `ReceiverStream` in the gRPC streaming
+- `tokio-stream = "0.1"` - required for `ReceiverStream` in the gRPC streaming
   handler.
 
 ### Design decisions
@@ -496,7 +496,7 @@ All four subcommands:
   `Reindex` handlers send on it; the daemon main loop fires a new `full_crawl`
   task on each received change.
 - `axum::serve(...).with_graceful_shutdown(shutdown_c.cancelled())` is used for
-  REST; `tonic::Server::serve_with_shutdown` for gRPC — both respect the same
+  REST; `tonic::Server::serve_with_shutdown` for gRPC - both respect the same
   `CancellationToken`.
 - The TUI uses the existing `IpcClient` (postcard framing) rather than a
   separate HTTP or direct-store path, keeping the CLI and TUI on the same
@@ -507,7 +507,7 @@ All four subcommands:
 ### Test results
 
 All 106 pre-existing tests still pass; `cargo clippy -p filesearch -- -D
-warnings` is clean. The gRPC and REST layers have no in-file unit tests — they
+warnings` is clean. The gRPC and REST layers have no in-file unit tests - they
 are covered by integration testing against a running daemon (Phase 7).
 
 ---
@@ -516,10 +516,10 @@ are covered by integration testing against a running daemon (Phase 7).
 
 Three gaps found and closed after checking the DoD against the implementation:
 
-### Gap 1 — IPC `reindex_handler` was a no-op
+### Gap 1 - IPC `reindex_handler` was a no-op
 
 `ipc_server.rs::reindex_handler` acknowledged every `IpcRequest::Reindex`
-without forwarding the signal — `filesearch reindex --full` was silently
+without forwarding the signal - `filesearch reindex --full` was silently
 dropped and the daemon never started a crawl.
 
 **Fix:** `run_ipc_server` now accepts `reindex_tx: watch::Sender<bool>` and
@@ -527,7 +527,7 @@ stores it in `ConnCtx`. `reindex_handler` calls `ctx.reindex_tx.send(full)`,
 wiring it to the same watch channel consumed by the daemon's main select loop.
 `daemon.rs` passes `reindex_tx.clone()` when spawning the IPC server.
 
-### Gap 2 — IPC `open_handler` always returned `opened: false`
+### Gap 2 - IPC `open_handler` always returned `opened: false`
 
 `ipc_server.rs::open_handler` was a stub that always responded with
 `opened: false`. This broke both `filesearch open <path>` (CLI) and the TUI's
@@ -538,7 +538,7 @@ Enter key, which send `IpcRequest::Open`.
 shared helpers `rest::open_with_os` (real paths) or `rest::extract_and_open`
 (virtual `!/` paths), which were made `pub(crate)`.
 
-### Gap 3 — TUI status bar showed only a hit count
+### Gap 3 - TUI status bar showed only a hit count
 
 The spec (§6.5) shows `N results  •  Xms  •  mode`; the status bar only
 displayed `{n} result(s) (total: {total})`.
@@ -577,13 +577,13 @@ Test totals after the audit: **132 filesearch** (+26), **58 rar2zip** (+17).
 
 ### rar2zip DoD assessment
 
-The remaining unchecked DoD items are not missing code — they require
+The remaining unchecked DoD items are not missing code - they require
 external infrastructure:
 
-- **`run` end-to-end** — needs a real RAR/7z/tar archive to be placed in the
+- **`run` end-to-end** - needs a real RAR/7z/tar archive to be placed in the
   watch folder and a reachable SFTP destination. The watcher, intake, convert,
   and transfer layers are all unit-tested individually.
-- **Windows Service** — `service.rs` is fully implemented; `install-service.ps1`
+- **Windows Service** - `service.rs` is fully implemented; `install-service.ps1`
   is created. Verifiable only when run against Windows SCM (`sc create/start`).
 
 ---
@@ -592,7 +592,7 @@ external infrastructure:
 
 Three items were completed to make phase 6 fully buildable and correct on Windows.
 
-### 1 — Build: vendored `protoc`
+### 1 - Build: vendored `protoc`
 
 `cargo build` (and `cargo check`) failed on Windows because `protoc` is not
 installed in PATH. Fixed by adding `protoc-bin-vendored = "3"` to
@@ -602,13 +602,13 @@ ships a pre-compiled `protoc` binary for the current platform; no system-level
 installation required.
 
 **Files changed:**
-- `crates/filesearch/Cargo.toml` — `protoc-bin-vendored = "3"` in
+- `crates/filesearch/Cargo.toml` - `protoc-bin-vendored = "3"` in
   `[build-dependencies]`; `Win32_Foundation`, `Win32_Security`,
   `Win32_System_Threading` added to `windows` feature list.
-- `crates/filesearch/build.rs` — calls `protoc_bin_vendored::protoc_bin_path()`
+- `crates/filesearch/build.rs` - calls `protoc_bin_vendored::protoc_bin_path()`
   and sets `PROTOC` before `tonic_build::configure().compile(...)`.
 
-### 2 — Daemon: Windows named-mutex instance guard
+### 2 - Daemon: Windows named-mutex instance guard
 
 The startup sequence (§6.4 step 3) specifies a Unix PID file **and** a Windows
 named mutex to prevent duplicate daemon instances. The PID file was implemented;
@@ -623,16 +623,16 @@ instance is already running and the daemon exits with an error. The returned
 when the daemon exits.
 
 **Files changed:**
-- `crates/filesearch/src/daemon.rs` — `win_guard` module + `_instance_guard`
+- `crates/filesearch/src/daemon.rs` - `win_guard` module + `_instance_guard`
   binding in `run()`.
 
-### 3 — rar2zip: `install-service.ps1`
+### 3 - rar2zip: `install-service.ps1`
 
 The spec (§6.7) describes a PowerShell script for installing/uninstalling the
 Windows Service. It was missing.
 
 **File created:**
-- `crates/rar2zip/install-service.ps1` — `#Requires -RunAsAdministrator` script
+- `crates/rar2zip/install-service.ps1` - `#Requires -RunAsAdministrator` script
   with `-BinaryPath`, `-ConfigPath`, `-ServiceName`, `-Uninstall` parameters.
   Uses `sc.exe create/failure/start/stop/delete`. Resolves relative paths with
   `Resolve-Path` before passing to `sc.exe`.
@@ -642,7 +642,7 @@ Windows Service. It was missing.
 ```
 cargo check --workspace          → Finished (0 errors, 0 warnings)
 cargo clippy --workspace -- -D warnings → Finished (0 warnings)
-cargo test --workspace           → 132 filesearch, 58 rar2zip — all pass
+cargo test --workspace           → 132 filesearch, 58 rar2zip - all pass
 cargo build --release -p rar2zip → Finished (0 warnings, 2m 08s on Windows 11)
 ```
 
@@ -653,7 +653,7 @@ cargo build --release -p rar2zip → Finished (0 warnings, 2m 08s on Windows 11)
 A second-pass audit identified six code gaps and two missing test areas. All are
 now closed.
 
-### Gap 1 — gRPC reflection service
+### Gap 1 - gRPC reflection service
 
 `tonic-reflection` was a dependency but the reflection service was never added to
 the gRPC server builder. Added `FILE_DESCRIPTOR_SET` constant to the `proto`
@@ -663,11 +663,11 @@ builder in `daemon.rs` step 16 so gRPC tools like `grpcurl` and Postman can
 enumerate the service schema.
 
 **Files changed:**
-- `crates/filesearch/build.rs` — `file_descriptor_set_path` added.
-- `crates/filesearch/src/api/grpc.rs` — `FILE_DESCRIPTOR_SET` constant.
-- `crates/filesearch/src/daemon.rs` — reflection service wired into the server.
+- `crates/filesearch/build.rs` - `file_descriptor_set_path` added.
+- `crates/filesearch/src/api/grpc.rs` - `FILE_DESCRIPTOR_SET` constant.
+- `crates/filesearch/src/daemon.rs` - reflection service wired into the server.
 
-### Gap 2 — TUI status bar index/zip counters
+### Gap 2 - TUI status bar index/zip counters
 
 The status bar showed only hit count + latency; the `{idx} idx  {zip} zip`
 counters from §6.5 were wired but missing the `humanize_count` helper, broken
@@ -679,9 +679,9 @@ stats fields in `App`, and no call to fetch stats after each search.
 result set.
 
 **Files changed:**
-- `crates/filesearch/src/frontend/tui.rs` — all of the above plus 8 new tests.
+- `crates/filesearch/src/frontend/tui.rs` - all of the above plus 8 new tests.
 
-### Gap 3 — rar2zip startup: expired-group check
+### Gap 3 - rar2zip startup: expired-group check
 
 `expire_multipart` ran only in the hourly loop, not at startup. Groups whose
 assembly window expired while the process was down were left in the queue.
@@ -689,7 +689,7 @@ assembly window expired while the process was down were left in the queue.
 **Fix:** Added an `expire_multipart(&queue, &config)` call in `app::run()` right
 after `recover_stale_jobs`, before the background loops start.
 
-### Gap 4 — rar2zip graceful shutdown: wait for in-flight tasks
+### Gap 4 - rar2zip graceful shutdown: wait for in-flight tasks
 
 `app::run()` broke out of the event loop immediately on shutdown without waiting
 for in-flight `process_job` tasks, risking partial transfers.
@@ -700,11 +700,11 @@ tasks (intake and drain). After the main loop the tracker is closed and
 timeout. Workspace Cargo.toml updated: `tokio-util = { version = "0.7", features = ["rt"] }`.
 
 **Files changed:**
-- `Cargo.toml` — `tokio-util` gains `rt` feature.
-- `crates/rar2zip/src/app.rs` — `TaskTracker` import, tracker creation,
+- `Cargo.toml` - `tokio-util` gains `rt` feature.
+- `crates/rar2zip/src/app.rs` - `TaskTracker` import, tracker creation,
   `tokio::spawn` → `tracker.spawn` in intake and drain, shutdown wait.
 
-### Gap 5 — validate-config: TCP ping destinations
+### Gap 5 - validate-config: TCP ping destinations
 
 `rar2zip validate-config` called `config::validate()` but never tested network
 reachability for each destination.
@@ -714,9 +714,9 @@ reachability for each destination.
 inline; any failure causes exit code 1.
 
 **Files changed:**
-- `crates/rar2zip/src/main.rs` — TCP ping loop in `Command::ValidateConfig`.
+- `crates/rar2zip/src/main.rs` - TCP ping loop in `Command::ValidateConfig`.
 
-### Gap 6 — Daemon: conditional initial crawl
+### Gap 6 - Daemon: conditional initial crawl
 
 `daemon.rs` always spawned `full_crawl` at startup even when the index was
 already built. The spec (§6.4 step 6) says "If absent → `full_crawl()`".
@@ -726,13 +726,13 @@ already built. The spec (§6.4 step 6) says "If absent → `full_crawl()`".
 directs users to the Reindex API for manual reindex.
 
 **Files changed:**
-- `crates/filesearch/src/daemon.rs` — conditional crawl guard in `run()`.
+- `crates/filesearch/src/daemon.rs` - conditional crawl guard in `run()`.
 
 ### Missing tests added
 
-- `crates/filesearch/src/api/dto.rs` — 6 tests for `archive_entry` and
+- `crates/filesearch/src/api/dto.rs` - 6 tests for `archive_entry` and
   `archive_entry_opt` (real file, normal zip entry, missing `!/` separator).
-- `crates/filesearch/src/api/ipc_client.rs` — 3 tests for
+- `crates/filesearch/src/api/ipc_client.rs` - 3 tests for
   `is_connection_error` (true for Connect/Read/Write, false for DaemonError/
   UnexpectedMessage/FrameTooLarge) plus display format smoke test.
 
@@ -740,5 +740,5 @@ directs users to the Reindex API for manual reindex.
 
 ```
 cargo clippy --workspace -- -D warnings → Finished (0 warnings)
-cargo test --workspace                  → 148 filesearch, 58 rar2zip — all pass
+cargo test --workspace                  → 148 filesearch, 58 rar2zip - all pass
 ```
