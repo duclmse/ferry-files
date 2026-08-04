@@ -4,7 +4,7 @@
 # crawl via GET /stats, and reports throughput.
 #
 # Usage:
-#   scripts\bench.ps1 [-TargetDir <path>] [-WithContent]
+#   scripts\bench.ps1 [-TargetDir <path>] [-WithContent] [-KeepDb] [-DataDir <path>]
 #
 # -TargetDir defaults to the repo root. -WithContent turns on full-text
 # content extraction for common source extensions; by default it's off, which
@@ -12,11 +12,20 @@
 # Archive-inner-file indexing is always off, so results are comparable across
 # runs regardless of how many archives happen to live under TargetDir.
 #
+# -KeepDb leaves the scratch config/data/logs directory in place instead of
+# deleting it on exit (its path is printed at the end). -DataDir <path> uses a
+# specific directory instead of a fresh temp one (implies -KeepDb); reuse the
+# same path across runs to re-crawl on top of an existing index. Either way,
+# the kept directory's config.toml can be fed straight into
+# scripts\bench-query.ps1 to benchmark query latency against that data.
+#
 # Note: the daemon is stopped with Stop-Process (hard-kill), not a graceful
 # SIGTERM-equivalent - this is a benchmark helper, not a production stop path.
 param(
     [string]$TargetDir = "",
-    [switch]$WithContent
+    [switch]$WithContent,
+    [switch]$KeepDb,
+    [string]$DataDir = ""
 )
 
 $ErrorActionPreference = "Stop"
@@ -26,13 +35,20 @@ $repoRoot = (Get-Location).Path
 if (-not $TargetDir) { $TargetDir = $repoRoot }
 $TargetDir = (Resolve-Path $TargetDir).Path
 
+if ($DataDir) { $KeepDb = $true }
+
 if (-not (Test-Path "target\release\filesearch.exe")) {
     Write-Host "==> Building release binary first"
     & .\scripts\build.ps1
 }
 $bin = Join-Path $repoRoot "target\release\filesearch.exe"
 
-$workDir = Join-Path $env:TEMP ("filesearch-bench-" + [guid]::NewGuid().ToString("N"))
+if ($DataDir) {
+    New-Item -ItemType Directory -Force -Path $DataDir | Out-Null
+    $workDir = (Resolve-Path $DataDir).Path
+} else {
+    $workDir = Join-Path $env:TEMP ("filesearch-bench-" + [guid]::NewGuid().ToString("N"))
+}
 New-Item -ItemType Directory -Force -Path "$workDir\data" | Out-Null
 New-Item -ItemType Directory -Force -Path "$workDir\logs" | Out-Null
 $config = Join-Path $workDir "config.toml"
@@ -95,6 +111,25 @@ try {
     }
     if (-not $up) { throw "daemon did not come up; see $workDir\daemon.err.log" }
 
+    # daemon.rs skips the initial crawl entirely when the data dir already has
+    # a built index (see "needs_crawl" there), which is exactly the -DataDir
+    # reuse case this script documents. Detect that from the daemon's own log
+    # and force a fresh crawl via the reindex API so there's actually
+    # something to time; otherwise last_crawl_secs never gets set and the
+    # wait below hangs until timeout.
+    $logPath = "$workDir\daemon.out.log"
+    for ($i = 0; $i -lt 20; $i++) {
+        if ((Test-Path $logPath) -and (Select-String -Path $logPath -Pattern "skipping initial crawl|full crawl starting" -Quiet)) {
+            break
+        }
+        Start-Sleep -Milliseconds 500
+    }
+    if ((Test-Path $logPath) -and (Select-String -Path $logPath -Pattern "skipping initial crawl" -Quiet)) {
+        Write-Host "==> Existing index found; forcing a fresh crawl via /reindex to benchmark"
+        $startEpoch = [DateTimeOffset]::UtcNow.ToUnixTimeSeconds()
+        Invoke-RestMethod -Uri "http://127.0.0.1:$restPort/reindex" -Method Post -ContentType "application/json" -Body '{"full": true}' | Out-Null
+    }
+
     Write-Host "==> Waiting for full crawl to finish (timeout 600s)"
     $stats = $null
     $lastCrawl = 0
@@ -124,6 +159,10 @@ try {
     Write-Host "Dirs indexed:       $($stats.total_dirs)"
     Write-Host "Content indexed:    $($stats.content_indexed)"
     Write-Host "Throughput:         $filesPerSec files/sec, $entriesPerSec entries/sec"
+    if ($KeepDb) {
+        Write-Host "Data dir kept at:   $workDir"
+        Write-Host "  Query it with:    scripts\bench-query.ps1 $workDir"
+    }
     Write-Host "=============================================================="
 }
 finally {
@@ -131,5 +170,7 @@ finally {
         Stop-Process -Id $proc.Id -Force -ErrorAction SilentlyContinue
         $proc.WaitForExit(10000) | Out-Null
     }
-    Remove-Item -Recurse -Force $workDir -ErrorAction SilentlyContinue
+    if (-not $KeepDb) {
+        Remove-Item -Recurse -Force $workDir -ErrorAction SilentlyContinue
+    }
 }
