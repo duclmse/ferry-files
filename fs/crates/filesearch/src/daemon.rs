@@ -124,7 +124,9 @@ pub async fn run_with_shutdown(
                 .unwrap_or_else(|| cfg.data_dir.join("zidx"));
             std::fs::create_dir_all(&zidx_dir).map_err(AppError::Io)?;
             let cache_size = cfg.archive_service.index_cache_size;
-            let reg = Arc::new(ArchiveRegistry::new(zidx_dir.clone(), cache_size));
+            let dzx_dir = cfg.archive_service.dzx_dir.clone()
+                .unwrap_or_else(|| cfg.data_dir.join("dzx"));
+            let reg = Arc::new(ArchiveRegistry::new(zidx_dir.clone(), cache_size).with_dzx_dir(dzx_dir));
             // Warm the registry from existing .zidx files without a full re-crawl.
             if let Ok(zip_paths) = sqlite.list_archive_paths() {
                 for zip_str in zip_paths {

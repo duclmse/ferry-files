@@ -36,7 +36,6 @@ use write::{copy_handler, delete_handler, mkdir_handler, move_handler, write_han
 
 pub use common::ProgressEvent;
 pub use drives::DriveInfo;
-#[cfg(test)]
 pub(crate) use common::parse_range;
 
 // ---------------------------------------------------------------------------

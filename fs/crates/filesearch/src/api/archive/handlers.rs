@@ -40,11 +40,7 @@ pub(super) async fn get_index(
 
     // Conditional GET: skip re-reading the file when client has a fresh copy.
     if req_headers.get(header::IF_NONE_MATCH).map(|v| v.as_bytes()) == Some(etag.as_bytes()) {
-        return axum::http::Response::builder()
-            .status(StatusCode::NOT_MODIFIED)
-            .body(Body::empty())
-            .unwrap()
-            .into_response();
+        return StatusCode::NOT_MODIFIED.into_response();
     }
 
     let file = match tokio::fs::File::open(&zidx_path).await {
@@ -151,6 +147,7 @@ pub(super) async fn stream_file(
     State(state): State<AppState>,
     AxumPath(id): AxumPath<String>,
     Query(params): Query<NodeParam>,
+    req_headers:   axum::http::HeaderMap,
 ) -> impl IntoResponse {
     let node_id = params.node.unwrap_or(0);
 
@@ -167,6 +164,22 @@ pub(super) async fn stream_file(
     if node.kind != 0 {
         return err_bad_node("node is a directory", node_id).into_response();
     }
+
+    let range = match req_headers.get(header::RANGE).map(|v| v.to_str()) {
+        None         => None,
+        Some(Err(_)) => return (StatusCode::BAD_REQUEST, "invalid Range header encoding").into_response(),
+        Some(Ok(s))  => match crate::api::fs::parse_range(s, node.uncompressed_size) {
+            Some(r) => Some(r),
+            None    => {
+                return axum::http::Response::builder()
+                    .status(StatusCode::RANGE_NOT_SATISFIABLE)
+                    .header(header::CONTENT_RANGE, format!("bytes */{}", node.uncompressed_size))
+                    .body(axum::body::Body::empty())
+                    .map(IntoResponse::into_response)
+                    .unwrap_or_else(|e| err_internal(e.to_string()).into_response());
+            }
+        },
+    };
 
     let meta = crate::archive::EntryMeta {
         compression:         node.compression,
@@ -193,6 +206,35 @@ pub(super) async fn stream_file(
     };
     state.scheduler_metrics.inc_inflight();
 
+    // A Range is served directly only when it needs no full inflate: stored
+    // entries are a plain byte slice, deflate entries need a `.dzx` sidecar.
+    // Anything else falls back to the 200 full stream below, which RFC 9110
+    // permits (a server may ignore Range).
+    if let Some((start, end)) = range {
+        let dzx = if meta.compression == 8 {
+            state.archive_registry.dzx(&id, node.local_header_offset)
+        } else {
+            None
+        };
+        if meta.compression == 0 || dzx.is_some() {
+            let result = read_entry_range(source.as_ref(), &meta, dzx.as_ref(), start, end).await;
+            drop(permit);
+            state.scheduler_metrics.dec_inflight();
+            return match result {
+                Ok((bytes, end)) => axum::http::Response::builder()
+                    .status(StatusCode::PARTIAL_CONTENT)
+                    .header(header::CONTENT_TYPE,   "application/octet-stream")
+                    .header(header::CONTENT_LENGTH, bytes.len())
+                    .header(header::CONTENT_RANGE,  format!("bytes {start}-{end}/{}", node.uncompressed_size))
+                    .header(header::ACCEPT_RANGES,  "bytes")
+                    .body(axum::body::Body::from(bytes))
+                    .map(IntoResponse::into_response)
+                    .unwrap_or_else(|e| err_internal(e.to_string()).into_response()),
+                Err(e) => err_internal(e.to_string()).into_response(),
+            };
+        }
+    }
+
     let extractor      = crate::archive::ZipStreamExtractor { source };
     let metrics        = state.scheduler_metrics.clone();
     let on_finish: Option<Box<dyn FnOnce() + Send>> = Some(Box::new(move || {
@@ -213,6 +255,34 @@ pub(super) async fn stream_file(
         Ok(r)  => r.into_response(),
         Err(e) => err_internal(e.to_string()).into_response(),
     }
+}
+
+/// `read_range` buffers its whole result, so one request could otherwise pin
+/// the entire entry in memory (e.g. `bytes=0-` on a multi-GB file). A shorter
+/// 206 is valid: `Content-Range` tells the client what it got and it re-requests
+/// the rest, which is how media players page through large files anyway.
+const MAX_RANGE_BYTES: u64 = 8 * 1024 * 1024;
+
+/// Read the inclusive `[start, end]` uncompressed range of a stored entry, or
+/// of a deflate entry via its `.dzx` index. Returns the bytes and the actual
+/// (possibly clamped) inclusive end.
+async fn read_entry_range(
+    source: &dyn crate::archive::ByteSource,
+    meta:   &crate::archive::EntryMeta,
+    dzx:    Option<&crate::archive::DzxIndex>,
+    start:  u64,
+    end:    u64,
+) -> std::io::Result<(bytes::Bytes, u64)> {
+    let end = end.min(start + MAX_RANGE_BYTES - 1);
+    let len = (end - start + 1) as usize;
+    let bytes = match dzx {
+        Some(dzx) => crate::archive::dzx::read_range(source, meta, dzx, start, len).await?,
+        None      => {
+            let data_start = crate::archive::parse_local_header_offset(source, meta.local_header_offset).await?;
+            source.read_range(data_start + start, len).await?
+        }
+    };
+    Ok((bytes, end))
 }
 
 // ---------------------------------------------------------------------------

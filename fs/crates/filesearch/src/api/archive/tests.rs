@@ -278,3 +278,120 @@ async fn stream_file_handler_limits_concurrent_inflight_per_archive() {
     assert!(seen <= 2, "observed {seen} concurrent inflates, expected <= 2 (max_per_archive)");
 }
 
+
+// ----- Range requests on GET /archive/:id/file ------------------------------
+
+async fn get_file_with_range(
+    state: AppState,
+    id:    &str,
+    node:  u32,
+    range: &str,
+) -> (StatusCode, axum::http::HeaderMap, bytes::Bytes) {
+    use tower::ServiceExt;
+    let app      = crate::api::rest::router(state);
+    let request  = axum::http::Request::builder()
+        .uri(format!("/archive/{id}/file?node={node}"))
+        .header(header::RANGE, range)
+        .body(axum::body::Body::empty())
+        .unwrap();
+    let response = app.oneshot(request).await.unwrap();
+    let status   = response.status();
+    let headers  = response.headers().clone();
+    let body     = axum::body::to_bytes(response.into_body(), usize::MAX).await.unwrap();
+    (status, headers, body)
+}
+
+/// Deflated single-entry ZIP registered with a dzx-enabled registry.
+fn make_deflated_registry(dir: &TempDir, content: &[u8]) -> (PathBuf, PathBuf, Arc<ArchiveRegistry>) {
+    let zip_bytes = {
+        let mut buf = std::io::Cursor::new(Vec::new());
+        let mut zw  = zip::ZipWriter::new(&mut buf);
+        let opts    = zip::write::FileOptions::<()>::default()
+            .compression_method(zip::CompressionMethod::Deflated);
+        zw.start_file("data.bin", opts).unwrap();
+        zw.write_all(content).unwrap();
+        zw.finish().unwrap();
+        buf.into_inner()
+    };
+    let zip_path = dir.path().join("deflated.zip");
+    let zidx_dir = dir.path().join("zidx");
+    let dzx_dir  = dir.path().join("dzx");
+    std::fs::create_dir_all(&zidx_dir).unwrap();
+    std::fs::create_dir_all(&dzx_dir).unwrap();
+    std::fs::write(&zip_path, &zip_bytes).unwrap();
+    ZidxBuilder::build(&zip_path, &zidx_path_for(&zidx_dir, &zip_path)).unwrap();
+    let registry = Arc::new(ArchiveRegistry::new(zidx_dir, 256).with_dzx_dir(dzx_dir.clone()));
+    registry.register(zip_path.clone());
+    (zip_path, dzx_dir, registry)
+}
+
+#[tokio::test]
+async fn range_on_stored_entry_returns_206_slice() {
+    let dir     = TempDir::new().unwrap();
+    let content = b"0123456789abcdefghij";
+    let (zip_path, registry) = make_registry_with_zip(&dir, &[("s.txt", content)]);
+    let id      = archive_id(&zip_path);
+    let node_id = registry.index(&id).unwrap().children(0).next().unwrap().unwrap();
+
+    let state = make_test_app_state(&dir, registry);
+    let (status, headers, body) = get_file_with_range(state, &id, node_id, "bytes=5-9").await;
+    assert_eq!(status, StatusCode::PARTIAL_CONTENT);
+    assert_eq!(headers[header::CONTENT_RANGE], "bytes 5-9/20");
+    assert_eq!(&body[..], b"56789");
+}
+
+#[tokio::test]
+async fn range_on_deflate_entry_with_dzx_returns_206_slice() {
+    let dir     = TempDir::new().unwrap();
+    let content: Vec<u8> = (0..40_000u32).map(|i| (i * 7 % 251) as u8).collect();
+    let (zip_path, dzx_dir, registry) = make_deflated_registry(&dir, &content);
+    let id      = archive_id(&zip_path);
+    let idx     = registry.index(&id).unwrap();
+    let node_id = idx.children(0).next().unwrap().unwrap();
+    let node    = idx.node(node_id).unwrap();
+
+    let meta = crate::archive::EntryMeta {
+        compression:         node.compression,
+        compressed_size:     node.compressed_size,
+        uncompressed_size:   node.uncompressed_size,
+        local_header_offset: node.local_header_offset,
+    };
+    let dzx_path = crate::archive::dzx_path_for(&dzx_dir, &zip_path, node.local_header_offset);
+    crate::archive::DzxBuilder::new(crate::archive::DEFAULT_BLOCK_SIZE)
+        .build(registry.source(&id).unwrap().as_ref(), &meta, &dzx_path)
+        .await
+        .unwrap();
+
+    let state = make_test_app_state(&dir, registry);
+    let (status, headers, body) = get_file_with_range(state, &id, node_id, "bytes=30000-30099").await;
+    assert_eq!(status, StatusCode::PARTIAL_CONTENT);
+    assert_eq!(headers[header::CONTENT_RANGE], "bytes 30000-30099/40000");
+    assert_eq!(&body[..], &content[30_000..30_100]);
+}
+
+#[tokio::test]
+async fn range_on_deflate_entry_without_dzx_falls_back_to_full_200() {
+    let dir     = TempDir::new().unwrap();
+    let content = b"no sidecar here ".repeat(100);
+    let (zip_path, _dzx_dir, registry) = make_deflated_registry(&dir, &content);
+    let id      = archive_id(&zip_path);
+    let node_id = registry.index(&id).unwrap().children(0).next().unwrap().unwrap();
+
+    let state = make_test_app_state(&dir, registry);
+    let (status, _headers, body) = get_file_with_range(state, &id, node_id, "bytes=10-19").await;
+    assert_eq!(status, StatusCode::OK);
+    assert_eq!(&body[..], content.as_slice());
+}
+
+#[tokio::test]
+async fn range_beyond_eof_returns_416() {
+    let dir     = TempDir::new().unwrap();
+    let (zip_path, registry) = make_registry_with_zip(&dir, &[("s.txt", b"short")]);
+    let id      = archive_id(&zip_path);
+    let node_id = registry.index(&id).unwrap().children(0).next().unwrap().unwrap();
+
+    let state = make_test_app_state(&dir, registry);
+    let (status, headers, _body) = get_file_with_range(state, &id, node_id, "bytes=100-200").await;
+    assert_eq!(status, StatusCode::RANGE_NOT_SATISFIABLE);
+    assert_eq!(headers[header::CONTENT_RANGE], "bytes */5");
+}

@@ -640,12 +640,12 @@ counter and no stack growth.
 
 ## 11.12 Definition of Done
 
-- [ ] `cargo test -p filesearch archive::dzx` passes all tests.
-- [ ] `GET /archive/:id/file` with `Range:` header returns `206 Partial Content`
+- [x] `cargo test -p filesearch archive::dzx` passes all tests.
+- [x] `GET /archive/:id/file` with `Range:` header returns `206 Partial Content`
       using the `.dzx` path when available.
-- [ ] `.dzx` build is gated by `dzx_min_entry_bytes` - small entries are not
+- [x] `.dzx` build is gated by `dzx_min_entry_bytes` - small entries are not
       indexed.
-- [ ] Resume from window snapshot produces byte-identical output vs. full
+- [x] Resume from window snapshot produces byte-identical output vs. full
       inflate.
-- [ ] No `unwrap()` in `archive/dzx.rs`.
-- [ ] `cargo clippy -- -D warnings` clean.
+- [x] No `unwrap()` in `archive/dzx.rs`.
+- [x] `cargo clippy -- -D warnings` clean.

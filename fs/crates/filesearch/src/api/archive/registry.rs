@@ -6,7 +6,7 @@ use std::sync::Arc;
 
 use dashmap::DashMap;
 
-use crate::archive::LocalFileSource;
+use crate::archive::{dzx_path_for, DzxIndex, LocalFileSource};
 use crate::zidx::{ZidxIndex, zidx_path_for};
 
 // ---------------------------------------------------------------------------
@@ -55,6 +55,8 @@ pub struct ArchiveRegistry {
     /// on every streaming request.  Evicted (along with index_cache) on rebuild.
     source_cache: DashMap<String, Arc<LocalFileSource>>,
     zidx_dir:     PathBuf,
+    /// `None` disables `.dzx`-backed Range reads (requests fall back to a full stream).
+    dzx_dir:      Option<PathBuf>,
     enabled:      bool,
 }
 
@@ -77,6 +79,7 @@ impl ArchiveRegistry {
             index_cache:  DashMap::new(),
             source_cache: DashMap::new(),
             zidx_dir,
+            dzx_dir:      None,
             enabled:      true,
         }
     }
@@ -87,8 +90,14 @@ impl ArchiveRegistry {
             index_cache:  DashMap::new(),
             source_cache: DashMap::new(),
             zidx_dir:     PathBuf::new(),
+            dzx_dir:      None,
             enabled:      false,
         }
+    }
+
+    pub fn with_dzx_dir(mut self, dzx_dir: PathBuf) -> Self {
+        self.dzx_dir = Some(dzx_dir);
+        self
     }
 
     pub fn is_enabled(&self) -> bool { self.enabled }
@@ -165,6 +174,24 @@ impl ArchiveRegistry {
             }
             Err(e) => {
                 tracing::warn!("failed to open source for archive {id}: {e}");
+                None
+            }
+        }
+    }
+
+    /// Open the `.dzx` sidecar for the entry at `local_header_offset`, if one
+    /// was built. Not cached: `DzxIndex::open` is a single mmap, and sidecars
+    /// can appear after registration (they are built after the `.zidx`).
+    pub fn dzx(&self, id: &str, local_header_offset: u64) -> Option<DzxIndex> {
+        if !self.enabled { return None; }
+        let dzx_dir  = self.dzx_dir.as_ref()?;
+        let zip_path = self.entries.get(id)?.zip_path.clone();
+        let path     = dzx_path_for(dzx_dir, &zip_path, local_header_offset);
+        if !path.exists() { return None; }
+        match DzxIndex::open(&path) {
+            Ok(dzx) => Some(dzx),
+            Err(e)  => {
+                tracing::warn!("failed to open .dzx {}: {e}", path.display());
                 None
             }
         }
