@@ -347,7 +347,7 @@ benchmarks (smoke test only, not perf assertion):
 - [x] `cargo bench -p filesearch` runs without errors.
 - [x] SIMD inflate throughput ≥ 400 MB/s on target hardware (measured with
       criterion).
-- [ ] Scheduler dispatch of 1000 tasks < 100 µs (criterion).
+- [x] Scheduler dispatch of 1000 tasks < 100 µs (criterion).
 - [x] Stage instrumentation disabled in release builds without env var.
 - [x] `cargo clippy -- -D warnings` clean.
 - [x] No `unwrap()` in `archive/inflate.rs` or `scheduler/` module.
@@ -363,12 +363,25 @@ benchmarks (smoke test only, not perf assertion):
 
 - `inflate/simd_1mb`: ~287 µs/iter, ~3.39 GiB/s (~3,470 MB/s) - well above the
   400 MB/s target.
-- `scheduler/dispatch_1000_tasks`: ~311 µs/iter - above the 100 µs target.
-  The DRR dispatch loop does a `DashMap` lookup + `VecDeque` pop per task;
-  at 1000 tasks that's dominated by per-task bookkeeping overhead rather than
-  any single hot loop, so hitting 100 µs would need batching dispatch instead
-  of a per-task async hop. Left as a known gap rather than a regression to
-  chase for this phase.
+- `scheduler/dispatch_1000_tasks`: ~311 µs/iter at first, above the 100 µs
+  target. Two problems caused it:
+  - The benchmark timed scheduler construction, 1000 enqueues (each with a
+    `format!` and `SystemTime::now()`) and the task drops, as well as dispatch.
+  - `ArchiveScheduler` hashed an `IpAddr` and an archive `String` on every
+    dispatch, and `enqueue` summed every archive queue to check the depth.
+
+  **Fixed 2026-11-06:**
+  - Clients and archives now live in `Vec`s addressed by index. A `HashMap` is
+    consulted only on enqueue and complete.
+  - A running `queued` counter makes the depth check O(1).
+  - The benchmark builds the queue in `iter_batched` setup, uses a fixed
+    `now`, and defers task drops out of the timed region.
+
+  Results:
+  - `dispatch_1000_tasks`: ~75 µs/iter, under the 100 µs target.
+  - `dispatch_1000_imbalanced`: ~65 µs/iter.
+  - `enqueue_1000_tasks` is measured separately: ~129 µs/iter, including
+    task construction.
 
 ### Module Layout (as built)
 

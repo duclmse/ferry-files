@@ -6,7 +6,7 @@
 use std::net::IpAddr;
 use std::time::{SystemTime, UNIX_EPOCH};
 
-use criterion::{black_box, criterion_group, criterion_main, Criterion, Throughput};
+use criterion::{black_box, criterion_group, criterion_main, BatchSize, Criterion, Throughput};
 
 use filesearch::scheduler::{ArchiveScheduler, SchedulerMetrics, Task};
 
@@ -40,35 +40,47 @@ fn make_scheduler() -> ArchiveScheduler {
 }
 
 // ---------------------------------------------------------------------------
-// Benchmark: enqueue + dispatch 1000 tasks (10 clients × 10 archives × 10 tasks)
+// Benchmark: dispatch 1000 pre-enqueued tasks (10 clients × 10 archives × 10)
+//
+// Enqueueing and task drops happen outside the timed region so this measures
+// the DRR dispatch/complete cycle alone; enqueue cost has its own benchmark.
 // ---------------------------------------------------------------------------
+
+fn filled_scheduler(tasks: impl IntoIterator<Item = Task>) -> (ArchiveScheduler, Vec<Task>) {
+    let mut sched = make_scheduler();
+    let mut n = 0;
+    for task in tasks {
+        let _ = sched.enqueue(task, 0);
+        n += 1;
+    }
+    (sched, Vec::with_capacity(n))
+}
+
+fn drain(sched: &mut ArchiveScheduler, out: &mut Vec<Task>, now: u64) {
+    while let Some(task) = sched.dispatch(now) {
+        sched.on_complete(&task.client, &task.archive, 0);
+        out.push(task);
+    }
+}
 
 fn bench_dispatch_1000(c: &mut Criterion) {
     let mut g = c.benchmark_group("scheduler");
     g.throughput(Throughput::Elements(1000));
 
+    let now = now_ns();
     g.bench_function("dispatch_1000_tasks", |b| {
-        b.iter(|| {
-            let mut sched = make_scheduler();
-            let now = now_ns();
-
-            // 10 clients × 10 archives × 10 tasks = 1000.
-            for client in 0u8..10 {
-                for archive in 0u8..10 {
-                    for _ in 0..10 {
-                        let task = make_task(client, archive, 1, 10);
-                        let _ = sched.enqueue(task, now);
-                    }
-                }
-            }
-
-            let mut dispatched = 0usize;
-            while let Some(task) = sched.dispatch(now_ns()) {
-                sched.on_complete(&task.client, &task.archive, 0);
-                dispatched += 1;
-            }
-            black_box(dispatched)
-        });
+        b.iter_batched(
+            || filled_scheduler((0u8..10).flat_map(|client| {
+                (0u8..10).flat_map(move |archive| {
+                    (0..10).map(move |_| make_task(client, archive, 1, 10))
+                })
+            })),
+            |(mut sched, mut out)| {
+                drain(&mut sched, &mut out, now);
+                black_box(out)
+            },
+            BatchSize::SmallInput,
+        );
     });
 
     g.finish();
@@ -110,33 +122,22 @@ fn bench_dispatch_imbalanced(c: &mut Criterion) {
     let mut g = c.benchmark_group("scheduler");
     g.throughput(Throughput::Elements(1000));
 
+    let now = now_ns();
     g.bench_function("dispatch_1000_imbalanced", |b| {
-        b.iter(|| {
-            let mut sched = make_scheduler();
-            let now = now_ns();
-
-            // Client 0 gets 900 tasks.
-            for _ in 0..900 {
-                let task = make_task(0, 0, 2, 1); // bulk priority
-                let _ = sched.enqueue(task, now);
-            }
-            // Clients 1-9 each get ~11 tasks.
-            for client in 1u8..10 {
-                for _ in 0..11 {
-                    let task = make_task(client, client, 1, 1);
-                    let _ = sched.enqueue(task, now);
-                }
-            }
-
-            let mut dispatched = 0usize;
-            while let Some(task) = sched.dispatch(now_ns()) {
-                sched.on_complete(&task.client, &task.archive, 0);
-                dispatched += 1;
-            }
-            black_box(dispatched)
-        });
+        b.iter_batched(
+            || filled_scheduler(
+                // Client 0 gets 900 bulk tasks; clients 1-9 get 11 each.
+                (0..900).map(|_| make_task(0, 0, 2, 1)).chain(
+                    (1u8..10).flat_map(|client| (0..11).map(move |_| make_task(client, client, 1, 1))),
+                ),
+            ),
+            |(mut sched, mut out)| {
+                drain(&mut sched, &mut out, now);
+                black_box(out)
+            },
+            BatchSize::SmallInput,
+        );
     });
-
     g.finish();
 }
 

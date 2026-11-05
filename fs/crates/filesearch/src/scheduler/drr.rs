@@ -58,10 +58,6 @@ impl ArchiveQueue {
         self.high.is_empty() && self.normal.is_empty() && self.bulk.is_empty()
     }
 
-    fn total_len(&self) -> usize {
-        self.high.len() + self.normal.len() + self.bulk.len()
-    }
-
     fn pop_highest(&mut self) -> Option<Task> {
         self.high.pop_front()
             .or_else(|| self.normal.pop_front())
@@ -89,12 +85,17 @@ impl ArchiveQueue {
 // ClientQueue
 // ---------------------------------------------------------------------------
 
+// Archives live in a Vec and are addressed by index so the dispatch hot path
+// never hashes a String; the map is only consulted on enqueue/complete.
 struct ClientQueue {
     deficit:  i64,
     quantum:  i64,
-    archives: HashMap<ArchiveId, ArchiveQueue>,
-    rr_keys:  Vec<ArchiveId>,
+    index:    HashMap<ArchiveId, usize>,
+    archives: Vec<ArchiveQueue>,
     rr_idx:   usize,
+    // Kept in sync on every push/pop so the depth check on enqueue is O(1)
+    // instead of summing every archive queue.
+    queued:   usize,
     archive_quantum:      i64,
     archive_concurrency:  usize,
 }
@@ -104,56 +105,61 @@ impl ClientQueue {
         Self {
             deficit:  0,
             quantum,
-            archives: HashMap::new(),
-            rr_keys:  Vec::new(),
+            index:    HashMap::new(),
+            archives: Vec::new(),
             rr_idx:   0,
+            queued:   0,
             archive_quantum,
             archive_concurrency,
         }
     }
 
     fn enqueue(&mut self, task: Task) {
-        // Fast path (existing archive): zero String allocations, one lookup.
-        if let Some(aq) = self.archives.get_mut(&task.archive) {
-            aq.push(task);
-            return;
-        }
-        // Slow path (new archive): two String allocations (map key + rr_keys).
-        let id = task.archive.clone();
-        self.archives.insert(id.clone(), ArchiveQueue::new(self.archive_quantum, self.archive_concurrency));
-        self.rr_keys.push(id);
-        // Unwrap safe: we just inserted the entry above.
-        self.archives.get_mut(&task.archive).unwrap().push(task);
+        let idx = match self.index.get(&task.archive) {
+            Some(&idx) => idx,
+            None => {
+                let idx = self.archives.len();
+                self.archives.push(ArchiveQueue::new(self.archive_quantum, self.archive_concurrency));
+                self.index.insert(task.archive.clone(), idx);
+                idx
+            }
+        };
+        self.archives[idx].push(task);
+        self.queued += 1;
     }
 
-    fn total_len(&self) -> usize {
-        self.archives.values().map(|q| q.total_len()).sum()
+    fn drop_bulk(&mut self) -> usize {
+        let removed = self.archives.iter_mut().fold(0, |acc, aq| {
+            let before = aq.bulk.len();
+            aq.bulk.clear();
+            acc + before
+        });
+        self.queued -= removed;
+        removed
     }
 
     /// Round-robin over per-archive queues, picking the first that can dispatch.
     fn try_dequeue(&mut self) -> Option<Task> {
-        if self.rr_keys.is_empty() { return None; }
+        if self.queued == 0 { return None; }
         self.deficit += self.quantum;
         if self.deficit <= 0 { return None; }
 
-        let n = self.rr_keys.len();
+        let n = self.archives.len();
         for _ in 0..n {
-            let idx = self.rr_idx % n;
-            self.rr_idx = (self.rr_idx + 1) % n;
-            let archive_id = &self.rr_keys[idx];
-            if let Some(aq) = self.archives.get_mut(archive_id) {
-                if let Some(task) = aq.try_dequeue() {
-                    self.deficit -= task.cost as i64;
-                    return Some(task);
-                }
+            let idx = self.rr_idx;
+            self.rr_idx = if idx + 1 == n { 0 } else { idx + 1 };
+            if let Some(task) = self.archives[idx].try_dequeue() {
+                self.deficit -= task.cost as i64;
+                self.queued  -= 1;
+                return Some(task);
             }
         }
         None
     }
 
     fn on_complete(&mut self, archive: &str) {
-        if let Some(aq) = self.archives.get_mut(archive) {
-            aq.on_complete();
+        if let Some(&idx) = self.index.get(archive) {
+            self.archives[idx].on_complete();
         }
     }
 }
@@ -163,8 +169,8 @@ impl ClientQueue {
 // ---------------------------------------------------------------------------
 
 pub struct ArchiveScheduler {
-    clients:      HashMap<ClientId, ClientQueue>,
-    client_order: Vec<ClientId>,
+    index:        HashMap<ClientId, usize>,
+    clients:      Vec<ClientQueue>,
     rr_idx:       usize,
     metrics:      std::sync::Arc<SchedulerMetrics>,
     max_queue_depth:     usize,
@@ -180,8 +186,8 @@ impl ArchiveScheduler {
         archive_concurrency: usize,
     ) -> Self {
         Self {
-            clients:      HashMap::new(),
-            client_order: Vec::new(),
+            index:        HashMap::new(),
+            clients:      Vec::new(),
             rr_idx:       0,
             metrics,
             max_queue_depth,
@@ -193,48 +199,43 @@ impl ArchiveScheduler {
 
     /// Enqueue a task. Returns Err(task) when the client queue is full.
     pub fn enqueue(&mut self, task: Task, now_ns: u64) -> Result<(), Task> {
-        let client = task.client;
-        let entry  = self.clients.entry(client).or_insert_with(|| {
-            self.client_order.push(client);
-            ClientQueue::new(self.client_quantum, self.archive_quantum, self.archive_concurrency)
-        });
-
-        if entry.total_len() >= self.max_queue_depth {
-            // Drop bulk tasks before hard-rejecting.
-            let removed = entry.archives.values_mut().fold(0, |acc, aq| {
-                let before = aq.bulk.len();
-                aq.bulk.clear();
-                acc + before
-            });
-            if removed == 0 {
-                self.metrics.inc_rejected();
-                return Err(task);
+        let idx = match self.index.get(&task.client) {
+            Some(&idx) => idx,
+            None => {
+                let idx = self.clients.len();
+                self.clients.push(ClientQueue::new(
+                    self.client_quantum, self.archive_quantum, self.archive_concurrency,
+                ));
+                self.index.insert(task.client, idx);
+                idx
             }
+        };
+        let cq = &mut self.clients[idx];
+
+        // Drop bulk tasks before hard-rejecting.
+        if cq.queued >= self.max_queue_depth && cq.drop_bulk() == 0 {
+            self.metrics.inc_rejected();
+            return Err(task);
         }
 
         let _ = now_ns; // enqueued_ns is already on the task
-        entry.enqueue(task);
+        cq.enqueue(task);
         Ok(())
     }
 
     /// Pick the next task via two-level DRR, or return None.
     pub fn dispatch(&mut self, now_ns: u64) -> Option<Task> {
-        if self.client_order.is_empty() { return None; }
-
-        let n = self.client_order.len();
+        let n = self.clients.len();
         for _ in 0..n {
-            let idx    = self.rr_idx % n;
-            self.rr_idx = (self.rr_idx + 1) % n;
-            let client = self.client_order[idx];
+            let idx = self.rr_idx;
+            self.rr_idx = if idx + 1 == n { 0 } else { idx + 1 };
 
-            if let Some(cq) = self.clients.get_mut(&client) {
-                if let Some(task) = cq.try_dequeue() {
-                    let wait = now_ns.saturating_sub(task.enqueued_ns);
-                    self.metrics.inc_dispatched();
-                    self.metrics.inc_inflight();
-                    self.metrics.add_wait_ns(wait);
-                    return Some(task);
-                }
+            if let Some(task) = self.clients[idx].try_dequeue() {
+                let wait = now_ns.saturating_sub(task.enqueued_ns);
+                self.metrics.inc_dispatched();
+                self.metrics.inc_inflight();
+                self.metrics.add_wait_ns(wait);
+                return Some(task);
             }
         }
         None
@@ -243,13 +244,13 @@ impl ArchiveScheduler {
     pub fn on_complete(&mut self, client: &ClientId, archive: &str, exec_ns: u64) {
         self.metrics.dec_inflight();
         self.metrics.add_exec_ns(exec_ns);
-        if let Some(cq) = self.clients.get_mut(client) {
-            cq.on_complete(archive);
+        if let Some(&idx) = self.index.get(client) {
+            self.clients[idx].on_complete(archive);
         }
     }
 
     pub fn global_queue_depth(&self) -> usize {
-        self.clients.values().map(|c| c.total_len()).sum()
+        self.clients.iter().map(|c| c.queued).sum()
     }
 }
 
