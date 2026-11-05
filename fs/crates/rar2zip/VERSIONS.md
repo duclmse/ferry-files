@@ -4,37 +4,42 @@ Generated at implementation time. Update whenever a dep is added or changed.
 
 | Crate                 | Spec version | Resolved version | API deviations |
 | --------------------- | ------------ | ---------------- | -------------- |
-| tokio                 | 1            | TBD              | none           |
-| tokio-util            | 0.7          | TBD              | none           |
-| serde                 | 1            | TBD              | none           |
-| serde_json            | 1            | TBD              | none           |
-| toml                  | 1            | TBD              | none           |
-| tracing               | 0.1          | TBD              | none           |
-| tracing-subscriber    | 0.3          | TBD              | none           |
-| tracing-appender      | 0.2          | TBD              | none           |
-| thiserror             | 1            | TBD              | none           |
-| anyhow                | 1            | TBD              | none           |
-| chrono                | 0.4          | TBD              | none           |
-| rusqlite              | 0.31         | TBD              | none           |
-| r2d2                  | 0.8          | TBD              | none           |
-| r2d2_sqlite           | 0.23         | TBD              | none           |
-| ssh2                  | 0.9          | TBD              | none           |
-| openssl               | 0.10         | TBD              | none           |
-| clap                  | 4            | TBD              | none           |
-| notify                | 6            | TBD              | none           |
-| notify-debouncer-full | 0.3          | TBD              | none           |
-| unrar                 | 0.5          | TBD              | none           |
-| sevenz-rust           | 0.6          | TBD              | none           |
-| tar                   | 0.4          | TBD              | none           |
-| flate2                | 1            | TBD              | none           |
-| bzip2                 | 0.4          | TBD              | none           |
-| zip                   | 2            | TBD              | none           |
-| sha2                  | 0.10         | TBD              | none           |
-| hex                   | 0.4          | TBD              | none           |
-| tiny_http             | 0.12         | TBD              | none           |
-| ureq                  | 2            | TBD              | none           |
-| lettre                | 0.11         | TBD              | none           |
-| windows-service       | 0.6          | TBD              | none           |
+| tokio                 | 1            | 1.52.1           | none           |
+| tokio-util            | 0.7          | 0.7.18           | none           |
+| serde                 | 1            | 1.0.228          | none           |
+| serde_json            | 1            | 1.0.149          | none           |
+| toml                  | 1            | 1.1.2+spec-1.1.0 | none           |
+| tracing               | 0.1          | 0.1.44           | none           |
+| tracing-subscriber    | 0.3          | 0.3.23           | none           |
+| tracing-appender      | 0.2          | 0.2.5            | none           |
+| thiserror             | 1            | 1.0.69           | none           |
+| anyhow                | 1            | 1.0.102          | none           |
+| chrono                | 0.4          | 0.4.44           | none           |
+| rusqlite              | 0.31         | 0.31.0           | none           |
+| r2d2                  | 0.8          | 0.8.10           | none           |
+| r2d2_sqlite           | 0.23         | 0.24.0           | none           |
+| ssh2                  | 0.9          | not used         | replaced by `russh` / `russh-sftp` |
+| openssl               | 0.10         | not used         | replaced by `russh` / `russh-sftp` |
+| clap                  | 4            | 4.6.1            | none           |
+| notify                | 6            | 6.1.1            | none           |
+| notify-debouncer-full | 0.3          | 0.3.2            | none           |
+| unrar                 | 0.5          | 0.5.8            | none           |
+| sevenz-rust           | 0.6          | 0.6.1            | none           |
+| tar                   | 0.4          | 0.4.45           | none           |
+| flate2                | 1            | 1.1.9            | none           |
+| bzip2                 | 0.4          | 0.4.4            | none           |
+| zip                   | 2            | 2.4.2            | none           |
+| sha2                  | 0.10         | 0.10.9           | none           |
+| hex                   | 0.4          | 0.4.3            | none           |
+| tiny_http             | 0.12         | 0.12.0           | none           |
+| ureq                  | 2            | 2.12.1           | none           |
+| lettre                | 0.11         | 0.11.21          | none           |
+| windows-service       | 0.6          | 0.6.0            | none           |
+| bytes                 | 1            | 1.11.1           | none           |
+| glob                  | 0.3          | 0.3.3            | none           |
+| russh                 | 0.60         | 0.60.2           | none           |
+| russh-sftp            | 2            | 2.1.2            | none           |
+| uuid                  | 1            | 1.23.1           | none           |
 
 ## Notes
 

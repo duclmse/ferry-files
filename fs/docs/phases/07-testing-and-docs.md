@@ -186,15 +186,16 @@ They serve as the primary reference for users.
 - [ ] All modules listed in spec section 2 implemented (no stubs).
 - [x] `query/exact.rs`, `query/fuzzy.rs`, `query/regex_search.rs` do not exist.
 - [ ] `filesearch daemon` starts, crawls, accepts queries via all three APIs.
-- [ ] ZIP inner files are indexed during crawl and watcher events.
+      *(REST and IPC queried live; gRPC port verified listening but not queried)*
+- [x] ZIP inner files are indexed during crawl and watcher events.
 - [ ] `filesearch tui` launches interactive TUI; inner entries show `[zip]` tag.
 - [ ] `filesearch search "main.rs"` returns results in < 50ms on 1M file index.
-- [ ] `filesearch search "fuzzy:mian"` returns `main.rs` as a top result.
-- [ ] `filesearch search "archive: *.rs"` returns only inner-archive entries.
+- [x] `filesearch search "fuzzy:mian"` returns `main.rs` as a top result.
+- [x] `filesearch search "archive: *.rs"` returns only inner-archive entries.
 - [ ] `POST /open` on inner entry extracts to temp and opens.
-- [ ] `filesearch validate-config` exits 0 on valid config, 1 on invalid.
+- [x] `filesearch validate-config` exits 0 on valid config, 1 on invalid.
 - [ ] README covers all 10 sections + ZIP inner-file section.
-- [ ] `VERSIONS.md` populated with all resolved crate versions (incl. `zip`,
+- [x] `VERSIONS.md` populated with all resolved crate versions (incl. `zip`,
       `tempfile`).
 - [ ] Builds on Windows, Linux, and macOS.
 
@@ -206,7 +207,7 @@ They serve as the primary reference for users.
 - [ ] `Strategy::Stream` confirmed: no zip file created for large archives.
 - [ ] README covers all 8 sections.
 - [ ] Builds on Windows only (Windows Service code must compile).
-- [ ] `VERSIONS.md` populated with all resolved crate versions.
+- [x] `VERSIONS.md` populated with all resolved crate versions.
 - [ ] Integration test passes for both Disk and Stream strategies.
 
 ---
