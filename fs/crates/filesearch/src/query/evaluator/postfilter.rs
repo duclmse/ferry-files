@@ -63,31 +63,94 @@ fn is_whole_word(text: &str, word: &str) -> bool {
 // Fuzzy scoring with nucleo
 // ---------------------------------------------------------------------------
 
+/// Scores each candidate name against `term` in `0.0..=1.0` and keeps those
+/// at or above `threshold`, best first.
+///
+/// The score is the better of two signals:
+/// - nucleo's subsequence score, normalised by the term's score against
+///   itself. nucleo scores grow with needle length, so a fixed divisor made
+///   short terms unreachable for any sensible threshold.
+/// - a typo similarity, `1 - d / len(term)`, where `d` is the smallest
+///   optimal-string-alignment distance between the term and any window of
+///   the name. nucleo never matches out-of-order letters, so without this
+///   `mian` could not find `main.rs`.
 pub(super) fn fuzzy_score(
     candidates: &[FileRecord],
     term:       &str,
     threshold:  f32,
     limit:      usize,
 ) -> Vec<FileRecord> {
+    let term_lower: Vec<char> = term.to_lowercase().chars().collect();
+    if term_lower.is_empty() {
+        return Vec::new();
+    }
+
     let mut needle_buf = Vec::new();
     let needle = Utf32Str::new(term, &mut needle_buf);
+    let mut self_buf = Vec::new();
+    let self_score = Matcher::new(NucleoConfig::DEFAULT)
+        .fuzzy_match(Utf32Str::new(term, &mut self_buf), needle)
+        .unwrap_or(0)
+        .max(1) as f32;
 
-    let mut scored: Vec<(u16, &FileRecord)> = candidates
+    let mut scored: Vec<(f32, &FileRecord)> = candidates
         .par_iter()
-        .filter_map(|r| {
-            let mut matcher = Matcher::new(NucleoConfig::DEFAULT);
-            let mut hay_buf = Vec::new();
-            let haystack    = Utf32Str::new(&r.name, &mut hay_buf);
-            matcher
-                .fuzzy_match(haystack, needle)
-                .map(|score| (score, r))
-        })
+        .map_init(
+            || Matcher::new(NucleoConfig::DEFAULT),
+            |matcher, r| {
+                let mut hay_buf = Vec::new();
+                let subseq = matcher
+                    .fuzzy_match(Utf32Str::new(&r.name, &mut hay_buf), needle)
+                    .map_or(0.0, |s| (s as f32 / self_score).min(1.0));
+                let name: Vec<char> = r.name.to_lowercase().chars().collect();
+                (subseq.max(typo_similarity(&term_lower, &name)), r)
+            },
+        )
+        .filter(|(s, _)| *s >= threshold)
         .collect();
 
-    let max_possible = 1024u16;
-    scored.retain(|(s, _)| (*s as f32 / max_possible as f32) >= threshold);
-    scored.sort_unstable_by(|(a, _), (b, _)| b.cmp(a));
+    scored.sort_unstable_by(|(a, _), (b, _)| b.total_cmp(a));
     scored.into_iter().take(limit).map(|(_, r)| r.clone()).collect()
+}
+
+/// `1 - d / len(term)` for the closest window of `name` (window lengths
+/// `len(term) ± 1`, so one insertion or deletion is reachable).
+fn typo_similarity(term: &[char], name: &[char]) -> f32 {
+    let n = term.len();
+    let mut best = n;
+    for w in n.saturating_sub(1).max(1)..=n + 1 {
+        if w > name.len() {
+            break;
+        }
+        for window in name.windows(w) {
+            best = best.min(osa_distance(term, window));
+            if best == 0 {
+                return 1.0;
+            }
+        }
+    }
+    1.0 - best as f32 / n as f32
+}
+
+/// Optimal string alignment distance: Levenshtein plus adjacent transposition.
+fn osa_distance(a: &[char], b: &[char]) -> usize {
+    let cols = b.len() + 1;
+    let mut d = vec![0usize; (a.len() + 1) * cols];
+    for i in 0..=a.len() { d[i * cols] = i; }
+    for (j, cell) in d.iter_mut().enumerate().take(cols) { *cell = j; }
+    for i in 1..=a.len() {
+        for j in 1..=b.len() {
+            let cost = usize::from(a[i - 1] != b[j - 1]);
+            let mut v = (d[(i - 1) * cols + j] + 1)
+                .min(d[i * cols + j - 1] + 1)
+                .min(d[(i - 1) * cols + j - 1] + cost);
+            if i > 1 && j > 1 && a[i - 1] == b[j - 2] && a[i - 2] == b[j - 1] {
+                v = v.min(d[(i - 2) * cols + j - 2] + 1);
+            }
+            d[i * cols + j] = v;
+        }
+    }
+    d[a.len() * cols + b.len()]
 }
 
 // ---------------------------------------------------------------------------
@@ -101,4 +164,46 @@ pub(super) fn build_regex(pattern: &str, case_sensitive: bool) -> Result<Regex> 
         Regex::new(&format!("(?i){pattern}"))
     };
     re.map_err(|e| AppError::Query(format!("invalid regex '{pattern}': {e}")))
+}
+
+#[cfg(test)]
+mod fuzzy_tests {
+    use super::*;
+
+    fn rec(name: &str) -> FileRecord {
+        FileRecord {
+            id: None, path: format!("/x/{name}"), name: name.into(), extension: None,
+            size_bytes: 0, mtime: 0, ctime: 0, is_dir: false, is_hidden: false,
+            is_symlink: false, attrib_bitmask: 0, content_indexed: false,
+            tantivy_id: None, indexed_at: 0, archive_path: None,
+        }
+    }
+
+    fn names(term: &str, threshold: f32) -> Vec<String> {
+        let c = [rec("main.rs"), rec("lib.rs"), rec("Cargo.toml"), rec("domain_model.rs")];
+        fuzzy_score(&c, term, threshold, 10).into_iter().map(|r| r.name).collect()
+    }
+
+    #[test]
+    fn transposed_term_finds_main_at_default_threshold() {
+        assert_eq!(names("mian", 0.7).first().map(String::as_str), Some("main.rs"));
+    }
+
+    #[test]
+    fn exact_short_term_passes_default_threshold() {
+        assert_eq!(names("main", 0.7).first().map(String::as_str), Some("main.rs"));
+        assert_eq!(names("lib", 0.7), vec!["lib.rs"]);
+    }
+
+    #[test]
+    fn unrelated_term_is_filtered() {
+        assert!(names("zzqx", 0.7).is_empty());
+    }
+
+    #[test]
+    fn osa_counts_transposition_as_one() {
+        let a: Vec<char> = "mian".chars().collect();
+        let b: Vec<char> = "main".chars().collect();
+        assert_eq!(osa_distance(&a, &b), 1);
+    }
 }
