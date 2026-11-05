@@ -213,7 +213,7 @@ Filter pipeline (applied in order for each `Create(File)` event):
 
 ## 3.7 filesearch - Archive Entry Crawler (`indexer/archive.rs`)
 
-Full specification in `zip-inner-streaming-spec.md` sections 4–5.
+Full specification in `docs/reference/zip-inner-streaming.md` sections 4–5.
 
 Summary of responsibilities:
 
@@ -301,7 +301,7 @@ pub fn select_strategy(file_size_bytes: u64, threshold_mb: u64) -> Strategy {
 - delete event: removed from both SQLite and Tantivy
 ```
 
-### filesearch Archive Crawler (see zip-inner-streaming-spec.md §4.5)
+### filesearch Archive Crawler (see docs/reference/zip-inner-streaming.md §4.5)
 
 ```
 - crawl fixture ZIP with 5 text entries → 5 ArchiveEntry items, virtual paths correct

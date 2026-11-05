@@ -1,3 +1,8 @@
+# Streaming ZIP Core Design Note
+
+> **Status:** research note. Design source for `docs/phases/10-streaming-zip-core.md`; the phase doc is the
+> implementation plan and `docs/reference/` stays authoritative.
+
 Below is a concrete design to **bring streaming/low-overhead into a
 `zip`-compatible ecosystem** without forking yourself into a maintenance hole.
 The right approach is to **split responsibilities** and introduce a **streaming

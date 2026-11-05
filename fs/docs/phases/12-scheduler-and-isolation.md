@@ -11,8 +11,8 @@ meaningful isolation.
 
 **Depends on:** Phase 10 (streaming ZIP core, inflate pipeline).
 
-**Design source:** `docs/00/global scheduler.md`,
-`docs/00/system-level optimizations.md`.
+**Design source:** `docs/research/global-scheduler.md`,
+`docs/research/system-level-optimizations.md`.
 
 ---
 

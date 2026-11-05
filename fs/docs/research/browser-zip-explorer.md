@@ -1,3 +1,9 @@
+# Browser ZIP Explorer Design Note
+
+> **Status:** research note. Client-side (browser) ZIP explorer ideas: packed
+> inode-style index, string pool, lazy loading. The server-side counterparts
+> are `research/zidx.md` and `research/backend-design.md`. Not a spec.
+
 ## 2. High-performance ZIP explorer architecture (what you actually asked)
 
 You’re now describing something closer to a **filesystem engine in the browser**. Below is a precise breakdown of each component and how they fit together.

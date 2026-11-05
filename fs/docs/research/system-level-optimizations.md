@@ -1,3 +1,8 @@
+# System-Level Optimizations Design Note
+
+> **Status:** research note. Design source for `docs/phases/12-scheduler-and-isolation.md`; the phase doc is the
+> implementation plan and `docs/reference/` stays authoritative.
+
 These three ideas are about **controlling contention, fault isolation, and
 memory locality** once your system scales beyond “a few archives” into **many
 concurrent users + large datasets**. They’re orthogonal, but they reinforce each

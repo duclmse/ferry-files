@@ -10,7 +10,7 @@ well-defined seams without touching the API surface.
 
 **Depends on:** Phase 9 (archive service API, `AppState`).
 
-**Design source:** `docs/00/streaming zip.md`.
+**Design source:** `docs/research/streaming-zip.md`.
 
 ---
 

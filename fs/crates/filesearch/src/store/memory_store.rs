@@ -1,6 +1,6 @@
 //! In-memory file-metadata store with binary snapshot persistence.
 //!
-//! Designed after the approach in `docs/design.md`: records live in a flat
+//! Designed after the approach in `docs/research/in-memory-index.md`: records live in a flat
 //! `Vec<FileRecord>` plus a `HashMap` path-index for O(1) lookups. Snapshots
 //! are written as a small binary file (`index.bin`) on clean shutdown and
 //! reloaded on the next start - near-zero load latency via sequential read.

@@ -605,8 +605,8 @@ Truncate decoded string at `max_bytes` at nearest UTF-8 char boundary.
 
 ## 10. indexer/archive.rs [tested]
 
-> See also: [Phase 3 doc §3.7](03-phase3-indexer-and-watcher.md) and
-> [ZIP inner streaming ref](11-ref-zip-inner-streaming.md).
+> See also: [Phase 3 doc §3.7](../phases/03-indexer-and-watcher.md) and
+> [ZIP inner streaming ref](zip-inner-streaming.md).
 
 ```rust
 pub struct ArchiveCrawler<'cfg> {
@@ -767,7 +767,7 @@ path has an extension in `config.archive_index.formats`.
 
 ## 13. query/ Module
 
-> Full specification: [09-ref-query-language.md](09-ref-query-language.md).
+> Full specification: [query-language.md](query-language.md).
 
 The `query/` module implements a full voidtools Everything-compatible query
 language plus the `fuzzy:` extension. The public entry point:

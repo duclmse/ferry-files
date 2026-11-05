@@ -1,8 +1,12 @@
 # Agent Handoff: Performance and Memory Update Plan
 
+> **Status:** implemented (mark-and-sweep crawl, indexed `parent`, bounded
+> fuzzy/content search, multi-destination `Strategy::Disk`, postcard IPC).
+> Kept for design history; current behaviour is specified in `docs/reference/`.
+
 Use this document to update both the project documentation and the Rust
 implementation. The goal is to keep the documented architecture aligned with
-the performance targets in `docs/02-ref/01-ref-filesearch-modules.md` while
+the performance targets in `docs/reference/filesearch-modules.md` while
 reducing avoidable memory growth, repeated CPU work, and large intermediate
 result sets.
 
@@ -31,13 +35,13 @@ Preserve the existing invariants in `AGENTS.md`, especially:
 
 Update these docs before or alongside implementation changes:
 
-- `docs/02-ref/01-ref-filesearch-modules.md`
-- `docs/02-ref/02-ref-query-language.md`
-- `docs/01-phases/02-phase2-data-stores.md`
-- `docs/01-phases/03-phase3-indexer-and-watcher.md`
-- `docs/01-phases/04-phase4-conversion-and-transfer.md`
-- `docs/01-phases/07-phase7-testing-and-docs.md`
-- `docs/MEMORY.md`
+- `docs/reference/filesearch-modules.md`
+- `docs/reference/query-language.md`
+- `docs/phases/02-data-stores.md`
+- `docs/phases/03-indexer-and-watcher.md`
+- `docs/phases/04-conversion-and-transfer.md`
+- `docs/phases/07-testing-and-docs.md`
+- `docs/README.md`
 
 Required doc changes:
 

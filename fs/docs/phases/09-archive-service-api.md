@@ -9,7 +9,7 @@ ZIP parsing. The archive service routes are mounted on the existing Axum server.
 
 **Depends on:** Phase 6 (Axum REST server), Phase 8 (ZidxIndex builder/reader).
 
-**Design source:** `docs/00/archive service.md`, `docs/00/backend design.md`.
+**Design source:** `docs/research/archive-service.md`, `docs/research/backend-design.md`.
 
 ---
 

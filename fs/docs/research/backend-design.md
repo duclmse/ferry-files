@@ -2,7 +2,7 @@
 
 This document is a design sketch for a future archive-serving backend. Code
 snippets are illustrative unless explicitly marked as production-ready. The
-current production specs remain in `docs/02-ref/`.
+current production specs remain in `docs/reference/`.
 
 Below is a **Rust backend design** built around:
 

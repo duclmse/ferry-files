@@ -1,3 +1,8 @@
+# SIMD Inflate & Benchmarking Design Note
+
+> **Status:** research note. Design source for `docs/phases/13-simd-and-benchmarks.md`; the phase doc is the
+> implementation plan and `docs/reference/` stays authoritative.
+
 1. a **SIMD-friendly deflate pipeline design** (what actually moves the needle)
 2. a **benchmarking framework** that isolates bottlenecks (so you don’t optimize
    the wrong thing)

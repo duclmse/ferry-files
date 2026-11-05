@@ -8,7 +8,7 @@
 //! [Window Snapshots - block_count × 32768 bytes]
 //! ```
 //!
-//! All integers are little-endian. See `docs/01-phases/11-phase11-deflate-random-access.md`.
+//! All integers are little-endian. See `docs/phases/11-deflate-random-access.md`.
 
 use std::io;
 use std::path::{Path, PathBuf};

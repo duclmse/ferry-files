@@ -10,7 +10,7 @@ provides regression protection for all archive service throughput targets.
 **Depends on:** Phase 10 (streaming ZIP core, `Decoder` trait), Phase 11 (`.dzx`
 block reader), Phase 12 (scheduler).
 
-**Design source:** `docs/00/simd and benchmark.md`.
+**Design source:** `docs/research/simd-and-benchmarks.md`.
 
 ---
 

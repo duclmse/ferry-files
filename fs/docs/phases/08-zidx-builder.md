@@ -9,7 +9,7 @@ The reader provides zero-copy traversal over the mmap at request time.
 
 **Depends on:** Phase 2 (SQLite store), Phase 3 (archive.rs ZIP iteration).
 
-**Design source:** `docs/00/zidx.md`, `docs/00/backend design.md`.
+**Design source:** `docs/research/zidx.md`, `docs/research/backend-design.md`.
 
 ---
 

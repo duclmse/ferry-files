@@ -1,3 +1,10 @@
+# In-Memory Index Design (early sketch)
+
+> **Status:** early brainstorm from before the workspace existed (written for a
+> hypothetical `everything-rs` layout). Not a spec. It is the design basis for
+> `crates/filesearch/src/store/memory_store`; the authoritative store specs are in
+> `docs/reference/filesearch-modules.md`.
+
 Great scope - full Everything clone, cross-platform, Windows-first. Here's a
 comprehensive implementation plan:
 

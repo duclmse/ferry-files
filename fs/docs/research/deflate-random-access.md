@@ -1,3 +1,8 @@
+# Deflate Random Access Design Note
+
+> **Status:** research note. Design source for `docs/phases/11-deflate-random-access.md`; the phase doc is the
+> implementation plan and `docs/reference/` stays authoritative.
+
 You’re trying to break a fundamental limitation: **Deflate is a serial stream**,
 so random access requires reconstructing decoder state. The way around it is to
 **insert restart points** and index them. What follows is a design that works

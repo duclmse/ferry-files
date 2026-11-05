@@ -9,7 +9,7 @@ Range requests by decoding only the relevant block, not the full entry.
 
 **Depends on:** Phase 10 (streaming ZIP core, `ByteSource`, `Decoder` traits).
 
-**Design source:** `docs/00/deflate random access.md` (Option B - post-process
+**Design source:** `docs/research/deflate-random-access.md` (Option B - post-process
 existing ZIP, preserves original compressed bytes).
 
 > **Why Option B only:** Option A requires re-compressing the entry with forced

@@ -88,7 +88,7 @@ Indices exist on: `name`, `extension`, `size`, `mtime`, `parent`,
    prefix).
 3. Map it to a `QueryPlan` arm in `query/evaluator.rs`.
 4. Add tests in `query/parser.rs` and `query/evaluator.rs`.
-5. Document it in `docs/02-ref/02-ref-query-language.md`.
+5. Document it in `docs/reference/query-language.md`.
 
 ### Adding a new API endpoint
 
@@ -203,10 +203,10 @@ are not un-watched until restart). Do not assume config is static after startup.
 
 ## Reference docs
 
-| File                                        | Contents                                                            |
-| ------------------------------------------- | ------------------------------------------------------------------- |
-| `docs/02-ref/01-ref-filesearch-modules.md`  | Module-by-module function signatures and contracts                  |
-| `docs/02-ref/02-ref-query-language.md`      | Complete query language grammar and examples                        |
-| `docs/02-ref/03-ref-rar2zip-modules.md`     | rar2zip module contracts                                            |
-| `docs/02-ref/04-ref-zip-inner-streaming.md` | ZIP virtual path spec and archive indexing rules                    |
-| `docs/01-phases/`                           | Phased implementation plan (useful for understanding design intent) |
+| File                                    | Contents                                                            |
+| --------------------------------------- | ------------------------------------------------------------------- |
+| `docs/reference/filesearch-modules.md`  | Module-by-module function signatures and contracts                  |
+| `docs/reference/query-language.md`      | Complete query language grammar and examples                        |
+| `docs/reference/rar2zip-modules.md`     | rar2zip module contracts                                            |
+| `docs/reference/zip-inner-streaming.md` | ZIP virtual path spec and archive indexing rules                    |
+| `docs/phases/`                          | Phased implementation plan (useful for understanding design intent) |

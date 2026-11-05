@@ -2,7 +2,7 @@
 
 This is a research note for a future archive browsing service. It is not the
 current `filesearch` API contract. Keep the production specs in
-`docs/02-ref/` authoritative until this design is promoted into a phase plan.
+`docs/reference/` authoritative until this design is promoted into a phase plan.
 
 # 1. Core shift: from file server → archive service
 
