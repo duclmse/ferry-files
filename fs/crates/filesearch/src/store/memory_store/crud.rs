@@ -115,11 +115,11 @@ impl MemoryStore {
     }
 
     pub fn get_usn_checkpoint(&self) -> u64 {
-        self.state.read().unwrap().usn_checkpoint
+        self.read_state().usn_checkpoint
     }
 
     pub fn set_usn_checkpoint(&self, checkpoint: u64) {
-        self.state.write().unwrap().usn_checkpoint = checkpoint;
+        self.write_state().usn_checkpoint = checkpoint;
     }
 
     // -----------------------------------------------------------------------
@@ -127,16 +127,16 @@ impl MemoryStore {
     // -----------------------------------------------------------------------
 
     pub fn upsert_file(&self, record: &FileRecord) {
-        self.state.write().unwrap().upsert(record.clone());
+        self.write_state().upsert(record.clone());
     }
 
     pub fn remove_file(&self, path: &str) -> bool {
-        self.state.write().unwrap().remove(path)
+        self.write_state().remove(path)
     }
 
     pub fn remove_directory(&self, path: &str) -> usize {
         let prefix = format!("{path}/");
-        let mut state = self.state.write().unwrap();
+        let mut state = self.write_state();
         let paths: Vec<String> = state.records.iter()
             .filter(|r| r.path.starts_with(&prefix))
             .map(|r| r.path.clone())
@@ -153,7 +153,7 @@ impl MemoryStore {
     /// `remove_stale_for_root`'s `None => true` fallback deletes archive
     /// entries right after the walk that just inserted them finishes.
     pub fn upsert_archive_batch(&self, records: &[FileRecord], tag: Option<(&str, i64)>) {
-        let mut state = self.state.write().unwrap();
+        let mut state = self.write_state();
         for r in records {
             if let Some((watch_root, generation)) = tag {
                 state.crawl_info.insert(r.path.clone(), (generation, watch_root.to_string()));
@@ -167,13 +167,13 @@ impl MemoryStore {
     // -----------------------------------------------------------------------
 
     pub fn begin_crawl_generation(&self) -> i64 {
-        let mut state = self.state.write().unwrap();
+        let mut state = self.write_state();
         state.crawl_gen += 1;
         state.crawl_gen
     }
 
     pub fn batch_upsert_crawl(&self, batch: &[(FileRecord, String)], generation: i64) {
-        let mut state = self.state.write().unwrap();
+        let mut state = self.write_state();
         for (record, watch_root) in batch {
             state.crawl_info.insert(record.path.clone(), (generation, watch_root.clone()));
             state.upsert(record.clone());
@@ -181,7 +181,7 @@ impl MemoryStore {
     }
 
     pub fn remove_stale_for_root(&self, watch_root: &str, generation: i64) -> usize {
-        let mut state = self.state.write().unwrap();
+        let mut state = self.write_state();
         let stale: Vec<String> = state.records.iter()
             .filter(|r| {
                 let under_root = r.path.starts_with(&format!("{watch_root}/"))
@@ -203,7 +203,7 @@ impl MemoryStore {
     }
 
     pub fn remove_archive_entries(&self, archive_path: &str) -> usize {
-        let mut state = self.state.write().unwrap();
+        let mut state = self.write_state();
         let paths: Vec<String> = state.records.iter()
             .filter(|r| r.archive_path.as_deref() == Some(archive_path))
             .map(|r| r.path.clone())
@@ -220,17 +220,17 @@ impl MemoryStore {
     // -----------------------------------------------------------------------
 
     pub fn get_by_path(&self, path: &str) -> Result<Option<FileRecord>> {
-        let state = self.state.read().unwrap();
+        let state = self.read_state();
         Ok(state.by_path.get(path).map(|&i| state.records[i].clone()))
     }
 
     pub fn total_files(&self) -> i64 {
-        let state = self.state.read().unwrap();
+        let state = self.read_state();
         state.records.iter().filter(|r| r.archive_path.is_none()).count() as i64
     }
 
     pub fn total_archive_entries(&self) -> i64 {
-        let state = self.state.read().unwrap();
+        let state = self.read_state();
         state.records.iter().filter(|r| r.archive_path.is_some()).count() as i64
     }
 
@@ -239,10 +239,10 @@ impl MemoryStore {
     // -----------------------------------------------------------------------
 
     pub fn get_meta(&self, key: &str) -> Option<String> {
-        self.state.read().unwrap().meta.get(key).cloned()
+        self.read_state().meta.get(key).cloned()
     }
 
     pub fn set_meta(&self, key: &str, value: &str) {
-        self.state.write().unwrap().meta.insert(key.to_owned(), value.to_owned());
+        self.write_state().meta.insert(key.to_owned(), value.to_owned());
     }
 }

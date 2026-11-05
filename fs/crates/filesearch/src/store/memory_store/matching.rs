@@ -48,7 +48,7 @@ pub(super) fn meta_filter_matches(r: &FileRecord, f: &MetaFilters) -> bool {
 /// Returns the inner literal if `pattern` is exactly `%<literal>%` with no other `%` or `_`.
 fn extract_contains_pattern(pattern: &str) -> Option<&str> {
     let b = pattern.as_bytes();
-    if b.len() < 3 || b[0] != b'%' || *b.last().unwrap() != b'%' {
+    if b.len() < 3 || b[0] != b'%' || b.last() != Some(&b'%') {
         return None;
     }
     let inner = &pattern[1..pattern.len() - 1];

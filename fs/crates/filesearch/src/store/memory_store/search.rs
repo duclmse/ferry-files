@@ -6,7 +6,7 @@ use super::{DupeKind, FileRecord, MemoryStore, MetaFilters, SqlCondition};
 
 impl MemoryStore {
     pub fn has_child(&self, parent_path: &str, name_pattern: &str) -> Result<bool> {
-        let state = self.state.read().unwrap();
+        let state = self.read_state();
         Ok(state.records.iter().any(|r| {
             parent_dir(&r.path) == parent_path && like_match(&r.name, name_pattern)
         }))
@@ -15,7 +15,7 @@ impl MemoryStore {
     /// Mirror of `SqliteStore::children_of`: direct (non-recursive) real-file
     /// children of `parent_path`.
     pub fn children_of(&self, parent_path: &str) -> Result<Vec<String>> {
-        let state = self.state.read().unwrap();
+        let state = self.read_state();
         Ok(state.records.iter()
             .filter(|r| r.archive_path.is_none() && parent_dir(&r.path) == parent_path)
             .map(|r| r.path.clone())
@@ -23,7 +23,7 @@ impl MemoryStore {
     }
 
     pub fn list_archive_paths(&self) -> Result<Vec<String>> {
-        let state = self.state.read().unwrap();
+        let state = self.read_state();
         Ok(state.records.iter()
             .filter(|r| r.archive_path.is_none() && !r.is_dir
                 && r.extension.as_deref() == Some("zip"))
@@ -32,7 +32,7 @@ impl MemoryStore {
     }
 
     pub fn search_meta(&self, filters: &MetaFilters, limit: usize) -> Result<Vec<FileRecord>> {
-        let state = self.state.read().unwrap();
+        let state = self.read_state();
         Ok(state.records.iter()
             .filter(|r| meta_filter_matches(r, filters))
             .take(limit)
@@ -47,7 +47,7 @@ impl MemoryStore {
         filters: &MetaFilters,
         limit:   usize,
     ) -> Result<Vec<FileRecord>> {
-        let state = self.state.read().unwrap();
+        let state = self.read_state();
         Ok(state.records.iter()
             .filter(|r| like_match(&r.name, name) && meta_filter_matches(r, filters))
             .take(limit)
@@ -62,7 +62,7 @@ impl MemoryStore {
         filters: &MetaFilters,
         limit:   usize,
     ) -> Result<Vec<FileRecord>> {
-        let state = self.state.read().unwrap();
+        let state = self.read_state();
         Ok(state.records.iter()
             .filter(|r| r.extension.as_deref() == Some(ext) && meta_filter_matches(r, filters))
             .take(limit)
@@ -73,7 +73,7 @@ impl MemoryStore {
     /// Mirror of `SqliteStore::paths_under`: all paths recursively under `dir`.
     pub fn paths_under(&self, dir: &str) -> Result<Vec<String>> {
         let prefix = format!("{dir}/");
-        let state = self.state.read().unwrap();
+        let state = self.read_state();
         Ok(state.records.iter()
             .filter(|r| r.path.starts_with(&prefix))
             .map(|r| r.path.clone())
@@ -84,7 +84,7 @@ impl MemoryStore {
         if conds.is_empty() {
             return self.search_meta(&MetaFilters::default(), limit);
         }
-        let state = self.state.read().unwrap();
+        let state = self.read_state();
         Ok(state.records.iter()
             .filter(|r| conds.iter().all(|c| c.matches(r)))
             .take(limit)
@@ -98,7 +98,7 @@ impl MemoryStore {
         conds: &[SqlCondition],
         limit: usize,
     ) -> Result<Vec<FileRecord>> {
-        let state = self.state.read().unwrap();
+        let state = self.read_state();
         let mut results = Vec::new();
         for path in paths.iter().take(limit * 4) {
             if let Some(&idx) = state.by_path.get(path) {
@@ -120,7 +120,7 @@ impl MemoryStore {
         conds: &[SqlCondition],
         limit: usize,
     ) -> Result<Vec<FileRecord>> {
-        let state = self.state.read().unwrap();
+        let state = self.read_state();
 
         let mut groups: HashMap<String, Vec<usize>> = HashMap::new();
         for (i, r) in state.records.iter().enumerate() {

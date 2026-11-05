@@ -19,7 +19,7 @@ enum MultipartClass {
     /// `archive.rar` - old-style main (always first/only old-style file)
     OldStyleMain { base: String },
     /// `archive.rNN` - old-style continuation part (0-based NN, so part_num = NN + 1)
-    OldStylePart { base: String, #[allow(dead_code)] part_num: u32 },
+    OldStylePart { base: String, part_num: u32 },
     /// Single archive - not part of any multi-part set
     Single,
 }
@@ -217,8 +217,9 @@ impl IntakeProcessor {
                 }
             }
 
-            MultipartClass::OldStylePart { ref base, .. } => {
+            MultipartClass::OldStylePart { ref base, part_num } => {
                 let group_id = format!("{}/{}", dir.display(), base);
+                tracing::debug!(group = %group_id, part_num, "old-style multipart part seen");
                 self.queue.add_part(&group_id, &path)?;
 
                 if old_style_complete(dir, base) {

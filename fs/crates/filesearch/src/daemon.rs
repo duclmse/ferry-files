@@ -344,7 +344,11 @@ pub async fn run_with_shutdown(
                 // Acquire a semaphore permit before spawning. When MAX_EVENT_TASKS
                 // are already running this yields here (backpressure) rather than
                 // allocating another task.
-                let permit    = Arc::clone(&event_sem).acquire_owned().await.unwrap();
+                // The semaphore is never closed, so Err is unreachable in practice;
+                // treat it as a shutdown signal rather than panicking the daemon.
+                let Ok(permit) = Arc::clone(&event_sem).acquire_owned().await else {
+                    break;
+                };
                 let sqlite_e  = Arc::clone(&sqlite);
                 let tantivy_e = Arc::clone(&tantivy);
                 let metrics_e = Arc::clone(&metrics);

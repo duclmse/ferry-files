@@ -176,15 +176,15 @@ They serve as the primary reference for users.
 - [ ] `cargo build --release` succeeds with zero warnings (workspace).
 - [ ] `cargo test` passes all unit tests (workspace).
 - [ ] `cargo clippy -- -D warnings` produces no output.
-- [ ] `cargo doc --no-deps` generates docs without warnings.
-- [ ] No `unwrap()` or `todo!()` in any production path.
-- [ ] No `#[allow(dead_code)]` or `#[allow(unused)]` in final code.
-- [ ] `cargo check -p common` passes.
+- [x] `cargo doc --no-deps` generates docs without warnings.
+- [x] No `unwrap()` or `todo!()` in any production path.
+- [x] No `#[allow(dead_code)]` or `#[allow(unused)]` in final code.
+- [x] `cargo check -p common` passes.
 
 ### filesearch
 
 - [ ] All modules listed in spec section 2 implemented (no stubs).
-- [ ] `query/exact.rs`, `query/fuzzy.rs`, `query/regex_search.rs` do not exist.
+- [x] `query/exact.rs`, `query/fuzzy.rs`, `query/regex_search.rs` do not exist.
 - [ ] `filesearch daemon` starts, crawls, accepts queries via all three APIs.
 - [ ] ZIP inner files are indexed during crawl and watcher events.
 - [ ] `filesearch tui` launches interactive TUI; inner entries show `[zip]` tag.

@@ -55,8 +55,7 @@ pub(super) async fn head_handler(
         .header("X-File-Is-Dir",        if fm.is_dir { "true" } else { "false" })
         .header("X-File-Mode",          fm.mode_str)
         .body(Body::empty())
-        .unwrap()
-        .into_response()
+        .unwrap_or_else(|e| internal(e.to_string()).into_response())
 }
 
 // ---------------------------------------------------------------------------
@@ -111,8 +110,7 @@ pub(super) async fn read_handler(
                     .status(StatusCode::RANGE_NOT_SATISFIABLE)
                     .header(header::CONTENT_RANGE, format!("bytes */{file_size}"))
                     .body(Body::empty())
-                    .unwrap()
-                    .into_response();
+                    .unwrap_or_else(|e| internal(e.to_string()).into_response());
             }
             Some((start, end)) => {
                 use tokio::io::{AsyncReadExt as _, AsyncSeekExt as _};
@@ -129,8 +127,7 @@ pub(super) async fn read_handler(
                     .header(header::ACCEPT_RANGES,  "bytes")
                     .header(header::ETAG,           etag)
                     .body(Body::from_stream(ReaderStream::new(limited)))
-                    .unwrap()
-                    .into_response();
+                    .unwrap_or_else(|e| internal(e.to_string()).into_response());
             }
         }
     }
@@ -143,8 +140,7 @@ pub(super) async fn read_handler(
         .header(header::ACCEPT_RANGES,  "bytes")
         .header(header::ETAG,           etag)
         .body(Body::from_stream(ReaderStream::new(file)))
-        .unwrap()
-        .into_response()
+        .unwrap_or_else(|e| internal(e.to_string()).into_response())
 }
 
 // ---------------------------------------------------------------------------

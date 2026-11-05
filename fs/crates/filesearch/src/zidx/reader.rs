@@ -63,6 +63,12 @@ impl<'a> Iterator for ChildIter<'a> {
     }
 }
 
+/// Fixed-width little-endian field at `off`. Callers bounds-check the
+/// enclosing record first, so the indexing here cannot go out of range.
+fn le_bytes<const N: usize>(b: &[u8], off: usize) -> [u8; N] {
+    std::array::from_fn(|i| b[off + i])
+}
+
 // ---------------------------------------------------------------------------
 // ZidxIndex
 // ---------------------------------------------------------------------------
@@ -72,8 +78,6 @@ pub struct ZidxIndex {
     pub node_count: u32,
     nodes_offset:   usize, // = HEADER_SIZE (20)
     strings_offset: usize, // = HEADER_SIZE + node_count * NODE_SIZE (48)
-    #[allow(dead_code)]
-    string_bytes:   u32,
     /// O(1) lookup accelerator: (parent_id, name) → child_id.
     /// Built once in `open`; avoids linear child scans in `lookup`.
     lookup_index:   HashMap<(u32, Box<str>), u32>,
@@ -101,14 +105,14 @@ impl ZidxIndex {
         if &mmap[0..4] != b"ZIDX" {
             return Err(ZidxError::Corrupt("invalid magic bytes".into()));
         }
-        let version = u32::from_le_bytes(mmap[4..8].try_into().unwrap());
+        let version = u32::from_le_bytes(le_bytes(&mmap, 4));
         if version != FORMAT_VERSION {
             return Err(ZidxError::Corrupt(format!(
                 "unsupported .zidx version {version} (expected {FORMAT_VERSION}); rebuild the index"
             )));
         }
-        let node_count   = u32::from_le_bytes(mmap[8..12].try_into().unwrap());
-        let string_bytes = u32::from_le_bytes(mmap[12..16].try_into().unwrap());
+        let node_count   = u32::from_le_bytes(le_bytes(&mmap, 8));
+        let string_bytes = u32::from_le_bytes(le_bytes(&mmap, 12));
 
         let expected_len = HEADER_SIZE
             .saturating_add((node_count as usize).saturating_mul(NODE_SIZE))
@@ -128,7 +132,6 @@ impl ZidxIndex {
             node_count,
             nodes_offset,
             strings_offset,
-            string_bytes,
             lookup_index: HashMap::with_capacity(node_count as usize),
         };
 
@@ -169,18 +172,18 @@ impl ZidxIndex {
         // 32..40  uncompressed_size u64  ← was u32 in v1
         // 40..48  local_header_offset u64
         Ok(NodeData {
-            parent:              u32::from_le_bytes(b[0..4].try_into().unwrap()),
-            first_child:         u32::from_le_bytes(b[4..8].try_into().unwrap()),
-            next_sibling:        u32::from_le_bytes(b[8..12].try_into().unwrap()),
-            name_off:            u32::from_le_bytes(b[12..16].try_into().unwrap()),
-            name_len:            u16::from_le_bytes(b[16..18].try_into().unwrap()),
+            parent:              u32::from_le_bytes(le_bytes(b, 0)),
+            first_child:         u32::from_le_bytes(le_bytes(b, 4)),
+            next_sibling:        u32::from_le_bytes(le_bytes(b, 8)),
+            name_off:            u32::from_le_bytes(le_bytes(b, 12)),
+            name_len:            u16::from_le_bytes(le_bytes(b, 16)),
             kind:                b[18],
             // b[19] = _pad
-            compression:         u16::from_le_bytes(b[20..22].try_into().unwrap()),
+            compression:         u16::from_le_bytes(le_bytes(b, 20)),
             // b[22..24] = _pad2
-            compressed_size:     u64::from_le_bytes(b[24..32].try_into().unwrap()),
-            uncompressed_size:   u64::from_le_bytes(b[32..40].try_into().unwrap()),
-            local_header_offset: u64::from_le_bytes(b[40..48].try_into().unwrap()),
+            compressed_size:     u64::from_le_bytes(le_bytes(b, 24)),
+            uncompressed_size:   u64::from_le_bytes(le_bytes(b, 32)),
+            local_header_offset: u64::from_le_bytes(le_bytes(b, 40)),
         })
     }
 

@@ -217,10 +217,7 @@ async fn health_handler() -> impl IntoResponse {
 async fn metrics_handler(State(state): State<AppState>) -> impl IntoResponse {
     use axum::http::header::CONTENT_TYPE;
     let body = state.scheduler_metrics.prometheus_text();
-    axum::response::Response::builder()
-        .header(CONTENT_TYPE, "text/plain; version=0.0.4; charset=utf-8")
-        .body(axum::body::Body::from(body))
-        .unwrap()
+    ([(CONTENT_TYPE, "text/plain; version=0.0.4; charset=utf-8")], body)
 }
 
 #[derive(Deserialize)]

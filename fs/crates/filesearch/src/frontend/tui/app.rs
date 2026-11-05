@@ -154,11 +154,10 @@ impl App {
     /// Send a request over the persistent connection, reconnecting once on
     /// transport-layer failures (socket closed, broken pipe, etc.).
     pub(super) async fn send(&mut self, req: IpcRequest) -> Result<IpcResponse, IpcClientError> {
-        // Lazily connect.
-        if self.ipc.is_none() {
-            self.ipc = Some(IpcClient::connect(&self.ipc_path).await?);
-        }
-        let client = self.ipc.as_mut().unwrap();
+        let client = match self.ipc.as_mut() {
+            Some(c) => c,
+            None    => self.ipc.insert(IpcClient::connect(&self.ipc_path).await?),
+        };
         match client.request(req).await {
             Err(e) if e.is_connection_error() => {
                 // Drop the stale connection; the next call will reconnect.
