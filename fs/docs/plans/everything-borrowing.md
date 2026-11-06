@@ -127,8 +127,9 @@ we approximate that during the _initial_ crawl only
 - Queries keep working during the crawl: the name-index scan uses
   `INDEXED BY idx_files_name`, so while it is dropped name queries fall back
   to a plain table scan.
-- If the daemon stops mid-crawl the rebuild is skipped; `SqliteStore::new`
-  recreates missing indexes from `SCHEMA` on the next start. Reindex requests
+- If the daemon stops mid-crawl the rebuild is skipped;
+  `SqliteStore::with_indexes` recreates the configured indexes on the next
+  start (phase 7). Reindex requests
   are rejected until the rebuild is done.
 
 Measured on the same tree, alternating runs, on a loaded machine (load
