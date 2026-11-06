@@ -1,16 +1,8 @@
 use super::{CmpOp, DupeKind, MetaFilters, RecordView, SqlCondition};
-use crate::store::is_under;
 
 // ---------------------------------------------------------------------------
 // Helpers
 // ---------------------------------------------------------------------------
-
-pub(super) fn parent_dir(path: &str) -> &str {
-    match path.rfind('/') {
-        None | Some(0) => "",
-        Some(i) => &path[..i],
-    }
-}
 
 pub(super) fn dupe_key<R: RecordView + ?Sized>(r: &R, kind: DupeKind) -> String {
     let name = r.name();
@@ -60,7 +52,7 @@ pub(super) fn meta_filter_matches<R: RecordView + ?Sized>(r: &R, f: &MetaFilters
         }
     }
     if let Some(prefix) = &f.path_prefix {
-        if !is_under(r.path(), prefix) {
+        if !r.path_is_under(prefix) {
             return false;
         }
     }
@@ -124,10 +116,6 @@ fn glob_inner(text: &[u8], pattern: &[u8]) -> bool {
     }
 }
 
-fn count_slashes(path: &str) -> usize {
-    path.bytes().filter(|&b| b == b'/').count()
-}
-
 // ---------------------------------------------------------------------------
 
 impl SqlCondition {
@@ -137,18 +125,18 @@ impl SqlCondition {
         match self {
             SqlCondition::NameLike(p) => like_match(r.name(), p),
             SqlCondition::NameGlob(p) => glob_match(r.name(), p),
-            SqlCondition::PathLike(p) => like_match(r.path(), p),
+            SqlCondition::PathLike(p) => r.with_path(|path| like_match(path, p)),
             SqlCondition::IsDir(v) => r.is_dir() == *v,
             SqlCondition::MtimeRange(a, b) => r.mtime() >= *a && r.mtime() <= *b,
             SqlCondition::CtimeRange(a, b) => r.ctime() >= *a && r.ctime() <= *b,
             SqlCondition::SizeRange(a, b) => r.size_bytes() >= *a && r.size_bytes() <= *b,
             SqlCondition::SizeOp(op, v) => cmp_op_u64(*op, r.size_bytes(), *v),
             SqlCondition::ExtIn(exts) => r.extension().is_some_and(|e| exts.iter().any(|x| x == e)),
-            SqlCondition::ParentPath(p) => is_under(r.path(), p),
+            SqlCondition::ParentPath(p) => r.path_is_under(p),
             SqlCondition::NameLenOp(op, n) => cmp_op_usize(*op, r.name().len(), *n),
-            SqlCondition::DepthOp(op, d) => cmp_op_usize(*op, count_slashes(r.path()), *d),
-            SqlCondition::IsArchiveEntry => r.archive_path().is_some(),
-            SqlCondition::ArchiveOf(ap) => r.archive_path() == Some(ap.as_str()),
+            SqlCondition::DepthOp(op, d) => cmp_op_usize(*op, r.path_depth(), *d),
+            SqlCondition::IsArchiveEntry => r.is_archive_entry(),
+            SqlCondition::ArchiveOf(ap) => r.with_archive_path(|a| a == Some(ap.as_str())),
             SqlCondition::AttribAll(mask) => r.attrib_bitmask() & mask == *mask,
             SqlCondition::AttribAny(mask) => r.attrib_bitmask() & mask != 0,
             SqlCondition::Or(branches) => branches.iter().any(|b| b.iter().all(|c| c.matches(r))),

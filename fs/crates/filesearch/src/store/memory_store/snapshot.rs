@@ -1,32 +1,37 @@
-//! Streaming encode and decode of the `index.bin` v3 body.
+//! Streaming encode and decode of the `index.bin` v3 and v4 bodies.
 //!
 //! The body is the postcard encoding of [`Snapshot`]. Decoding it with
 //! `postcard::from_bytes` needed the whole file in memory next to the decoded
 //! arrays, and encoding built the file twice (1.5-1.6 GB peak RSS for a
 //! 420 MB snapshot). These functions read and write the same bytes field by
 //! field, so neither direction holds more than the index plus a small buffer.
-//! The writer also drops arena garbage on the way out, so saving no longer
-//! needs to compact (copy) the arena first.
+//! The writer also drops dead entries and their tails on the way out, so
+//! saving never needs to compact (copy) the index first.
 
 use std::io::{self, Read, Write};
 
+use serde::de::DeserializeOwned;
 use serde::{Deserialize, Serialize};
 
-use super::state::{Entry, Extra};
+use super::state::{Entry, Extra, NO_PARENT};
 
 #[derive(Serialize)]
 pub(super) struct SnapshotRef<'a> {
     pub(super) arena: &'a str,
     pub(super) entries: &'a [Entry],
+    /// New entry numbers when dead entries are dropped on the way out
+    /// (`NO_PARENT` = dropped); `None` writes every entry as is.
+    #[serde(skip)]
+    pub(super) renumber: Option<Vec<u32>>,
     pub(super) exts: &'a [String],
     pub(super) extra: Vec<(u32, &'a Extra)>,
     pub(super) meta: Vec<(&'a String, &'a String)>,
     pub(super) crawl_gen: i64,
 }
 
-pub(super) struct Snapshot {
+pub(super) struct Snapshot<E> {
     pub(super) arena: String,
-    pub(super) entries: Vec<Entry>,
+    pub(super) entries: Vec<E>,
     pub(super) exts: Vec<String>,
     pub(super) extra: Vec<(u32, Extra)>,
     pub(super) meta: Vec<(String, String)>,
@@ -52,10 +57,11 @@ struct Tail {
 }
 
 /// Longest postcard encoding of one `Entry`: five 64-bit varints (10 bytes),
-/// six 32-bit varints (5 bytes) and one byte, rounded up.
+/// seven 32-bit varints (5 bytes) and one byte, rounded up.
 const MAX_ENTRY: usize = 96;
-/// Shortest encoding of one `Entry` (one byte per field); bounds the entry
-/// count a corrupt header can make us reserve.
+/// Shortest encoding of one v3 `EntryV3` (one byte per field; `Entry` has
+/// one field more); bounds the entry count a corrupt header can make us
+/// reserve.
 const MIN_ENTRY: usize = 12;
 
 fn invalid(msg: impl Into<String>) -> io::Error {
@@ -80,22 +86,37 @@ fn write_varint(w: &mut impl Write, mut v: u64) -> io::Result<()> {
 }
 
 /// Writes the body; returns its length in bytes. The arena is written as
-/// the entries' paths in entry order, without the bytes of removed paths, and
-/// entry offsets are rewritten to match.
+/// the kept entries' tails in entry order, and entry offsets and parent
+/// numbers are rewritten to match.
 pub(super) fn write(w: impl Write, s: &SnapshotRef<'_>) -> io::Result<u64> {
     let mut w = Counting { inner: w, n: 0 };
     let arena = s.arena.as_bytes();
-    let live: u64 = s.entries.iter().map(|e| e.path_range().len() as u64).sum();
+    let renumber = |i: u32| match &s.renumber {
+        None => i,
+        Some(m) => m[i as usize],
+    };
+    let kept = || {
+        s.entries
+            .iter()
+            .enumerate()
+            .filter(|(i, _)| renumber(*i as u32) != NO_PARENT)
+            .map(|(_, e)| e)
+    };
+    let live: u64 = kept().map(|e| e.tail_range().len() as u64).sum();
     write_varint(&mut w, live)?;
-    for e in s.entries {
-        w.write_all(arena.get(e.path_range()).ok_or_else(|| invalid("entry outside arena"))?)?;
+    for e in kept() {
+        w.write_all(arena.get(e.tail_range()).ok_or_else(|| invalid("entry outside arena"))?)?;
     }
-    write_varint(&mut w, s.entries.len() as u64)?;
+    write_varint(&mut w, kept().count() as u64)?;
     let mut buf = [0u8; MAX_ENTRY];
     let mut off = 0u64;
-    for e in s.entries {
-        let moved = e.with_path_off(off);
-        off += e.path_range().len() as u64;
+    for e in kept() {
+        let parent = match e.parent() {
+            NO_PARENT => NO_PARENT,
+            p => renumber(p),
+        };
+        let moved = e.moved(off, parent);
+        off += e.tail_range().len() as u64;
         let used = postcard::to_slice(&moved, &mut buf).map_err(|e| invalid(e.to_string()))?;
         w.write_all(used)?;
     }
@@ -123,7 +144,7 @@ impl<W: Write> Write for Counting<W> {
 }
 
 /// Reads a body of exactly `len` bytes.
-pub(super) fn read(r: impl Read, len: u64) -> io::Result<Snapshot> {
+pub(super) fn read<E: DeserializeOwned>(r: impl Read, len: u64) -> io::Result<Snapshot<E>> {
     let mut r = Chunks::new(r.take(len));
     let mut left = len;
 
@@ -143,7 +164,7 @@ pub(super) fn read(r: impl Read, len: u64) -> io::Result<Snapshot> {
     let mut entries = Vec::with_capacity(count as usize);
     for _ in 0..count {
         r.fill(MAX_ENTRY)?;
-        let (e, rest) = postcard::take_from_bytes::<Entry>(r.avail())
+        let (e, rest) = postcard::take_from_bytes::<E>(r.avail())
             .map_err(|e| invalid(format!("entry: {e}")))?;
         let used = r.avail().len() - rest.len();
         r.pos += used;
@@ -298,12 +319,12 @@ mod tests {
     fn truncated_or_lying_body_is_an_error() {
         let out = encode(&IndexState::from_records((0..500).map(rec).collect()));
         for cut in [1, out.len() / 2, out.len() - 1] {
-            assert!(read(&out[..cut], cut as u64).is_err(), "cut at {cut}");
+            assert!(read::<Entry>(&out[..cut], cut as u64).is_err(), "cut at {cut}");
         }
         // A huge entry count must not be trusted for the allocation.
         let mut lie = Vec::new();
         write_varint(&mut lie, 0).unwrap();
         write_varint(&mut lie, u64::MAX / 2).unwrap();
-        assert!(read(&lie[..], lie.len() as u64).is_err());
+        assert!(read::<Entry>(&lie[..], lie.len() as u64).is_err());
     }
 }

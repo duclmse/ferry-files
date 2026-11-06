@@ -315,3 +315,190 @@ fn fuzzy_search_materializes_ranked_winners_only() {
     assert_eq!(hits.len(), 1);
     assert_eq!(hits[0].path, "/b/main.rs");
 }
+
+// ---------------------------------------------------------------------------
+// Parent-pointer tree (phase 3 follow-up)
+// ---------------------------------------------------------------------------
+
+fn dir(path: &str) -> FileRecord {
+    let mut r = sample(path);
+    r.is_dir = true;
+    r.extension = None;
+    r
+}
+
+fn paths(records: Vec<FileRecord>) -> Vec<String> {
+    let mut v: Vec<String> = records.into_iter().map(|r| r.path).collect();
+    v.sort();
+    v
+}
+
+#[test]
+fn removed_parent_keeps_children_resolvable_and_revives() {
+    let store = make_store();
+    for r in [dir("/w"), dir("/w/src"), sample("/w/src/a.rs"), sample("/w/src/b.rs")] {
+        store.upsert_file(&r);
+    }
+    assert!(store.remove_file("/w/src"));
+    assert!(store.get_by_path("/w/src").unwrap().is_none());
+    assert_same(store.get_by_path("/w/src/a.rs").unwrap(), &sample("/w/src/a.rs"));
+    let under = [SqlCondition::ParentPath("/w/src".into())];
+    assert_eq!(
+        paths(store.search_conditions(&under, 10).unwrap()),
+        ["/w/src/a.rs", "/w/src/b.rs"]
+    );
+    assert_eq!(store.children_of("/w/src").unwrap().len(), 2);
+    assert!(store.children_of("/w").unwrap().is_empty());
+
+    store.upsert_file(&dir("/w/src"));
+    assert_same(store.get_by_path("/w/src").unwrap(), &dir("/w/src"));
+    assert_eq!(store.children_of("/w").unwrap(), ["/w/src"]);
+    assert_eq!(store.total_files(), 4);
+    assert_eq!(store.remove_directory("/w"), 3);
+    assert_eq!(store.total_files(), 1);
+}
+
+#[test]
+fn prefix_predicates_match_whole_components_only() {
+    let store = make_store();
+    for r in [dir("/a"), sample("/a/x.rs"), dir("/ab"), sample("/ab/y.rs"), sample("/a/d/z.rs")] {
+        store.upsert_file(&r);
+    }
+    assert_eq!(store.paths_under("/a").unwrap().len(), 2);
+    assert_eq!(store.children_of("/a").unwrap(), ["/a/x.rs"]);
+    assert!(store.has_child("/ab", "y%").unwrap());
+    assert!(!store.has_child("/a", "z%").unwrap());
+    assert_eq!(store.children_of("").unwrap().len(), 2);
+    let depth = [SqlCondition::DepthOp(CmpOp::Eq, 3)];
+    assert_eq!(paths(store.search_conditions(&depth, 10).unwrap()), ["/a/d/z.rs"]);
+    let like = [SqlCondition::PathLike("%b/y%".into())];
+    assert_eq!(paths(store.search_conditions(&like, 10).unwrap()), ["/ab/y.rs"]);
+}
+
+#[test]
+fn archive_members_share_the_archive_entry() {
+    let store = make_store();
+    let mut zip = sample("/a/x.zip");
+    zip.extension = Some("zip".into());
+    let member = |p: &str| {
+        let mut r = sample(p);
+        r.archive_path = Some("/a/x.zip".into());
+        r
+    };
+    store.upsert_file(&dir("/a"));
+    store.upsert_file(&zip);
+    for p in ["/a/x.zip!/top.rs", "/a/x.zip!/d", "/a/x.zip!/d/f.rs"] {
+        store.upsert_file(&member(p));
+    }
+    for p in ["/a/x.zip!/top.rs", "/a/x.zip!/d/f.rs"] {
+        assert_same(store.get_by_path(p).unwrap(), &member(p));
+    }
+    let of = [SqlCondition::ArchiveOf("/a/x.zip".into())];
+    assert_eq!(store.search_conditions(&of, 10).unwrap().len(), 3);
+    assert_eq!(store.list_archive_paths().unwrap(), ["/a/x.zip"]);
+    assert_eq!(store.children_of("/a").unwrap(), ["/a/x.zip"]);
+    assert_eq!(store.remove_archive_entries("/a/x.zip"), 3);
+    assert_eq!(store.total_files(), 2);
+}
+
+#[test]
+fn compaction_keeps_ghost_ancestors_and_snapshot_round_trips() {
+    let dir_path = TempDir::new().unwrap();
+    let store = MemoryStore::new(dir_path.path()).unwrap();
+    store.upsert_file(&dir("/r"));
+    for d in 0..100 {
+        store.upsert_file(&dir(&format!("/r/{d}")));
+        for f in 0..100 {
+            store.upsert_file(&sample(&format!("/r/{d}/f{f}.rs")));
+        }
+    }
+    // Directories go, one file in each stays: the directories become ghosts
+    // and survive compaction; most files are dropped outright.
+    for d in 0..100 {
+        assert!(store.remove_file(&format!("/r/{d}")));
+        for f in 1..100 {
+            assert!(store.remove_file(&format!("/r/{d}/f{f}.rs")));
+        }
+    }
+    assert_eq!(store.total_files(), 101);
+    let check = |s: &MemoryStore| {
+        for d in 0..100 {
+            assert!(s.get_by_path(&format!("/r/{d}")).unwrap().is_none());
+            assert!(s.get_by_path(&format!("/r/{d}/f1.rs")).unwrap().is_none());
+            let f0 = format!("/r/{d}/f0.rs");
+            assert_same(s.get_by_path(&f0).unwrap(), &sample(&f0));
+        }
+        assert_eq!(s.paths_under("/r").unwrap().len(), 100);
+    };
+    check(&store);
+    store.flush_to_disk(dir_path.path()).unwrap();
+    let back = MemoryStore::new(dir_path.path()).unwrap();
+    assert_eq!(back.total_files(), 101);
+    check(&back);
+    back.upsert_file(&dir("/r/7"));
+    assert_eq!(back.children_of("/r/7").unwrap(), ["/r/7/f0.rs"]);
+}
+
+#[test]
+fn v3_snapshot_upgrades() {
+    use super::state::{EntryV3, Extra};
+    #[derive(serde::Serialize)]
+    struct V3<'a> {
+        arena: &'a str,
+        entries: Vec<EntryV3>,
+        exts: Vec<String>,
+        extra: Vec<(u32, Extra)>,
+        meta: Vec<(String, String)>,
+        crawl_gen: i64,
+    }
+    let entry = |off: u64, path: &str, name_off: u32, archive_len: u32, flags: u8| EntryV3 {
+        path_off: off,
+        path_len: path.len() as u32,
+        name_off,
+        archive_len,
+        ext: 1,
+        size: 1024,
+        mtime: 1_000_000,
+        ctime: 1_000_000,
+        indexed_at: 1_000_000,
+        attrib: 0,
+        flags,
+        generation: 3,
+    };
+    // Child before parent, as swap-remove could leave them.
+    let (child, parent, member) = ("/a/b/c.rs", "/a/b", "/a/b/c.rs!/m.rs");
+    let arena = format!("{child}{parent}{member}");
+    let snap = V3 {
+        arena: &arena,
+        entries: vec![
+            entry(0, child, 5, 0, 0),
+            entry(child.len() as u64, parent, 3, 0, 1),
+            entry((child.len() + parent.len()) as u64, member, 11, child.len() as u32, 0),
+        ],
+        exts: vec!["rs".into()],
+        extra: vec![],
+        meta: vec![("last_crawl_time".into(), "5".into())],
+        crawl_gen: 3,
+    };
+    let body = postcard::to_allocvec(&snap).unwrap();
+    let mut buf = Vec::new();
+    buf.extend_from_slice(b"FSID");
+    buf.extend_from_slice(&3u16.to_le_bytes());
+    buf.extend_from_slice(&7u64.to_le_bytes());
+    buf.extend_from_slice(&(body.len() as u64).to_le_bytes());
+    buf.extend_from_slice(&body);
+    let dir_path = TempDir::new().unwrap();
+    std::fs::write(dir_path.path().join("index.bin"), buf).unwrap();
+
+    let store = MemoryStore::new(dir_path.path()).unwrap();
+    assert_eq!(store.get_usn_checkpoint(), 7);
+    assert_eq!(store.get_meta("last_crawl_time").as_deref(), Some("5"));
+    assert_same(store.get_by_path(child).unwrap(), &sample(child));
+    let mut m = sample(member);
+    m.archive_path = Some(child.into());
+    assert_same(store.get_by_path(member).unwrap(), &m);
+    let p = store.get_by_path(parent).unwrap().unwrap();
+    assert!(p.is_dir);
+    // Generations carried over: a crawl at generation 3 finds nothing stale.
+    assert_eq!(store.remove_stale_for_root("/a", 3), 0);
+}

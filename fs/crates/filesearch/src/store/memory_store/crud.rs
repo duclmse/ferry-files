@@ -7,7 +7,6 @@ use super::snapshot;
 use super::state::IndexState;
 use super::{FileRecord, MemoryStore, RecordView};
 use crate::error::{AppError, Result};
-use crate::store::is_under;
 
 // ---------------------------------------------------------------------------
 // Binary snapshot format
@@ -25,14 +24,17 @@ use crate::store::is_under;
 //   [8 bytes]  data_len:       u64 LE
 //   [data_len] postcard-encoded Vec<FileRecord>
 //
-// Version 3 (current): v2 header, then a postcard-encoded `state::Snapshot`
+// Version 3 (legacy): v2 header, then a postcard-encoded `snapshot::Snapshot`
 //   (path arena, packed entries, extension table, side table, meta, crawl
 //   generation). v1/v2 carried no `meta`, so `last_crawl_time` was lost and
 //   every restart re-crawled.
+//
+// Version 4 (current): as v3, but the arena holds path tails and each entry
+//   names its parent entry (`state::Entry`) instead of holding a whole path.
 // ---------------------------------------------------------------------------
 
 const MAGIC: &[u8; 4] = b"FSID";
-const VERSION: u16 = 3;
+const VERSION: u16 = 4;
 const HEADER_V1: usize = 4 + 2 + 8; // magic + version + data_len
 const HEADER_V2: usize = 4 + 2 + 8 + 8; // magic + version + checkpoint + data_len
 const HEADER: usize = HEADER_V2;
@@ -96,7 +98,7 @@ impl MemoryStore {
         let version = u16::from_le_bytes([header[4], header[5]]);
         let (data_offset, usn_checkpoint) = match version {
             1 => (HEADER_V1, 0u64),
-            2 | 3 => {
+            2..=4 => {
                 if got < HEADER_V2 {
                     return Err(AppError::Index(
                         "corrupt index.bin: header too short".into(),
@@ -112,11 +114,15 @@ impl MemoryStore {
             return Err(AppError::Index("corrupt index.bin: truncated data".into()));
         }
         file.seek(SeekFrom::Start(data_offset as u64)).map_err(AppError::Io)?;
+        let decode = |e: std::io::Error| AppError::Index(format!("snapshot decode: {e}"));
+        let corrupt = |e: String| AppError::Index(format!("corrupt index.bin: {e}"));
+        if version == 4 {
+            let snap = snapshot::read(&mut file, data_len).map_err(decode)?;
+            return IndexState::from_snapshot(snap, usn_checkpoint).map_err(corrupt);
+        }
         if version == 3 {
-            let snap = snapshot::read(&mut file, data_len)
-                .map_err(|e| AppError::Index(format!("snapshot decode: {e}")))?;
-            return IndexState::from_snapshot(snap, usn_checkpoint)
-                .map_err(|e| AppError::Index(format!("corrupt index.bin: {e}")));
+            let snap = snapshot::read(&mut file, data_len).map_err(decode)?;
+            return IndexState::from_v3(snap, usn_checkpoint).map_err(corrupt);
         }
         let mut body = Vec::new();
         file.take(data_len).read_to_end(&mut body).map_err(AppError::Io)?;
@@ -127,7 +133,7 @@ impl MemoryStore {
         Ok(state)
     }
 
-    /// Serialize the index to `data_dir/index.bin` in v3 format.
+    /// Serialize the index to `data_dir/index.bin` in v4 format.
     pub fn flush_to_disk(&self, data_dir: &Path) -> Result<()> {
         let state = self.read_state();
         // Write-then-rename so a crash mid-write keeps the previous snapshot.
@@ -179,19 +185,16 @@ impl MemoryStore {
 
     fn remove_where(&self, pred: impl Fn(&super::state::EntryRef<'_>) -> bool) -> usize {
         let mut state = self.write_state();
-        let paths: Vec<String> = state
-            .iter()
-            .filter(|e| pred(e))
-            .map(|e| e.path_str().to_owned())
-            .collect();
-        for p in &paths {
-            state.remove(p);
+        let hits: Vec<u32> = state.iter().filter(|e| pred(e)).map(|e| e.index()).collect();
+        for &i in &hits {
+            state.remove_at(i);
         }
-        paths.len()
+        state.maybe_compact();
+        hits.len()
     }
 
     pub fn remove_directory(&self, path: &str) -> usize {
-        self.remove_where(|e| is_under(e.path_str(), path))
+        self.remove_where(|e| e.under(path).is_some())
     }
 
     /// `tag`, when set, stamps every row with the current crawl's generation -
@@ -232,14 +235,13 @@ impl MemoryStore {
     pub fn remove_stale_for_root(&self, watch_root: &str, generation: i64) -> usize {
         let generation = generation_u32(generation);
         self.remove_where(|e| {
-            let p = e.path_str();
-            (p == watch_root || is_under(p, watch_root))
-                && (e.generation() == 0 || e.generation() < generation)
+            (e.generation() == 0 || e.generation() < generation)
+                && (e.under(watch_root).is_some() || e.path_is(watch_root))
         })
     }
 
     pub fn remove_archive_entries(&self, archive_path: &str) -> usize {
-        self.remove_where(|e| e.archive_path() == Some(archive_path))
+        self.remove_where(|e| e.is_archive() && e.with_archive_path(|a| a == Some(archive_path)))
     }
 
     // -----------------------------------------------------------------------
@@ -253,12 +255,12 @@ impl MemoryStore {
 
     pub fn total_files(&self) -> i64 {
         let state = self.read_state();
-        state.iter().filter(|e| e.archive_path().is_none()).count() as i64
+        state.iter().filter(|e| !e.is_archive()).count() as i64
     }
 
     pub fn total_archive_entries(&self) -> i64 {
         let state = self.read_state();
-        state.iter().filter(|e| e.archive_path().is_some()).count() as i64
+        state.iter().filter(|e| e.is_archive()).count() as i64
     }
 
     // -----------------------------------------------------------------------

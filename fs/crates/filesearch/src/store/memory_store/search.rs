@@ -1,10 +1,9 @@
 use std::collections::HashMap;
 
-use super::matching::{dupe_key, like_match, meta_filter_matches, parent_dir};
+use super::matching::{dupe_key, like_match, meta_filter_matches};
 use super::state::EntryRef;
 use super::{DupeKind, FileRecord, FuzzyRank, MemoryStore, MetaFilters, RecordView, SqlCondition};
 use crate::error::Result;
-use crate::store::is_under;
 
 fn all_match(conds: &[SqlCondition], e: &EntryRef<'_>) -> bool {
     conds.iter().all(|c| c.matches(e))
@@ -25,7 +24,7 @@ impl MemoryStore {
     pub fn has_child(&self, parent_path: &str, name_pattern: &str) -> Result<bool> {
         let state = self.read_state();
         let found = state.iter().any(|e| {
-            parent_dir(e.path_str()) == parent_path && like_match(e.name_str(), name_pattern)
+            like_match(e.name_str(), name_pattern) && e.under(parent_path) == Some(true)
         });
         Ok(found)
     }
@@ -36,8 +35,8 @@ impl MemoryStore {
         let state = self.read_state();
         Ok(state
             .iter()
-            .filter(|e| e.archive_str().is_none() && parent_dir(e.path_str()) == parent_path)
-            .map(|e| e.path_str().to_owned())
+            .filter(|e| !e.is_archive() && e.under(parent_path) == Some(true))
+            .map(|e| e.path_string())
             .collect())
     }
 
@@ -45,8 +44,8 @@ impl MemoryStore {
         let state = self.read_state();
         Ok(state
             .iter()
-            .filter(|e| e.archive_str().is_none() && !e.is_dir() && e.ext_str() == Some("zip"))
-            .map(|e| e.path_str().to_owned())
+            .filter(|e| !e.is_archive() && !e.is_dir() && e.ext_str() == Some("zip"))
+            .map(|e| e.path_string())
             .collect())
     }
 
@@ -83,8 +82,8 @@ impl MemoryStore {
         let state = self.read_state();
         Ok(state
             .iter()
-            .filter(|e| is_under(e.path_str(), dir))
-            .map(|e| e.path_str().to_owned())
+            .filter(|e| e.under(dir).is_some())
+            .map(|e| e.path_string())
             .collect())
     }
 
@@ -149,7 +148,7 @@ impl MemoryStore {
 
         let mut groups: HashMap<String, Vec<EntryRef<'_>>> = HashMap::new();
         for e in state.iter() {
-            if e.archive_str().is_some() || !all_match(conds, &e) {
+            if e.is_archive() || !all_match(conds, &e) {
                 continue;
             }
             groups.entry(dupe_key(&e, kind)).or_default().push(e);

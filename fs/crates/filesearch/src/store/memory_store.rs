@@ -1,11 +1,12 @@
 //! In-memory file-metadata store with binary snapshot persistence.
 //!
-//! Layout follows `docs/plans/everything-borrowing.md` (phase 3): every path
-//! is stored once in a shared string arena, entries are fixed-size records of
-//! offsets and metadata, names and archive paths are slices of the path, and
-//! the path index is a hash table of entry numbers. Snapshots (`index.bin`)
-//! hold those arrays plus the key-value metadata, so a restart reloads the
-//! index without rebuilding strings or re-crawling.
+//! Layout follows `docs/plans/everything-borrowing.md` (phase 3): entries are
+//! fixed-size records holding a parent entry number and the path's tail (the
+//! last component, stored once in a shared string arena), so a full path is
+//! rebuilt by walking the parent chain. Names are slices of the tail, and the
+//! path index is a hash table of entry numbers. Snapshots (`index.bin`) hold
+//! those arrays plus the key-value metadata, so a restart reloads the index
+//! without rebuilding strings or re-crawling.
 //!
 //! This store is single-writer: all mutating methods take an exclusive lock.
 //! Use the SQLite store when you need concurrent writers.

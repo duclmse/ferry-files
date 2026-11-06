@@ -56,8 +56,17 @@ pub type FuzzyRank<'a> = dyn Fn(&[&str]) -> Vec<usize> + Sync + 'a;
 
 /// The fields predicates read, so they can run on borrowed storage (the
 /// memory store's packed entries) without building a `FileRecord` per row.
+/// The memory store keeps no whole paths, so path access goes through a
+/// callback that may rebuild the path into a scratch buffer.
 pub trait RecordView {
-    fn path(&self) -> &str;
+    fn with_path<T>(&self, f: impl FnOnce(&str) -> T) -> T;
+    fn path_is_under(&self, dir: &str) -> bool {
+        self.with_path(|p| is_under(p, dir))
+    }
+    /// Number of '/' in the path, which is what `depth:` compares.
+    fn path_depth(&self) -> usize {
+        self.with_path(|p| p.bytes().filter(|&b| b == b'/').count())
+    }
     fn name(&self) -> &str;
     fn extension(&self) -> Option<&str>;
     fn size_bytes(&self) -> u64;
@@ -65,11 +74,12 @@ pub trait RecordView {
     fn ctime(&self) -> i64;
     fn is_dir(&self) -> bool;
     fn attrib_bitmask(&self) -> u32;
-    fn archive_path(&self) -> Option<&str>;
+    fn is_archive_entry(&self) -> bool;
+    fn with_archive_path<T>(&self, f: impl FnOnce(Option<&str>) -> T) -> T;
 }
 
 impl RecordView for FileRecord {
-    fn path(&self) -> &str { &self.path }
+    fn with_path<T>(&self, f: impl FnOnce(&str) -> T) -> T { f(&self.path) }
     fn name(&self) -> &str { &self.name }
     fn extension(&self) -> Option<&str> { self.extension.as_deref() }
     fn size_bytes(&self) -> u64 { self.size_bytes }
@@ -77,7 +87,10 @@ impl RecordView for FileRecord {
     fn ctime(&self) -> i64 { self.ctime }
     fn is_dir(&self) -> bool { self.is_dir }
     fn attrib_bitmask(&self) -> u32 { self.attrib_bitmask }
-    fn archive_path(&self) -> Option<&str> { self.archive_path.as_deref() }
+    fn is_archive_entry(&self) -> bool { self.archive_path.is_some() }
+    fn with_archive_path<T>(&self, f: impl FnOnce(Option<&str>) -> T) -> T {
+        f(self.archive_path.as_deref())
+    }
 }
 
 /// `path` is strictly inside directory `dir`, without allocating `"{dir}/"`.

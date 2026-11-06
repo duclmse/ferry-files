@@ -107,9 +107,62 @@ the idea that removes the duplication without changing predicate semantics:
 - Acceptance: idle RSS on the 2.37M-file tree at most ~1/3 of the 2.1 GB
   baseline; all memory-store and evaluator tests pass on both backends.
 
-A true parent-pointer tree (one name per directory level) is left as a
-follow-up: it would cut another ~60 B/entry, but needs path reconstruction in
-every path predicate.
+### Follow-up, done: parent-pointer tree
+
+Each entry now stores only its **tail** plus the entry number of its parent,
+as Everything does. The tail is `/name` for an entry whose directory is
+indexed, `!/inner` for an archive's top-level members (their parent is the
+archive entry), or the whole path when the parent is not indexed (watch
+roots, records inserted through the API). A parent always has a lower entry
+number than its children, so a snapshot can be validated and loaded in one
+pass.
+
+- Paths are rebuilt by walking the parent chain, into a thread-local buffer
+  where only a borrow is needed. The path index hashes the rebuilt path and
+  compares by stripping tails off the end of the probe, so a lookup copies
+  nothing on a hit.
+- `RecordView` exposes the path through a callback (`with_path`) plus
+  `path_is_under` and `path_depth`. The memory store answers those two by
+  walking the chain without rebuilding the path: `parent:` compares tails
+  root-first against the directory and rejects most entries in their first
+  segment, and `depth:` sums the `/` in each tail.
+- Removing a directory that still has indexed children marks it dead
+  (`F_DEAD`) instead of dropping it, so its children keep resolving and a
+  re-add of the same path revives it in place. Dead entries are compacted
+  once there are more than 4,096 of them and they exceed a quarter of the
+  table, keeping only those that are still ancestors of live entries, and
+  are never written to a snapshot unless they are such ancestors.
+- `index.bin` is **v4** (tails arena, entries with `parent`). v3 files load
+  by re-inserting their entries, shortest path first, so parents come first.
+
+Measured on `~/projects` (2.31M files + 178K dirs, memory store, same
+`run.sh` load as the table above; footprint is `vmmap` "Physical
+footprint", which, unlike RSS, includes compressed pages):
+
+| Measure                          | Flat arena | Parent tree |
+| -------------------------------- | ---------: | ----------: |
+| Footprint after crawl, idle      |     527 MB |      249 MB |
+| Peak footprint, cold crawl       |     753 MB |      419 MB |
+| Footprint, warm restart steady   |     515 MB |      291 MB |
+| `index.bin` size                 |     401 MB |      169 MB |
+| Warm restart until ready         |     0.40 s |      0.54 s |
+| Queries completed in 20 s        |      3,304 |       3,320 |
+
+Queries that must rebuild or walk the path of every entry got slower; the
+rest did not change. Warm REST calls, `limit=100`, five runs each:
+
+| Query                      | Flat arena | Parent tree |
+| -------------------------- | ---------: | ----------: |
+| `zzqx` (name, no match)    |  112-129 ms |   114-135 ms |
+| `readme`                   |     2 ms   |      2-3 ms |
+| `path:/zzqx` (full scan)   | 156-164 ms |  350-361 ms |
+| `parent:/zzqx` (full scan) |   14-15 ms |    76-78 ms |
+| `depth:99` (full scan)     |   86-88 ms |  178-183 ms |
+| `parent:` an indexed dir   |     5 ms   |        7 ms |
+| `dupe:name count:10`       |    1.0-1.1 s |    1.0-1.1 s |
+
+That is the trade Everything makes as well: half the memory, and path
+predicates over the whole table cost a chain walk per entry.
 
 ## Phase 4 - SQLite bulk load (Everything §2.7) - done
 
