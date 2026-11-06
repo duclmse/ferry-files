@@ -34,8 +34,9 @@ pub(super) const DEFAULT_AUTOCHECKPOINT: &str = "PRAGMA wal_autocheckpoint=1000"
 /// `index_meta` key holding the `CREATE INDEX` statements to replay. Kept in
 /// the database rather than in memory so the statements match whatever the
 /// schema was when they were dropped; if the daemon dies mid-crawl,
-/// `SqliteStore::new` recreates them from `SCHEMA` on the next start anyway.
-const META_KEY: &str = "bulk_load_indexes";
+/// `SqliteStore::with_indexes` recreates the configured ones on the next
+/// start and clears this key.
+pub(super) const META_KEY: &str = "bulk_load_indexes";
 
 impl SqliteStore {
     /// Drops the secondary indexes if the `files` table is empty. Returns
@@ -190,6 +191,36 @@ mod tests {
     }
 
     #[test]
+    fn configured_indexes_are_built_and_dropped_on_open() {
+        use crate::config::SqliteIndex;
+        let dir = tempfile::TempDir::new().unwrap();
+        let db = dir.path().join("i.db");
+        let all = indexes(&SqliteStore::new(&db).unwrap());
+        let s = SqliteStore::with_indexes(&db, &[SqliteIndex::Mtime]).unwrap();
+        assert_eq!(
+            indexes(&s),
+            ["idx_files_archive", "idx_files_mtime", "idx_files_parent"]
+        );
+        s.upsert_file(&rec("/w/abc.rs")).unwrap();
+        // Name searches use INDEXED BY idx_files_name when it exists.
+        let like = vec![SqlCondition::NameLike("%b%".into())];
+        assert_eq!(s.search_conditions(&like, 10).unwrap().len(), 1);
+        drop(s);
+        assert_eq!(indexes(&SqliteStore::new(&db).unwrap()), all);
+    }
+
+    #[test]
+    fn bulk_load_keeps_unconfigured_indexes_off() {
+        use crate::config::SqliteIndex;
+        let dir = tempfile::TempDir::new().unwrap();
+        let s = SqliteStore::with_indexes(&dir.path().join("i.db"), &[SqliteIndex::Size]).unwrap();
+        let before = indexes(&s);
+        assert!(s.begin_bulk_load().unwrap());
+        s.end_bulk_load().unwrap();
+        assert_eq!(indexes(&s), before);
+    }
+
+    #[test]
     fn restart_mid_bulk_load_recreates_indexes() {
         let dir = tempfile::TempDir::new().unwrap();
         let db = dir.path().join("i.db");
@@ -201,6 +232,7 @@ mod tests {
         };
         let s = SqliteStore::new(&db).unwrap();
         assert_eq!(indexes(&s), before);
+        assert!(s.get_meta(META_KEY).unwrap().is_none());
         s.end_bulk_load().unwrap();
         assert_eq!(indexes(&s), before);
     }

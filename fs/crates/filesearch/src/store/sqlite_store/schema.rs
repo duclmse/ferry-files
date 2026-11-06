@@ -1,5 +1,6 @@
 use rusqlite::params_from_iter;
 
+use crate::config::SqliteIndex;
 use crate::error::{AppError, Result};
 use crate::store::FileRecord;
 
@@ -31,12 +32,7 @@ CREATE TABLE IF NOT EXISTS files (
     crawl_generation INTEGER DEFAULT NULL
 );
 
-CREATE INDEX IF NOT EXISTS idx_files_name      ON files(name);
-CREATE INDEX IF NOT EXISTS idx_files_extension ON files(extension);
-CREATE INDEX IF NOT EXISTS idx_files_mtime     ON files(mtime);
-CREATE INDEX IF NOT EXISTS idx_files_size      ON files(size_bytes);
 CREATE INDEX IF NOT EXISTS idx_files_parent    ON files(parent);
-CREATE INDEX IF NOT EXISTS idx_files_attrib    ON files(attrib_bitmask);
 CREATE INDEX IF NOT EXISTS idx_files_archive   ON files(archive_path)
     WHERE archive_path IS NOT NULL;
 
@@ -45,6 +41,17 @@ CREATE TABLE IF NOT EXISTS index_meta (
     value TEXT NOT NULL
 );
 ";
+
+/// The `[store] indexes` choices: config name, index name, indexed column.
+/// Kept out of `SCHEMA`, which runs on every start and would rebuild an index
+/// the config turned off.
+pub(super) const OPTIONAL_INDEXES: &[(SqliteIndex, &str, &str)] = &[
+    (SqliteIndex::Name, "idx_files_name", "name"),
+    (SqliteIndex::Extension, "idx_files_extension", "extension"),
+    (SqliteIndex::Mtime, "idx_files_mtime", "mtime"),
+    (SqliteIndex::Size, "idx_files_size", "size_bytes"),
+    (SqliteIndex::Attrib, "idx_files_attrib", "attrib_bitmask"),
+];
 
 // Migration: add columns if this is an existing database that pre-dates them.
 // SQLite does not support ADD COLUMN IF NOT EXISTS before 3.37, so we catch the

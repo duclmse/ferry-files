@@ -17,6 +17,16 @@ data_dir = "/var/lib/filesearch"
 # Directory for rolling daily log files.
 log_dir = "/var/log/filesearch"
 
+# ── Store ─────────────────────────────────────────────────────────────────────
+
+[store]
+# "sqlite" (default) or "memory".
+mode = "sqlite"
+# Optional SQLite indexes (sqlite mode). Each one makes queries on its column
+# fast and slows every write; see docs/plans/everything-borrowing.md, phase 7.
+# Changes apply on restart: missing indexes are built, unlisted ones dropped.
+indexes = ["name", "extension", "mtime", "size", "attrib"]
+
 # ── Exclusions ────────────────────────────────────────────────────────────────
 
 [exclusions]

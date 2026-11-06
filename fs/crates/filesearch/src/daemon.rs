@@ -585,7 +585,7 @@ fn spawn_crawl(
             tracing::info!("full crawl complete");
         }
         // On shutdown, skip the rebuild: it can take tens of seconds, and
-        // SqliteStore::new recreates missing indexes on the next start.
+        // SqliteStore::with_indexes recreates missing indexes on the next start.
         if bulk && !cancelled.is_cancelled() {
             match tokio::task::spawn_blocking(move || store.end_bulk_load()).await {
                 Ok(Ok(())) => {}

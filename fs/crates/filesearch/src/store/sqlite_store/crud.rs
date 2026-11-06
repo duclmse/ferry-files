@@ -2,14 +2,24 @@ use std::path::Path;
 
 use r2d2_sqlite::SqliteConnectionManager;
 
+use crate::config::SqliteIndex;
 use crate::error::{AppError, Result};
 use crate::store::FileRecord;
 
 use super::SqliteStore;
-use super::schema::{SCHEMA, apply_migrations, parent_of, row_to_record};
+use super::schema::{
+    OPTIONAL_INDEXES, SCHEMA, apply_migrations, parent_of, row_to_record,
+};
 
 impl SqliteStore {
+    /// Opens the store with every optional index.
     pub fn new(db_path: &Path) -> Result<Self> {
+        Self::with_indexes(db_path, &SqliteIndex::ALL)
+    }
+
+    /// Opens the store, building the listed optional indexes that are
+    /// missing and dropping the others.
+    pub fn with_indexes(db_path: &Path, indexes: &[SqliteIndex]) -> Result<Self> {
         let manager = SqliteConnectionManager::file(db_path).with_init(|conn| {
             conn.execute_batch(
                 "PRAGMA journal_mode=WAL;
@@ -27,8 +37,13 @@ impl SqliteStore {
         let conn = pool.get().map_err(|e| AppError::Index(e.to_string()))?;
         conn.execute_batch(SCHEMA)?;
         apply_migrations(&conn)?;
+        sync_optional_indexes(&conn, indexes)?;
 
-        Ok(Self { pool, name_bounds: Default::default() })
+        Ok(Self {
+            pool,
+            name_bounds: Default::default(),
+            name_index: indexes.contains(&SqliteIndex::Name),
+        })
     }
 
     pub(crate) fn get_conn(&self) -> Result<r2d2::PooledConnection<SqliteConnectionManager>> {
@@ -338,4 +353,28 @@ impl SqliteStore {
         )?;
         Ok(())
     }
+}
+
+fn sync_optional_indexes(conn: &rusqlite::Connection, indexes: &[SqliteIndex]) -> Result<()> {
+    for (which, name, column) in OPTIONAL_INDEXES {
+        let exists: bool = conn.query_row(
+            "SELECT EXISTS (SELECT 1 FROM sqlite_master WHERE type = 'index' AND name = ?1)",
+            [name],
+            |r| r.get(0),
+        )?;
+        let wanted = indexes.contains(which);
+        if wanted && !exists {
+            let start = std::time::Instant::now();
+            conn.execute_batch(&format!("CREATE INDEX {name} ON files({column})"))?;
+            tracing::info!("built index {name} in {:.1}s", start.elapsed().as_secs_f64());
+        } else if !wanted && exists {
+            conn.execute_batch(&format!("DROP INDEX {name}"))?;
+            // The freed pages stay in the file until a VACUUM.
+            tracing::info!("dropped index {name} (not in [store] indexes)");
+        }
+    }
+    // Everything a bulk load dropped is now either rebuilt or unwanted, so a
+    // replay left over from a crawl that never finished must not run.
+    conn.execute("DELETE FROM index_meta WHERE key = ?1", [super::bulk::META_KEY])?;
+    Ok(())
 }

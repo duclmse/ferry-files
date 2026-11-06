@@ -55,10 +55,42 @@ pub enum StoreMode {
     Memory,
 }
 
-#[derive(Debug, Clone, Deserialize, Default)]
+#[derive(Debug, Clone, Deserialize)]
 pub struct StoreConfig {
     #[serde(default)]
     pub mode: StoreMode,
+    /// Optional SQLite secondary indexes (sqlite mode only). Each one speeds
+    /// up queries on its column and costs disk space and crawl/write time;
+    /// the parent and archive indexes are always kept. Changing the list
+    /// takes effect on restart: missing indexes are built, unlisted ones
+    /// dropped.
+    #[serde(default = "default_sqlite_indexes")]
+    pub indexes: Vec<SqliteIndex>,
+}
+
+impl Default for StoreConfig {
+    fn default() -> Self {
+        Self { mode: StoreMode::default(), indexes: default_sqlite_indexes() }
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum SqliteIndex {
+    Name,
+    Extension,
+    Mtime,
+    Size,
+    Attrib,
+}
+
+impl SqliteIndex {
+    pub const ALL: [SqliteIndex; 5] =
+        [Self::Name, Self::Extension, Self::Mtime, Self::Size, Self::Attrib];
+}
+
+fn default_sqlite_indexes() -> Vec<SqliteIndex> {
+    SqliteIndex::ALL.to_vec()
 }
 
 #[derive(Debug, Clone, Deserialize, Default)]
@@ -496,6 +528,21 @@ log_dir     = "{dir}/logs"
         assert_eq!(cfg.api.rest_port, 7700);
         assert_eq!(cfg.api.grpc_port, 7701);
         assert!((cfg.search.fuzzy_threshold - 0.7).abs() < f32::EPSILON);
+    }
+
+    #[test]
+    fn store_indexes_default_to_all_and_reject_unknown_names() {
+        let dir = tempfile::tempdir().unwrap();
+        let base = minimal_config_toml(dir.path());
+        let cfg = load(write_config(&base).path()).unwrap();
+        assert_eq!(cfg.store.indexes, SqliteIndex::ALL);
+        let cfg = load(write_config(&format!("{base}[store]\nmode = \"sqlite\"\n")).path()).unwrap();
+        assert_eq!(cfg.store.indexes, SqliteIndex::ALL);
+        let some = format!("{base}[store]\nindexes = [\"name\", \"mtime\"]\n");
+        let cfg = load(write_config(&some).path()).unwrap();
+        assert_eq!(cfg.store.indexes, [SqliteIndex::Name, SqliteIndex::Mtime]);
+        let bad = format!("{base}[store]\nindexes = [\"path\"]\n");
+        assert!(matches!(load(write_config(&bad).path()), Err(AppError::Config(_))));
     }
 
     #[test]

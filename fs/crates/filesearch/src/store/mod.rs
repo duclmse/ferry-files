@@ -370,7 +370,10 @@ impl FileStore {
     pub fn from_config(cfg: &crate::config::Config) -> Result<Self> {
         match cfg.store.mode {
             crate::config::StoreMode::Sqlite =>
-                Ok(FileStore::Sqlite(Arc::new(SqliteStore::new(&cfg.data_dir.join("index.db"))?))),
+                Ok(FileStore::Sqlite(Arc::new(SqliteStore::with_indexes(
+                    &cfg.data_dir.join("index.db"),
+                    &cfg.store.indexes,
+                )?))),
             crate::config::StoreMode::Memory =>
                 Ok(FileStore::Memory(Arc::new(MemoryStore::new(&cfg.data_dir)?))),
         }

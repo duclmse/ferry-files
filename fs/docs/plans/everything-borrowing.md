@@ -1,6 +1,6 @@
 # Plan: Borrowing Everything's Techniques
 
-> **Status:** phases 1-4 implemented; phase 5 on macOS; phase 6 crawl-writer fix; open: phase 5 on Windows/Linux, platform enumeration, phase 7 (Nov 2026). Background:
+> **Status:** phases 1-4 and 7 implemented; phase 5 on macOS; phase 6 crawl-writer fix; open: phase 5 on Windows/Linux, platform enumeration (Nov 2026). Background:
 > [research/everything-internals.md](../research/everything-internals.md).
 > Measurements: RSS and CPU time sampled every 250 ms plus `/usr/bin/time -l`
 > peaks, on `~/projects` (2.38M files, 191k dirs), macOS, 8 cores, with 8
@@ -236,8 +236,75 @@ Still open, and now lower priority:
   enumeration matters most and is untested here.
 - Linux: `statx` with a minimal mask.
 
-## Phase 7 - Optional extras (Everything §2.4) - open
+## Phase 7 - Optional extras (Everything §2.4) - done
 
-Make SQLite secondary indexes and stored-but-rarely-used columns configurable
-(`[store] indexes = ["name", "extension", "mtime", ...]`), mirroring
-Everything's "fast sort" toggles, and document the per-index cost.
+SQLite secondary indexes are configurable in the same way as Everything's
+"fast sort" toggles:
+
+```toml
+[store]
+indexes = ["name", "extension", "mtime", "size", "attrib"]   # the default
+```
+
+- The optional indexes are no longer in `SCHEMA`, which runs on every start.
+  `SqliteStore::with_indexes` builds the listed ones that are missing and
+  drops the unlisted ones, so a change takes effect on the next start. A
+  dropped index's pages stay in the file until a `VACUUM`.
+- `idx_files_parent` (directory listing, the watcher's stale-sibling sweep)
+  and the partial `idx_files_archive` are always kept.
+- Without `name`, name searches take the plain-scan path they already used
+  during a bulk load, because the partitioned search names the index in
+  `INDEXED BY`.
+- The bulk load records only the indexes that exist, so it never rebuilds an
+  unlisted one. Opening the store also clears a replay left by a crawl that
+  never finished, because the configured indexes are rebuilt by then.
+
+Making columns optional was not worth it: the large ones (`path`, `parent`,
+`watch_root`) are all used, and the integer columns are 1-9 bytes each.
+
+Cost per index, measured on 2.59M rows (`~/projects`, sqlite mode, load
+average 3-17 during the runs). Size comes from `dbstat`. Build is the time to
+create the index on the full table at startup. The table itself is 884 MB,
+and `idx_files_parent` is 281 MB.
+
+| Index       |   Size | Build      |
+| ----------- | -----: | ---------- |
+| `name`      | 116 MB | 4.4-10.6 s |
+| `extension` |  27 MB | 1.7-6.8 s  |
+| `mtime`     |  33 MB | 3.9-6.1 s  |
+| `size`      |  29 MB | 3.4-7.4 s  |
+| `attrib`    |  23 MB | 2.5-6.3 s  |
+
+The initial crawl is not affected, because the bulk load (Phase 4) drops
+these indexes anyway. They do slow every later write. A full rescan of the
+existing database (every row upserted, two alternating runs each) took:
+
+| `indexes`                              | Rescan     |
+| -------------------------------------- | ---------- |
+| `[]`                                   | 45-50 s    |
+| `["name"]`                             | 87-102 s   |
+| `["extension","mtime","size","attrib"]` | 90-100 s   |
+| all five                               | 131-136 s  |
+
+In return, queries on an indexed column take milliseconds, and without the
+index they scan the whole table. Times are warm REST calls with
+`limit=100`, from the second run on; results were identical:
+
+| Query             | All indexes | None       |
+| ----------------- | ----------- | ---------- |
+| `zzqx` (no match) | 70 ms       | 0.9-6.1 s  |
+| `*.pdf`           | 72-76 ms    | 0.27-1.7 s |
+| `ext:pdf`         | 1 ms        | 0.23 s     |
+| `size:>500mb`     | 0.6-0.8 ms  | 0.4-1.6 s  |
+| `readme size:>1mb` | 124 ms     | 0.57-1.2 s |
+| `readme` (common) | 70 ms       | 7 ms       |
+
+The last row is a side finding. A name pattern with many matches fills
+`LIMIT` sooner from a plain table scan than from the partitioned index scan,
+which runs every partition to its own limit. That is a planner choice for
+later. It does not justify dropping the index.
+
+Use the default unless writes matter more than queries, for example a large
+tree under constant churn. Remove `attrib` first, since no common query uses
+it, then `size` and `mtime` if nobody sorts or filters by them. Keep `name`:
+name search is the main use.

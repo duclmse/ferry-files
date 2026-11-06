@@ -199,7 +199,7 @@ impl SqliteStore {
         }
         let (name_conds, other_conds): (Vec<SqlCondition>, Vec<SqlCondition>) =
             conds.iter().cloned().partition(is_name_condition);
-        if name_conds.iter().all(is_match_all) || self.bulk_loading()? {
+        if name_conds.iter().all(is_match_all) || !self.name_index || self.bulk_loading()? {
             let (where_extra, params) = build_conditions(conds);
             let sql = format!(
                 "SELECT id, path, name, extension, size_bytes, mtime, ctime,
