@@ -1,4 +1,5 @@
-use std::sync::Arc;
+use std::sync::atomic::{AtomicUsize, Ordering};
+use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
 
 use rayon::prelude::*;
@@ -36,6 +37,88 @@ fn is_name_condition(c: &SqlCondition) -> bool {
 /// The planner emits `NameLike("%")` as a catch-all for OR / NOT.
 fn is_match_all(c: &SqlCondition) -> bool {
     matches!(c, SqlCondition::NameLike(p) if p == "%")
+}
+
+/// Shared row count across the parallel name ranges, with the interrupt
+/// handles of the connections still scanning.
+struct EarlyStop {
+    limit: usize,
+    found: AtomicUsize,
+    running: Mutex<Option<Vec<(usize, rusqlite::InterruptHandle)>>>,
+}
+
+impl EarlyStop {
+    fn new(limit: usize) -> Self {
+        Self { limit, found: AtomicUsize::new(0), running: Mutex::new(Some(Vec::new())) }
+    }
+
+    fn key(conn: &rusqlite::Connection) -> usize {
+        std::ptr::from_ref(conn) as usize
+    }
+
+    /// False if the limit was already reached and the range need not run.
+    fn register(&self, conn: &rusqlite::Connection) -> bool {
+        let Ok(mut running) = self.running.lock() else { return true };
+        match running.as_mut() {
+            Some(list) => {
+                list.push((Self::key(conn), conn.get_interrupt_handle()));
+                true
+            }
+            None => false,
+        }
+    }
+
+    fn unregister(&self, conn: &rusqlite::Connection) {
+        if let Ok(mut running) = self.running.lock() {
+            if let Some(list) = running.as_mut() {
+                list.retain(|(k, _)| *k != Self::key(conn));
+            }
+        }
+    }
+
+    /// Counts one row; interrupts every running range once `limit` is reached.
+    fn add_row(&self) {
+        if self.found.fetch_add(1, Ordering::Relaxed) + 1 != self.limit {
+            return;
+        }
+        if let Ok(mut running) = self.running.lock() {
+            for (_, h) in running.take().into_iter().flatten() {
+                h.interrupt();
+            }
+        }
+    }
+
+    fn stopped(&self) -> bool {
+        self.found.load(Ordering::Relaxed) >= self.limit
+    }
+}
+
+/// Runs `sql`, keeping the rows read before an early-stop interrupt.
+fn collect_until_stopped(
+    conn: &rusqlite::Connection,
+    sql: &str,
+    params: &[Value],
+    stop: &EarlyStop,
+) -> Result<Vec<FileRecord>> {
+    let mut stmt = conn.prepare_cached(sql)?;
+    let mut rows = stmt.query(rusqlite::params_from_iter(params.iter()))?;
+    let mut out = Vec::new();
+    loop {
+        match rows.next() {
+            Ok(Some(row)) => {
+                out.push(row_to_record(row)?);
+                stop.add_row();
+            }
+            Ok(None) => break,
+            Err(rusqlite::Error::SqliteFailure(e, _))
+                if e.code == rusqlite::ErrorCode::OperationInterrupted && stop.stopped() =>
+            {
+                break
+            }
+            Err(e) => return Err(e.into()),
+        }
+    }
+    Ok(out)
 }
 
 impl SqliteStore {
@@ -272,6 +355,11 @@ impl SqliteStore {
     /// matching rows are fetched. Large indexes are additionally split into
     /// name ranges scanned in parallel, one pooled connection each.
     ///
+    /// Matches often cluster in one range (`%readme%` is mostly names starting
+    /// with "readme"), so once the ranges together hold `limit` rows the ones
+    /// still scanning are interrupted rather than left to finish: waiting for
+    /// them made a common term as slow as one with no match at all.
+    ///
     /// Results come back in name order rather than rowid order; neither is
     /// part of the API contract (there is no ORDER BY either way).
     fn search_by_name_index(
@@ -283,6 +371,7 @@ impl SqliteStore {
         let (name_sql, name_params) = build_conditions(name_conds);
         let (other_sql, other_params) = build_conditions(other_conds);
         let bounds = self.name_bounds()?;
+        let stop = EarlyStop::new(limit);
 
         let run = |lo: Option<&String>, hi: Option<&String>| -> Result<Vec<FileRecord>> {
             let mut params = name_params.clone();
@@ -310,8 +399,14 @@ impl SqliteStore {
                  WHERE 1=1 {other_sql} LIMIT ?"
             );
             let conn = self.get_conn()?;
-            let mut stmt = conn.prepare_cached(&sql)?;
-            query_records(&mut stmt, params)
+            if !stop.register(&conn) {
+                return Ok(Vec::new());
+            }
+            let rows = collect_until_stopped(&conn, &sql, &params, &stop);
+            // After the statement is reset, so a late interrupt cannot reach
+            // whatever query uses this pooled connection next.
+            stop.unregister(&conn);
+            rows
         };
 
         if bounds.is_empty() {

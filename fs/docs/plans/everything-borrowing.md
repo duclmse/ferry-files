@@ -329,12 +329,27 @@ index they scan the whole table. Times are warm REST calls with
 | `ext:pdf`         | 1 ms        | 0.23 s     |
 | `size:>500mb`     | 0.6-0.8 ms  | 0.4-1.6 s  |
 | `readme size:>1mb` | 124 ms     | 0.57-1.2 s |
-| `readme` (common) | 70 ms       | 7 ms       |
+| `readme` (common) | 70 ms (6-11 ms after the fix below) | 7 ms |
 
-The last row is a side finding. A name pattern with many matches fills
-`LIMIT` sooner from a plain table scan than from the partitioned index scan,
-which runs every partition to its own limit. That is a planner choice for
-later. It does not justify dropping the index.
+The last row was a side finding, now fixed. The partitioned name search
+splits the index into up to eight name ranges scanned in parallel, and
+waited for all of them. The matches for `%readme%` almost all sort into the
+range holding names that start with "readme", so the other ranges scanned
+to their end and the query cost as much as one with no match. The ranges now
+share a row count, and once it reaches `LIMIT` the ones still scanning are
+stopped with `sqlite3_interrupt` (`search.rs`, `EarlyStop`). Same database,
+two runs of three warm calls each:
+
+| Query    | Before   | After     |
+| -------- | -------- | --------- |
+| `readme` | 73-78 ms | 6-11 ms   |
+| `zzqx`   | 74-134 ms | 78-120 ms (must scan everything) |
+| `*.pdf`  | 77-121 ms | 59-129 ms |
+
+`*.pdf` is unchanged: its matches are spread thinly over every range, so
+`LIMIT` is reached only near the end. Answering it from `idx_files_extension`
+like `ext:pdf` (1 ms) would need the glob rewritten into an extension test
+that matches exactly the same names, which is left open.
 
 Use the default unless writes matter more than queries, for example a large
 tree under constant churn. Remove `attrib` first, since no common query uses

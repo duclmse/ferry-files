@@ -264,3 +264,33 @@ fn name_search_partitioned_matches_unpartitioned_semantics() {
     let again = store.search_conditions(&[like], 1_000).unwrap();
     assert_eq!(again.len(), expected.len());
 }
+
+#[test]
+fn clustered_name_matches_stop_the_other_ranges_cleanly() {
+    use crate::store::SqlCondition;
+
+    let dir   = tempfile::tempdir().unwrap();
+    let store = SqliteStore::new(&dir.path().join("index.db")).unwrap();
+    let gen   = store.begin_crawl_generation().unwrap();
+    // Hits all sort into one name range, as `%readme%` does in a real tree.
+    let batch: Vec<(FileRecord, String)> = (0..60_000)
+        .map(|i| {
+            let lead = (b'a' + (i % 26) as u8) as char;
+            let name = if i % 20 == 0 { format!("readme_{i}.md") } else { format!("{lead}_file_{i}.txt") };
+            (sample_record(&format!("/root/d{}/{name}", i % 50)), "/root".to_owned())
+        })
+        .collect();
+    store.batch_upsert_crawl(&batch, gen).unwrap();
+
+    let like = [SqlCondition::NameLike("%readme%".into())];
+    let none = [SqlCondition::NameLike("%zzqx%".into())];
+    // Repeated so an interrupt that outlived its range would surface as an
+    // error or a short result on a later query over the same pooled connections.
+    for _ in 0..20 {
+        let few = store.search_conditions(&like, 10).unwrap();
+        assert_eq!(few.len(), 10);
+        assert!(few.iter().all(|r| r.name.starts_with("readme_")));
+        assert_eq!(store.search_conditions(&like, 10_000).unwrap().len(), 3_000);
+        assert!(store.search_conditions(&none, 10).unwrap().is_empty());
+    }
+}
