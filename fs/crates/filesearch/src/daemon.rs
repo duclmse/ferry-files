@@ -496,12 +496,21 @@ pub async fn run_with_shutdown(
 /// replay changes that were already applied; replay is idempotent.
 const JOURNAL_POSITION_INTERVAL: Duration = Duration::from_secs(60);
 
+/// How often to check whether a running crawl has finished, so the position
+/// captured before it is stored soon after (a restart within the first minutes
+/// would otherwise crawl again).
+const JOURNAL_CRAWL_POLL: Duration = Duration::from_secs(2);
+
 /// Periodically stores the position captured one interval earlier. By then
 /// every event before it has passed the debouncer and been applied, so the
-/// stored position is safe even after a crash. Positions are discarded while
-/// a crawl runs: until it finishes the index may not reflect the changes the
-/// crawl was started to pick up, and the old position (or none) must stay so
-/// the next start crawls again.
+/// stored position is safe even after a crash.
+///
+/// Nothing is stored while a crawl runs: changes made before the crawl
+/// started (while the daemon was stopped, say) are only in the index once it
+/// finishes, so an interrupted crawl must leave the old position (or none)
+/// for the next start. The pending position is kept, not discarded: it was
+/// captured before the crawl started, so once the crawl is done everything
+/// before it has been crawled and everything after it is in the log.
 async fn keep_journal_position(
     store:        Arc<FileStore>,
     roots:        Vec<PathBuf>,
@@ -509,14 +518,18 @@ async fn keep_journal_position(
     crawl_active: Arc<AtomicBool>,
     shutdown:     CancellationToken,
 ) {
-    let mut prev = (!crawl_active.load(Ordering::Acquire)).then_some(first);
+    let mut prev = Some(first);
     loop {
+        let wait = if crawl_active.load(Ordering::Acquire) {
+            JOURNAL_CRAWL_POLL
+        } else {
+            JOURNAL_POSITION_INTERVAL
+        };
         tokio::select! {
             _ = shutdown.cancelled() => return,
-            _ = tokio::time::sleep(JOURNAL_POSITION_INTERVAL) => {}
+            _ = tokio::time::sleep(wait) => {}
         }
         if crawl_active.load(Ordering::Acquire) {
-            prev = None;
             continue;
         }
         if let Some(p) = prev.take() {

@@ -169,6 +169,10 @@ Now (`watcher/journal.rs`, wired in `daemon.rs` step 17):
   lagging one interval behind so every earlier event has been through the
   debouncer; this makes it crash-safe without a shutdown hook. While a crawl
   runs no position is stored, so an interrupted recovery crawl is redone.
+  The position captured before the crawl is kept and stored within seconds
+  of the crawl finishing: everything before it was crawled and everything
+  after it is in the log. (At first only positions captured after a crawl
+  were stored, so a restart within two minutes of any crawl crawled again.)
 - On a warm start the history since that id is replayed
   (`FSEventStreamCreate` with `sinceWhen`, file-level events, until
   `HistoryDone`). Each changed path is checked on disk and becomes a
