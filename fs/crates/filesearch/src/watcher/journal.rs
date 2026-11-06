@@ -4,9 +4,10 @@
 //! The live watcher only sees changes from the moment it starts. Like
 //! Everything's USN journal replay, a position in the OS change log is stored
 //! with the index and the log is replayed from it on the next start. macOS
-//! replays FSEvents history; elsewhere (Linux has no persistent log, and the
-//! Windows USN journal is not read yet) the tree is scanned for timestamps
-//! newer than the position (`scan.rs`).
+//! replays FSEvents history and Windows replays the NTFS USN journal
+//! (`usn.rs`). Linux has no persistent log, so there (and on Windows when the
+//! journal cannot be read) the tree is scanned for timestamps newer than the
+//! position (`scan.rs`).
 
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
@@ -14,9 +15,10 @@ use std::path::{Path, PathBuf};
 use serde::{Deserialize, Serialize};
 
 use crate::indexer::crawler::IndexEvent;
-use crate::store::{is_under, FileStore};
+use crate::store::FileStore;
 
 mod scan;
+mod usn;
 
 /// Store metadata key holding the serialized [`Position`].
 pub const META_KEY: &str = "journal_position";
@@ -26,19 +28,20 @@ pub const META_KEY: &str = "journal_position";
 const MAX_REPLAY_PATHS: usize = 200_000;
 
 // FSEvents flag bits (CoreServices/FSEvents.h). Kept here rather than taken
-// from `fsevent-sys` so `plan` and its tests build on every platform; other
-// platforms use `scan` instead, hence the dead-code allowances.
-#[cfg_attr(not(target_os = "macos"), allow(dead_code))]
+// from `fsevent-sys` so `plan` and its tests build on every platform; the USN
+// replay produces the same flags, and Linux uses `scan` instead, hence the
+// dead-code allowances.
+#[cfg_attr(not(any(target_os = "macos", windows)), allow(dead_code))]
 const MUST_SCAN_SUBDIRS: u32 = 0x0000_0001;
-#[cfg_attr(not(target_os = "macos"), allow(dead_code))]
+#[cfg_attr(not(any(target_os = "macos", windows)), allow(dead_code))]
 const USER_DROPPED: u32 = 0x0000_0002;
-#[cfg_attr(not(target_os = "macos"), allow(dead_code))]
+#[cfg_attr(not(any(target_os = "macos", windows)), allow(dead_code))]
 const KERNEL_DROPPED: u32 = 0x0000_0004;
-#[cfg_attr(not(target_os = "macos"), allow(dead_code))]
+#[cfg_attr(not(any(target_os = "macos", windows)), allow(dead_code))]
 const EVENT_IDS_WRAPPED: u32 = 0x0000_0008;
-#[cfg_attr(not(target_os = "macos"), allow(dead_code))]
+#[cfg_attr(not(any(target_os = "macos", windows)), allow(dead_code))]
 const ROOT_CHANGED: u32 = 0x0000_0020;
-#[cfg_attr(not(target_os = "macos"), allow(dead_code))]
+#[cfg_attr(not(any(target_os = "macos", windows)), allow(dead_code))]
 const ITEM_IS_DIR: u32 = 0x0002_0000;
 
 /// A point in the OS change log up to which the index is known to be current.
@@ -49,6 +52,11 @@ pub struct Position {
     /// means the roots changed or the volume's history was reset; either way
     /// replay cannot be trusted.
     pub roots: Vec<(String, String)>,
+    /// Windows: the USN journal position of each root's volume, in `roots`
+    /// order (`None` where it cannot be read). `event_id` still holds the
+    /// wall-clock time, for the timestamp scan when replay is not possible.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub usn: Vec<Option<usn::UsnPos>>,
 }
 
 impl Position {
@@ -102,7 +110,13 @@ pub fn current_position(roots: &[PathBuf]) -> Option<Position> {
     }
     #[cfg(not(target_os = "macos"))]
     {
-        scan::current_position(roots)
+        #[cfg_attr(not(windows), allow(unused_mut))]
+        let mut p = scan::current_position(roots)?;
+        #[cfg(windows)]
+        {
+            p.usn = usn::current(roots);
+        }
+        Some(p)
     }
 }
 
@@ -122,6 +136,15 @@ pub fn catch_up(
     let roots: Vec<PathBuf> = stored.roots.iter().map(|(r, _)| PathBuf::from(r)).collect();
     #[cfg(not(target_os = "macos"))]
     {
+        // A missing root is left to `reconcile`, which crawls: replay would
+        // read it as one deleted directory.
+        #[cfg(windows)]
+        if roots.iter().all(|r| r.symlink_metadata().is_ok()) {
+            match usn::replay(&roots, &stored.usn, &now.usn) {
+                Ok(changed) => return plan(changed, &roots, formats, |d| index.paths_under(d)),
+                Err(reason) => tracing::info!("USN journal replay not possible ({reason}); scanning timestamps"),
+            }
+        }
         // Seconds, not a log offset: a restart within the same second must
         // still scan.
         let _ = now;
@@ -143,7 +166,7 @@ pub fn catch_up(
 /// Turns replayed `path -> OR of event flags` into index events. The flags
 /// say *that* a path changed; its current state is read from disk, so the
 /// order of the original events does not matter.
-#[cfg_attr(not(target_os = "macos"), allow(dead_code))]
+#[cfg_attr(not(any(target_os = "macos", windows)), allow(dead_code))]
 fn plan(
     changed:     HashMap<PathBuf, u32>,
     roots:       &[PathBuf],
@@ -161,15 +184,17 @@ fn plan(
     let mut events = Vec::new();
     for (path, flags) in changed {
         let Some(path_str) = path.to_str() else { continue };
-        if !roots.iter().any(|r| under_or_eq(path_str, r)) {
+        // Component-wise, so it also holds for Windows separators.
+        if !roots.iter().any(|r| path.starts_with(r)) {
             continue;
         }
-        if flags & MUST_SCAN_SUBDIRS != 0 {
+        let exists = path.symlink_metadata().is_ok();
+        if flags & MUST_SCAN_SUBDIRS != 0 && (exists || roots.iter().any(|r| r.as_path() == path)) {
             if roots.iter().any(|r| r.as_path() == path) {
                 return CatchUp::FullCrawl(format!("rescan of watch root {path_str}"));
             }
             rescan(&path, formats, &paths_under, &mut events);
-        } else if path.symlink_metadata().is_ok() {
+        } else if exists {
             events.push(changed_event(path, formats));
         } else {
             if flags & ITEM_IS_DIR != 0 {
@@ -192,7 +217,7 @@ fn plan(
 
 /// Re-reads one subtree: everything on disk is re-indexed, indexed paths that
 /// are gone are deleted.
-#[cfg_attr(not(target_os = "macos"), allow(dead_code))]
+#[cfg_attr(not(any(target_os = "macos", windows)), allow(dead_code))]
 fn rescan(
     dir:         &Path,
     formats:     &[String],
@@ -211,11 +236,6 @@ fn rescan(
             }
         }
     }
-}
-
-#[cfg_attr(not(target_os = "macos"), allow(dead_code))]
-fn under_or_eq(path: &str, root: &Path) -> bool {
-    root.to_str().is_some_and(|r| path == r || is_under(path, r))
 }
 
 fn is_archive(path: &Path, formats: &[String]) -> bool {
@@ -281,7 +301,7 @@ mod fsevents {
             let dev = std::fs::metadata(root).ok()?.dev();
             out.push((root.to_str()?.to_owned(), volume_uuid(dev as i32)?));
         }
-        Some(Position { event_id, roots: out })
+        Some(Position { event_id, roots: out, usn: Vec::new() })
     }
 
     fn volume_uuid(dev: i32) -> Option<String> {
@@ -499,13 +519,28 @@ mod tests {
     }
 
     #[test]
+    fn moved_in_directory_that_is_gone_again_is_deleted() {
+        let dir = tempfile::TempDir::new().unwrap();
+        let root = dir.path().to_path_buf();
+        let gone = root.join("gone");
+        let out = plan(HashMap::from([(gone, MUST_SCAN_SUBDIRS | ITEM_IS_DIR)]), &[root], &[], |_| vec![]);
+        let k = kinds(&out);
+        assert!(k.len() == 1 && k[0].starts_with("Deleted"), "{k:?}");
+    }
+
+    #[test]
     fn changed_roots_force_a_crawl() {
-        let a = Position { event_id: 1, roots: vec![("/w".into(), "U1".into())] };
-        let b = Position { event_id: 9, roots: vec![("/w".into(), "U2".into())] };
+        let a = Position { event_id: 1, roots: vec![("/w".into(), "U1".into())], usn: vec![] };
+        let b = Position { event_id: 9, roots: vec![("/w".into(), "U2".into())], usn: vec![] };
         assert!(matches!(catch_up(&a, &b, &[], &|_, _| false, &NoIndex), CatchUp::FullCrawl(_)));
         #[cfg(target_os = "macos")]
         assert!(matches!(catch_up(&b, &b, &[], &|_, _| false, &NoIndex), CatchUp::UpToDate));
         assert_eq!(Position::from_json(&a.to_json()), Some(a));
+        // Positions stored before the USN field existed still load.
+        let old = r#"{"event_id":5,"roots":[["/w","U1"]]}"#;
+        assert_eq!(Position::from_json(old).map(|p| p.usn), Some(vec![]));
+        let win = Position { usn: vec![Some(usn::UsnPos { journal: 7, next: 42 }), None], ..b };
+        assert_eq!(Position::from_json(&win.to_json()), Some(win));
     }
 
     /// End to end against the real FSEvents history: changes made after a

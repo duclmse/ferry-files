@@ -247,8 +247,8 @@ planner on every platform and a real FSEvents replay on macOS.
 
 ### Linux and Windows: timestamp scan
 
-inotify keeps no history, and reading the USN journal is not built yet, so
-these platforms use `watcher/journal/scan.rs`. The stored position is the
+inotify keeps no history, so Linux uses `watcher/journal/scan.rs`, as does
+Windows whenever the USN journal cannot be replayed (next section). The stored position is the
 wall-clock second it was captured, plus each root's device id (Unix) so a
 different filesystem mounted on a root forces a crawl. A warm start walks the
 roots with the crawler's exclusions and flags entries whose times are within
@@ -271,14 +271,49 @@ clock set backwards, or a tool that rewrites times).
 Cost: one `stat` per entry and no index writes for unchanged files. On the
 2.6M-entry `~/projects` tree the walk takes 16.5 s (release, warm cache, no
 exclusions, macOS: the same walk phase 6 measured), against 32-37 s for an
-initial crawl and longer for a reconcile crawl, which also upserts every row. Unit tests run on macOS (new, edited, deleted, moved-in,
+initial crawl and longer for a reconcile crawl, which also upserts every
+row. Unit tests run on macOS (new, edited, deleted, moved-in,
 unindexed-with-old-times and excluded entries); Linux and Windows builds are
 clippy-clean via cross-compilation, but neither has been run on its own OS
 here.
 
-Still open: replaying the NTFS USN journal (`FSCTL_READ_USN_JOURNAL`, journal
-ID + next USN per volume) would make the Windows catch-up cost proportional
-to the changes instead of the tree.
+### Windows: USN journal replay (follow-up, done; not run on Windows)
+
+`watcher/journal/usn.rs` replays the NTFS change journal, so the Windows
+catch-up costs time in proportion to the changes instead of the tree, like
+Everything's.
+
+- The position gains `usn`: per root, the journal ID and next USN of its
+  volume (`FSCTL_QUERY_USN_JOURNAL`). `event_id` keeps the wall-clock time,
+  so the timestamp scan still has a position to scan from. Positions stored
+  before this change have no `usn` and use the scan once.
+- On a warm start the records since the stored USN are read with
+  `FSCTL_READ_USN_JOURNAL`, once per volume however many roots it holds.
+  A record names the file and its parent directory's file reference number;
+  the parent's current path comes from `OpenFileById` and
+  `GetFinalPathNameByHandleW` (cached per parent), and is mapped back onto
+  the configured root ignoring ASCII case.
+- The result is the same `path -> flags` map the FSEvents replay produces,
+  so the same planner checks each path on disk. A directory renamed into
+  place gets `MustScanSubDirs`, because its contents moved without records
+  of their own. A record whose parent no longer exists is skipped: the
+  removal of that parent, or of the nearest ancestor that still resolves, is
+  in the journal too, and deleting a directory deletes everything indexed
+  below it. The planner now treats a `MustScanSubDirs` path that is gone as
+  deleted, on macOS as well.
+- Replay falls back to the timestamp scan, not to a crawl, when the volume
+  cannot be opened (it needs administrator rights; the service runs as
+  LocalSystem), the journal was recreated or no longer reaches the stored
+  USN, the volume is not NTFS (ReFS writes v3 records), or more than 200,000
+  paths changed. A missing root still goes to the scan, which crawls.
+
+The record parser, the fold into paths, the root mapping and the volume
+grouping are unit-tested on every platform; the Windows calls are
+clippy-clean via cross-compilation (`x86_64-pc-windows-gnu`) but have not
+been run on Windows. Two things to check there first: that a service
+without administrator rights logs the fallback and scans, and that the
+paths the replay produces match the crawler's for roots configured with
+`/` separators or a different case.
 
 ## Phase 6 - Faster enumeration (Everything §2.1) - writer fixed; platform enumeration deferred
 
@@ -317,8 +352,8 @@ Platform enumeration was not built (Nov 2026):
   so only an initial or reconcile crawl would gain, by less than that.
 - Linux and Windows warm starts do walk (phase 5 timestamp scan, ~16 s for
   2.6M entries), so faster enumeration would pay there: `statx` with a minimal
-  mask on Linux, `FSCTL_ENUM_USN_DATA` over the MFT on Windows (service mode;
-  USN journal replay would remove the walk altogether). Neither can be
+  mask on Linux, `FSCTL_ENUM_USN_DATA` over the MFT on Windows (service
+  mode; with USN journal replay, Windows walks only when replay fails). Neither can be
   measured on this machine, so both stay open until they can be.
 
 ## Phase 7 - Optional extras (Everything §2.4) - done

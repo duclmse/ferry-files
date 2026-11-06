@@ -1,12 +1,13 @@
 //! Catch-up by timestamp scan, for Linux and Windows
 //! (docs/plans/everything-borrowing.md, phase 5).
 //!
-//! inotify keeps no history, so there is no log to replay; Windows has the USN
-//! journal, but reading it is not built yet. Instead the stored position is
-//! the wall-clock time it was captured, and a warm start walks the tree
-//! looking for entries whose times are not older than that. This costs one
-//! `stat` per entry, but no index writes for unchanged files, which is what
-//! makes a full crawl slow.
+//! inotify keeps no history, so there is no log to replay; Windows replays
+//! the USN journal (`usn.rs`) and comes here only when that is not possible
+//! (no administrator rights, journal reset or wrapped, not NTFS). Instead the
+//! stored position is the wall-clock time it was captured, and a warm start
+//! walks the tree looking for entries whose times are not older than that.
+//! This costs one `stat` per entry, but no index writes for unchanged files,
+//! which is what makes a full crawl slow.
 //!
 //! Besides mtime, Unix checks ctime, which only the kernel sets: a file
 //! extracted or copied with its old mtime preserved still has a fresh ctime.
@@ -45,7 +46,7 @@ pub(super) fn current_position(roots: &[PathBuf]) -> Option<Position> {
     for root in roots {
         out.push((root.to_str()?.to_owned(), volume_id(root)?));
     }
-    Some(Position { event_id: now, roots: out })
+    Some(Position { event_id: now, roots: out, usn: Vec::new() })
 }
 
 /// A different device means a different filesystem was mounted on the root:
