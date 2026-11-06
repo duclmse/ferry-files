@@ -114,7 +114,7 @@ every path predicate.
 ## Phase 4 - SQLite bulk load (Everything §2.7) - done
 
 Everything never maintains a transactional index while indexing. For SQLite
-we approximate that during the *initial* crawl only
+we approximate that during the _initial_ crawl only
 (`store/sqlite_store/bulk.rs`, called from `daemon::spawn_crawl`):
 
 - When a crawl starts on an empty `files` table, the `name`, `extension`,
@@ -134,10 +134,10 @@ we approximate that during the *initial* crawl only
 Measured on the same tree, alternating runs, on a loaded machine (load
 average 5-23):
 
-| Run | Crawl | Index rebuild | Crawl CPU | Queries in 20 s |
-|-----|------:|--------------:|----------:|----------------:|
-| without bulk load | 131 s, 110 s | - | 166 s, 154 s | 1,128, 1,136 |
-| with bulk load | 66 s, 68 s, 101 s | 6.1 s, 9.4 s, 7.7 s | 123 s, 114 s, 290 s | 1,248, 256*, 1,208 |
+| Run               |             Crawl |       Index rebuild |           Crawl CPU |    Queries in 20 s |
+| ----------------- | ----------------: | ------------------: | ------------------: | -----------------: |
+| without bulk load |      131 s, 110 s |                   - |        166 s, 154 s |       1,128, 1,136 |
+| with bulk load    | 66 s, 68 s, 101 s | 6.1 s, 9.4 s, 7.7 s | 123 s, 114 s, 290 s | 1,248, 256*, 1,208 |
 
 \* That run saw 344 watcher events during the crawl (others: 0-58) and kept
 using ~4 cores after the query clients stopped; the next run with the same
@@ -193,10 +193,10 @@ planner on every platform and a real FSEvents replay on macOS.
 
 Still open:
 
-| Platform | Source | Fallback today |
-| -------- | ------ | -------------- |
-| Windows | NTFS USN journal (`FSCTL_READ_USN_JOURNAL`): journal ID + next USN per volume | changes while stopped missed; no Windows toolchain here to build or test |
-| Linux | none persistent; rescan that skips directories whose `mtime` is unchanged (as `updatedb` does) - misses in-place content edits | changes while stopped missed |
+| Platform | Source                                                                                                                         | Fallback today                                                           |
+| -------- | ------------------------------------------------------------------------------------------------------------------------------ | ------------------------------------------------------------------------ |
+| Windows  | NTFS USN journal (`FSCTL_READ_USN_JOURNAL`): journal ID + next USN per volume                                                  | changes while stopped missed; no Windows toolchain here to build or test |
+| Linux    | none persistent; rescan that skips directories whose `mtime` is unchanged (as `updatedb` does) - misses in-place content edits | changes while stopped missed                                             |
 
 ## Phase 6 - Faster enumeration (Everything §2.1) - macOS measured; writer fixed
 
@@ -219,12 +219,12 @@ Two causes, both fixed:
   to 100,000 pages and restores the default after each batch; the WAL peaks
   at ~435 MB and `end_bulk_load` truncates it.
 
-| Variant (2 runs each, alternating) | Crawl | + index rebuild |
-|---|---:|---:|
-| baseline | 52-57 s | 60-65 s |
-| larger channel only | 42-45 s | 50-53 s |
-| less frequent checkpoint only | 38 s | 46-47 s |
-| both (committed) | 32-37 s | 40-49 s |
+| Variant (2 runs each, alternating) |   Crawl | + index rebuild |
+| ---------------------------------- | ------: | --------------: |
+| baseline                           | 52-57 s |         60-65 s |
+| larger channel only                | 42-45 s |         50-53 s |
+| less frequent checkpoint only      |    38 s |         46-47 s |
+| both (committed)                   | 32-37 s |         40-49 s |
 
 Peak RSS did not change (481-540 MB across all runs).
 

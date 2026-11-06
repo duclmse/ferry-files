@@ -7,7 +7,7 @@ use crate::error::{AppError, Result};
 
 #[derive(Clone)]
 pub struct ExclusionEngine {
-    patterns:       Vec<Pattern>,
+    patterns: Vec<Pattern>,
     exclude_hidden: bool,
 }
 
@@ -18,7 +18,10 @@ impl ExclusionEngine {
             .iter()
             .map(|p| Pattern::new(p).map_err(|e| AppError::Config(e.to_string())))
             .collect::<Result<Vec<_>>>()?;
-        Ok(Self { patterns, exclude_hidden: cfg.exclude_hidden })
+        Ok(Self {
+            patterns,
+            exclude_hidden: cfg.exclude_hidden,
+        })
     }
 
     /// Returns true if this path should be excluded from indexing.
@@ -38,13 +41,14 @@ impl ExclusionEngine {
 #[cfg(target_os = "linux")]
 pub fn is_network_mount(path: &Path) -> bool {
     use std::io::{BufRead, BufReader};
-    let Ok(file) = std::fs::File::open("/proc/mounts") else { return false; };
+    let Ok(file) = std::fs::File::open("/proc/mounts") else {
+        return false;
+    };
     let path_str = path.to_string_lossy();
     BufReader::new(file).lines().flatten().any(|line| {
         let parts: Vec<&str> = line.split_whitespace().collect();
         if parts.len() >= 3 {
-            path_str.starts_with(parts[1])
-                && matches!(parts[2], "nfs" | "nfs4" | "cifs" | "smbfs")
+            path_str.starts_with(parts[1]) && matches!(parts[2], "nfs" | "nfs4" | "cifs" | "smbfs")
         } else {
             false
         }
@@ -55,7 +59,12 @@ pub fn is_network_mount(path: &Path) -> bool {
 pub fn is_network_mount(path: &Path) -> bool {
     use nix::sys::statfs::statfs;
     statfs(path)
-        .map(|st| matches!(st.filesystem_type_name(), "nfs" | "smbfs" | "afpfs" | "webdav"))
+        .map(|st| {
+            matches!(
+                st.filesystem_type_name(),
+                "nfs" | "smbfs" | "afpfs" | "webdav"
+            )
+        })
         .unwrap_or(false)
 }
 

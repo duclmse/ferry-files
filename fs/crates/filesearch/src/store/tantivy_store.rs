@@ -3,44 +3,41 @@ use std::sync::{Arc, Mutex};
 
 use tantivy::collector::TopDocs;
 use tantivy::query::QueryParser;
-use tantivy::schema::{
-    Field, Schema, Value, FAST, INDEXED, STORED, STRING, TEXT,
-};
+use tantivy::schema::{Field, Schema, Value, FAST, INDEXED, STORED, STRING, TEXT};
 use tantivy::{Index, IndexReader, IndexWriter, ReloadPolicy, TantivyDocument};
 
-use crate::error::{AppError, Result};
 use super::{FileRecord, MetaFilters, SearchHit};
+use crate::error::{AppError, Result};
 
 // ---------------------------------------------------------------------------
 
 pub struct TantivyStore {
-    index:     Index,
-    reader:    IndexReader,
-    writer:    Arc<Mutex<IndexWriter>>,
-    f_path:    Field,
-    f_name:    Field,
+    index: Index,
+    reader: IndexReader,
+    writer: Arc<Mutex<IndexWriter>>,
+    f_path: Field,
+    f_name: Field,
     f_content: Field,
-    f_ext:     Field,
-    f_mtime:   Field,
-    f_size:    Field,
+    f_ext: Field,
+    f_mtime: Field,
+    f_size: Field,
 }
 
 impl TantivyStore {
     pub fn new(index_dir: &Path) -> Result<Self> {
         let mut builder = Schema::builder();
-        let f_path    = builder.add_text_field("path",       STRING | STORED);
-        let f_name    = builder.add_text_field("name",       TEXT | STORED);
-        let f_content = builder.add_text_field("content",    TEXT);
-        let f_ext     = builder.add_text_field("extension",  STRING | STORED);
-        let f_mtime   = builder.add_u64_field("mtime",       INDEXED | FAST | STORED);
-        let f_size    = builder.add_u64_field("size_bytes",  INDEXED | FAST | STORED);
+        let f_path = builder.add_text_field("path", STRING | STORED);
+        let f_name = builder.add_text_field("name", TEXT | STORED);
+        let f_content = builder.add_text_field("content", TEXT);
+        let f_ext = builder.add_text_field("extension", STRING | STORED);
+        let f_mtime = builder.add_u64_field("mtime", INDEXED | FAST | STORED);
+        let f_size = builder.add_u64_field("size_bytes", INDEXED | FAST | STORED);
         let schema = builder.build();
 
         let index = if index_dir == Path::new(":memory:") {
             Index::create_in_ram(schema)
         } else {
-            std::fs::create_dir_all(index_dir)
-                .map_err(AppError::Io)?;
+            std::fs::create_dir_all(index_dir).map_err(AppError::Io)?;
             Index::open_or_create(
                 tantivy::directory::MmapDirectory::open(index_dir)
                     .map_err(|e| AppError::Tantivy(e.into()))?,
@@ -56,9 +53,7 @@ impl TantivyStore {
             .map_err(AppError::Tantivy)?;
 
         // 128 MB writer heap
-        let writer = index
-            .writer(128 * 1024 * 1024)
-            .map_err(AppError::Tantivy)?;
+        let writer = index.writer(128 * 1024 * 1024).map_err(AppError::Tantivy)?;
 
         Ok(Self {
             index,
@@ -76,7 +71,10 @@ impl TantivyStore {
     /// Delete-then-add upsert. Does NOT commit - call `commit()` separately.
     pub fn upsert(&self, record: &FileRecord, content: Option<&str>) -> Result<()> {
         let term = tantivy::Term::from_field_text(self.f_path, &record.path);
-        let w = self.writer.lock().map_err(|e| AppError::Index(e.to_string()))?;
+        let w = self
+            .writer
+            .lock()
+            .map_err(|e| AppError::Index(e.to_string()))?;
 
         w.delete_term(term);
 
@@ -99,14 +97,20 @@ impl TantivyStore {
     /// Delete document(s) matching this path. Does NOT commit.
     pub fn remove(&self, path: &str) -> Result<()> {
         let term = tantivy::Term::from_field_text(self.f_path, path);
-        let w = self.writer.lock().map_err(|e| AppError::Index(e.to_string()))?;
+        let w = self
+            .writer
+            .lock()
+            .map_err(|e| AppError::Index(e.to_string()))?;
         w.delete_term(term);
         Ok(())
     }
 
     /// Flush pending operations to disk.
     pub fn commit(&self) -> Result<()> {
-        let mut w = self.writer.lock().map_err(|e| AppError::Index(e.to_string()))?;
+        let mut w = self
+            .writer
+            .lock()
+            .map_err(|e| AppError::Index(e.to_string()))?;
         w.commit().map_err(AppError::Tantivy)?;
         Ok(())
     }
@@ -127,8 +131,7 @@ impl TantivyStore {
         let searcher = self.reader.searcher();
 
         // Parse against name + content fields
-        let parser =
-            QueryParser::for_index(&self.index, vec![self.f_name, self.f_content]);
+        let parser = QueryParser::for_index(&self.index, vec![self.f_name, self.f_content]);
         let parsed = parser
             .parse_query(query)
             .map_err(|e| AppError::Query(e.to_string()))?;
@@ -140,9 +143,8 @@ impl TantivyStore {
             .map_err(AppError::Tantivy)?;
 
         // Snippet generator for the content field
-        let snippet_gen =
-            tantivy::SnippetGenerator::create(&searcher, &parsed, self.f_content)
-                .map_err(AppError::Tantivy)?;
+        let snippet_gen = tantivy::SnippetGenerator::create(&searcher, &parsed, self.f_content)
+            .map_err(AppError::Tantivy)?;
 
         let mut hits = Vec::with_capacity(limit);
         for (score, addr) in top_docs {
@@ -219,7 +221,11 @@ impl TantivyStore {
                 Some(raw.replace("<b>", "<mark>").replace("</b>", "</mark>"))
             };
 
-            hits.push(SearchHit { path, score, snippet });
+            hits.push(SearchHit {
+                path,
+                score,
+                snippet,
+            });
         }
         Ok(hits)
     }
@@ -237,21 +243,21 @@ mod tests {
 
     fn sample_record(path: &str) -> FileRecord {
         FileRecord {
-            id:              None,
-            path:            path.to_owned(),
-            name:            path.split('/').next_back().unwrap_or(path).to_owned(),
-            extension:       Some("rs".into()),
-            size_bytes:      512,
-            mtime:           1_000_000,
-            ctime:           1_000_000,
-            is_dir:          false,
-            is_hidden:       false,
-            is_symlink:      false,
-            attrib_bitmask:  0,
+            id: None,
+            path: path.to_owned(),
+            name: path.split('/').next_back().unwrap_or(path).to_owned(),
+            extension: Some("rs".into()),
+            size_bytes: 512,
+            mtime: 1_000_000,
+            ctime: 1_000_000,
+            is_dir: false,
+            is_hidden: false,
+            is_symlink: false,
+            attrib_bitmask: 0,
             content_indexed: true,
-            tantivy_id:      None,
-            indexed_at:      1_000_000,
-            archive_path:    None,
+            tantivy_id: None,
+            indexed_at: 1_000_000,
+            archive_path: None,
         }
     }
 
@@ -275,7 +281,9 @@ mod tests {
     fn remove_then_search_returns_nothing() {
         let store = make_store();
         let rec = sample_record("/src/lib.rs");
-        store.upsert(&rec, Some("pub fn add(a: i32, b: i32) -> i32 { a + b }")).unwrap();
+        store
+            .upsert(&rec, Some("pub fn add(a: i32, b: i32) -> i32 { a + b }"))
+            .unwrap();
         store.commit().unwrap();
         store.reload_reader().unwrap();
 
@@ -323,12 +331,14 @@ mod tests {
     #[test]
     fn extension_filter_applied_post_search() {
         let store = make_store();
-        let rec_rs   = sample_record("/a/foo.rs");
+        let rec_rs = sample_record("/a/foo.rs");
         let mut rec_toml = sample_record("/a/bar.toml");
         rec_toml.extension = Some("toml".into());
 
-        store.upsert(&rec_rs,   Some("search keyword here")).unwrap();
-        store.upsert(&rec_toml, Some("search keyword here")).unwrap();
+        store.upsert(&rec_rs, Some("search keyword here")).unwrap();
+        store
+            .upsert(&rec_toml, Some("search keyword here"))
+            .unwrap();
         store.commit().unwrap();
         store.reload_reader().unwrap();
 

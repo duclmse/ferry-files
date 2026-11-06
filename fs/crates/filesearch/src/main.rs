@@ -7,7 +7,11 @@ use filesearch::zidx::{ZidxBuilder, ZidxIndex};
 use clap::{Parser, Subcommand};
 
 #[derive(Parser)]
-#[command(name = "filesearch", version, about = "Cross-platform file-search daemon")]
+#[command(
+    name = "filesearch",
+    version,
+    about = "Cross-platform file-search daemon"
+)]
 struct Cli {
     #[arg(short, long, default_value = "config.toml")]
     config: std::path::PathBuf,
@@ -24,8 +28,10 @@ enum Command {
         #[arg(long)]
         service: bool,
     },
+
     /// Validate the configuration file
     ValidateConfig,
+
     /// Search the index (requires daemon to be running)
     Search {
         /// Name pattern or query expression; omit to match all (combine with filter flags)
@@ -74,21 +80,28 @@ enum Command {
         #[arg(long)]
         archive_only: bool,
     },
+
     /// Show index statistics
     Stats,
+
     /// Trigger a re-index
     Reindex {
         #[arg(long)]
         full: bool,
     },
+
     /// Open a file via the daemon
     Open { path: String },
+
     /// Launch the interactive TUI
     Tui,
+
     /// Install filesearch as a Windows Service (Windows only)
     InstallService,
+
     /// Uninstall the filesearch Windows Service (Windows only)
     UninstallService,
+
     /// Create or inspect .zidx index files
     Zidx {
         #[command(subcommand)]
@@ -106,6 +119,7 @@ enum ZidxAction {
         #[arg(short, long)]
         out: Option<std::path::PathBuf>,
     },
+
     /// List entries in a .zidx index file as an indented tree
     Ls {
         /// Path to the .zidx file
@@ -117,6 +131,7 @@ enum ZidxAction {
         #[arg(short, long, default_value = "0")]
         depth: u32,
     },
+
     /// Show metadata for a specific entry in a .zidx index
     Stat {
         /// Path to the .zidx file
@@ -131,26 +146,24 @@ async fn main() {
     let cli = Cli::parse();
 
     match cli.command {
-        Command::ValidateConfig => {
-            match config::load(&cli.config) {
-                Ok(cfg) => {
-                    let errors = config::validate(&cfg);
-                    if errors.is_empty() {
-                        println!("Config OK");
-                        std::process::exit(0);
-                    } else {
-                        for e in &errors {
-                            eprintln!("ERROR: {e}");
-                        }
-                        std::process::exit(1);
+        Command::ValidateConfig => match config::load(&cli.config) {
+            Ok(cfg) => {
+                let errors = config::validate(&cfg);
+                if errors.is_empty() {
+                    println!("Config OK");
+                    std::process::exit(0);
+                } else {
+                    for e in &errors {
+                        eprintln!("ERROR: {e}");
                     }
-                }
-                Err(e) => {
-                    eprintln!("Failed to load config: {e}");
                     std::process::exit(1);
                 }
             }
-        }
+            Err(e) => {
+                eprintln!("Failed to load config: {e}");
+                std::process::exit(1);
+            }
+        },
         Command::Daemon { service } => {
             #[cfg(target_os = "windows")]
             if service {
@@ -175,17 +188,26 @@ async fn main() {
             {
                 let exe_path = match std::env::current_exe() {
                     Ok(p) => p,
-                    Err(e) => { eprintln!("cannot determine exe path: {e}"); std::process::exit(1); }
+                    Err(e) => {
+                        eprintln!("cannot determine exe path: {e}");
+                        std::process::exit(1);
+                    }
                 };
                 let config_path = match cli.config.canonicalize() {
                     Ok(p) => p,
-                    Err(e) => { eprintln!("cannot resolve config path: {e}"); std::process::exit(1); }
+                    Err(e) => {
+                        eprintln!("cannot resolve config path: {e}");
+                        std::process::exit(1);
+                    }
                 };
                 if let Err(e) = filesearch::service::windows::install(&exe_path, &config_path) {
                     eprintln!("install-service error: {e}");
                     std::process::exit(1);
                 }
-                println!("Service '{}' installed.", filesearch::service::windows::SERVICE_NAME);
+                println!(
+                    "Service '{}' installed.",
+                    filesearch::service::windows::SERVICE_NAME
+                );
             }
             #[cfg(not(target_os = "windows"))]
             {
@@ -200,7 +222,10 @@ async fn main() {
                     eprintln!("uninstall-service error: {e}");
                     std::process::exit(1);
                 }
-                println!("Service '{}' uninstalled.", filesearch::service::windows::SERVICE_NAME);
+                println!(
+                    "Service '{}' uninstalled.",
+                    filesearch::service::windows::SERVICE_NAME
+                );
             }
             #[cfg(not(target_os = "windows"))]
             {
@@ -209,12 +234,37 @@ async fn main() {
             }
         }
         Command::Search {
-            query, limit, offset, json,
-            ext, path, parent, size, modified, created,
-            content, fuzzy, regex, files_only, dirs_only, archive_only,
+            query,
+            limit,
+            offset,
+            json,
+            ext,
+            path,
+            parent,
+            size,
+            modified,
+            created,
+            content,
+            fuzzy,
+            regex,
+            files_only,
+            dirs_only,
+            archive_only,
         } => {
-            let opts = SearchOpts { ext, path, parent, size, modified, created,
-                                    content, fuzzy, regex, files_only, dirs_only, archive_only };
+            let opts = SearchOpts {
+                ext,
+                path,
+                parent,
+                size,
+                modified,
+                created,
+                content,
+                fuzzy,
+                regex,
+                files_only,
+                dirs_only,
+                archive_only,
+            };
             if let Err(e) = run_search(cli.config, query, limit, offset, json, opts).await {
                 eprintln!("search error: {e}");
                 std::process::exit(1);
@@ -262,67 +312,90 @@ async fn main() {
 // IPC client helpers
 // ---------------------------------------------------------------------------
 
-async fn ipc_client_for(
-    config_path: std::path::PathBuf,
-) -> anyhow::Result<IpcClient> {
-    let cfg = config::load(&config_path)
-        .map_err(|e| anyhow::anyhow!("config load error: {e}"))?;
+async fn ipc_client_for(config_path: std::path::PathBuf) -> anyhow::Result<IpcClient> {
+    let cfg = config::load(&config_path).map_err(|e| anyhow::anyhow!("config load error: {e}"))?;
     IpcClient::connect(&cfg.api.ipc_path)
         .await
         .map_err(|e| anyhow::anyhow!("ipc connect: {e}"))
 }
 
 struct SearchOpts {
-    ext:         Vec<String>,
-    path:        Option<String>,
-    parent:      Option<String>,
-    size:        Option<String>,
-    modified:    Option<String>,
-    created:     Option<String>,
-    content:     Option<String>,
-    fuzzy:       Option<String>,
-    regex:       Option<String>,
-    files_only:  bool,
-    dirs_only:   bool,
+    ext: Vec<String>,
+    path: Option<String>,
+    parent: Option<String>,
+    size: Option<String>,
+    modified: Option<String>,
+    created: Option<String>,
+    content: Option<String>,
+    fuzzy: Option<String>,
+    regex: Option<String>,
+    files_only: bool,
+    dirs_only: bool,
     archive_only: bool,
 }
 
 async fn run_search(
     config_path: std::path::PathBuf,
-    query:       String,
-    limit:       u32,
-    offset:      u32,
-    json:        bool,
-    opts:        SearchOpts,
+    query: String,
+    limit: u32,
+    offset: u32,
+    json: bool,
+    opts: SearchOpts,
 ) -> anyhow::Result<()> {
     let mut clauses: Vec<String> = Vec::new();
 
     if !opts.ext.is_empty() {
         clauses.push(format!("ext:{}", opts.ext.join(";")));
     }
-    if let Some(p) = opts.path     { clauses.push(format!("path:{p}")); }
-    if let Some(p) = opts.parent   { clauses.push(format!("parent:{p}")); }
-    if let Some(s) = opts.size     { clauses.push(format!("size:{s}")); }
-    if let Some(d) = opts.modified { clauses.push(format!("dm:{d}")); }
-    if let Some(d) = opts.created  { clauses.push(format!("dc:{d}")); }
-    if let Some(c) = opts.content  { clauses.push(format!("content:{c}")); }
-    if let Some(f) = opts.fuzzy    { clauses.push(format!("fuzzy:{f}")); }
-    if let Some(r) = opts.regex    { clauses.push(format!("regex:{r}")); }
+    if let Some(p) = opts.path {
+        clauses.push(format!("path:{p}"));
+    }
+    if let Some(p) = opts.parent {
+        clauses.push(format!("parent:{p}"));
+    }
+    if let Some(s) = opts.size {
+        clauses.push(format!("size:{s}"));
+    }
+    if let Some(d) = opts.modified {
+        clauses.push(format!("dm:{d}"));
+    }
+    if let Some(d) = opts.created {
+        clauses.push(format!("dc:{d}"));
+    }
+    if let Some(c) = opts.content {
+        clauses.push(format!("content:{c}"));
+    }
+    if let Some(f) = opts.fuzzy {
+        clauses.push(format!("fuzzy:{f}"));
+    }
+    if let Some(r) = opts.regex {
+        clauses.push(format!("regex:{r}"));
+    }
     // Modifier flags: inject a dummy `*` term so the modifier emits its SQL condition
-    if opts.files_only   { clauses.push("file: *".into()); }
-    if opts.dirs_only    { clauses.push("folder: *".into()); }
-    if opts.archive_only { clauses.push("archive: *".into()); }
+    if opts.files_only {
+        clauses.push("file: *".into());
+    }
+    if opts.dirs_only {
+        clauses.push("folder: *".into());
+    }
+    if opts.archive_only {
+        clauses.push("archive: *".into());
+    }
 
     let query = match (query.is_empty(), clauses.is_empty()) {
-        (true, true)   => anyhow::bail!("specify a query or at least one filter flag"),
-        (true, false)  => clauses.join(" "),
-        (false, true)  => query,
+        (true, true) => anyhow::bail!("specify a query or at least one filter flag"),
+        (true, false) => clauses.join(" "),
+        (false, true) => query,
         (false, false) => format!("{query} {}", clauses.join(" ")),
     };
 
     let mut client = ipc_client_for(config_path).await?;
     let resp = client
-        .request(IpcRequest::Search { query, limit, offset })
+        .request(IpcRequest::Search {
+            query,
+            limit,
+            offset,
+        })
         .await
         .map_err(|e| anyhow::anyhow!("{e}"))?;
 
@@ -399,8 +472,7 @@ async fn run_open(config_path: std::path::PathBuf, path: String) -> anyhow::Resu
 }
 
 async fn run_tui(config_path: std::path::PathBuf) -> anyhow::Result<()> {
-    let cfg = config::load(&config_path)
-        .map_err(|e| anyhow::anyhow!("config load error: {e}"))?;
+    let cfg = config::load(&config_path).map_err(|e| anyhow::anyhow!("config load error: {e}"))?;
     filesearch::frontend::tui::run(&cfg.api.ipc_path).await
 }
 
@@ -413,21 +485,12 @@ fn run_zidx_build(
     out_path: Option<std::path::PathBuf>,
 ) -> anyhow::Result<()> {
     let out_path = out_path.unwrap_or_else(|| zip_path.with_extension("zidx"));
-    let count = ZidxBuilder::build(&zip_path, &out_path)
-        .map_err(|e| anyhow::anyhow!("{e}"))?;
-    println!(
-        "wrote {} ({} nodes)",
-        out_path.display(),
-        count,
-    );
+    let count = ZidxBuilder::build(&zip_path, &out_path).map_err(|e| anyhow::anyhow!("{e}"))?;
+    println!("wrote {} ({} nodes)", out_path.display(), count,);
     Ok(())
 }
 
-fn run_zidx_ls(
-    zidx_path: std::path::PathBuf,
-    path:      String,
-    max_depth: u32,
-) -> anyhow::Result<()> {
+fn run_zidx_ls(zidx_path: std::path::PathBuf, path: String, max_depth: u32) -> anyhow::Result<()> {
     let idx = ZidxIndex::open(&zidx_path).map_err(|e| anyhow::anyhow!("{e}"))?;
 
     let start_id = if path.is_empty() {
@@ -443,13 +506,13 @@ fn run_zidx_ls(
 }
 
 fn zidx_print_tree(
-    idx:       &ZidxIndex,
-    node_id:   u32,
-    indent:    u32,
+    idx: &ZidxIndex,
+    node_id: u32,
+    indent: u32,
     max_depth: u32,
 ) -> anyhow::Result<()> {
-    let node   = idx.node(node_id).map_err(|e| anyhow::anyhow!("{e}"))?;
-    let name   = idx.name(&node).map_err(|e| anyhow::anyhow!("{e}"))?;
+    let node = idx.node(node_id).map_err(|e| anyhow::anyhow!("{e}"))?;
+    let name = idx.name(&node).map_err(|e| anyhow::anyhow!("{e}"))?;
     let prefix = "  ".repeat(indent as usize);
 
     if node.kind == 1 {
@@ -470,28 +533,38 @@ fn zidx_print_tree(
     Ok(())
 }
 
-fn run_zidx_stat(
-    zidx_path: std::path::PathBuf,
-    path:      String,
-) -> anyhow::Result<()> {
-    let idx     = ZidxIndex::open(&zidx_path).map_err(|e| anyhow::anyhow!("{e}"))?;
-    let node_id = idx.lookup(&path)
+fn run_zidx_stat(zidx_path: std::path::PathBuf, path: String) -> anyhow::Result<()> {
+    let idx = ZidxIndex::open(&zidx_path).map_err(|e| anyhow::anyhow!("{e}"))?;
+    let node_id = idx
+        .lookup(&path)
         .map_err(|e| anyhow::anyhow!("{e}"))?
         .ok_or_else(|| anyhow::anyhow!("path not found: {path}"))?;
-    let node    = idx.node(node_id).map_err(|e| anyhow::anyhow!("{e}"))?;
-    let name    = idx.name(&node).map_err(|e| anyhow::anyhow!("{e}"))?;
+    let node = idx.node(node_id).map_err(|e| anyhow::anyhow!("{e}"))?;
+    let name = idx.name(&node).map_err(|e| anyhow::anyhow!("{e}"))?;
 
     println!("name:                 {name}");
-    println!("kind:                 {}", if node.kind == 1 { "directory" } else { "file" });
+    println!(
+        "kind:                 {}",
+        if node.kind == 1 { "directory" } else { "file" }
+    );
     println!("node_id:              {node_id}");
     println!("parent_id:            {}", node.parent);
-    println!("uncompressed_size:    {}", zidx_fmt_size(node.uncompressed_size));
-    println!("compressed_size:      {}", zidx_fmt_size(node.compressed_size));
+    println!(
+        "uncompressed_size:    {}",
+        zidx_fmt_size(node.uncompressed_size)
+    );
+    println!(
+        "compressed_size:      {}",
+        zidx_fmt_size(node.compressed_size)
+    );
     if node.uncompressed_size > 0 {
         let ratio = node.compressed_size as f64 / node.uncompressed_size as f64 * 100.0;
         println!("compression_ratio:    {ratio:.1}%");
     }
-    println!("compression_method:   {}", zidx_compression_name(node.compression));
+    println!(
+        "compression_method:   {}",
+        zidx_compression_name(node.compression)
+    );
     println!("local_header_offset:  {}", node.local_header_offset);
     Ok(())
 }
@@ -504,7 +577,7 @@ fn zidx_fmt_size(bytes: u64) -> String {
         b if b >= GB => format!("{:.2} GB", b as f64 / GB as f64),
         b if b >= MB => format!("{:.2} MB", b as f64 / MB as f64),
         b if b >= KB => format!("{:.2} KB", b as f64 / KB as f64),
-        b            => format!("{b} B"),
+        b => format!("{b} B"),
     }
 }
 

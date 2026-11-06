@@ -1,24 +1,24 @@
-use super::*;
 use super::matching::{glob_match, like_match};
+use super::*;
 use tempfile::TempDir;
 
 fn sample(path: &str) -> FileRecord {
     FileRecord {
-        id:              None,
-        path:            path.to_owned(),
-        name:            path.split('/').next_back().unwrap_or(path).to_owned(),
-        extension:       Some("rs".into()),
-        size_bytes:      1024,
-        mtime:           1_000_000,
-        ctime:           1_000_000,
-        is_dir:          false,
-        is_hidden:       false,
-        is_symlink:      false,
-        attrib_bitmask:  0,
+        id: None,
+        path: path.to_owned(),
+        name: path.split('/').next_back().unwrap_or(path).to_owned(),
+        extension: Some("rs".into()),
+        size_bytes: 1024,
+        mtime: 1_000_000,
+        ctime: 1_000_000,
+        is_dir: false,
+        is_hidden: false,
+        is_symlink: false,
+        attrib_bitmask: 0,
         content_indexed: false,
-        tantivy_id:      None,
-        indexed_at:      1_000_000,
-        archive_path:    None,
+        tantivy_id: None,
+        indexed_at: 1_000_000,
+        archive_path: None,
     }
 }
 
@@ -60,9 +60,9 @@ fn search_conditions_name_like() {
     let store = make_store();
     store.upsert_file(&sample("/a/foo.rs"));
     store.upsert_file(&sample("/a/bar.toml"));
-    let results = store.search_conditions(
-        &[SqlCondition::NameLike("%foo%".into())], 100,
-    ).unwrap();
+    let results = store
+        .search_conditions(&[SqlCondition::NameLike("%foo%".into())], 100)
+        .unwrap();
     assert_eq!(results.len(), 1);
     assert_eq!(results[0].path, "/a/foo.rs");
 }
@@ -97,10 +97,14 @@ fn search_name_like() {
     let store = make_store();
     store.upsert_file(&sample("/a/foo.rs"));
     store.upsert_file(&sample("/a/bar.toml"));
-    let results = store.search_name("%foo%", &MetaFilters::default(), 100).unwrap();
+    let results = store
+        .search_name("%foo%", &MetaFilters::default(), 100)
+        .unwrap();
     assert_eq!(results.len(), 1);
     assert_eq!(results[0].name, "foo.rs");
-    let all = store.search_name("%", &MetaFilters::default(), 100).unwrap();
+    let all = store
+        .search_name("%", &MetaFilters::default(), 100)
+        .unwrap();
     assert_eq!(all.len(), 2);
 }
 
@@ -111,7 +115,9 @@ fn search_extension_exact() {
     let mut toml = sample("/a/bar.toml");
     toml.extension = Some("toml".into());
     store.upsert_file(&toml);
-    let rs = store.search_extension("rs", &MetaFilters::default(), 100).unwrap();
+    let rs = store
+        .search_extension("rs", &MetaFilters::default(), 100)
+        .unwrap();
     assert_eq!(rs.len(), 1);
     assert_eq!(rs[0].name, "foo.rs");
 }
@@ -178,7 +184,7 @@ fn snapshot_v3_keeps_meta_generation_and_odd_records() {
     assert_same(store.get_by_path("/a/odd.rs").unwrap(), &odd);
     // The crawl generation counter survived, so the tagged entry is current.
     let gen = store.begin_crawl_generation();
-    assert_eq!(gen, 2);
+    assert_eq!(gen, 2i64);
     store.batch_upsert_crawl(&[(sample("/w/x.rs"), "/w".into())], gen);
     assert_eq!(store.remove_stale_for_root("/w", gen), 0);
 }
@@ -244,7 +250,9 @@ fn replace_updates_fields_and_side_table() {
 #[test]
 fn many_removals_keep_index_consistent_and_compact() {
     let store = make_store();
-    let paths: Vec<String> = (0..2000).map(|i| format!("/d/{i:04}/file_{i}.rs")).collect();
+    let paths: Vec<String> = (0..2000)
+        .map(|i| format!("/d/{i:04}/file_{i}.rs"))
+        .collect();
     for (i, p) in paths.iter().enumerate() {
         let mut r = sample(p);
         if i % 3 == 0 {
@@ -296,7 +304,12 @@ fn fuzzy_search_materializes_ranked_winners_only() {
     let conds = [SqlCondition::ParentPath("/b".into())];
     let hits = store
         .fuzzy_search(&conds, 100, &|names: &[&str]| {
-            names.iter().enumerate().filter(|(_, n)| n.starts_with('m')).map(|(i, _)| i).collect()
+            names
+                .iter()
+                .enumerate()
+                .filter(|(_, n)| n.starts_with('m'))
+                .map(|(i, _)| i)
+                .collect()
         })
         .unwrap();
     assert_eq!(hits.len(), 1);

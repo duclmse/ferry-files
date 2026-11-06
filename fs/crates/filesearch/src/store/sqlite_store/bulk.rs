@@ -43,7 +43,8 @@ impl SqliteStore {
     pub fn begin_bulk_load(&self) -> Result<bool> {
         let mut conn = self.get_conn()?;
         let tx = conn.transaction()?;
-        let empty: bool = tx.query_row("SELECT NOT EXISTS (SELECT 1 FROM files)", [], |r| r.get(0))?;
+        let empty: bool =
+            tx.query_row("SELECT NOT EXISTS (SELECT 1 FROM files)", [], |r| r.get(0))?;
         if !empty {
             return Ok(false);
         }
@@ -53,7 +54,10 @@ impl SqliteStore {
                 "SELECT sql FROM sqlite_master WHERE type = 'index' AND name = ?1 AND sql IS NOT NULL",
             )?;
             for name in BULK_DROPPED {
-                if let Some(sql) = stmt.query_row([name], |r| r.get::<_, String>(0)).optional()? {
+                if let Some(sql) = stmt
+                    .query_row([name], |r| r.get::<_, String>(0))
+                    .optional()?
+                {
                     sqls.push(sql);
                 }
             }
@@ -74,7 +78,10 @@ impl SqliteStore {
         // missing index; a failed commit only costs a few slower scans.
         self.set_bulk_loading(true)?;
         tx.commit()?;
-        tracing::info!("bulk load: dropped {} secondary indexes for the initial crawl", sqls.len());
+        tracing::info!(
+            "bulk load: dropped {} secondary indexes for the initial crawl",
+            sqls.len()
+        );
         Ok(true)
     }
 
@@ -82,7 +89,11 @@ impl SqliteStore {
     pub fn end_bulk_load(&self) -> Result<()> {
         let conn = self.get_conn()?;
         let saved: Option<String> = conn
-            .query_row("SELECT value FROM index_meta WHERE key = ?1", [META_KEY], |r| r.get(0))
+            .query_row(
+                "SELECT value FROM index_meta WHERE key = ?1",
+                [META_KEY],
+                |r| r.get(0),
+            )
             .optional()?;
         let Some(saved) = saved else { return Ok(()) };
         let sqls: Vec<String> =
@@ -115,10 +126,21 @@ mod tests {
 
     fn rec(path: &str) -> FileRecord {
         FileRecord {
-            id: None, path: path.into(), name: path.rsplit('/').next().unwrap_or(path).into(),
-            extension: Some("rs".into()), size_bytes: 1, mtime: 0, ctime: 0, is_dir: false,
-            is_hidden: false, is_symlink: false, attrib_bitmask: 0, content_indexed: false,
-            tantivy_id: None, indexed_at: 0, archive_path: None,
+            id: None,
+            path: path.into(),
+            name: path.rsplit('/').next().unwrap_or(path).into(),
+            extension: Some("rs".into()),
+            size_bytes: 1,
+            mtime: 0,
+            ctime: 0,
+            is_dir: false,
+            is_hidden: false,
+            is_symlink: false,
+            attrib_bitmask: 0,
+            content_indexed: false,
+            tantivy_id: None,
+            indexed_at: 0,
+            archive_path: None,
         }
     }
 
@@ -127,7 +149,10 @@ mod tests {
         let mut stmt = conn
             .prepare("SELECT name FROM sqlite_master WHERE type='index' AND sql IS NOT NULL ORDER BY name")
             .unwrap();
-        stmt.query_map([], |r| r.get(0)).unwrap().map(|r| r.unwrap()).collect()
+        stmt.query_map([], |r| r.get(0))
+            .unwrap()
+            .map(|r| r.unwrap())
+            .collect()
     }
 
     #[test]
@@ -141,7 +166,8 @@ mod tests {
         assert!(!during.contains(&"idx_files_name".to_owned()));
 
         let generation = s.begin_crawl_generation().unwrap();
-        s.batch_upsert_crawl(&[(rec("/w/a.rs"), "/w".into())], generation).unwrap();
+        s.batch_upsert_crawl(&[(rec("/w/a.rs"), "/w".into())], generation)
+            .unwrap();
         // Name queries must keep working while idx_files_name is gone.
         let like = vec![SqlCondition::NameLike("%a%".into())];
         assert_eq!(s.search_conditions(&like, 10).unwrap().len(), 1);

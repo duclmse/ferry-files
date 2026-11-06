@@ -17,29 +17,29 @@ use super::{FileRecord, RecordView};
 // never copied a second time. See docs/plans/everything-borrowing.md, phase 3.
 // ---------------------------------------------------------------------------
 
-const F_DIR:     u8 = 1;
-const F_HIDDEN:  u8 = 2;
+const F_DIR: u8 = 1;
+const F_HIDDEN: u8 = 2;
 const F_SYMLINK: u8 = 4;
 const F_CONTENT: u8 = 8;
 /// Entry has a row in `extra` (fields that are not slices of the path).
-const F_EXTRA:   u8 = 16;
+const F_EXTRA: u8 = 16;
 
 #[derive(Debug, Clone, Copy, Serialize, Deserialize)]
 pub(super) struct Entry {
-    path_off:    u64,
-    path_len:    u32,
+    path_off: u64,
+    path_len: u32,
     /// Byte offset of the name within the path.
-    name_off:    u32,
+    name_off: u32,
     /// Length of the archive-path prefix; 0 = not an archive entry.
     archive_len: u32,
     /// 1-based index into `exts`; 0 = no extension.
-    ext:         u32,
-    size:        u64,
-    mtime:       i64,
-    ctime:       i64,
-    indexed_at:  i64,
-    attrib:      u32,
-    flags:       u8,
+    ext: u32,
+    size: u64,
+    mtime: i64,
+    ctime: i64,
+    indexed_at: i64,
+    attrib: u32,
+    flags: u8,
     /// Crawl generation that last saw this entry; 0 = never tagged by a crawl.
     pub(super) generation: u32,
 }
@@ -59,30 +59,32 @@ impl Entry {
 /// Fields that are rare, or that do not follow the crawler's path layout.
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
 pub(super) struct Extra {
-    id:           Option<i64>,
-    tantivy_id:   Option<String>,
-    name:         Option<String>,
+    id: Option<i64>,
+    tantivy_id: Option<String>,
+    name: Option<String>,
     archive_path: Option<String>,
 }
 
 impl Extra {
     fn is_empty(&self) -> bool {
-        self.id.is_none() && self.tantivy_id.is_none()
-            && self.name.is_none() && self.archive_path.is_none()
+        self.id.is_none()
+            && self.tantivy_id.is_none()
+            && self.name.is_none()
+            && self.archive_path.is_none()
     }
 }
 
 pub(super) struct IndexState {
-    arena:   String,
+    arena: String,
     /// Bytes in `arena` no longer referenced by any entry.
     garbage: usize,
     entries: Vec<Entry>,
-    index:   HashTable<u32>,
-    hasher:  DefaultHashBuilder,
-    exts:    Vec<String>,
+    index: HashTable<u32>,
+    hasher: DefaultHashBuilder,
+    exts: Vec<String>,
     ext_ids: HashMap<String, u32>,
-    extra:   HashMap<u32, Extra>,
-    pub(super) meta:      HashMap<String, String>,
+    extra: HashMap<u32, Extra>,
+    pub(super) meta: HashMap<String, String>,
     pub(super) crawl_gen: i64,
     /// USN/inotify journal position recorded at last clean shutdown.
     /// Used for dirty-shutdown recovery: replay events from this position.
@@ -98,23 +100,23 @@ fn path_in<'a>(arena: &'a str, e: &Entry) -> &'a str {
 #[derive(Clone, Copy)]
 pub(super) struct EntryRef<'a> {
     st: &'a IndexState,
-    e:  &'a Entry,
-    i:  u32,
+    e: &'a Entry,
+    i: u32,
 }
 
 impl IndexState {
     pub(super) fn empty() -> Self {
         Self {
-            arena:          String::new(),
-            garbage:        0,
-            entries:        Vec::new(),
-            index:          HashTable::new(),
-            hasher:         DefaultHashBuilder::default(),
-            exts:           Vec::new(),
-            ext_ids:        HashMap::new(),
-            extra:          HashMap::new(),
-            meta:           HashMap::new(),
-            crawl_gen:      0,
+            arena: String::new(),
+            garbage: 0,
+            entries: Vec::new(),
+            index: HashTable::new(),
+            hasher: DefaultHashBuilder::default(),
+            exts: Vec::new(),
+            ext_ids: HashMap::new(),
+            extra: HashMap::new(),
+            meta: HashMap::new(),
+            crawl_gen: 0,
             usn_checkpoint: 0,
         }
     }
@@ -148,11 +150,19 @@ impl IndexState {
     }
 
     pub(super) fn view(&self, i: u32) -> EntryRef<'_> {
-        EntryRef { st: self, e: &self.entries[i as usize], i }
+        EntryRef {
+            st: self,
+            e: &self.entries[i as usize],
+            i,
+        }
     }
 
     pub(super) fn iter(&self) -> impl Iterator<Item = EntryRef<'_>> + '_ {
-        self.entries.iter().enumerate().map(|(i, e)| EntryRef { st: self, e, i: i as u32 })
+        self.entries.iter().enumerate().map(|(i, e)| EntryRef {
+            st: self,
+            e,
+            i: i as u32,
+        })
     }
 
     fn intern_ext(&mut self, ext: Option<&str>) -> u32 {
@@ -170,28 +180,52 @@ impl IndexState {
     /// is not a slice of the path goes to the returned `Extra`.
     fn pack(&mut self, r: &FileRecord, path_off: u64) -> (Entry, Extra) {
         let path = r.path.as_str();
-        let mut extra = Extra { id: r.id, tantivy_id: r.tantivy_id.clone(), ..Extra::default() };
+        let mut extra = Extra {
+            id: r.id,
+            tantivy_id: r.tantivy_id.clone(),
+            ..Extra::default()
+        };
 
         let name_off = match path.strip_suffix(r.name.as_str()) {
             Some(head) if !r.name.is_empty() => head.len() as u32,
             _ if r.name.is_empty() => path.len() as u32,
-            _ => { extra.name = Some(r.name.clone()); 0 }
+            _ => {
+                extra.name = Some(r.name.clone());
+                0
+            }
         };
         let archive_len = match r.archive_path.as_deref() {
             None => 0,
-            Some(ap) if !ap.is_empty()
-                && path.len() > ap.len() + 1
-                && path.starts_with(ap)
-                && path[ap.len()..].starts_with("!/") => ap.len() as u32,
-            Some(ap) => { extra.archive_path = Some(ap.to_owned()); 0 }
+            Some(ap)
+                if !ap.is_empty()
+                    && path.len() > ap.len() + 1
+                    && path.starts_with(ap)
+                    && path[ap.len()..].starts_with("!/") =>
+            {
+                ap.len() as u32
+            }
+            Some(ap) => {
+                extra.archive_path = Some(ap.to_owned());
+                0
+            }
         };
 
         let mut flags = 0;
-        if r.is_dir          { flags |= F_DIR; }
-        if r.is_hidden       { flags |= F_HIDDEN; }
-        if r.is_symlink      { flags |= F_SYMLINK; }
-        if r.content_indexed { flags |= F_CONTENT; }
-        if !extra.is_empty() { flags |= F_EXTRA; }
+        if r.is_dir {
+            flags |= F_DIR;
+        }
+        if r.is_hidden {
+            flags |= F_HIDDEN;
+        }
+        if r.is_symlink {
+            flags |= F_SYMLINK;
+        }
+        if r.content_indexed {
+            flags |= F_CONTENT;
+        }
+        if !extra.is_empty() {
+            flags |= F_EXTRA;
+        }
 
         let entry = Entry {
             path_off,
@@ -252,9 +286,10 @@ impl IndexState {
     pub(super) fn remove(&mut self, path: &str) -> bool {
         let h = self.hash(path);
         let (entries, arena) = (&self.entries, &self.arena);
-        let Ok(slot) = self.index.find_entry(h, |&i| {
-            path_in(arena, &entries[i as usize]) == path
-        }) else {
+        let Ok(slot) = self
+            .index
+            .find_entry(h, |&i| path_in(arena, &entries[i as usize]) == path)
+        else {
             return false;
         };
         let (i, _) = slot.remove();
@@ -299,9 +334,9 @@ impl IndexState {
         let mut meta: Vec<(&String, &String)> = self.meta.iter().collect();
         meta.sort_unstable();
         SnapshotRef {
-            arena:     &self.arena,
-            entries:   &self.entries,
-            exts:      &self.exts,
+            arena: &self.arena,
+            entries: &self.entries,
+            exts: &self.exts,
             extra,
             meta,
             crawl_gen: self.crawl_gen,
@@ -316,9 +351,11 @@ impl IndexState {
                 && s.arena.is_char_boundary(e.path_off as usize)
                 && s.arena.is_char_boundary(end)
                 && e.name_off <= e.path_len
-                && s.arena.is_char_boundary(e.path_off as usize + e.name_off as usize)
+                && s.arena
+                    .is_char_boundary(e.path_off as usize + e.name_off as usize)
                 && e.archive_len <= e.path_len
-                && s.arena.is_char_boundary(e.path_off as usize + e.archive_len as usize)
+                && s.arena
+                    .is_char_boundary(e.path_off as usize + e.archive_len as usize)
                 && e.ext as usize <= s.exts.len();
             if !ok {
                 return Err("entry out of bounds".into());
@@ -329,7 +366,12 @@ impl IndexState {
         }
         st.arena = s.arena;
         st.entries = s.entries;
-        st.ext_ids = s.exts.iter().enumerate().map(|(i, x)| (x.clone(), i as u32 + 1)).collect();
+        st.ext_ids = s
+            .exts
+            .iter()
+            .enumerate()
+            .map(|(i, x)| (x.clone(), i as u32 + 1))
+            .collect();
         st.exts = s.exts;
         st.extra = s.extra.into_iter().collect();
         st.meta = s.meta.into_iter().collect();
@@ -338,9 +380,13 @@ impl IndexState {
         st.index = HashTable::with_capacity(st.entries.len());
         for i in 0..st.entries.len() as u32 {
             let h = st.hash(st.path_of(&st.entries[i as usize]));
-            if st.index.find(h, |&j| {
-                st.path_of(&st.entries[j as usize]) == st.path_of(&st.entries[i as usize])
-            }).is_some() {
+            if st
+                .index
+                .find(h, |&j| {
+                    st.path_of(&st.entries[j as usize]) == st.path_of(&st.entries[i as usize])
+                })
+                .is_some()
+            {
                 return Err("duplicate path".into());
             }
             let (entries, arena, hasher) = (&st.entries, &st.arena, &st.hasher);
@@ -396,33 +442,51 @@ impl<'a> EntryRef<'a> {
     pub(super) fn to_record(self) -> FileRecord {
         let extra = self.extra();
         FileRecord {
-            id:              extra.and_then(|x| x.id),
-            path:            self.path_str().to_owned(),
-            name:            self.name_str().to_owned(),
-            extension:       self.ext_str().map(str::to_owned),
-            size_bytes:      self.e.size,
-            mtime:           self.e.mtime,
-            ctime:           self.e.ctime,
-            is_dir:          self.e.flags & F_DIR != 0,
-            is_hidden:       self.e.flags & F_HIDDEN != 0,
-            is_symlink:      self.e.flags & F_SYMLINK != 0,
-            attrib_bitmask:  self.e.attrib,
+            id: extra.and_then(|x| x.id),
+            path: self.path_str().to_owned(),
+            name: self.name_str().to_owned(),
+            extension: self.ext_str().map(str::to_owned),
+            size_bytes: self.e.size,
+            mtime: self.e.mtime,
+            ctime: self.e.ctime,
+            is_dir: self.e.flags & F_DIR != 0,
+            is_hidden: self.e.flags & F_HIDDEN != 0,
+            is_symlink: self.e.flags & F_SYMLINK != 0,
+            attrib_bitmask: self.e.attrib,
             content_indexed: self.e.flags & F_CONTENT != 0,
-            tantivy_id:      extra.and_then(|x| x.tantivy_id.clone()),
-            indexed_at:      self.e.indexed_at,
-            archive_path:    self.archive_str().map(str::to_owned),
+            tantivy_id: extra.and_then(|x| x.tantivy_id.clone()),
+            indexed_at: self.e.indexed_at,
+            archive_path: self.archive_str().map(str::to_owned),
         }
     }
 }
 
 impl RecordView for EntryRef<'_> {
-    fn path(&self) -> &str { self.path_str() }
-    fn name(&self) -> &str { self.name_str() }
-    fn extension(&self) -> Option<&str> { self.ext_str() }
-    fn size_bytes(&self) -> u64 { self.e.size }
-    fn mtime(&self) -> i64 { self.e.mtime }
-    fn ctime(&self) -> i64 { self.e.ctime }
-    fn is_dir(&self) -> bool { self.e.flags & F_DIR != 0 }
-    fn attrib_bitmask(&self) -> u32 { self.e.attrib }
-    fn archive_path(&self) -> Option<&str> { self.archive_str() }
+    fn path(&self) -> &str {
+        self.path_str()
+    }
+    fn name(&self) -> &str {
+        self.name_str()
+    }
+    fn extension(&self) -> Option<&str> {
+        self.ext_str()
+    }
+    fn size_bytes(&self) -> u64 {
+        self.e.size
+    }
+    fn mtime(&self) -> i64 {
+        self.e.mtime
+    }
+    fn ctime(&self) -> i64 {
+        self.e.ctime
+    }
+    fn is_dir(&self) -> bool {
+        self.e.flags & F_DIR != 0
+    }
+    fn attrib_bitmask(&self) -> u32 {
+        self.e.attrib
+    }
+    fn archive_path(&self) -> Option<&str> {
+        self.archive_str()
+    }
 }

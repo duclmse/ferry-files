@@ -3,11 +3,11 @@ use std::io::{BufWriter, Read, Seek, SeekFrom, Write};
 use std::path::Path;
 use std::sync::RwLock;
 
-use crate::error::{AppError, Result};
-use crate::store::is_under;
 use super::snapshot;
 use super::state::IndexState;
 use super::{FileRecord, MemoryStore, RecordView};
+use crate::error::{AppError, Result};
+use crate::store::is_under;
 
 // ---------------------------------------------------------------------------
 // Binary snapshot format
@@ -31,11 +31,11 @@ use super::{FileRecord, MemoryStore, RecordView};
 //   every restart re-crawled.
 // ---------------------------------------------------------------------------
 
-const MAGIC:      &[u8; 4] = b"FSID";
-const VERSION:    u16      = 3;
-const HEADER_V1:  usize    = 4 + 2 + 8;      // magic + version + data_len
-const HEADER_V2:  usize    = 4 + 2 + 8 + 8;  // magic + version + checkpoint + data_len
-const HEADER:     usize    = HEADER_V2;
+const MAGIC: &[u8; 4] = b"FSID";
+const VERSION: u16 = 3;
+const HEADER_V1: usize = 4 + 2 + 8; // magic + version + data_len
+const HEADER_V2: usize = 4 + 2 + 8 + 8; // magic + version + checkpoint + data_len
+const HEADER: usize = HEADER_V2;
 
 fn le_u64(b: &[u8]) -> u64 {
     let mut a = [0u8; 8];
@@ -77,7 +77,9 @@ impl MemoryStore {
         } else {
             IndexState::empty()
         };
-        Ok(Self { state: RwLock::new(state) })
+        Ok(Self {
+            state: RwLock::new(state),
+        })
     }
 
     fn load_snapshot(path: &Path) -> Result<IndexState> {
@@ -177,7 +179,8 @@ impl MemoryStore {
 
     fn remove_where(&self, pred: impl Fn(&super::state::EntryRef<'_>) -> bool) -> usize {
         let mut state = self.write_state();
-        let paths: Vec<String> = state.iter()
+        let paths: Vec<String> = state
+            .iter()
             .filter(|e| pred(e))
             .map(|e| e.path_str().to_owned())
             .collect();
@@ -267,7 +270,9 @@ impl MemoryStore {
     }
 
     pub fn set_meta(&self, key: &str, value: &str) {
-        self.write_state().meta.insert(key.to_owned(), value.to_owned());
+        self.write_state()
+            .meta
+            .insert(key.to_owned(), value.to_owned());
     }
 }
 

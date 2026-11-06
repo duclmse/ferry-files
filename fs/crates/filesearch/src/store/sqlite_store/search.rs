@@ -5,10 +5,10 @@ use rayon::prelude::*;
 use rusqlite::types::Value;
 
 use crate::error::{AppError, Result};
-use crate::store::{DupeKind, FileRecord, FuzzyRank, MetaFilters, SqlCondition, build_conditions};
+use crate::store::{build_conditions, DupeKind, FileRecord, FuzzyRank, MetaFilters, SqlCondition};
 
-use super::SqliteStore;
 use super::schema::{query_records, row_to_record};
+use super::SqliteStore;
 
 /// One sampled name per 512 rowids (mask + 1).
 const NAME_SAMPLE_MASK: i64 = 511;
@@ -20,7 +20,7 @@ const NAME_BOUNDS_TTL: Duration = Duration::from_secs(60);
 #[derive(Default)]
 pub(super) struct NameBounds {
     sampled_at: Option<Instant>,
-    bounds:     Arc<Vec<String>>,
+    bounds: Arc<Vec<String>>,
     /// Set while `bulk.rs` has the secondary indexes dropped; the `INDEXED BY`
     /// statements below would fail with "no such index" until they are rebuilt.
     bulk_loading: bool,
@@ -71,9 +71,9 @@ impl SqliteStore {
     ) -> Result<Vec<FileRecord>> {
         let (filter_sql, filter_params) = filters.build_where();
         let sql = format!(
-            "SELECT id, path, name, extension, size_bytes, mtime, ctime,
-                    is_dir, is_hidden, is_symlink, attrib_bitmask,
-                    content_indexed, tantivy_id, indexed_at, archive_path
+            "SELECT id, path, name, extension, size_bytes, mtime, ctime, is_dir,
+              is_hidden, is_symlink, attrib_bitmask, content_indexed,
+              tantivy_id, indexed_at, archive_path
              FROM files WHERE extension = ? {filter_sql} LIMIT ?"
         );
         let conn = self.get_conn()?;
@@ -87,11 +87,7 @@ impl SqliteStore {
         query_records(&mut stmt, params)
     }
 
-    pub fn search_meta(
-        &self,
-        filters: &MetaFilters,
-        limit: usize,
-    ) -> Result<Vec<FileRecord>> {
+    pub fn search_meta(&self, filters: &MetaFilters, limit: usize) -> Result<Vec<FileRecord>> {
         let (filter_sql, filter_params) = filters.build_where();
         let where_extra = if let Some(stripped) = filter_sql.strip_prefix("AND ") {
             format!("AND {stripped}")
@@ -99,9 +95,9 @@ impl SqliteStore {
             filter_sql
         };
         let sql = format!(
-            "SELECT id, path, name, extension, size_bytes, mtime, ctime,
-                    is_dir, is_hidden, is_symlink, attrib_bitmask,
-                    content_indexed, tantivy_id, indexed_at, archive_path
+            "SELECT id, path, name, extension, size_bytes, mtime, ctime, is_dir,
+              is_hidden, is_symlink, attrib_bitmask, content_indexed,
+              tantivy_id, indexed_at, archive_path
              FROM files WHERE 1=1 {where_extra} LIMIT ?"
         );
         let conn = self.get_conn()?;
@@ -117,8 +113,7 @@ impl SqliteStore {
     /// non-crawl purposes; full-crawl stale detection should use generation methods.
     pub fn paths_under(&self, dir: &str) -> Result<Vec<String>> {
         let conn = self.get_conn()?;
-        let mut stmt =
-            conn.prepare("SELECT path FROM files WHERE path LIKE ? || '/%'")?;
+        let mut stmt = conn.prepare("SELECT path FROM files WHERE path LIKE ? || '/%'")?;
         let rows = stmt.query_map([dir], |row| row.get(0))?;
         rows.map(|r| r.map_err(AppError::Database)).collect()
     }
@@ -139,9 +134,8 @@ impl SqliteStore {
     /// i.e. not archive-inner entries. Uses the indexed `parent` column.
     pub fn children_of(&self, parent_path: &str) -> Result<Vec<String>> {
         let conn = self.get_conn()?;
-        let mut stmt = conn.prepare(
-            "SELECT path FROM files WHERE parent = ? AND archive_path IS NULL",
-        )?;
+        let mut stmt =
+            conn.prepare("SELECT path FROM files WHERE parent = ? AND archive_path IS NULL")?;
         let rows = stmt.query_map([parent_path], |row| row.get(0))?;
         rows.map(|r| r.map_err(AppError::Database)).collect()
     }
@@ -159,13 +153,13 @@ impl SqliteStore {
         let (extra_sql, extra_params) = build_conditions(extra_conditions);
 
         let group_col = match kind {
-            DupeKind::Name         => "name",
-            DupeKind::NamePart     => "COALESCE(REPLACE(name, '.' || extension, ''), name)",
-            DupeKind::Size         => "size_bytes",
+            DupeKind::Name => "name",
+            DupeKind::NamePart => "COALESCE(REPLACE(name, '.' || extension, ''), name)",
+            DupeKind::Size => "size_bytes",
             DupeKind::DateModified => "mtime",
-            DupeKind::DateCreated  => "ctime",
+            DupeKind::DateCreated => "ctime",
             DupeKind::DateAccessed => "mtime",
-            DupeKind::Attrib       => "attrib_bitmask",
+            DupeKind::Attrib => "attrib_bitmask",
         };
 
         let pass1 = format!(
@@ -195,7 +189,11 @@ impl SqliteStore {
 
     /// Execute arbitrary SqlConditions and return matching records.
     /// Used by `FileStore::search_conditions` dispatch.
-    pub fn search_conditions(&self, conds: &[SqlCondition], limit: usize) -> Result<Vec<FileRecord>> {
+    pub fn search_conditions(
+        &self,
+        conds: &[SqlCondition],
+        limit: usize,
+    ) -> Result<Vec<FileRecord>> {
         if conds.is_empty() {
             return self.search_meta(&MetaFilters::default(), limit);
         }
@@ -226,8 +224,8 @@ impl SqliteStore {
     pub fn fuzzy_search(
         &self,
         conds: &[SqlCondition],
-        cap:   usize,
-        rank:  &FuzzyRank<'_>,
+        cap: usize,
+        rank: &FuzzyRank<'_>,
     ) -> Result<Vec<FileRecord>> {
         let (where_extra, mut params) = build_conditions(conds);
         params.push(Value::Integer(cap as i64));
@@ -278,17 +276,17 @@ impl SqliteStore {
     /// part of the API contract (there is no ORDER BY either way).
     fn search_by_name_index(
         &self,
-        name_conds:  &[SqlCondition],
+        name_conds: &[SqlCondition],
         other_conds: &[SqlCondition],
-        limit:       usize,
+        limit: usize,
     ) -> Result<Vec<FileRecord>> {
-        let (name_sql, name_params)   = build_conditions(name_conds);
+        let (name_sql, name_params) = build_conditions(name_conds);
         let (other_sql, other_params) = build_conditions(other_conds);
         let bounds = self.name_bounds()?;
 
         let run = |lo: Option<&String>, hi: Option<&String>| -> Result<Vec<FileRecord>> {
             let mut params = name_params.clone();
-            let mut range  = String::new();
+            let mut range = String::new();
             if let Some(lo) = lo {
                 range.push_str(" AND name >= ?");
                 params.push(Value::Text(lo.clone()));
@@ -353,7 +351,10 @@ impl SqliteStore {
     /// cover the whole keyspace, so results stay exact.
     fn name_bounds(&self) -> Result<Arc<Vec<String>>> {
         let mut cache = self.lock_name_bounds()?;
-        if cache.sampled_at.is_some_and(|t| t.elapsed() < NAME_BOUNDS_TTL) {
+        if cache
+            .sampled_at
+            .is_some_and(|t| t.elapsed() < NAME_BOUNDS_TTL)
+        {
             return Ok(Arc::clone(&cache.bounds));
         }
 
@@ -377,7 +378,7 @@ impl SqliteStore {
         bounds.dedup();
 
         cache.sampled_at = Some(Instant::now());
-        cache.bounds     = Arc::new(bounds);
+        cache.bounds = Arc::new(bounds);
         Ok(Arc::clone(&cache.bounds))
     }
 
@@ -385,9 +386,9 @@ impl SqliteStore {
     /// Used by `FileStore::search_by_paths` for the Tantivy → SQLite path.
     pub fn search_by_paths(
         &self,
-        paths:  &[String],
-        conds:  &[SqlCondition],
-        limit:  usize,
+        paths: &[String],
+        conds: &[SqlCondition],
+        limit: usize,
     ) -> Result<Vec<FileRecord>> {
         let mut results = Vec::with_capacity(paths.len().min(limit));
         let (where_extra, extra_params) = build_conditions(conds);

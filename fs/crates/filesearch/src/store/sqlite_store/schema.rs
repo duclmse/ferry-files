@@ -89,21 +89,21 @@ pub(super) fn parent_of(path: &str) -> String {
 
 pub(super) fn row_to_record(row: &rusqlite::Row<'_>) -> rusqlite::Result<FileRecord> {
     Ok(FileRecord {
-        id:              Some(row.get(0)?),
-        path:            row.get(1)?,
-        name:            row.get(2)?,
-        extension:       row.get(3)?,
-        size_bytes:      row.get::<_, i64>(4)? as u64,
-        mtime:           row.get(5)?,
-        ctime:           row.get(6)?,
-        is_dir:          row.get::<_, i64>(7)? != 0,
-        is_hidden:       row.get::<_, i64>(8)? != 0,
-        is_symlink:      row.get::<_, i64>(9)? != 0,
-        attrib_bitmask:  row.get::<_, i64>(10)? as u32,
+        id: Some(row.get(0)?),
+        path: row.get(1)?,
+        name: row.get(2)?,
+        extension: row.get(3)?,
+        size_bytes: row.get::<_, i64>(4)? as u64,
+        mtime: row.get(5)?,
+        ctime: row.get(6)?,
+        is_dir: row.get::<_, i64>(7)? != 0,
+        is_hidden: row.get::<_, i64>(8)? != 0,
+        is_symlink: row.get::<_, i64>(9)? != 0,
+        attrib_bitmask: row.get::<_, i64>(10)? as u32,
         content_indexed: row.get::<_, i64>(11)? != 0,
-        tantivy_id:      row.get(12)?,
-        indexed_at:      row.get(13)?,
-        archive_path:    row.get(14)?,
+        tantivy_id: row.get(12)?,
+        indexed_at: row.get(13)?,
+        archive_path: row.get(14)?,
     })
 }
 

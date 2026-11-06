@@ -16,7 +16,7 @@ impl SqliteStore {
     pub fn populate_for_bench(&self, count: usize) -> Result<()> {
         const EXTENSIONS: &[&str] = &["rs", "toml", "md", "txt", "py", "go", "ts", "json"];
         let conn = self.get_conn()?;
-        let now  = std::time::SystemTime::now()
+        let now = std::time::SystemTime::now()
             .duration_since(std::time::UNIX_EPOCH)
             .unwrap_or_default()
             .as_secs() as i64;
@@ -24,9 +24,8 @@ impl SqliteStore {
         let tx = conn.unchecked_transaction()?;
         {
             let mut stmt = tx.prepare(
-                "INSERT OR IGNORE INTO files
-                 (path, name, extension, size_bytes, mtime, ctime,
-                  is_dir, is_hidden, is_symlink, attrib_bitmask,
+                "INSERT OR IGNORE INTO files(path, name, extension, size_bytes,
+                  mtime, ctime, is_dir, is_hidden, is_symlink, attrib_bitmask,
                   content_indexed, indexed_at, parent)
                  VALUES (?1,?2,?3,?4,?5,?6,0,0,0,0,0,?7,?8)",
             )?;
