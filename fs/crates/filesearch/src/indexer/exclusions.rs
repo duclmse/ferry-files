@@ -45,7 +45,7 @@ pub fn is_network_mount(path: &Path) -> bool {
         return false;
     };
     let path_str = path.to_string_lossy();
-    BufReader::new(file).lines().flatten().any(|line| {
+    BufReader::new(file).lines().map_while(std::io::Result::ok).any(|line| {
         let parts: Vec<&str> = line.split_whitespace().collect();
         if parts.len() >= 3 {
             path_str.starts_with(parts[1]) && matches!(parts[2], "nfs" | "nfs4" | "cifs" | "smbfs")

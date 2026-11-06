@@ -18,6 +18,7 @@ use crate::api::rest::AppState;
 use crate::config;
 use crate::error::AppError;
 use crate::indexer::crawler::{full_crawl, process_event, IndexEvent, IndexMetrics};
+use crate::indexer::exclusions::ExclusionEngine;
 use crate::scheduler::{ArchiveSemaphores, ClientRateLimiter, SchedulerMetrics};
 use crate::store::{FileStore, tantivy_store::TantivyStore};
 use crate::watcher;
@@ -317,7 +318,8 @@ pub async fn run_with_shutdown(
 
     // ── 17. Initial crawl, or catch up on changes made while stopped ───────
     // The live watcher only sees changes from now on; anything that happened
-    // while the daemon was down comes from the OS change log (journal.rs).
+    // while the daemon was down comes from the OS change log or a timestamp
+    // scan (journal.rs).
     {
         let needs_crawl = sqlite.get_meta("last_crawl_time")
             .map(|v| v.is_none())
@@ -342,9 +344,9 @@ pub async fn run_with_shutdown(
                     shutdown.clone(),
                 );
             };
-            let (roots, formats) = {
+            let (roots, formats, exclusions) = {
                 let c = cfg.read().await;
-                (c.watch_paths.clone(), c.archive_index.formats.clone())
+                (c.watch_paths.clone(), c.archive_index.formats.clone(), c.exclusions.clone())
             };
             let now = {
                 let roots = roots.clone();
@@ -369,9 +371,14 @@ pub async fn run_with_shutdown(
                     let store = Arc::clone(&sqlite);
                     let (now, start) = (now.clone(), std::time::Instant::now());
                     let plan = tokio::task::spawn_blocking(move || {
-                        watcher::journal::catch_up(&stored, &now, &formats, |dir| {
-                            store.paths_under(dir).unwrap_or_default()
-                        })
+                        let excl = match ExclusionEngine::new(&exclusions) {
+                            Ok(e) => e,
+                            Err(e) => {
+                                return watcher::journal::CatchUp::FullCrawl(format!("exclusions: {e}"))
+                            }
+                        };
+                        let skip = |p: &std::path::Path, hidden: bool| excl.should_exclude(p, hidden);
+                        watcher::journal::catch_up(&stored, &now, &formats, &skip, &*store)
                     }).await;
                     match plan {
                         Ok(watcher::journal::CatchUp::UpToDate) => {

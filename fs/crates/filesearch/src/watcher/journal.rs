@@ -3,9 +3,10 @@
 //!
 //! The live watcher only sees changes from the moment it starts. Like
 //! Everything's USN journal replay, a position in the OS change log is stored
-//! with the index and the log is replayed from it on the next start. Only
-//! macOS (FSEvents history) is implemented; elsewhere `current_position`
-//! returns `None` and the daemon keeps its previous behaviour.
+//! with the index and the log is replayed from it on the next start. macOS
+//! replays FSEvents history; elsewhere (Linux has no persistent log, and the
+//! Windows USN journal is not read yet) the tree is scanned for timestamps
+//! newer than the position (`scan.rs`).
 
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
@@ -13,7 +14,9 @@ use std::path::{Path, PathBuf};
 use serde::{Deserialize, Serialize};
 
 use crate::indexer::crawler::IndexEvent;
-use crate::store::is_under;
+use crate::store::{is_under, FileStore};
+
+mod scan;
 
 /// Store metadata key holding the serialized [`Position`].
 pub const META_KEY: &str = "journal_position";
@@ -23,12 +26,19 @@ pub const META_KEY: &str = "journal_position";
 const MAX_REPLAY_PATHS: usize = 200_000;
 
 // FSEvents flag bits (CoreServices/FSEvents.h). Kept here rather than taken
-// from `fsevent-sys` so `plan` and its tests build on every platform.
+// from `fsevent-sys` so `plan` and its tests build on every platform; other
+// platforms use `scan` instead, hence the dead-code allowances.
+#[cfg_attr(not(target_os = "macos"), allow(dead_code))]
 const MUST_SCAN_SUBDIRS: u32 = 0x0000_0001;
+#[cfg_attr(not(target_os = "macos"), allow(dead_code))]
 const USER_DROPPED: u32 = 0x0000_0002;
+#[cfg_attr(not(target_os = "macos"), allow(dead_code))]
 const KERNEL_DROPPED: u32 = 0x0000_0004;
+#[cfg_attr(not(target_os = "macos"), allow(dead_code))]
 const EVENT_IDS_WRAPPED: u32 = 0x0000_0008;
+#[cfg_attr(not(target_os = "macos"), allow(dead_code))]
 const ROOT_CHANGED: u32 = 0x0000_0020;
+#[cfg_attr(not(target_os = "macos"), allow(dead_code))]
 const ITEM_IS_DIR: u32 = 0x0002_0000;
 
 /// A point in the OS change log up to which the index is known to be current.
@@ -59,6 +69,30 @@ pub enum CatchUp {
     FullCrawl(String),
 }
 
+/// What catch-up needs to know about the index.
+pub trait IndexLookup {
+    fn contains(&self, path: &str) -> bool;
+    /// Direct children (real files, not archive entries).
+    fn children_of(&self, dir: &str) -> Vec<String>;
+    /// Everything below `dir`, at any depth.
+    fn paths_under(&self, dir: &str) -> Vec<String>;
+}
+
+// A failed lookup reads as "not indexed" / "no children": the first makes
+// catch-up re-walk a directory, the second leaves a stale row for the live
+// sibling sweep; neither loses a change.
+impl IndexLookup for FileStore {
+    fn contains(&self, path: &str) -> bool {
+        self.get_by_path(path).ok().flatten().is_some()
+    }
+    fn children_of(&self, dir: &str) -> Vec<String> {
+        FileStore::children_of(self, dir).unwrap_or_default()
+    }
+    fn paths_under(&self, dir: &str) -> Vec<String> {
+        FileStore::paths_under(self, dir).unwrap_or_default()
+    }
+}
+
 /// Current change-log position for `roots`, or `None` when this platform or
 /// one of the volumes has no replayable history.
 pub fn current_position(roots: &[PathBuf]) -> Option<Position> {
@@ -68,39 +102,48 @@ pub fn current_position(roots: &[PathBuf]) -> Option<Position> {
     }
     #[cfg(not(target_os = "macos"))]
     {
-        let _ = roots;
-        None
+        scan::current_position(roots)
     }
 }
 
-/// Replays the change log from `stored` and turns it into index events.
-/// Blocking; run it on a blocking thread.
+/// Finds what changed since `stored` and turns it into index events. `skip`
+/// is the crawler's exclusion test (`path`, `is_hidden`). Blocking; run it on
+/// a blocking thread.
 pub fn catch_up(
-    stored:      &Position,
-    now:         &Position,
-    formats:     &[String],
-    paths_under: impl Fn(&str) -> Vec<String>,
+    stored:  &Position,
+    now:     &Position,
+    formats: &[String],
+    skip:    &(dyn Fn(&Path, bool) -> bool + Sync),
+    index:   &dyn IndexLookup,
 ) -> CatchUp {
     if stored.roots != now.roots {
         return CatchUp::FullCrawl("watch roots or volume history changed".into());
     }
-    if stored.event_id >= now.event_id {
-        return CatchUp::UpToDate;
-    }
     let roots: Vec<PathBuf> = stored.roots.iter().map(|(r, _)| PathBuf::from(r)).collect();
-    #[cfg(target_os = "macos")]
-    let changed = fsevents::replay(&roots, stored.event_id);
     #[cfg(not(target_os = "macos"))]
-    let changed: Result<HashMap<PathBuf, u32>, String> = Err("no change log on this platform".into());
-    match changed {
-        Ok(changed) => plan(changed, &roots, formats, paths_under),
-        Err(reason) => CatchUp::FullCrawl(reason),
+    {
+        // Seconds, not a log offset: a restart within the same second must
+        // still scan.
+        let _ = now;
+        scan::reconcile(&roots, stored.event_id, formats, skip, index)
+    }
+    #[cfg(target_os = "macos")]
+    {
+        let _ = skip;
+        if stored.event_id >= now.event_id {
+            return CatchUp::UpToDate;
+        }
+        match fsevents::replay(&roots, stored.event_id) {
+            Ok(changed) => plan(changed, &roots, formats, |d| index.paths_under(d)),
+            Err(reason) => CatchUp::FullCrawl(reason),
+        }
     }
 }
 
 /// Turns replayed `path -> OR of event flags` into index events. The flags
 /// say *that* a path changed; its current state is read from disk, so the
 /// order of the original events does not matter.
+#[cfg_attr(not(target_os = "macos"), allow(dead_code))]
 fn plan(
     changed:     HashMap<PathBuf, u32>,
     roots:       &[PathBuf],
@@ -149,6 +192,7 @@ fn plan(
 
 /// Re-reads one subtree: everything on disk is re-indexed, indexed paths that
 /// are gone are deleted.
+#[cfg_attr(not(target_os = "macos"), allow(dead_code))]
 fn rescan(
     dir:         &Path,
     formats:     &[String],
@@ -169,6 +213,7 @@ fn rescan(
     }
 }
 
+#[cfg_attr(not(target_os = "macos"), allow(dead_code))]
 fn under_or_eq(path: &str, root: &Path) -> bool {
     root.to_str().is_some_and(|r| path == r || is_under(path, r))
 }
@@ -376,6 +421,20 @@ mod fsevents {
 mod tests {
     use super::*;
 
+    struct NoIndex;
+
+    impl IndexLookup for NoIndex {
+        fn contains(&self, _: &str) -> bool {
+            false
+        }
+        fn children_of(&self, _: &str) -> Vec<String> {
+            vec![]
+        }
+        fn paths_under(&self, _: &str) -> Vec<String> {
+            vec![]
+        }
+    }
+
     fn kinds(c: &CatchUp) -> Vec<String> {
         let CatchUp::Events(ev) = c else { return vec![format!("{c:?}")] };
         let mut v: Vec<String> = ev.iter().map(|e| format!("{e:?}")).collect();
@@ -443,8 +502,9 @@ mod tests {
     fn changed_roots_force_a_crawl() {
         let a = Position { event_id: 1, roots: vec![("/w".into(), "U1".into())] };
         let b = Position { event_id: 9, roots: vec![("/w".into(), "U2".into())] };
-        assert!(matches!(catch_up(&a, &b, &[], |_| vec![]), CatchUp::FullCrawl(_)));
-        assert!(matches!(catch_up(&b, &b, &[], |_| vec![]), CatchUp::UpToDate));
+        assert!(matches!(catch_up(&a, &b, &[], &|_, _| false, &NoIndex), CatchUp::FullCrawl(_)));
+        #[cfg(target_os = "macos")]
+        assert!(matches!(catch_up(&b, &b, &[], &|_, _| false, &NoIndex), CatchUp::UpToDate));
         assert_eq!(Position::from_json(&a.to_json()), Some(a));
     }
 
@@ -462,7 +522,7 @@ mod tests {
         // FSEvents writes history asynchronously; give it a moment.
         std::thread::sleep(std::time::Duration::from_secs(2));
         let now = current_position(std::slice::from_ref(&root)).expect("position");
-        let out = catch_up(&start, &now, &[], |_| vec![]);
+        let out = catch_up(&start, &now, &[], &|_, _| false, &NoIndex);
         let k = kinds(&out);
         assert!(k.iter().any(|e| e.starts_with("Modified") && e.contains("after.txt")), "{k:?}");
         assert!(k.iter().any(|e| e.starts_with("Deleted") && e.contains("before.txt")), "{k:?}");

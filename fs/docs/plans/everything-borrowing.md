@@ -1,6 +1,6 @@
 # Plan: Borrowing Everything's Techniques
 
-> **Status:** phases 1-4 and 7 implemented; phase 5 on macOS; phase 6 crawl-writer fix; open: phase 5 on Windows/Linux, platform enumeration (Nov 2026). Background:
+> **Status:** phases 1-5 and 7 implemented (phase 5: FSEvents replay on macOS, timestamp scan on Linux and Windows); phase 6 crawl-writer fix; open: USN journal replay, platform enumeration (Nov 2026). Background:
 > [research/everything-internals.md](../research/everything-internals.md).
 > Measurements: RSS and CPU time sampled every 250 ms plus `/usr/bin/time -l`
 > peaks, on `~/projects` (2.38M files, 191k dirs), macOS, 8 cores, with 8
@@ -155,7 +155,7 @@ Tried and rejected:
 Benchmark hygiene: a run on a 98 %-full disk produced 2-3x slower, very
 noisy numbers. Delete each run's data directory before the next.
 
-## Phase 5 - Catch up from the OS change log (Everything §2.2) - macOS done
+## Phase 5 - Catch up from the OS change log (Everything §2.2) - done
 
 Before: on a warm start the daemon skipped the crawl, and a comment claimed
 the watcher would deliver a "startup backlog". It does not - `notify`'s
@@ -191,12 +191,40 @@ a new nested directory and a content change made while stopped all appear
 after restart (replay of 11-14 changes: 0.3 s). Unit tests cover the
 planner on every platform and a real FSEvents replay on macOS.
 
-Still open:
+### Linux and Windows: timestamp scan
 
-| Platform | Source                                                                                                                         | Fallback today                                                           |
-| -------- | ------------------------------------------------------------------------------------------------------------------------------ | ------------------------------------------------------------------------ |
-| Windows  | NTFS USN journal (`FSCTL_READ_USN_JOURNAL`): journal ID + next USN per volume                                                  | changes while stopped missed; no Windows toolchain here to build or test |
-| Linux    | none persistent; rescan that skips directories whose `mtime` is unchanged (as `updatedb` does) - misses in-place content edits | changes while stopped missed                                             |
+inotify keeps no history, and reading the USN journal is not built yet, so
+these platforms use `watcher/journal/scan.rs`. The stored position is the
+wall-clock second it was captured, plus each root's device id (Unix) so a
+different filesystem mounted on a root forces a crawl. A warm start walks the
+roots with the crawler's exclusions and flags entries whose times are within
+2 s of the position or newer:
+
+- mtime, plus ctime on Unix (only the kernel sets it, so an extracted or
+  copied file with an old mtime is caught) or creation time on Windows (a
+  copy or extraction sets it to now);
+- each changed directory's children are compared with the index: indexed
+  ones that are gone are deleted (with everything under them), unindexed ones
+  are added. This catches entries moved in with all their times old, which
+  NTFS does on rename;
+- a changed directory that is not in the index is walked in full, since its
+  contents can keep old times;
+- more than 200,000 events still means a reconcile crawl.
+
+Missed: changes that leave every checked time older than the position (a
+clock set backwards, or a tool that rewrites times).
+
+Cost: one `stat` per entry and no index writes for unchanged files. On the
+2.6M-entry `~/projects` tree the walk takes 16.5 s (release, warm cache, no
+exclusions, macOS: the same walk phase 6 measured), against 32-37 s for an
+initial crawl and longer for a reconcile crawl, which also upserts every row. Unit tests run on macOS (new, edited, deleted, moved-in,
+unindexed-with-old-times and excluded entries); Linux and Windows builds are
+clippy-clean via cross-compilation, but neither has been run on its own OS
+here.
+
+Still open: replaying the NTFS USN journal (`FSCTL_READ_USN_JOURNAL`, journal
+ID + next USN per volume) would make the Windows catch-up cost proportional
+to the changes instead of the tree.
 
 ## Phase 6 - Faster enumeration (Everything §2.1) - macOS measured; writer fixed
 
