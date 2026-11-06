@@ -518,7 +518,8 @@ This matches the spec's "no recursion" rule and avoids infinite loops.
 - [x] `cargo test -p filesearch query` passes all parser + evaluator tests.
 - [x] All acceptance test queries from spec section 13 parse without error.
 - [x] `dm:today` produces `MtimeRange` SQL condition (unit-tested; live index TBD).
-- [ ] `audio:` returns the same extension list as Everything's built-in filter (live index).
+- [x] `audio:` returns the same extension list as Everything's built-in filter (live index).
+      *(unit test compares against the §1.5 table in `docs/reference/query-language.md`)*
 - [x] `size:large` produces `SizeRange(1048577, 16777216)` (unit-tested).
 - [x] `dupe:` produces `DupeSearch` strategy (unit-tested; live index TBD).
 - [x] `content:TODO` delegates to Tantivy with `TantivyThenSqlite` strategy (unit-tested).

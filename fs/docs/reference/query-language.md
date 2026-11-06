@@ -28,6 +28,10 @@ Examples:
 - `!A !B` = `(NOT A) AND (NOT B)`
 - `A|B C` = `A OR (B AND C)`
 
+`content:`, `fuzzy:` and `dupe:` choose how the whole query runs, so they
+cannot appear inside `|` or after `!`; such queries are rejected with a
+query error rather than evaluated with the wrong meaning.
+
 ### 1.2 Wildcards
 
 | Wildcard | Meaning |

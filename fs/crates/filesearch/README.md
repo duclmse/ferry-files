@@ -115,6 +115,7 @@ index_cache_size = 256
 | `search.max_limit`                      | `int`          | `10000`          | Maximum allowed limit                             |
 | `search.fuzzy_threshold`                | `float`        | `0.7`            | nucleo fuzzy match threshold (0–1)                |
 | `search.max_fuzzy_candidates`           | `int`          | `50000`          | Max candidates scored by fuzzy search             |
+| `search.max_filter_candidates`          | `int`          | `200000`         | Max rows fetched when filters run after the fetch |
 | `archive_index.enabled`                 | `bool`         | `true`           | Index ZIP inner entries                           |
 | `archive_index.formats`                 | `[string]`     | `["zip"]`        | Supported archive formats                         |
 | `archive_index.max_entries_per_archive` | `int`          | `10000`          | Entry limit per archive                           |
@@ -394,7 +395,71 @@ The TUI shows:
 
 ---
 
-## 10. Performance Tuning
+## 10. ZIP Inner-File Indexing
+
+With `[archive_index] enabled = true` (the default), every `.zip` under a watch
+path is opened during the crawl, and each entry inside it is indexed as a
+virtual file. Nothing is extracted to disk while indexing; entries are read
+one at a time.
+
+**Virtual paths.** An inner entry's path is the archive path, then `!/`, then
+the entry name:
+
+```
+/home/me/src/bundle.zip!/inner/lib.rs
+```
+
+The `archive_path` field (REST/gRPC) holds the outer `.zip`. For real files it
+is `null`. If you script against the APIs, split on `!/`. Don't treat the
+whole string as a filesystem path.
+
+**Querying.**
+
+```sh
+filesearch search "lib.rs"               # real files and inner entries
+filesearch search "archive: *.rs"        # inner entries only
+filesearch search "noarchive: *.rs"      # real files only
+filesearch search "archive: content:fn"  # full-text inside archives
+```
+
+Inner entries support name, extension, size, date, `fuzzy:` and `regex:`
+queries like real files. Their content is indexed when the entry's extension
+has a limit in `[archive_index.inner_extension_limits]`, falling back to
+`[content.extension_limits]`. A limit of `0`, or no matching entry, means the
+entry is indexed by metadata only.
+
+**Opening.** `POST /open` with an inner virtual path, or `Enter` in the TUI,
+extracts that one entry to a temp file named `filesearch_*_<name>` and opens
+it with the OS default handler. The temp file is deleted after 30 seconds.
+
+**Keeping it current.** The watcher treats `.zip` changes as archive events:
+- Creating or modifying a ZIP re-indexes all of its entries.
+- Deleting or moving it away removes them.
+
+**Limits and caveats.**
+
+| Setting                   | Effect                                                                    |
+| ------------------------- | ------------------------------------------------------------------------- |
+| `formats`                 | Only `"zip"` is supported; other values fail `validate-config`.           |
+| `max_entries_per_archive` | Entries past this count are skipped, with a warning (`0` = unlimited).    |
+| `passwords`               | Tried in order for encrypted entries. If none work, the entry is indexed by name only and a warning is logged. |
+| `max_nesting_depth`       | How many levels of ZIP-inside-ZIP to index (`0` = none, max `2`). See below. |
+
+**Nested ZIPs.** With `max_nesting_depth = 1`, a `.zip` entry inside an
+archive is itself indexed, with paths like
+`/data/outer.zip!/inner.zip!/file.txt`. `archive_path` stays the real outer
+file, so re-indexing or deleting it updates every level. Each nested ZIP is
+read into memory to be opened (it cannot be seeked inside the outer one).
+Nested ZIPs over 256 MiB, and encrypted nested ZIPs, are indexed as plain
+files and not recursed, with a warning. `POST /open` and the TUI extract nested
+entries the same way as first-level ones.
+
+RAR, 7z and TAR archives are not indexed as archives. Use `rar2zip` to convert
+them first.
+
+---
+
+## 11. Performance Tuning
 
 **inotify limit (Linux):** The default `max_user_watches` of 8192 is far too low
 for large directories. Set it to at least `524288` (see Prerequisites).
@@ -409,9 +474,15 @@ full-text search at the cost of more frequent disk I/O.
 the nucleo scorer examines. Lower it if fuzzy searches are slow on very large
 indices.
 
+**Post-fetch filters:** `regex:`, `child:`, `startwith:`, `endwith:`, `ww:`
+and `|` / `!` over them are checked after rows are fetched. The daemon keeps
+fetching larger batches until a full page survives, up to
+`search.max_filter_candidates` rows. Lower it if such queries are slow on
+very large indices; results may then be short when matches are rare.
+
 ---
 
-## 11. Troubleshooting
+## 12. Troubleshooting
 
 | Symptom                            | Cause                                | Fix                                                   |
 | ---------------------------------- | ------------------------------------ | ----------------------------------------------------- |

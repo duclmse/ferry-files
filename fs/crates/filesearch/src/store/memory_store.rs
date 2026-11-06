@@ -1,16 +1,18 @@
 //! In-memory file-metadata store with binary snapshot persistence.
 //!
-//! Designed after the approach in `docs/research/in-memory-index.md`: records live in a flat
-//! `Vec<FileRecord>` plus a `HashMap` path-index for O(1) lookups. Snapshots
-//! are written as a small binary file (`index.bin`) on clean shutdown and
-//! reloaded on the next start - near-zero load latency via sequential read.
+//! Layout follows `docs/plans/everything-borrowing.md` (phase 3): every path
+//! is stored once in a shared string arena, entries are fixed-size records of
+//! offsets and metadata, names and archive paths are slices of the path, and
+//! the path index is a hash table of entry numbers. Snapshots (`index.bin`)
+//! hold those arrays plus the key-value metadata, so a restart reloads the
+//! index without rebuilding strings or re-crawling.
 //!
 //! This store is single-writer: all mutating methods take an exclusive lock.
 //! Use the SQLite store when you need concurrent writers.
 
 use std::sync::RwLock;
 
-use super::{CmpOp, DupeKind, FileRecord, MetaFilters, SqlCondition};
+use super::{CmpOp, DupeKind, FileRecord, FuzzyRank, MetaFilters, RecordView, SqlCondition};
 
 mod crud;
 mod matching;

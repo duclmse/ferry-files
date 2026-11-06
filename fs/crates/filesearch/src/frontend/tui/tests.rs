@@ -249,3 +249,25 @@ fn reset_stats_zeroes_counters() {
     assert_eq!(app.stats_total_files, 0);
     assert_eq!(app.stats_zip_entries, 0);
 }
+
+#[test]
+fn render_tags_only_archive_rows_with_zip() {
+    use ratatui::{backend::TestBackend, Terminal};
+
+    let mut app = make_app();
+    app.load_hits(vec![
+        make_hit("/archive.zip!/main.rs", Some("/archive.zip")),
+        make_hit("/real.rs", None),
+    ], 2, 1);
+
+    let mut term = Terminal::new(TestBackend::new(80, 10)).unwrap();
+    term.draw(|f| super::render::render(f, &mut app)).unwrap();
+
+    let buf = term.backend().buffer();
+    let line = |y: u16| (0..buf.area.width).map(|x| buf.get(x, y).symbol()).collect::<String>();
+    let lines: Vec<String> = (0..buf.area.height).map(line).collect();
+    let archive = lines.iter().find(|l| l.contains("/archive.zip!/main.rs")).unwrap();
+    let real    = lines.iter().find(|l| l.contains("/real.rs")).unwrap();
+    assert!(archive.contains("[zip]"), "{archive}");
+    assert!(!real.contains("[zip]"), "{real}");
+}

@@ -1,16 +1,16 @@
 use chrono::Local;
 
-use crate::error::Result;
+use crate::error::{AppError, Result};
 use crate::query::ast::{
     DateExpr, Expr, Function, Modifiers, Predicate, PredicateKind, RangeExpr,
 };
 use crate::query::date::resolve_date_constant;
 use crate::query::glob::{glob_to_sqlite, has_wildcards};
 use crate::query::macros::expand_type_macro;
-use crate::store::{build_conditions, CmpOp, SqlCondition};
+use crate::store::{CmpOp, SqlCondition};
 
 use super::postfilter::build_regex;
-use super::types::{EvalStrategy, PostFilter, QueryPlan};
+use super::types::{Branch, EvalStrategy, PostFilter, QueryPlan};
 
 // ---------------------------------------------------------------------------
 // Plan builder
@@ -36,33 +36,42 @@ fn walk(expr: &Expr, inherited: &Modifiers, p: &mut QueryPlan) -> Result<()> {
             walk(r, inherited, p)?;
         }
         Expr::Or(l, r) => {
-            // OR across two branches - both sides add conditions.
-            // For SQL we approximate OR as an OR'd LIKE by wrapping conditions.
-            // A simple but correct approach: collect each branch's conditions
-            // and OR them together in a single SqlCondition.
-            // For now, emit both branches' conditions joined with OR at the SQL level.
-            let lp = sub_plan(l, inherited)?;
-            let rp = sub_plan(r, inherited)?;
-
-            // Merge limit / tantivy / strategy from branches
-            merge_strategy(&mut p.strategy, lp.strategy);
-            merge_strategy(&mut p.strategy, rp.strategy);
-            if p.tantivy_query.is_none() { p.tantivy_query = lp.tantivy_query; }
-            p.post_filters.extend(lp.post_filters);
-            p.post_filters.extend(rp.post_filters);
-
-            if !lp.sql_conditions.is_empty() || !rp.sql_conditions.is_empty() {
-                // Emit an OR condition block
-                p.sql_conditions.push(or_conditions(lp.sql_conditions, rp.sql_conditions));
+            let mut branches = Vec::new();
+            for side in [l, r] {
+                let sp = sub_plan(side, inherited)?;
+                require_plain(&sp, "OR")?;
+                p.limit = p.limit.or(sp.limit);
+                // Flatten `a | b | c` into one OR instead of nesting.
+                match <[SqlCondition; 1]>::try_from(sp.sql_conditions) {
+                    Ok([SqlCondition::Or(inner)]) if sp.post_filters.is_empty() => {
+                        branches.extend(inner.into_iter().map(|sql| Branch { sql, post: Vec::new() }));
+                    }
+                    Ok(one) => branches.push(Branch { sql: one.into(), post: sp.post_filters }),
+                    Err(sql) => branches.push(Branch { sql, post: sp.post_filters }),
+                }
+            }
+            // Each branch's SQL alone is a superset of the branch, so the OR of
+            // them is a superset of the whole OR; post-filters then make it exact.
+            p.sql_conditions.push(SqlCondition::Or(
+                branches.iter().map(|b| b.sql.clone()).collect(),
+            ));
+            if branches.iter().any(|b| !b.post.is_empty()) {
+                p.post_filters.push(PostFilter::Any(branches));
             }
         }
         Expr::Not(inner) => {
             let np = sub_plan(inner, inherited)?;
-            // Negate SQL conditions
-            for cond in np.sql_conditions {
-                p.sql_conditions.push(negate_condition(cond));
+            require_plain(&np, "NOT")?;
+            p.limit = p.limit.or(np.limit);
+            if np.post_filters.is_empty() {
+                p.sql_conditions.push(SqlCondition::Not(np.sql_conditions));
+            } else {
+                // NOT of a superset is a subset, so SQL cannot narrow here.
+                p.post_filters.push(PostFilter::Not(Branch {
+                    sql:  np.sql_conditions,
+                    post: np.post_filters,
+                }));
             }
-            p.post_filters.extend(np.post_filters);
         }
         Expr::Predicate(pred) => {
             let mods = merge_mods(inherited, &pred.modifiers);
@@ -85,35 +94,15 @@ fn sub_plan(expr: &Expr, inherited: &Modifiers) -> Result<QueryPlan> {
     Ok(p)
 }
 
-fn merge_strategy(dst: &mut EvalStrategy, src: EvalStrategy) {
-    match (&*dst, &src) {
-        (EvalStrategy::SqliteOnly, _) => *dst = src,
-        (EvalStrategy::FuzzyFilter(_), EvalStrategy::TantivyThenSqlite) => {
-            *dst = EvalStrategy::TantivyThenSqlite;
-        }
-        _ => {}
-    }
-}
-
-fn or_conditions(left: Vec<SqlCondition>, right: Vec<SqlCondition>) -> SqlCondition {
-    // Build "( left AND ... ) OR ( right AND ... )" as a raw SQL fragment.
-    let (lsql, _lp) = build_conditions(&left);
-    let (rsql, _rp) = build_conditions(&right);
-    // We need to carry the params too. Use NameLike as a carrier of raw SQL.
-    // This is a deliberate simplification: for OR we fall back to a catch-all
-    // that returns everything when we can't express it in SqlCondition enum.
-    // The correct approach would be a SqlCondition::Raw(String, Vec<Value>).
-    // For now, if both sides produce conditions, we drop the OR optimisation
-    // and return an always-true condition (let post-filters handle it).
-    let _ = (lsql, rsql);
-    SqlCondition::NameLike("%".into()) // catch-all, post-filters narrow it down
-}
-
-fn negate_condition(c: SqlCondition) -> SqlCondition {
-    match c {
-        SqlCondition::IsDir(v)           => SqlCondition::IsDir(!v),
-        SqlCondition::IsArchiveEntry     => SqlCondition::NameLike("%".into()), // approximate
-        other                            => other, // cannot negate generically; post-filter handles it
+/// `content:`, `fuzzy:` and `dupe:` pick a whole-query execution strategy, so
+/// they cannot be combined per-branch; rejecting beats silently AND-ing them.
+fn require_plain(sp: &QueryPlan, op: &str) -> Result<()> {
+    if matches!(sp.strategy, EvalStrategy::SqliteOnly) && sp.tantivy_query.is_none() {
+        Ok(())
+    } else {
+        Err(AppError::Query(format!(
+            "content:, fuzzy: and dupe: cannot be used inside {op}"
+        )))
     }
 }
 

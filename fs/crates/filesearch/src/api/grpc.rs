@@ -52,7 +52,7 @@ impl FileSearch for FileSearchService {
     ) -> Result<Response<SearchResponse>, Status> {
         let req = request.into_inner();
         let (results, total, took_ms) = self
-            .run_query(&req.query, req.limit as usize, req.offset as usize)
+            .run_query(&req.query, req.limit, req.offset)
             .await?;
         Ok(Response::new(SearchResponse {
             results,
@@ -69,7 +69,7 @@ impl FileSearch for FileSearchService {
     ) -> Result<Response<Self::SearchStreamStream>, Status> {
         let req = request.into_inner();
         let (results, _, _) = self
-            .run_query(&req.query, req.limit as usize, req.offset as usize)
+            .run_query(&req.query, req.limit, req.offset)
             .await?;
 
         // Fan results out through a bounded channel so the caller can start
@@ -130,16 +130,20 @@ impl FileSearchService {
     async fn run_query(
         &self,
         query_str: &str,
-        limit:     usize,
-        offset:    usize,
+        limit:     i32,
+        offset:    i32,
     ) -> Result<(Vec<SearchResult>, usize, u64), Status> {
-        // Single config lock - reads macros then releases.
-        let macros = self.config.read().await.macros.clone();
+        // Single config lock - reads macros and the default limit then releases.
+        let (macros, default_limit) = {
+            let cfg = self.config.read().await;
+            (cfg.macros.clone(), cfg.search.default_limit)
+        };
         let expr = parser::parse(query_str, &macros)
             .map_err(|e| Status::invalid_argument(e.to_string()))?;
 
         let mut plan = evaluator::plan(&expr, &Default::default())
             .map_err(|e| Status::invalid_argument(e.to_string()))?;
+        let (limit, offset) = resolve_page(limit, offset, default_limit);
         plan.limit  = Some(limit);
         plan.offset = offset;
 
@@ -175,5 +179,34 @@ fn file_record_into_result(r: FileRecord) -> SearchResult {
         is_dir:        r.is_dir,
         archive_path,
         archive_entry: entry,
+    }
+}
+
+/// proto3 has no "unset" for scalars, so a client that omits `limit` sends 0;
+/// treating that literally returned no results. Negative values would wrap
+/// when cast to `usize`.
+fn resolve_page(limit: i32, offset: i32, default_limit: usize) -> (usize, usize) {
+    let limit = usize::try_from(limit).ok().filter(|&l| l > 0).unwrap_or(default_limit);
+    (limit, usize::try_from(offset).unwrap_or(0))
+}
+
+#[cfg(test)]
+mod page_tests {
+    use super::resolve_page;
+
+    #[test]
+    fn unset_or_negative_limit_uses_default() {
+        assert_eq!(resolve_page(0, 0, 100), (100, 0));
+        assert_eq!(resolve_page(-5, 0, 100), (100, 0));
+    }
+
+    #[test]
+    fn explicit_limit_and_offset_pass_through() {
+        assert_eq!(resolve_page(10, 20, 100), (10, 20));
+    }
+
+    #[test]
+    fn negative_offset_clamps_to_zero() {
+        assert_eq!(resolve_page(10, -1, 100), (10, 0));
     }
 }

@@ -1,5 +1,5 @@
 use std::collections::HashMap;
-use std::io::{BufReader, Read};
+use std::io::{BufReader, Cursor, Read, Seek, Write};
 use std::path::Path;
 use std::time::{SystemTime, UNIX_EPOCH};
 
@@ -31,11 +31,32 @@ pub struct ArchiveEntry {
 // full entry vector proportional to the archive size.
 // ---------------------------------------------------------------------------
 
+/// Largest nested ZIP that is buffered in memory to be recursed into.
+/// Nested archives cannot be seeked in place, so they are read whole; the cap
+/// bounds memory for each level and stops decompression bombs.
+pub const MAX_NESTED_ARCHIVE_BYTES: u64 = 256 * 1024 * 1024;
+
+trait ReadSeek: Read + Seek + Send {}
+impl<T: Read + Seek + Send> ReadSeek for T {}
+
+type DynZip = zip::ZipArchive<Box<dyn ReadSeek>>;
+
+/// One open archive on the nesting stack.
+struct Frame {
+    archive:   DynZip,
+    current:   usize,
+    effective: usize,
+    /// Virtual path of this archive: the real file for depth 0, else
+    /// `outer.zip!/inner.zip`.
+    prefix:    String,
+    depth:     u8,
+}
+
 pub struct ArchiveEntryIter {
-    archive:      zip::ZipArchive<BufReader<std::fs::File>>,
-    current:      usize,
-    effective:    usize,
-    archive_str:  String,
+    stack:        Vec<Frame>,
+    root:         String,
+    max_depth:    u8,
+    max_entries:  usize,
     passwords:    Vec<String>,
     inner_limits: HashMap<String, u64>,
     outer_limits: HashMap<String, u64>,
@@ -45,20 +66,85 @@ impl Iterator for ArchiveEntryIter {
     type Item = Result<ArchiveEntry>;
 
     fn next(&mut self) -> Option<Self::Item> {
-        if self.current >= self.effective {
+        loop {
+            let frame = self.stack.last_mut()?;
+            if frame.current >= frame.effective {
+                self.stack.pop();
+                continue;
+            }
+            let index = frame.current;
+            frame.current += 1;
+
+            let result = process_entry(
+                &mut frame.archive,
+                index,
+                &frame.prefix,
+                &self.root,
+                &self.passwords,
+                &self.inner_limits,
+                &self.outer_limits,
+            );
+
+            let nested = match &result {
+                Ok(e) if !e.is_dir
+                    && frame.depth < self.max_depth
+                    && e.extension.as_deref() == Some("zip") =>
+                {
+                    let depth = frame.depth + 1;
+                    read_nested(&mut frame.archive, index, &e.virtual_path)
+                        .and_then(|bytes| {
+                            let reader: Box<dyn ReadSeek> = Box::new(Cursor::new(bytes));
+                            open_frame(reader, e.virtual_path.clone(), depth, self.max_entries)
+                                .map_err(|err| tracing::warn!("{err}"))
+                                .ok()
+                        })
+                }
+                _ => None,
+            };
+            if let Some(f) = nested {
+                self.stack.push(f);
+            }
+            return Some(result);
+        }
+    }
+}
+
+fn open_frame(reader: Box<dyn ReadSeek>, prefix: String, depth: u8, max_entries: usize) -> Result<Frame> {
+    let archive = zip::ZipArchive::new(reader)
+        .map_err(|e| AppError::Content(format!("zip open {prefix}: {e}")))?;
+    let total = archive.len();
+    let effective = if max_entries == 0 { total } else { total.min(max_entries) };
+    if effective < total {
+        tracing::warn!("archive {prefix} has {total} entries; limiting to {effective}");
+    }
+    Ok(Frame { archive, current: 0, effective, prefix, depth })
+}
+
+/// Reads entry `index` whole so it can be opened as a nested archive.
+/// `None` (with a warning) when it is encrypted, unreadable or too large.
+fn read_nested(archive: &mut DynZip, index: usize, virtual_path: &str) -> Option<Vec<u8>> {
+    let f = match archive.by_index(index) {
+        Ok(f)  => f,
+        Err(e) => {
+            tracing::warn!("nested archive {virtual_path} not recursed: {e}");
             return None;
         }
-        let result = process_entry(
-            &mut self.archive,
-            self.current,
-            &self.archive_str,
-            &self.passwords,
-            &self.inner_limits,
-            &self.outer_limits,
+    };
+    read_capped(f, virtual_path).ok()
+}
+
+fn read_capped(f: impl Read, virtual_path: &str) -> Result<Vec<u8>> {
+    let mut buf = Vec::new();
+    // Read one byte past the cap: the declared size can lie.
+    f.take(MAX_NESTED_ARCHIVE_BYTES + 1).read_to_end(&mut buf).map_err(AppError::Io)?;
+    if buf.len() as u64 > MAX_NESTED_ARCHIVE_BYTES {
+        let msg = format!(
+            "nested archive {virtual_path} exceeds {MAX_NESTED_ARCHIVE_BYTES} bytes; not recursed"
         );
-        self.current += 1;
-        Some(result)
+        tracing::warn!("{msg}");
+        return Err(AppError::Content(msg));
     }
+    Ok(buf)
 }
 
 // ---------------------------------------------------------------------------
@@ -68,45 +154,58 @@ impl<'cfg> ArchiveCrawler<'cfg> {
         Self { config, content_config }
     }
 
-    /// Iterate all indexable entries from a ZIP file one at a time.
+    /// Iterate all indexable entries from a ZIP file one at a time, recursing
+    /// into nested ZIPs while `nesting_depth < max_nesting_depth`.
     /// Never writes to disk; never allocates a vector of all entries.
     pub fn crawl(
         &self,
-        archive_path: &Path,
-        _nesting_depth: u8,
+        archive_path:  &Path,
+        nesting_depth: u8,
     ) -> Result<ArchiveEntryIter> {
         let file = std::fs::File::open(archive_path).map_err(AppError::Io)?;
-        let reader = BufReader::with_capacity(65536, file);
-        let archive = zip::ZipArchive::new(reader).map_err(|e| {
-            AppError::Content(format!("zip open {}: {}", archive_path.display(), e))
-        })?;
-
-        let total = archive.len();
-        let effective = if self.config.max_entries_per_archive == 0 {
-            total
-        } else {
-            total.min(self.config.max_entries_per_archive)
-        };
-
-        if effective < total {
-            tracing::warn!(
-                "archive {} has {} entries; limiting to {}",
-                archive_path.display(),
-                total,
-                effective
-            );
-        }
+        let reader: Box<dyn ReadSeek> = Box::new(BufReader::with_capacity(65536, file));
+        let root = archive_path.to_string_lossy().into_owned();
+        let frame = open_frame(
+            reader,
+            root.clone(),
+            nesting_depth,
+            self.config.max_entries_per_archive,
+        )?;
 
         Ok(ArchiveEntryIter {
-            archive,
-            current:      0,
-            effective,
-            archive_str:  archive_path.to_string_lossy().into_owned(),
+            stack:        vec![frame],
+            root,
+            max_depth:    self.config.max_nesting_depth,
+            max_entries:  self.config.max_entries_per_archive,
             passwords:    self.config.passwords.clone(),
             inner_limits: self.config.inner_extension_limits.clone(),
             outer_limits: self.content_config.extension_limits.clone(),
         })
     }
+}
+
+/// Streams the entry at `virtual_path` (`a.zip!/b.zip!/c.txt`) into `out`,
+/// opening each nested archive along the way.
+pub fn extract_virtual_entry(virtual_path: &str, out: &mut dyn Write) -> Result<()> {
+    let mut parts = virtual_path.split("!/");
+    let root = parts.next().unwrap_or_default();
+    let segments: Vec<&str> = parts.collect();
+    let Some((last, nested)) = segments.split_last() else {
+        return Err(AppError::Content(format!("not a virtual path: {virtual_path}")));
+    };
+    let not_found = || AppError::Content(format!("entry not found in archive: {virtual_path}"));
+
+    let file = std::fs::File::open(root).map_err(AppError::Io)?;
+    let reader: Box<dyn ReadSeek> = Box::new(BufReader::new(file));
+    let mut archive = open_frame(reader, root.to_owned(), 0, 0)?.archive;
+    for seg in nested {
+        let bytes = read_capped(archive.by_name(seg).map_err(|_| not_found())?, virtual_path)?;
+        let reader: Box<dyn ReadSeek> = Box::new(Cursor::new(bytes));
+        archive = open_frame(reader, virtual_path.to_owned(), 0, 0)?.archive;
+    }
+    let mut entry = archive.by_name(last).map_err(|_| not_found())?;
+    std::io::copy(&mut entry, out).map_err(AppError::Io)?;
+    Ok(())
 }
 
 // ---------------------------------------------------------------------------
@@ -155,6 +254,7 @@ fn process_entry<R: Read + std::io::Seek>(
     archive: &mut zip::ZipArchive<R>,
     index:   usize,
     archive_str: &str,
+    root:        &str,
     passwords:   &[String],
     inner_limits: &HashMap<String, u64>,
     outer_limits: &HashMap<String, u64>,
@@ -179,7 +279,7 @@ fn process_entry<R: Read + std::io::Seek>(
     if is_dir {
         return Ok(ArchiveEntry {
             virtual_path,
-            outer_archive_path: archive_str.to_owned(),
+            outer_archive_path: root.to_owned(),
             entry_name,
             extension,
             size_bytes,
@@ -200,7 +300,7 @@ fn process_entry<R: Read + std::io::Seek>(
 
     Ok(ArchiveEntry {
         virtual_path,
-        outer_archive_path: archive_str.to_owned(),
+        outer_archive_path: root.to_owned(),
         entry_name,
         extension,
         size_bytes,
@@ -430,5 +530,66 @@ mod tests {
         assert!(rec.content_indexed);
         assert!(!rec.is_hidden);
         assert!(!rec.is_symlink);
+    }
+
+    /// `outer.zip` holds `a.txt` and `mid.zip`; `mid.zip` holds `b.txt` and
+    /// `deep.zip`; `deep.zip` holds `c.txt`.
+    fn make_nested_zip() -> NamedTempFile {
+        fn zip_bytes(entries: &[(&str, &[u8])]) -> Vec<u8> {
+            let mut zw = ZipWriter::new(std::io::Cursor::new(Vec::new()));
+            let opts = FileOptions::<()>::default().compression_method(CompressionMethod::Stored);
+            for (name, data) in entries {
+                zw.start_file(*name, opts).unwrap();
+                zw.write_all(data).unwrap();
+            }
+            zw.finish().unwrap().into_inner()
+        }
+        let deep = zip_bytes(&[("c.txt", b"gamma")]);
+        let mid  = zip_bytes(&[("b.txt", b"beta"), ("deep.zip", &deep)]);
+        make_zip_with_entries(&[("a.txt", b"alpha"), ("mid.zip", &mid)])
+    }
+
+    fn nested_paths(depth: u8) -> (String, Vec<(String, String)>) {
+        let zip_file = make_nested_zip();
+        let (mut arc_cfg, cnt_cfg) = default_cfg();
+        arc_cfg.max_nesting_depth = depth;
+        let crawler = ArchiveCrawler::new(&arc_cfg, &cnt_cfg);
+        let root = zip_file.path().display().to_string();
+        let got = crawler.crawl(zip_file.path(), 0).unwrap()
+            .map(|r| r.unwrap())
+            .map(|e| (e.virtual_path.replacen(&root, "R", 1), e.outer_archive_path))
+            .collect();
+        (root, got)
+    }
+
+    #[test]
+    fn nested_zip_not_recursed_at_depth_zero() {
+        let (_, got) = nested_paths(0);
+        let paths: Vec<_> = got.iter().map(|(p, _)| p.as_str()).collect();
+        assert_eq!(paths, ["R!/a.txt", "R!/mid.zip"]);
+    }
+
+    #[test]
+    fn nested_zip_recursed_to_configured_depth() {
+        let (root, got) = nested_paths(1);
+        let paths: Vec<_> = got.iter().map(|(p, _)| p.as_str()).collect();
+        assert_eq!(paths, ["R!/a.txt", "R!/mid.zip", "R!/mid.zip!/b.txt", "R!/mid.zip!/deep.zip"]);
+        assert!(got.iter().all(|(_, outer)| *outer == root), "archive_path stays the real file");
+
+        let (_, got) = nested_paths(2);
+        assert_eq!(got.last().map(|(p, _)| p.as_str()), Some("R!/mid.zip!/deep.zip!/c.txt"));
+    }
+
+    #[test]
+    fn extract_virtual_entry_walks_nested_archives() {
+        let zip_file = make_nested_zip();
+        let root = zip_file.path().display().to_string();
+        let mut out = Vec::new();
+        extract_virtual_entry(&format!("{root}!/mid.zip!/deep.zip!/c.txt"), &mut out).unwrap();
+        assert_eq!(out, b"gamma");
+        out.clear();
+        extract_virtual_entry(&format!("{root}!/a.txt"), &mut out).unwrap();
+        assert_eq!(out, b"alpha");
+        assert!(extract_virtual_entry(&format!("{root}!/mid.zip!/nope"), &mut out).is_err());
     }
 }

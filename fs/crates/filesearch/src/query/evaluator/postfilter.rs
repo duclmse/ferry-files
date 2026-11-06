@@ -5,7 +5,7 @@ use regex::Regex;
 use crate::error::{AppError, Result};
 use crate::store::{FileRecord, FileStore};
 
-use super::types::PostFilter;
+use super::types::{Branch, PostFilter};
 
 // ---------------------------------------------------------------------------
 // Post-filter application
@@ -38,7 +38,13 @@ fn post_filter_match(f: &PostFilter, r: &FileRecord, store: &FileStore) -> bool 
         PostFilter::StartWith(s) => r.name.starts_with(s.as_str()),
         PostFilter::EndWith(s)   => r.name.ends_with(s.as_str()),
         PostFilter::ArchiveExclude => r.archive_path.is_none(),
+        PostFilter::Any(branches)  => branches.iter().any(|b| branch_match(b, r, store)),
+        PostFilter::Not(b)         => !branch_match(b, r, store),
     }
+}
+
+fn branch_match(b: &Branch, r: &FileRecord, store: &FileStore) -> bool {
+    b.sql.iter().all(|c| c.matches(r)) && b.post.iter().all(|f| post_filter_match(f, r, store))
 }
 
 fn is_whole_word(text: &str, word: &str) -> bool {
@@ -74,12 +80,15 @@ fn is_whole_word(text: &str, word: &str) -> bool {
 ///   optimal-string-alignment distance between the term and any window of
 ///   the name. nucleo never matches out-of-order letters, so without this
 ///   `mian` could not find `main.rs`.
-pub(super) fn fuzzy_score(
-    candidates: &[FileRecord],
-    term:       &str,
-    threshold:  f32,
-    limit:      usize,
-) -> Vec<FileRecord> {
+///
+/// Returns indices into `names`, so callers can score borrowed names and
+/// materialize only the winning rows.
+pub(super) fn fuzzy_rank(
+    names:     &[&str],
+    term:      &str,
+    threshold: f32,
+    limit:     usize,
+) -> Vec<usize> {
     let term_lower: Vec<char> = term.to_lowercase().chars().collect();
     if term_lower.is_empty() {
         return Vec::new();
@@ -93,24 +102,25 @@ pub(super) fn fuzzy_score(
         .unwrap_or(0)
         .max(1) as f32;
 
-    let mut scored: Vec<(f32, &FileRecord)> = candidates
+    let mut scored: Vec<(f32, usize)> = names
         .par_iter()
+        .enumerate()
         .map_init(
-            || Matcher::new(NucleoConfig::DEFAULT),
-            |matcher, r| {
-                let mut hay_buf = Vec::new();
+            || (Matcher::new(NucleoConfig::DEFAULT), Vec::new()),
+            |(matcher, hay_buf), (i, name)| {
                 let subseq = matcher
-                    .fuzzy_match(Utf32Str::new(&r.name, &mut hay_buf), needle)
+                    .fuzzy_match(Utf32Str::new(name, hay_buf), needle)
                     .map_or(0.0, |s| (s as f32 / self_score).min(1.0));
-                let name: Vec<char> = r.name.to_lowercase().chars().collect();
-                (subseq.max(typo_similarity(&term_lower, &name)), r)
+                let lower: Vec<char> = name.to_lowercase().chars().collect();
+                (subseq.max(typo_similarity(&term_lower, &lower)), i)
             },
         )
         .filter(|(s, _)| *s >= threshold)
         .collect();
 
-    scored.sort_unstable_by(|(a, _), (b, _)| b.total_cmp(a));
-    scored.into_iter().take(limit).map(|(_, r)| r.clone()).collect()
+    // Ties keep candidate order so results are deterministic across runs.
+    scored.sort_unstable_by(|(a, i), (b, j)| b.total_cmp(a).then(i.cmp(j)));
+    scored.into_iter().take(limit).map(|(_, i)| i).collect()
 }
 
 /// `1 - d / len(term)` for the closest window of `name` (window lengths
@@ -170,18 +180,9 @@ pub(super) fn build_regex(pattern: &str, case_sensitive: bool) -> Result<Regex> 
 mod fuzzy_tests {
     use super::*;
 
-    fn rec(name: &str) -> FileRecord {
-        FileRecord {
-            id: None, path: format!("/x/{name}"), name: name.into(), extension: None,
-            size_bytes: 0, mtime: 0, ctime: 0, is_dir: false, is_hidden: false,
-            is_symlink: false, attrib_bitmask: 0, content_indexed: false,
-            tantivy_id: None, indexed_at: 0, archive_path: None,
-        }
-    }
-
     fn names(term: &str, threshold: f32) -> Vec<String> {
-        let c = [rec("main.rs"), rec("lib.rs"), rec("Cargo.toml"), rec("domain_model.rs")];
-        fuzzy_score(&c, term, threshold, 10).into_iter().map(|r| r.name).collect()
+        let c = ["main.rs", "lib.rs", "Cargo.toml", "domain_model.rs"];
+        fuzzy_rank(&c, term, threshold, 10).into_iter().map(|i| c[i].to_owned()).collect()
     }
 
     #[test]

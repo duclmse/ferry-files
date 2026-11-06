@@ -49,7 +49,6 @@ Generated at implementation time. Update whenever a dep is added or changed.
 | flate2                | 1            | 1.1.9            | none           |
 | futures               | 0.3          | 0.3.32           | none           |
 | glob                  | 0.3          | 0.3.3            | none           |
-| memchr                | 2            | 2.8.0            | none           |
 | nix                   | 0.28         | 0.28.0           | none           |
 | postcard              | 1            | 1.1.3            | none           |
 | sd-notify             | 0.4          | 0.4.5            | none           |

@@ -12,5 +12,6 @@ mod tests;
 // ---------------------------------------------------------------------------
 
 pub struct SqliteStore {
-    pool: Pool<SqliteConnectionManager>,
+    pool:        Pool<SqliteConnectionManager>,
+    name_bounds: std::sync::Mutex<search::NameBounds>,
 }

@@ -215,3 +215,52 @@ fn parent_of_archive_entry() {
     assert_eq!(parent_of("/a/b/c.rs"), "/a/b");
     assert_eq!(parent_of("/root.rs"), "");
 }
+
+#[test]
+fn name_search_partitioned_matches_unpartitioned_semantics() {
+    use crate::store::SqlCondition;
+
+    let dir   = tempfile::tempdir().unwrap();
+    let store = SqliteStore::new(&dir.path().join("index.db")).unwrap();
+    let gen   = store.begin_crawl_generation().unwrap();
+
+    // Enough rows for several sampled partitions; every 997th name carries the
+    // needle, and leading letters spread the hits across all name ranges.
+    let batch: Vec<(FileRecord, String)> = (0..40_000)
+        .map(|i| {
+            let lead = (b'a' + (i % 26) as u8) as char;
+            let name = if i % 997 == 0 { format!("{lead}_needle_{i}.rs") } else { format!("{lead}_file_{i}.txt") };
+            let mut r = sample_record(&format!("/root/d{}/{name}", i % 50));
+            r.extension = Some(if name.ends_with(".rs") { "rs" } else { "txt" }.into());
+            (r, "/root".to_owned())
+        })
+        .collect();
+    store.batch_upsert_crawl(&batch, gen).unwrap();
+
+    let expected: Vec<String> = {
+        let mut v: Vec<String> = batch.iter()
+            .map(|(r, _)| r.name.clone())
+            .filter(|n| n.contains("needle"))
+            .collect();
+        v.sort();
+        v
+    };
+
+    let like = SqlCondition::NameLike("%NEEDLE%".into());
+    let mut got: Vec<String> = store.search_conditions(std::slice::from_ref(&like), 1_000).unwrap()
+        .into_iter().map(|r| r.name).collect();
+    got.sort();
+    assert_eq!(got, expected, "LIKE is case-insensitive and every partition contributes");
+
+    let limited = store.search_conditions(std::slice::from_ref(&like), 7).unwrap();
+    assert_eq!(limited.len(), 7);
+
+    let with_ext = store
+        .search_conditions(&[like.clone(), SqlCondition::ExtIn(vec!["txt".into()])], 1_000)
+        .unwrap();
+    assert!(with_ext.is_empty(), "non-name conditions still apply");
+
+    // Run twice so the second call goes through the cached bounds.
+    let again = store.search_conditions(&[like], 1_000).unwrap();
+    assert_eq!(again.len(), expected.len());
+}

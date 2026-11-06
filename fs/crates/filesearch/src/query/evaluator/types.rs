@@ -44,4 +44,16 @@ pub enum PostFilter {
     StartWith(String),
     EndWith(String),
     ArchiveExclude,
+    /// OR over branches that need post-fetch checks; SQL only narrows to a superset.
+    Any(Vec<Branch>),
+    /// NOT of a branch that needs post-fetch checks.
+    Not(Branch),
+}
+
+/// One side of an OR / the inside of a NOT: matches when all of its SQL
+/// conditions and all of its post-filters match.
+#[derive(Debug)]
+pub struct Branch {
+    pub sql:  Vec<SqlCondition>,
+    pub post: Vec<PostFilter>,
 }

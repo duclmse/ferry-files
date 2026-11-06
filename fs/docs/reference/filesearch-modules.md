@@ -81,9 +81,10 @@ crates/filesearch/
     │   ├── mod.rs                ← API server launcher
     │   ├── rest.rs               ← Axum HTTP REST server
     │   ├── grpc.rs               ← Tonic gRPC server
-    │   └── ipc.rs                ← Unix socket / named pipe server
+    │   └── ipc_server.rs         ← Unix socket / named pipe server
+    │   (+ ipc_client.rs, ipc_protocol.rs: CLI/TUI side and wire format)
     └── frontend/
-        └── cli.rs                ← interactive CLI/TUI frontend
+        └── tui.rs, tui/          ← interactive TUI frontend (CLI subcommands in main.rs)
 ```
 
 > **Note:** `query/exact.rs`, `query/fuzzy.rs`, and `query/regex_search.rs`
@@ -288,6 +289,7 @@ pub struct SearchConfig {
     pub max_limit:        usize,  // default 10000
     pub fuzzy_threshold:      f32,    // default 0.7; range 0.0–1.0
     pub max_fuzzy_candidates: usize,  // default 50_000; 0 = no cap
+    pub max_filter_candidates: usize, // default 200_000; 0 = no cap
 }
 
 #[derive(Debug, Clone, Deserialize)]
@@ -1134,6 +1136,7 @@ default_limit        = 100
 max_limit            = 10000
 fuzzy_threshold      = 0.7
 max_fuzzy_candidates = 50000   # 0 = no cap
+max_filter_candidates = 200000 # 0 = no cap
 
 [indexer]
 crawl_threads        = 4

@@ -21,8 +21,11 @@ cargo clippy --workspace -- -D warnings
 cargo doc --no-deps --workspace
 ```
 
-`rar2zip` is Windows-only - it will not compile on Linux/macOS. `filesearch` is
-cross-platform.
+Both crates build on Windows, Linux and macOS. Only the Windows Service
+integration in `rar2zip` (`service.rs`, `windows-service`) is Windows-only;
+elsewhere `rar2zip` runs as a foreground process. RAR extraction uses the
+`unrar` crate, which compiles the bundled RARLAB UnRAR C++ source, so a C++
+compiler is required.
 
 ## Test commands
 
@@ -103,7 +106,9 @@ disk. The commit loop in `daemon.rs` runs every `commit_interval_secs`.
   not add fields without migrating existing indices.
 - `nucleo` - SIMD fuzzy matcher (used for `fuzzy:` queries). Called from rayon
   threads via `spawn_blocking`.
-- `ssh2` - libssh2 bindings for SFTP. Public-key auth only; no password auth.
+- `russh` / `russh-sftp` - pure-Rust SSH and SFTP for rar2zip transfers.
+  Public-key auth only; no password auth. The server host key is not
+  verified yet (`SshHandler::check_server_key` accepts any key).
 - `windows-service` - Windows SCM integration. Only compiled on Windows
   (`#[cfg(target_os = "windows")]`).
 - `tonic` / `prost` - gRPC. Proto changes require `protoc` on PATH; stubs

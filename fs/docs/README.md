@@ -67,12 +67,16 @@ research doc disagree, the **reference** doc wins.
 
 - [Performance & Memory Update](plans/performance-memory-update.md) -
   implemented; bounded crawl/fuzzy/content search, stream fan-out, postcard IPC
+- [Borrowing Everything's Techniques](plans/everything-borrowing.md) - phases
+  1-3 implemented (snapshot metadata, name-only fuzzy, compact memory store);
+  SQLite bulk load, OS change-log catch-up, fast enumeration open
 
 ## Research notes
 
 | Note                                                                 | Fed into              |
 | -------------------------------------------------------------------- | --------------------- |
 | [In-memory index](research/in-memory-index.md)                       | `store/memory_store`  |
+| [Everything internals](research/everything-internals.md)             | Everything plan       |
 | [Shutdown persistence](research/shutdown-persistence.md)             | daemon shutdown       |
 | [Archive service](research/archive-service.md)                       | Phase 9               |
 | [Backend design](research/backend-design.md)                         | Phases 8-9            |

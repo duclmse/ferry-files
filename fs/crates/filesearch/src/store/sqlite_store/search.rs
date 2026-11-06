@@ -1,8 +1,39 @@
+use std::sync::Arc;
+use std::time::{Duration, Instant};
+
+use rayon::prelude::*;
+use rusqlite::types::Value;
+
 use crate::error::{AppError, Result};
-use crate::store::{DupeKind, FileRecord, MetaFilters, SqlCondition, build_conditions};
+use crate::store::{DupeKind, FileRecord, FuzzyRank, MetaFilters, SqlCondition, build_conditions};
 
 use super::SqliteStore;
 use super::schema::{query_records, row_to_record};
+
+/// One sampled name per 512 rowids (mask + 1).
+const NAME_SAMPLE_MASK: i64 = 511;
+/// 16 samples ≈ 8k rows: below that a range is not worth a connection.
+const MIN_SAMPLES_PER_PARTITION: usize = 16;
+const MAX_NAME_PARTITIONS: usize = 8;
+const NAME_BOUNDS_TTL: Duration = Duration::from_secs(60);
+
+#[derive(Default)]
+pub(super) struct NameBounds {
+    sampled_at: Option<Instant>,
+    bounds:     Arc<Vec<String>>,
+}
+
+fn is_name_condition(c: &SqlCondition) -> bool {
+    matches!(
+        c,
+        SqlCondition::NameLike(_) | SqlCondition::NameGlob(_) | SqlCondition::NameLenOp(..)
+    )
+}
+
+/// The planner emits `NameLike("%")` as a catch-all for OR / NOT.
+fn is_match_all(c: &SqlCondition) -> bool {
+    matches!(c, SqlCondition::NameLike(p) if p == "%")
+}
 
 impl SqliteStore {
     pub fn search_name(
@@ -165,18 +196,171 @@ impl SqliteStore {
         if conds.is_empty() {
             return self.search_meta(&MetaFilters::default(), limit);
         }
-        let (where_extra, params) = build_conditions(conds);
-        let sql = format!(
-            "SELECT id, path, name, extension, size_bytes, mtime, ctime,
-                    is_dir, is_hidden, is_symlink, attrib_bitmask,
-                    content_indexed, tantivy_id, indexed_at, archive_path
-             FROM files WHERE 1=1 {where_extra} LIMIT ?"
-        );
+        let (name_conds, other_conds): (Vec<SqlCondition>, Vec<SqlCondition>) =
+            conds.iter().cloned().partition(is_name_condition);
+        if name_conds.iter().all(is_match_all) {
+            let (where_extra, params) = build_conditions(conds);
+            let sql = format!(
+                "SELECT id, path, name, extension, size_bytes, mtime, ctime,
+                        is_dir, is_hidden, is_symlink, attrib_bitmask,
+                        content_indexed, tantivy_id, indexed_at, archive_path
+                 FROM files WHERE 1=1 {where_extra} LIMIT ?"
+            );
+            let conn = self.get_conn()?;
+            let mut stmt = conn.prepare(&sql)?;
+            let mut all_params = params;
+            all_params.push(Value::Integer(limit as i64));
+            return query_records(&mut stmt, all_params);
+        }
+        self.search_by_name_index(&name_conds, &other_conds, limit)
+    }
+
+    /// Fuzzy candidate pass: reads only `(id, name)` for up to `cap` rows
+    /// matching `conds`, lets `rank` pick the winners by name, then loads full
+    /// rows for those ids alone, in rank order. Loading every candidate's full
+    /// row only to score its name cost ~70 MB of transient allocations per
+    /// query at the default cap.
+    pub fn fuzzy_search(
+        &self,
+        conds: &[SqlCondition],
+        cap:   usize,
+        rank:  &FuzzyRank<'_>,
+    ) -> Result<Vec<FileRecord>> {
+        let (where_extra, mut params) = build_conditions(conds);
+        params.push(Value::Integer(cap as i64));
         let conn = self.get_conn()?;
-        let mut stmt = conn.prepare(&sql)?;
-        let mut all_params = params;
-        all_params.push(rusqlite::types::Value::Integer(limit as i64));
-        query_records(&mut stmt, all_params)
+        let mut stmt = conn.prepare(&format!(
+            "SELECT id, name FROM files WHERE 1=1 {where_extra} LIMIT ?"
+        ))?;
+        let candidates = stmt
+            .query_map(rusqlite::params_from_iter(params.iter()), |row| {
+                Ok((row.get::<_, i64>(0)?, row.get::<_, String>(1)?))
+            })?
+            .collect::<rusqlite::Result<Vec<(i64, String)>>>()?;
+        let names: Vec<&str> = candidates.iter().map(|(_, n)| n.as_str()).collect();
+        let ids: Vec<i64> = rank(&names).into_iter().map(|i| candidates[i].0).collect();
+        drop(names);
+        drop(candidates);
+
+        let mut by_id: std::collections::HashMap<i64, FileRecord> =
+            std::collections::HashMap::with_capacity(ids.len());
+        // Stay well under SQLITE_MAX_VARIABLE_NUMBER on older builds (999).
+        for chunk in ids.chunks(500) {
+            let marks = vec!["?"; chunk.len()].join(",");
+            let mut stmt = conn.prepare(&format!(
+                "SELECT id, path, name, extension, size_bytes, mtime, ctime,
+                        is_dir, is_hidden, is_symlink, attrib_bitmask,
+                        content_indexed, tantivy_id, indexed_at, archive_path
+                 FROM files WHERE id IN ({marks})"
+            ))?;
+            let params = chunk.iter().map(|&id| Value::Integer(id)).collect();
+            for r in query_records(&mut stmt, params)? {
+                if let Some(id) = r.id {
+                    by_id.insert(id, r);
+                }
+            }
+        }
+        // A row deleted between the two statements is simply dropped.
+        Ok(ids.iter().filter_map(|id| by_id.remove(id)).collect())
+    }
+
+    /// Name predicates like `%term%` can't use an index, so they force a scan.
+    /// Scanning the table reads every full row (paths dominate its size); the
+    /// covering `idx_files_name` index holds only `(name, id)` and is several
+    /// times smaller, so the name predicates run against the index and only
+    /// matching rows are fetched. Large indexes are additionally split into
+    /// name ranges scanned in parallel, one pooled connection each.
+    ///
+    /// Results come back in name order rather than rowid order; neither is
+    /// part of the API contract (there is no ORDER BY either way).
+    fn search_by_name_index(
+        &self,
+        name_conds:  &[SqlCondition],
+        other_conds: &[SqlCondition],
+        limit:       usize,
+    ) -> Result<Vec<FileRecord>> {
+        let (name_sql, name_params)   = build_conditions(name_conds);
+        let (other_sql, other_params) = build_conditions(other_conds);
+        let bounds = self.name_bounds()?;
+
+        let run = |lo: Option<&String>, hi: Option<&String>| -> Result<Vec<FileRecord>> {
+            let mut params = name_params.clone();
+            let mut range  = String::new();
+            if let Some(lo) = lo {
+                range.push_str(" AND name >= ?");
+                params.push(Value::Text(lo.clone()));
+            }
+            if let Some(hi) = hi {
+                range.push_str(" AND name < ?");
+                params.push(Value::Text(hi.clone()));
+            }
+            params.extend(other_params.iter().cloned());
+            params.push(Value::Integer(limit as i64));
+            // CROSS JOIN pins the index scan as the outer loop so LIMIT can
+            // stop it early; `n` exposes only `nid`, so the unqualified column
+            // names in the select list and `other_sql` resolve to `files`.
+            let sql = format!(
+                "SELECT id, path, name, extension, size_bytes, mtime, ctime,
+                        is_dir, is_hidden, is_symlink, attrib_bitmask,
+                        content_indexed, tantivy_id, indexed_at, archive_path
+                 FROM (SELECT id AS nid FROM files INDEXED BY idx_files_name
+                       WHERE 1=1 {name_sql}{range}) AS n
+                 CROSS JOIN files ON files.id = n.nid
+                 WHERE 1=1 {other_sql} LIMIT ?"
+            );
+            let conn = self.get_conn()?;
+            let mut stmt = conn.prepare_cached(&sql)?;
+            query_records(&mut stmt, params)
+        };
+
+        if bounds.is_empty() {
+            return run(None, None);
+        }
+        let ranges: Vec<(Option<&String>, Option<&String>)> = (0..=bounds.len())
+            .map(|i| (i.checked_sub(1).map(|j| &bounds[j]), bounds.get(i)))
+            .collect();
+        let parts = ranges
+            .par_iter()
+            .map(|(lo, hi)| run(*lo, *hi))
+            .collect::<Result<Vec<_>>>()?;
+        let mut out: Vec<FileRecord> = parts.into_iter().flatten().collect();
+        out.truncate(limit);
+        Ok(out)
+    }
+
+    /// Range split points for `search_by_name_index`, sampled from the name
+    /// index and cached. Stale points only unbalance the ranges: they always
+    /// cover the whole keyspace, so results stay exact.
+    fn name_bounds(&self) -> Result<Arc<Vec<String>>> {
+        let mut cache = self.name_bounds
+            .lock()
+            .map_err(|_| AppError::Index("name bounds lock poisoned".into()))?;
+        if cache.sampled_at.is_some_and(|t| t.elapsed() < NAME_BOUNDS_TTL) {
+            return Ok(Arc::clone(&cache.bounds));
+        }
+
+        let conn = self.get_conn()?;
+        let mut stmt = conn.prepare_cached(
+            "SELECT name FROM files INDEXED BY idx_files_name
+             WHERE (id & ?1) = 0 ORDER BY name",
+        )?;
+        let sample = stmt
+            .query_map([NAME_SAMPLE_MASK], |r| r.get::<_, String>(0))?
+            .collect::<rusqlite::Result<Vec<_>>>()?;
+
+        let parts = std::thread::available_parallelism()
+            .map_or(1, std::num::NonZeroUsize::get)
+            .min(MAX_NAME_PARTITIONS)
+            .min(sample.len() / MIN_SAMPLES_PER_PARTITION)
+            .max(1);
+        let mut bounds: Vec<String> = (1..parts)
+            .map(|i| sample[i * sample.len() / parts].clone())
+            .collect();
+        bounds.dedup();
+
+        cache.sampled_at = Some(Instant::now());
+        cache.bounds     = Arc::new(bounds);
+        Ok(Arc::clone(&cache.bounds))
     }
 
     /// Look up `paths` in order, applying `conds` as additional filters.

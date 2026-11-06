@@ -153,6 +153,11 @@ pub struct SearchConfig {
     /// Caps memory usage for broad fuzzy searches; 0 means no cap.
     #[serde(default = "default_max_fuzzy_candidates")]
     pub max_fuzzy_candidates: usize,
+
+    /// Maximum rows fetched for a query whose filters run after the fetch
+    /// (`regex:`, `child:`, `startwith:`, OR/NOT over those, ...). 0 means no cap.
+    #[serde(default = "default_max_filter_candidates")]
+    pub max_filter_candidates: usize,
 }
 
 fn default_default_limit() -> usize { 100 }
@@ -163,6 +168,8 @@ fn default_fuzzy_threshold() -> f32 { 0.7 }
 
 fn default_max_fuzzy_candidates() -> usize { 50_000 }
 
+fn default_max_filter_candidates() -> usize { 200_000 }
+
 impl Default for SearchConfig {
     fn default() -> Self {
         Self {
@@ -170,6 +177,7 @@ impl Default for SearchConfig {
             max_limit:            default_max_limit(),
             fuzzy_threshold:      default_fuzzy_threshold(),
             max_fuzzy_candidates: default_max_fuzzy_candidates(),
+            max_filter_candidates: default_max_filter_candidates(),
         }
     }
 }
@@ -309,6 +317,16 @@ pub fn load(path: &Path) -> Result<Config> {
 }
 
 /// Validate config. Returns a list of error strings; empty means valid.
+/// `sockaddr_un.sun_path` minus the trailing NUL (104 bytes on macOS/BSD,
+/// 108 on Linux; the smaller limit is used so configs stay portable).
+#[cfg(unix)]
+const MAX_UNIX_SOCKET_PATH: usize = 103;
+
+/// Each level buffers a nested ZIP in memory (up to
+/// `indexer::archive::MAX_NESTED_ARCHIVE_BYTES`), so depth is capped to keep
+/// worst-case memory and ZIP-bomb fan-out bounded.
+const MAX_NESTING_DEPTH: u8 = 2;
+
 pub fn validate(cfg: &Config) -> Vec<String> {
     let mut errors = Vec::new();
 
@@ -328,6 +346,19 @@ pub fn validate(cfg: &Config) -> Vec<String> {
             "rest_port and grpc_port must differ (both are {})",
             cfg.api.rest_port
         ));
+    }
+
+    // bind() on an over-long Unix socket path fails at runtime, and the IPC
+    // server only logs it, leaving the daemon up with no CLI/TUI access.
+    #[cfg(unix)]
+    if cfg.api.ipc_enabled {
+        let len = cfg.api.ipc_path.as_os_str().len();
+        if len > MAX_UNIX_SOCKET_PATH {
+            errors.push(format!(
+                "ipc_path is {len} bytes; Unix socket paths must be at most {MAX_UNIX_SOCKET_PATH}: {}",
+                cfg.api.ipc_path.display()
+            ));
+        }
     }
 
     if !(0.0..=1.0).contains(&cfg.search.fuzzy_threshold) {
@@ -354,7 +385,12 @@ pub fn validate(cfg: &Config) -> Vec<String> {
         }
     }
 
-    if cfg.archive_index.max_nesting_depth > 1 {
+    if cfg.archive_index.max_nesting_depth > MAX_NESTING_DEPTH {
+        errors.push(format!(
+            "archive_index.max_nesting_depth={} exceeds the maximum of {MAX_NESTING_DEPTH}",
+            cfg.archive_index.max_nesting_depth
+        ));
+    } else if cfg.archive_index.max_nesting_depth > 1 {
         tracing::warn!(
             "archive_index.max_nesting_depth={} - nested ZIP indexing can be slow",
             cfg.archive_index.max_nesting_depth
@@ -478,6 +514,46 @@ log_dir     = "{dir}/logs"
         let cfg = load(f.path()).unwrap();
         let errs = validate(&cfg);
         assert!(errs.iter().any(|e| e.contains("fuzzy_threshold")));
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn validate_ipc_path_too_long() {
+        let dir = tempfile::tempdir().unwrap();
+        let long = format!("/tmp/{}.sock", "x".repeat(120));
+        let f = write_config(&format!(
+            "{}\n[api]\nipc_path = \"{long}\"",
+            minimal_config_toml(dir.path())
+        ));
+        let cfg = load(f.path()).unwrap();
+        assert!(validate(&cfg).iter().any(|e| e.contains("ipc_path")));
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn validate_ipc_path_too_long_ignored_when_ipc_disabled() {
+        let dir = tempfile::tempdir().unwrap();
+        let long = format!("/tmp/{}.sock", "x".repeat(120));
+        let f = write_config(&format!(
+            "{}\n[api]\nipc_enabled = false\nipc_path = \"{long}\"",
+            minimal_config_toml(dir.path())
+        ));
+        let cfg = load(f.path()).unwrap();
+        assert!(!validate(&cfg).iter().any(|e| e.contains("ipc_path")));
+    }
+
+    #[test]
+    fn validate_nesting_depth_above_two_is_error() {
+        let dir = tempfile::tempdir().unwrap();
+        for (depth, bad) in [(2, false), (3, true)] {
+            let f = write_config(&format!(
+                "{}\n[archive_index]\nmax_nesting_depth = {depth}",
+                minimal_config_toml(dir.path())
+            ));
+            let cfg = load(f.path()).unwrap();
+            let errs = validate(&cfg);
+            assert_eq!(errs.iter().any(|e| e.contains("max_nesting_depth")), bad, "{depth}: {errs:?}");
+        }
     }
 
     #[test]

@@ -50,6 +50,41 @@ pub struct FileRecord {
     pub archive_path:    Option<String>,
 }
 
+/// Fuzzy ranker handed to the stores: takes candidate names, returns the
+/// indices of the winners, best first.
+pub type FuzzyRank<'a> = dyn Fn(&[&str]) -> Vec<usize> + Sync + 'a;
+
+/// The fields predicates read, so they can run on borrowed storage (the
+/// memory store's packed entries) without building a `FileRecord` per row.
+pub trait RecordView {
+    fn path(&self) -> &str;
+    fn name(&self) -> &str;
+    fn extension(&self) -> Option<&str>;
+    fn size_bytes(&self) -> u64;
+    fn mtime(&self) -> i64;
+    fn ctime(&self) -> i64;
+    fn is_dir(&self) -> bool;
+    fn attrib_bitmask(&self) -> u32;
+    fn archive_path(&self) -> Option<&str>;
+}
+
+impl RecordView for FileRecord {
+    fn path(&self) -> &str { &self.path }
+    fn name(&self) -> &str { &self.name }
+    fn extension(&self) -> Option<&str> { self.extension.as_deref() }
+    fn size_bytes(&self) -> u64 { self.size_bytes }
+    fn mtime(&self) -> i64 { self.mtime }
+    fn ctime(&self) -> i64 { self.ctime }
+    fn is_dir(&self) -> bool { self.is_dir }
+    fn attrib_bitmask(&self) -> u32 { self.attrib_bitmask }
+    fn archive_path(&self) -> Option<&str> { self.archive_path.as_deref() }
+}
+
+/// `path` is strictly inside directory `dir`, without allocating `"{dir}/"`.
+pub(crate) fn is_under(path: &str, dir: &str) -> bool {
+    path.len() > dir.len() && path.starts_with(dir) && path.as_bytes()[dir.len()] == b'/'
+}
+
 /// A search hit returned by the Tantivy full-text store.
 #[derive(Debug, Clone)]
 pub struct SearchHit {
@@ -207,6 +242,24 @@ pub enum SqlCondition {
     AttribAll(u32),
     /// `attrib_bitmask & mask != 0` (any of the specified bits set)
     AttribAny(u32),
+    /// True when any branch matches; each branch is an AND of its conditions.
+    Or(Vec<Vec<SqlCondition>>),
+    /// True when the AND of the conditions does not match.
+    Not(Vec<SqlCondition>),
+}
+
+fn conjunction_sql(conds: &[SqlCondition]) -> (String, Vec<rusqlite::types::Value>) {
+    if conds.is_empty() {
+        return ("1".into(), Vec::new());
+    }
+    let mut parts  = Vec::with_capacity(conds.len());
+    let mut params = Vec::new();
+    for c in conds {
+        let (sql, p) = c.to_sql();
+        parts.push(sql);
+        params.extend(p);
+    }
+    (format!("({})", parts.join(" AND ")), params)
 }
 
 impl SqlCondition {
@@ -255,6 +308,26 @@ impl SqlCondition {
                 (format!("(attrib_bitmask & {mask}) = {mask}"), vec![]),
             SqlCondition::AttribAny(mask) =>
                 (format!("(attrib_bitmask & {mask}) != 0"), vec![]),
+            SqlCondition::Or(branches) => {
+                if branches.is_empty() {
+                    return ("0".into(), Vec::new());
+                }
+                let mut parts  = Vec::with_capacity(branches.len());
+                let mut params = Vec::new();
+                for b in branches {
+                    let (sql, p) = conjunction_sql(b);
+                    parts.push(sql);
+                    params.extend(p);
+                }
+                (format!("({})", parts.join(" OR ")), params)
+            }
+            SqlCondition::Not(conds) => {
+                // NULL columns (extension, archive_path) make the inner
+                // expression NULL, and a bare NOT NULL would drop those rows;
+                // `!ext:rs` must still return files without an extension.
+                let (sql, p) = conjunction_sql(conds);
+                (format!("NOT COALESCE({sql}, 0)"), p)
+            }
         }
     }
 }
@@ -442,6 +515,20 @@ impl FileStore {
         match self {
             FileStore::Sqlite(s) => s.search_conditions(conds, limit),
             FileStore::Memory(m) => m.search_conditions(conds, limit),
+        }
+    }
+
+    /// Fuzzy search: `rank` scores the names of up to `cap` rows matching
+    /// `conds`; only the winners are materialized as `FileRecord`s.
+    pub fn fuzzy_search(
+        &self,
+        conds: &[SqlCondition],
+        cap:   usize,
+        rank:  &FuzzyRank<'_>,
+    ) -> Result<Vec<FileRecord>> {
+        match self {
+            FileStore::Sqlite(s) => s.fuzzy_search(conds, cap, rank),
+            FileStore::Memory(m) => m.fuzzy_search(conds, cap, rank),
         }
     }
 

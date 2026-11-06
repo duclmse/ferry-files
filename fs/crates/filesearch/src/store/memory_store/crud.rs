@@ -2,8 +2,9 @@ use std::path::Path;
 use std::sync::RwLock;
 
 use crate::error::{AppError, Result};
-use super::state::IndexState;
-use super::{FileRecord, MemoryStore};
+use crate::store::is_under;
+use super::state::{IndexState, Snapshot};
+use super::{FileRecord, MemoryStore, RecordView};
 
 // ---------------------------------------------------------------------------
 // Binary snapshot format
@@ -14,16 +15,21 @@ use super::{FileRecord, MemoryStore};
 //   [8 bytes]  data_len:   u64 LE
 //   [data_len] postcard-encoded Vec<FileRecord>
 //
-// Version 2 (current):
+// Version 2 (legacy):
 //   [4 bytes]  magic:          b"FSID"
 //   [2 bytes]  version:        2u16 LE
 //   [8 bytes]  usn_checkpoint: u64 LE - USN/inotify journal position for dirty-shutdown recovery
 //   [8 bytes]  data_len:       u64 LE
 //   [data_len] postcard-encoded Vec<FileRecord>
+//
+// Version 3 (current): v2 header, then a postcard-encoded `state::Snapshot`
+//   (path arena, packed entries, extension table, side table, meta, crawl
+//   generation). v1/v2 carried no `meta`, so `last_crawl_time` was lost and
+//   every restart re-crawled.
 // ---------------------------------------------------------------------------
 
 const MAGIC:      &[u8; 4] = b"FSID";
-const VERSION:    u16      = 2;
+const VERSION:    u16      = 3;
 const HEADER_V1:  usize    = 4 + 2 + 8;      // magic + version + data_len
 const HEADER_V2:  usize    = 4 + 2 + 8 + 8;  // magic + version + checkpoint + data_len
 const HEADER:     usize    = HEADER_V2;
@@ -37,7 +43,7 @@ impl MemoryStore {
                 Ok(s) => {
                     tracing::info!(
                         "memory store: loaded {} records from {}",
-                        s.records.len(),
+                        s.len(),
                         bin.display()
                     );
                     s
@@ -64,9 +70,9 @@ impl MemoryStore {
         let version = u16::from_le_bytes([bytes[4], bytes[5]]);
         let (data_offset, usn_checkpoint) = match version {
             1 => (HEADER_V1, 0u64),
-            2 => {
+            2 | 3 => {
                 if bytes.len() < HEADER_V2 {
-                    return Err(AppError::Index("corrupt index.bin: too short for v2".into()));
+                    return Err(AppError::Index("corrupt index.bin: header too short".into()));
                 }
                 let cp = u64::from_le_bytes(
                     bytes[6..14].try_into()
@@ -81,21 +87,29 @@ impl MemoryStore {
             bytes[data_len_start..data_offset].try_into()
                 .map_err(|_| AppError::Index("corrupt data_len field".into()))?,
         ) as usize;
-        if bytes.len() < data_offset + data_len {
+        if bytes.len() - data_offset < data_len {
             return Err(AppError::Index("corrupt index.bin: truncated data".into()));
         }
-        let records: Vec<FileRecord> =
-            postcard::from_bytes(&bytes[data_offset..data_offset + data_len])
+        let body = &bytes[data_offset..data_offset + data_len];
+        if version == 3 {
+            let snap: Snapshot = postcard::from_bytes(body)
                 .map_err(|e| AppError::Index(format!("snapshot decode: {e}")))?;
+            return IndexState::from_snapshot(snap, usn_checkpoint)
+                .map_err(|e| AppError::Index(format!("corrupt index.bin: {e}")));
+        }
+        let records: Vec<FileRecord> = postcard::from_bytes(body)
+            .map_err(|e| AppError::Index(format!("snapshot decode: {e}")))?;
         let mut state = IndexState::from_records(records);
         state.usn_checkpoint = usn_checkpoint;
         Ok(state)
     }
 
-    /// Serialize all records to `data_dir/index.bin` in v2 format.
+    /// Serialize the index to `data_dir/index.bin` in v3 format.
     pub fn flush_to_disk(&self, data_dir: &Path) -> Result<()> {
-        let state = self.state.read().map_err(|_| AppError::Index("lock poisoned".into()))?;
-        let encoded = postcard::to_allocvec(&state.records)
+        // Write lock only to drop arena garbage before saving it.
+        self.write_state().compact();
+        let state = self.read_state();
+        let encoded = postcard::to_allocvec(&state.to_snapshot())
             .map_err(|e| AppError::Index(format!("snapshot encode: {e}")))?;
         let mut buf = Vec::with_capacity(HEADER + encoded.len());
         buf.extend_from_slice(MAGIC);
@@ -103,11 +117,15 @@ impl MemoryStore {
         buf.extend_from_slice(&state.usn_checkpoint.to_le_bytes());
         buf.extend_from_slice(&(encoded.len() as u64).to_le_bytes());
         buf.extend_from_slice(&encoded);
+        drop(encoded);
+        // Write-then-rename so a crash mid-write keeps the previous snapshot.
         let path = data_dir.join("index.bin");
-        std::fs::write(&path, &buf).map_err(AppError::Io)?;
+        let tmp  = data_dir.join("index.bin.tmp");
+        std::fs::write(&tmp, &buf).map_err(AppError::Io)?;
+        std::fs::rename(&tmp, &path).map_err(AppError::Io)?;
         tracing::info!(
             "memory store: flushed {} records (checkpoint={}) to {}",
-            state.records.len(),
+            state.len(),
             state.usn_checkpoint,
             path.display(),
         );
@@ -127,38 +145,40 @@ impl MemoryStore {
     // -----------------------------------------------------------------------
 
     pub fn upsert_file(&self, record: &FileRecord) {
-        self.write_state().upsert(record.clone());
+        self.write_state().upsert(record);
     }
 
     pub fn remove_file(&self, path: &str) -> bool {
         self.write_state().remove(path)
     }
 
-    pub fn remove_directory(&self, path: &str) -> usize {
-        let prefix = format!("{path}/");
+    fn remove_where(&self, pred: impl Fn(&super::state::EntryRef<'_>) -> bool) -> usize {
         let mut state = self.write_state();
-        let paths: Vec<String> = state.records.iter()
-            .filter(|r| r.path.starts_with(&prefix))
-            .map(|r| r.path.clone())
+        let paths: Vec<String> = state.iter()
+            .filter(|e| pred(e))
+            .map(|e| e.path_str().to_owned())
             .collect();
-        let n = paths.len();
         for p in &paths {
             state.remove(p);
         }
-        n
+        paths.len()
     }
 
-    /// `tag`, when set, stamps every row with the current crawl's generation - 
+    pub fn remove_directory(&self, path: &str) -> usize {
+        self.remove_where(|e| is_under(e.path_str(), path))
+    }
+
+    /// `tag`, when set, stamps every row with the current crawl's generation -
     /// mirrors `SqliteStore::upsert_archive_batch`'s reasoning: without it,
-    /// `remove_stale_for_root`'s `None => true` fallback deletes archive
+    /// `remove_stale_for_root`'s untagged-means-stale rule deletes archive
     /// entries right after the walk that just inserted them finishes.
     pub fn upsert_archive_batch(&self, records: &[FileRecord], tag: Option<(&str, i64)>) {
         let mut state = self.write_state();
         for r in records {
-            if let Some((watch_root, generation)) = tag {
-                state.crawl_info.insert(r.path.clone(), (generation, watch_root.to_string()));
+            let i = state.upsert(r);
+            if let Some((_, generation)) = tag {
+                state.set_generation(i, generation_u32(generation));
             }
-            state.upsert(r.clone());
         }
     }
 
@@ -172,47 +192,28 @@ impl MemoryStore {
         state.crawl_gen
     }
 
+    /// The watch root is not stored per entry: stale removal selects entries
+    /// by path prefix, so only the generation is needed.
     pub fn batch_upsert_crawl(&self, batch: &[(FileRecord, String)], generation: i64) {
         let mut state = self.write_state();
-        for (record, watch_root) in batch {
-            state.crawl_info.insert(record.path.clone(), (generation, watch_root.clone()));
-            state.upsert(record.clone());
+        let generation = generation_u32(generation);
+        for (record, _watch_root) in batch {
+            let i = state.upsert(record);
+            state.set_generation(i, generation);
         }
     }
 
     pub fn remove_stale_for_root(&self, watch_root: &str, generation: i64) -> usize {
-        let mut state = self.write_state();
-        let stale: Vec<String> = state.records.iter()
-            .filter(|r| {
-                let under_root = r.path.starts_with(&format!("{watch_root}/"))
-                    || r.path == watch_root;
-                if !under_root { return false; }
-                match state.crawl_info.get(&r.path) {
-                    Some((gen, _)) => *gen < generation,
-                    None => true,
-                }
-            })
-            .map(|r| r.path.clone())
-            .collect();
-        let n = stale.len();
-        for p in &stale {
-            state.remove(p);
-            state.crawl_info.remove(p);
-        }
-        n
+        let generation = generation_u32(generation);
+        self.remove_where(|e| {
+            let p = e.path_str();
+            (p == watch_root || is_under(p, watch_root))
+                && (e.generation() == 0 || e.generation() < generation)
+        })
     }
 
     pub fn remove_archive_entries(&self, archive_path: &str) -> usize {
-        let mut state = self.write_state();
-        let paths: Vec<String> = state.records.iter()
-            .filter(|r| r.archive_path.as_deref() == Some(archive_path))
-            .map(|r| r.path.clone())
-            .collect();
-        let n = paths.len();
-        for p in &paths {
-            state.remove(p);
-        }
-        n
+        self.remove_where(|e| e.archive_path() == Some(archive_path))
     }
 
     // -----------------------------------------------------------------------
@@ -221,17 +222,17 @@ impl MemoryStore {
 
     pub fn get_by_path(&self, path: &str) -> Result<Option<FileRecord>> {
         let state = self.read_state();
-        Ok(state.by_path.get(path).map(|&i| state.records[i].clone()))
+        Ok(state.find(path).map(|i| state.view(i).to_record()))
     }
 
     pub fn total_files(&self) -> i64 {
         let state = self.read_state();
-        state.records.iter().filter(|r| r.archive_path.is_none()).count() as i64
+        state.iter().filter(|e| e.archive_path().is_none()).count() as i64
     }
 
     pub fn total_archive_entries(&self) -> i64 {
         let state = self.read_state();
-        state.records.iter().filter(|r| r.archive_path.is_some()).count() as i64
+        state.iter().filter(|e| e.archive_path().is_some()).count() as i64
     }
 
     // -----------------------------------------------------------------------
@@ -245,4 +246,10 @@ impl MemoryStore {
     pub fn set_meta(&self, key: &str, value: &str) {
         self.write_state().meta.insert(key.to_owned(), value.to_owned());
     }
+}
+
+/// Generations count crawls; 4 billion crawls do not happen, so saturating
+/// keeps ordering without widening every entry to 8 bytes.
+fn generation_u32(generation: i64) -> u32 {
+    generation.clamp(0, i64::from(u32::MAX)) as u32
 }

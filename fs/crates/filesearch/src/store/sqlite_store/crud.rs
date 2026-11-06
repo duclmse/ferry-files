@@ -28,7 +28,7 @@ impl SqliteStore {
         conn.execute_batch(SCHEMA)?;
         apply_migrations(&conn)?;
 
-        Ok(Self { pool })
+        Ok(Self { pool, name_bounds: Default::default() })
     }
 
     pub(crate) fn get_conn(&self) -> Result<r2d2::PooledConnection<SqliteConnectionManager>> {

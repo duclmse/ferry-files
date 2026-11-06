@@ -183,18 +183,24 @@ They serve as the primary reference for users.
 
 ### filesearch
 
-- [ ] All modules listed in spec section 2 implemented (no stubs).
+- [x] All modules listed in spec section 2 implemented (no stubs).
+      *(`ipc.rs` is split into `ipc_server.rs`/`ipc_client.rs`/`ipc_protocol.rs`,
+      `frontend/cli.rs` is `frontend/tui/`; spec tree updated)*
 - [x] `query/exact.rs`, `query/fuzzy.rs`, `query/regex_search.rs` do not exist.
-- [ ] `filesearch daemon` starts, crawls, accepts queries via all three APIs.
-      *(REST and IPC queried live; gRPC port verified listening but not queried)*
+- [x] `filesearch daemon` starts, crawls, accepts queries via all three APIs.
+      *(REST, IPC and gRPC `Search`/`SearchStream`/`GetStats` queried live)*
 - [x] ZIP inner files are indexed during crawl and watcher events.
-- [ ] `filesearch tui` launches interactive TUI; inner entries show `[zip]` tag.
-- [ ] `filesearch search "main.rs"` returns results in < 50ms on 1M file index.
+- [x] `filesearch tui` launches interactive TUI; inner entries show `[zip]` tag.
+      *(`[zip]` asserted on a rendered frame via ratatui `TestBackend`)*
+- [x] `filesearch search "main.rs"` returns results in < 50ms on 1M file index.
+      *(macOS, 1,000,000 files, SQLite store: 28 ms end-to-end CLI, ~20 ms
+      server-side; was 212 ms before name searches moved to the name index)*
 - [x] `filesearch search "fuzzy:mian"` returns `main.rs` as a top result.
 - [x] `filesearch search "archive: *.rs"` returns only inner-archive entries.
-- [ ] `POST /open` on inner entry extracts to temp and opens.
+- [x] `POST /open` on inner entry extracts to temp and opens.
+      *(extraction unit-tested; the OS open call is not exercised in tests)*
 - [x] `filesearch validate-config` exits 0 on valid config, 1 on invalid.
-- [ ] README covers all 10 sections + ZIP inner-file section.
+- [x] README covers all 10 sections + ZIP inner-file section.
 - [x] `VERSIONS.md` populated with all resolved crate versions (incl. `zip`,
       `tempfile`).
 - [ ] Builds on Windows, Linux, and macOS.
