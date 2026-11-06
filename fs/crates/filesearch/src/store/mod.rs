@@ -582,6 +582,22 @@ impl FileStore {
     // ---- persistence -------------------------------------------------------
 
     /// Write the in-memory index to disk. No-op for the SQLite backend.
+    /// Starts an initial-crawl bulk load (SQLite only, and only when the
+    /// index is empty). Returns whether `end_bulk_load` has work to do.
+    pub fn begin_bulk_load(&self) -> Result<bool> {
+        match self {
+            FileStore::Sqlite(s) => s.begin_bulk_load(),
+            FileStore::Memory(_) => Ok(false),
+        }
+    }
+
+    pub fn end_bulk_load(&self) -> Result<()> {
+        match self {
+            FileStore::Sqlite(s) => s.end_bulk_load(),
+            FileStore::Memory(_) => Ok(()),
+        }
+    }
+
     pub fn flush_to_disk(&self, data_dir: &Path) -> Result<()> {
         match self {
             FileStore::Sqlite(_) => Ok(()),

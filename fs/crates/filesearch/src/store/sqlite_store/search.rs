@@ -21,6 +21,9 @@ const NAME_BOUNDS_TTL: Duration = Duration::from_secs(60);
 pub(super) struct NameBounds {
     sampled_at: Option<Instant>,
     bounds:     Arc<Vec<String>>,
+    /// Set while `bulk.rs` has `idx_files_name` dropped; the `INDEXED BY`
+    /// statements below would fail with "no such index" until it is rebuilt.
+    name_index_dropped: bool,
 }
 
 fn is_name_condition(c: &SqlCondition) -> bool {
@@ -198,7 +201,7 @@ impl SqliteStore {
         }
         let (name_conds, other_conds): (Vec<SqlCondition>, Vec<SqlCondition>) =
             conds.iter().cloned().partition(is_name_condition);
-        if name_conds.iter().all(is_match_all) {
+        if name_conds.iter().all(is_match_all) || self.name_index_dropped()? {
             let (where_extra, params) = build_conditions(conds);
             let sql = format!(
                 "SELECT id, path, name, extension, size_bytes, mtime, ctime,
@@ -328,13 +331,28 @@ impl SqliteStore {
         Ok(out)
     }
 
+    fn name_index_dropped(&self) -> Result<bool> {
+        Ok(self.lock_name_bounds()?.name_index_dropped)
+    }
+
+    pub(super) fn set_name_index_dropped(&self, dropped: bool) -> Result<()> {
+        let mut cache = self.lock_name_bounds()?;
+        cache.name_index_dropped = dropped;
+        cache.sampled_at = None;
+        Ok(())
+    }
+
+    fn lock_name_bounds(&self) -> Result<std::sync::MutexGuard<'_, NameBounds>> {
+        self.name_bounds
+            .lock()
+            .map_err(|_| AppError::Index("name bounds lock poisoned".into()))
+    }
+
     /// Range split points for `search_by_name_index`, sampled from the name
     /// index and cached. Stale points only unbalance the ranges: they always
     /// cover the whole keyspace, so results stay exact.
     fn name_bounds(&self) -> Result<Arc<Vec<String>>> {
-        let mut cache = self.name_bounds
-            .lock()
-            .map_err(|_| AppError::Index("name bounds lock poisoned".into()))?;
+        let mut cache = self.lock_name_bounds()?;
         if cache.sampled_at.is_some_and(|t| t.elapsed() < NAME_BOUNDS_TTL) {
             return Ok(Arc::clone(&cache.bounds));
         }

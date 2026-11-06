@@ -6,6 +6,7 @@ mod crud;
 mod search;
 mod archive_entries;
 mod bench;
+mod bulk;
 #[cfg(test)]
 mod tests;
 

@@ -1,6 +1,6 @@
 # Plan: Borrowing Everything's Techniques
 
-> **Status:** phases 1-3 implemented (Nov 2026); phases 4-7 open. Background:
+> **Status:** phases 1-4 implemented (Nov 2026); phases 5-7 open. Background:
 > [research/everything-internals.md](../research/everything-internals.md).
 > Measurements: RSS and CPU time sampled every 250 ms plus `/usr/bin/time -l`
 > peaks, on `~/projects` (2.38M files, 191k dirs), macOS, 8 cores, with 8
@@ -14,7 +14,7 @@
 | 1   | Memory-store snapshot drops `meta`, so `last_crawl_time` is lost and every restart runs a full crawl | 52 CPU-s, RSS 130 MB → 2 GB within 10 s of restart                 | 1     |
 | 2   | `fuzzy:` copies up to 50,000 full `FileRecord`s per query before scoring                             | RSS 169 → 758 MB under 8 concurrent fuzzy clients, kept after load | 2     |
 | 3   | Memory store stores each path 3x plus a watch-root copy, `name`/`extension` as separate strings      | ~850 B/entry, 2.1 GB idle for 2.56M entries                        | 3     |
-| 4   | SQLite crawl is write-bound (kernel time 173 s vs user 106 s)                                        | 136 s initial crawl                                                | 4     |
+| 4   | SQLite crawl maintains 5 secondary indexes row by row                                                | 110-136 s initial crawl                                            | 4     |
 | 5   | Changes made while the daemon is stopped are missed (SQLite) or cost a full recrawl (memory)         | correctness + restart cost                                         | 5     |
 | 6   | Crawl does one `stat` per entry                                                                      | crawl CPU                                                          | 6     |
 
@@ -106,24 +106,49 @@ A true parent-pointer tree (one name per directory level) is left as a
 follow-up: it would cut another ~60 B/entry, but needs path reconstruction in
 every path predicate.
 
-## Phase 4 - SQLite bulk load (Everything §2.7) - open
+## Phase 4 - SQLite bulk load (Everything §2.7) - done
 
-Everything never maintains a transactional index while indexing. For SQLite we
-can approximate that during the _initial_ crawl only:
+Everything never maintains a transactional index while indexing. For SQLite
+we approximate that during the *initial* crawl only
+(`store/sqlite_store/bulk.rs`, called from `daemon::spawn_crawl`):
 
-1. Set `cache_size` on every pooled connection (today only the schema connection
-   gets `-65536`; writer connections run with SQLite's 2 MB default, so the
-   random-order `path` unique index thrashes).
-2. On the initial crawl of an empty database, drop the secondary indexes
-   (`name`, `extension`, `mtime`, `size`, `parent`, `attrib`), insert, then
-   recreate them; building an index from sorted data is much cheaper than
-   maintaining it row by row.
-3. `PRAGMA synchronous=OFF` for the initial crawl's connection only; a crash
-   mid-crawl already means a recrawl.
+- When a crawl starts on an empty `files` table, the `name`, `extension`,
+  `mtime`, `size` and `attrib` indexes are dropped and their `CREATE INDEX`
+  statements are saved in `index_meta`. After the crawl they are rebuilt from
+  the saved statements and the WAL is checkpointed.
+- `idx_files_parent` stays: the watcher's stale-sibling sweep (`children_of`)
+  runs during the crawl and would scan the whole table per event without it.
+  The small partial `idx_files_archive` stays too.
+- Queries keep working during the crawl: the name-index scan uses
+  `INDEXED BY idx_files_name`, so while it is dropped name queries fall back
+  to a plain table scan.
+- If the daemon stops mid-crawl the rebuild is skipped; `SqliteStore::new`
+  recreates missing indexes from `SCHEMA` on the next start. Reindex requests
+  are rejected until the rebuild is done.
 
-Touches `store/sqlite_store/crud.rs` (pool init) and `indexer/crawler.rs`, both
-of which carry uncommitted local edits at the time of writing, so this phase
-waits for those to land.
+Measured on the same tree, alternating runs, on a loaded machine (load
+average 5-23):
+
+| Run | Crawl | Index rebuild | Crawl CPU | Queries in 20 s |
+|-----|------:|--------------:|----------:|----------------:|
+| without bulk load | 131 s, 110 s | - | 166 s, 154 s | 1,128, 1,136 |
+| with bulk load | 66 s, 68 s, 101 s | 6.1 s, 9.4 s, 7.7 s | 123 s, 114 s, 290 s | 1,248, 256*, 1,208 |
+
+\* That run saw 344 watcher events during the crawl (others: 0-58) and kept
+using ~4 cores after the query clients stopped; the next run with the same
+build did not repeat it. Treated as outside interference, not confirmed.
+
+Tried and rejected:
+
+- `cache_size=-16384` on every pooled connection: the crawl got no faster
+  (140 s) and RSS grew ~300 MB under query load as 16 connections filled
+  their caches.
+- `synchronous=OFF` for the crawl: under WAL with `synchronous=NORMAL` SQLite
+  only syncs at checkpoints, so there is little to gain, and it would need
+  per-connection state in `batch_upsert_crawl`.
+
+Benchmark hygiene: a run on a 98 %-full disk produced 2-3x slower, very
+noisy numbers. Delete each run's data directory before the next.
 
 ## Phase 5 - Catch up from the OS change log (Everything §2.2) - open
 

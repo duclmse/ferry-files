@@ -444,10 +444,30 @@ fn spawn_crawl(
     let ca = Arc::clone(crawl_active);
     tokio::spawn(async move {
         tracing::info!("full crawl starting");
+        let store = Arc::clone(&sqlite);
+        let bulk = tokio::task::spawn_blocking(move || store.begin_bulk_load())
+            .await
+            .map_err(|e| e.to_string())
+            .and_then(|r| r.map_err(|e| e.to_string()))
+            .unwrap_or_else(|e| {
+                tracing::warn!("bulk load setup failed, crawling with indexes: {e}");
+                false
+            });
+        let store = Arc::clone(&sqlite);
+        let cancelled = shutdown.clone();
         if let Err(e) = full_crawl(cfg, sqlite, tantivy, metrics, registry, shutdown).await {
             tracing::error!("full_crawl error: {e}");
         } else {
             tracing::info!("full crawl complete");
+        }
+        // On shutdown, skip the rebuild: it can take tens of seconds, and
+        // SqliteStore::new recreates missing indexes on the next start.
+        if bulk && !cancelled.is_cancelled() {
+            match tokio::task::spawn_blocking(move || store.end_bulk_load()).await {
+                Ok(Ok(())) => {}
+                Ok(Err(e)) => tracing::error!("bulk load index rebuild failed: {e}"),
+                Err(e)     => tracing::error!("bulk load index rebuild panicked: {e}"),
+            }
         }
         ca.store(false, Ordering::Release);
     });
