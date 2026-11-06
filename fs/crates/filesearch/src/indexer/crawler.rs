@@ -120,7 +120,10 @@ pub async fn full_crawl(
             // walker/stat-syscall-bound). 10000 captures most of the win while
             // keeping the per-crash replay window (unwritten buffered rows) small.
             const BATCH_SIZE: usize = 10000;
-            let (tx, rx) = mpsc::sync_channel::<(FileRecord, String)>(2048);
+            // Room for several batches: with a channel smaller than one batch
+            // the walkers stalled for every commit and the writer then waited
+            // for them to refill it (crawl 52-57 s -> 42-45 s on 2.4M files).
+            let (tx, rx) = mpsc::sync_channel::<(FileRecord, String)>(4 * BATCH_SIZE);
             let writer_thread = {
                 let sqlite_b  = Arc::clone(&sqlite_w);
                 let metrics_b = Arc::clone(&metrics_w);

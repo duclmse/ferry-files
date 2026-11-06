@@ -21,9 +21,9 @@ const NAME_BOUNDS_TTL: Duration = Duration::from_secs(60);
 pub(super) struct NameBounds {
     sampled_at: Option<Instant>,
     bounds:     Arc<Vec<String>>,
-    /// Set while `bulk.rs` has `idx_files_name` dropped; the `INDEXED BY`
-    /// statements below would fail with "no such index" until it is rebuilt.
-    name_index_dropped: bool,
+    /// Set while `bulk.rs` has the secondary indexes dropped; the `INDEXED BY`
+    /// statements below would fail with "no such index" until they are rebuilt.
+    bulk_loading: bool,
 }
 
 fn is_name_condition(c: &SqlCondition) -> bool {
@@ -201,7 +201,7 @@ impl SqliteStore {
         }
         let (name_conds, other_conds): (Vec<SqlCondition>, Vec<SqlCondition>) =
             conds.iter().cloned().partition(is_name_condition);
-        if name_conds.iter().all(is_match_all) || self.name_index_dropped()? {
+        if name_conds.iter().all(is_match_all) || self.bulk_loading()? {
             let (where_extra, params) = build_conditions(conds);
             let sql = format!(
                 "SELECT id, path, name, extension, size_bytes, mtime, ctime,
@@ -331,13 +331,13 @@ impl SqliteStore {
         Ok(out)
     }
 
-    fn name_index_dropped(&self) -> Result<bool> {
-        Ok(self.lock_name_bounds()?.name_index_dropped)
+    pub(super) fn bulk_loading(&self) -> Result<bool> {
+        Ok(self.lock_name_bounds()?.bulk_loading)
     }
 
-    pub(super) fn set_name_index_dropped(&self, dropped: bool) -> Result<()> {
+    pub(super) fn set_bulk_loading(&self, on: bool) -> Result<()> {
         let mut cache = self.lock_name_bounds()?;
-        cache.name_index_dropped = dropped;
+        cache.bulk_loading = on;
         cache.sampled_at = None;
         Ok(())
     }

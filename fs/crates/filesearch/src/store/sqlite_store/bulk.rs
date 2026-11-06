@@ -22,6 +22,15 @@ const BULK_DROPPED: &[&str] = &[
     "idx_files_attrib",
 ];
 
+/// WAL auto-checkpoint threshold (pages) for crawl batches during a bulk
+/// load. The default of 1000 pages (~4 MB) checkpointed after nearly every
+/// 10,000-row batch, two fsyncs each, and the crawl writer spent a third of
+/// its time in fsync. The WAL may grow to ~400 MB until `end_bulk_load`
+/// truncates it.
+pub(super) const BULK_AUTOCHECKPOINT: &str = "PRAGMA wal_autocheckpoint=100000";
+/// SQLite's default; restored so pooled connections leave the crawl unchanged.
+pub(super) const DEFAULT_AUTOCHECKPOINT: &str = "PRAGMA wal_autocheckpoint=1000";
+
 /// `index_meta` key holding the `CREATE INDEX` statements to replay. Kept in
 /// the database rather than in memory so the statements match whatever the
 /// schema was when they were dropped; if the daemon dies mid-crawl,
@@ -63,7 +72,7 @@ impl SqliteStore {
         }
         // Raised before the drop is visible so no query plans against the
         // missing index; a failed commit only costs a few slower scans.
-        self.set_name_index_dropped(true)?;
+        self.set_bulk_loading(true)?;
         tx.commit()?;
         tracing::info!("bulk load: dropped {} secondary indexes for the initial crawl", sqls.len());
         Ok(true)
@@ -86,7 +95,7 @@ impl SqliteStore {
             conn.execute_batch(&sql)?;
         }
         conn.execute("DELETE FROM index_meta WHERE key = ?1", [META_KEY])?;
-        self.set_name_index_dropped(false)?;
+        self.set_bulk_loading(false)?;
         // The rebuild leaves hundreds of MB of index pages in the WAL; until
         // a checkpoint moves them, every read consults the WAL index first.
         conn.query_row("PRAGMA wal_checkpoint(TRUNCATE)", [], |_| Ok(()))?;

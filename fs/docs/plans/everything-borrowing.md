@@ -1,6 +1,6 @@
 # Plan: Borrowing Everything's Techniques
 
-> **Status:** phases 1-4 implemented (Nov 2026); phases 5-7 open. Background:
+> **Status:** phases 1-4 implemented, phase 6 partly (crawl writer); phases 5, 7 and platform enumeration open (Nov 2026). Background:
 > [research/everything-internals.md](../research/everything-internals.md).
 > Measurements: RSS and CPU time sampled every 250 ms plus `/usr/bin/time -l`
 > peaks, on `~/projects` (2.38M files, 191k dirs), macOS, 8 cores, with 8
@@ -161,13 +161,43 @@ rescanning.
 | macOS    | FSEvents with `sinceWhen` = last event ID (needs `fsevent-sys`; `notify` does not expose it) | last event ID + volume UUID                                            | full crawl on `kFSEventStreamEventFlagMustScanSubDirs` / history gap |
 | Linux    | none persistent                                                                              | per-directory `mtime`                                                  | rescan that skips unchanged directories' entries                     |
 
-## Phase 6 - Faster enumeration (Everything §2.1) - open
+## Phase 6 - Faster enumeration (Everything §2.1) - macOS measured; writer fixed
 
-- Windows: `FSCTL_ENUM_USN_DATA` over the MFT when running elevated (service
-  mode); fall back to the walker otherwise.
-- macOS: `getattrlistbulk` returns names + size + dates + type for a whole
-  directory per call.
-- Linux: keep the walker; use `statx` with a minimal mask.
+Measured before building platform enumeration. On macOS the bare `ignore`
+parallel walk of the 2.58M-entry tree takes 16 s with `metadata()` and 7.5 s
+without it, while the SQLite crawl took 52-57 s. So enumeration was not the
+bottleneck. A `sample` profile mid-crawl showed:
+
+- walker threads ~66 % blocked sending to the writer channel, ~23 % in `lstat`;
+- the single writer thread ~33 % in `fsync`, ~17 % in `pwrite`, ~25 %
+  waiting for input.
+
+Two causes, both fixed:
+
+- The channel held 2,048 records but the writer commits 10,000 at a time,
+  so walkers stalled during every commit and the writer then waited for
+  them. The channel now holds four batches (`crawler.rs`).
+- SQLite's default WAL auto-checkpoint (1000 pages) ran after almost every
+  batch, two fsyncs each. During a bulk load `batch_upsert_crawl` raises it
+  to 100,000 pages and restores the default after each batch; the WAL peaks
+  at ~435 MB and `end_bulk_load` truncates it.
+
+| Variant (2 runs each, alternating) | Crawl | + index rebuild |
+|---|---:|---:|
+| baseline | 52-57 s | 60-65 s |
+| larger channel only | 42-45 s | 50-53 s |
+| less frequent checkpoint only | 38 s | 46-47 s |
+| both (committed) | 32-37 s | 40-49 s |
+
+Peak RSS did not change (481-540 MB across all runs).
+
+Still open, and now lower priority:
+
+- macOS `getattrlistbulk` could save at most ~9 s of the 16 s walk, which now
+  overlaps the writer.
+- Windows `FSCTL_ENUM_USN_DATA` over the MFT (service mode) is where
+  enumeration matters most and is untested here.
+- Linux: `statx` with a minimal mask.
 
 ## Phase 7 - Optional extras (Everything §2.4) - open
 

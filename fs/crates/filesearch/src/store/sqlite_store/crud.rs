@@ -105,6 +105,10 @@ impl SqliteStore {
             return Ok(());
         }
         let conn = self.get_conn()?;
+        let bulk = self.bulk_loading()?;
+        if bulk {
+            conn.execute_batch(super::bulk::BULK_AUTOCHECKPOINT)?;
+        }
         conn.execute_batch("BEGIN").map_err(AppError::Database)?;
 
         let result: Result<()> = (|| {
@@ -159,13 +163,17 @@ impl SqliteStore {
             Ok(())
         })();
 
-        match result {
+        let out = match result {
             Ok(()) => conn.execute_batch("COMMIT").map_err(AppError::Database),
             Err(e) => {
                 let _ = conn.execute_batch("ROLLBACK");
                 Err(e)
             }
+        };
+        if bulk {
+            conn.execute_batch(super::bulk::DEFAULT_AUTOCHECKPOINT)?;
         }
+        out
     }
 
     /// Same as `upsert_file_conn` but also stamps `watch_root`/`crawl_generation`.
