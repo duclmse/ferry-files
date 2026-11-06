@@ -1,6 +1,6 @@
 # Plan: Borrowing Everything's Techniques
 
-> **Status:** phases 1-5 and 7 implemented (phase 5: FSEvents replay on macOS, timestamp scan on Linux and Windows); phase 6 crawl-writer fix; open: USN journal replay, platform enumeration (Nov 2026). Background:
+> **Status:** phases 1-5 and 7 implemented (phase 5: FSEvents replay on macOS, USN journal replay on Windows, timestamp scan on Linux and as the Windows fallback); phase 3 follow-up: parent-pointer tree; phase 6 crawl-writer fix, platform enumeration measured and not built; open: Windows MFT enumeration (Nov 2026). Background:
 > [research/everything-internals.md](../research/everything-internals.md).
 > Measurements: RSS and CPU time sampled every 250 ms plus `/usr/bin/time -l`
 > peaks, on `~/projects` (2.38M files, 191k dirs), macOS, 8 cores, with 8
@@ -315,7 +315,7 @@ without administrator rights logs the fallback and scans, and that the
 paths the replay produces match the crawler's for roots configured with
 `/` separators or a different case.
 
-## Phase 6 - Faster enumeration (Everything §2.1) - writer fixed; platform enumeration deferred
+## Phase 6 - Faster enumeration (Everything §2.1) - writer fixed; platform enumeration measured, not built
 
 Measured before building platform enumeration. On macOS the bare `ignore`
 parallel walk of the 2.58M-entry tree takes 16 s with `metadata()` and 7.5 s
@@ -345,16 +345,45 @@ Two causes, both fixed:
 
 Peak RSS did not change (481-540 MB across all runs).
 
-Platform enumeration was not built (Nov 2026):
+Platform enumeration was not built (Nov 2026). The macOS part was measured
+with a prototype; the other two turned out to have little to gain:
 
-- macOS `getattrlistbulk` could save at most ~9 s of the 16 s walk. The walk
-  now overlaps the writer, and warm starts replay FSEvents instead of walking,
-  so only an initial or reconcile crawl would gain, by less than that.
-- Linux and Windows warm starts do walk (phase 5 timestamp scan, ~16 s for
-  2.6M entries), so faster enumeration would pay there: `statx` with a minimal
-  mask on Linux, `FSCTL_ENUM_USN_DATA` over the MFT on Windows (service
-  mode; with USN journal replay, Windows walks only when replay fails). Neither can be
-  measured on this machine, so both stay open until they can be.
+- **macOS `getattrlistbulk`.** A prototype walker (one `getattrlistbulk`
+  call per directory buffer, returning name, type, mtime, ctime, flags and
+  size, directories shared between threads) against the `ignore` walk with
+  `metadata()` that the crawler uses, on the 2.5M-entry `~/projects` tree,
+  warm cache, load average 6-10:
+
+  | Threads | `ignore` + `lstat`     | `getattrlistbulk`  |
+  | ------: | ---------------------: | -----------------: |
+  |       2 |                   45 s |               25 s |
+  |       4 |                   26 s |               20 s |
+  |       8 | 18.4-18.9 s (87 s CPU) | 20-21 s (44 s CPU) |
+  |      16 |                      - | 18.6 s (48 s CPU)  |
+
+  One thread on a 50K-entry subtree: 0.44 s against 0.26 s.
+
+  Per directory it is about twice as fast and it halves the CPU, but
+  `getattrlistbulk` stops scaling past about two busy cores (APFS
+  serializes it), so it never gets below the ~18.5 s the parallel `lstat`
+  walk already reaches. The crawl would use ~40 s less CPU, out of 174 s,
+  and finish no sooner. On macOS a crawl runs only on the first start or
+  after a lost FSEvents history, so this was not worth replacing the
+  `ignore` walker. A replacement would also have to reproduce its handling
+  of `.ignore` and git exclude files: the prototype found 30K entries more
+  than the `ignore` walk.
+- **Linux `statx`.** std's `symlink_metadata` already calls `statx` on
+  Linux, so a smaller mask would save only filling unused fields, not the
+  system call per entry. Linux has no bulk equivalent (`getdents64` returns
+  names and types only).
+- **Windows.** `ignore` keeps the metadata that `FindNextFileW` returned with
+  the directory listing, so the Windows walk makes no per-entry call to
+  begin with. What remains is Everything's MFT read (`FSCTL_ENUM_USN_DATA`
+  or the raw `$MFT`), which enumerates a volume without visiting
+  directories but needs administrator rights, and needs the raw `$MFT` for
+  sizes and times. Since the USN replay (phase 5), a Windows warm start
+  walks only when the replay fails, so this would only shorten initial
+  crawls. It cannot be measured here and stays open.
 
 ## Phase 7 - Optional extras (Everything §2.4) - done
 

@@ -69,8 +69,9 @@ research doc disagree, the **reference** doc wins.
   implemented; bounded crawl/fuzzy/content search, stream fan-out, postcard IPC
 - [Borrowing Everything's Techniques](plans/everything-borrowing.md) - phases
   1-5 and 7 implemented (snapshot metadata, name-only fuzzy, compact memory
-  store, SQLite bulk load, change catch-up on restart, optional SQLite
-  indexes); USN journal replay and platform enumeration open
+  store with a parent-pointer tree, SQLite bulk load, change catch-up on
+  restart including USN journal replay, optional SQLite indexes); platform
+  enumeration measured and not built; Windows MFT enumeration open
 
 ## Research notes
 
