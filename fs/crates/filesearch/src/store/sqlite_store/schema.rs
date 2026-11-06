@@ -111,8 +111,6 @@ pub(super) fn query_records(
     stmt: &mut rusqlite::Statement<'_>,
     params: Vec<rusqlite::types::Value>,
 ) -> Result<Vec<FileRecord>> {
-    let rows = stmt.query_map(params_from_iter(params.iter()), |row| {
-        row_to_record(row)
-    })?;
+    let rows = stmt.query_map(params_from_iter(params.iter()), row_to_record)?;
     rows.map(|r| r.map_err(AppError::Database)).collect()
 }

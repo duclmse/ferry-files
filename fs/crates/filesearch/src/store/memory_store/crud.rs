@@ -1,9 +1,12 @@
+use std::fs::File;
+use std::io::{BufWriter, Read, Seek, SeekFrom, Write};
 use std::path::Path;
 use std::sync::RwLock;
 
 use crate::error::{AppError, Result};
 use crate::store::is_under;
-use super::state::{IndexState, Snapshot};
+use super::snapshot;
+use super::state::IndexState;
 use super::{FileRecord, MemoryStore, RecordView};
 
 // ---------------------------------------------------------------------------
@@ -34,6 +37,24 @@ const HEADER_V1:  usize    = 4 + 2 + 8;      // magic + version + data_len
 const HEADER_V2:  usize    = 4 + 2 + 8 + 8;  // magic + version + checkpoint + data_len
 const HEADER:     usize    = HEADER_V2;
 
+fn le_u64(b: &[u8]) -> u64 {
+    let mut a = [0u8; 8];
+    a.copy_from_slice(&b[..8]);
+    u64::from_le_bytes(a)
+}
+
+/// Like `read_exact`, but a short file is not an error: returns the bytes read.
+fn read_up_to(r: &mut impl Read, buf: &mut [u8]) -> std::io::Result<usize> {
+    let mut n = 0;
+    while n < buf.len() {
+        match r.read(&mut buf[n..])? {
+            0 => break,
+            k => n += k,
+        }
+    }
+    Ok(n)
+}
+
 impl MemoryStore {
     /// Create a new store, loading a snapshot from `data_dir/index.bin` when one exists.
     pub fn new(data_dir: &Path) -> Result<Self> {
@@ -60,44 +81,44 @@ impl MemoryStore {
     }
 
     fn load_snapshot(path: &Path) -> Result<IndexState> {
-        let bytes = std::fs::read(path).map_err(AppError::Io)?;
-        if bytes.len() < HEADER_V1 {
+        let mut file = File::open(path).map_err(AppError::Io)?;
+        let file_len = file.metadata().map_err(AppError::Io)?.len();
+        let mut header = [0u8; HEADER_V2];
+        let got = read_up_to(&mut file, &mut header).map_err(AppError::Io)?;
+        if got < HEADER_V1 {
             return Err(AppError::Index("corrupt index.bin: too short".into()));
         }
-        if &bytes[..4] != MAGIC {
+        if &header[..4] != MAGIC {
             return Err(AppError::Index("corrupt index.bin: bad magic".into()));
         }
-        let version = u16::from_le_bytes([bytes[4], bytes[5]]);
+        let version = u16::from_le_bytes([header[4], header[5]]);
         let (data_offset, usn_checkpoint) = match version {
             1 => (HEADER_V1, 0u64),
             2 | 3 => {
-                if bytes.len() < HEADER_V2 {
-                    return Err(AppError::Index("corrupt index.bin: header too short".into()));
+                if got < HEADER_V2 {
+                    return Err(AppError::Index(
+                        "corrupt index.bin: header too short".into(),
+                    ));
                 }
-                let cp = u64::from_le_bytes(
-                    bytes[6..14].try_into()
-                        .map_err(|_| AppError::Index("corrupt checkpoint field".into()))?,
-                );
-                (HEADER_V2, cp)
+                (HEADER_V2, le_u64(&header[6..14]))
             }
             v => return Err(AppError::Index(format!("unsupported index version {v}"))),
         };
-        let data_len_start = data_offset - 8; // data_len is always the last 8 bytes of the header
-        let data_len = u64::from_le_bytes(
-            bytes[data_len_start..data_offset].try_into()
-                .map_err(|_| AppError::Index("corrupt data_len field".into()))?,
-        ) as usize;
-        if bytes.len() - data_offset < data_len {
+        // data_len is always the last 8 bytes of the header.
+        let data_len = le_u64(&header[data_offset - 8..data_offset]);
+        if file_len - (data_offset as u64) < data_len {
             return Err(AppError::Index("corrupt index.bin: truncated data".into()));
         }
-        let body = &bytes[data_offset..data_offset + data_len];
+        file.seek(SeekFrom::Start(data_offset as u64)).map_err(AppError::Io)?;
         if version == 3 {
-            let snap: Snapshot = postcard::from_bytes(body)
+            let snap = snapshot::read(&mut file, data_len)
                 .map_err(|e| AppError::Index(format!("snapshot decode: {e}")))?;
             return IndexState::from_snapshot(snap, usn_checkpoint)
                 .map_err(|e| AppError::Index(format!("corrupt index.bin: {e}")));
         }
-        let records: Vec<FileRecord> = postcard::from_bytes(body)
+        let mut body = Vec::new();
+        file.take(data_len).read_to_end(&mut body).map_err(AppError::Io)?;
+        let records: Vec<FileRecord> = postcard::from_bytes(&body)
             .map_err(|e| AppError::Index(format!("snapshot decode: {e}")))?;
         let mut state = IndexState::from_records(records);
         state.usn_checkpoint = usn_checkpoint;
@@ -106,22 +127,24 @@ impl MemoryStore {
 
     /// Serialize the index to `data_dir/index.bin` in v3 format.
     pub fn flush_to_disk(&self, data_dir: &Path) -> Result<()> {
-        // Write lock only to drop arena garbage before saving it.
-        self.write_state().compact();
         let state = self.read_state();
-        let encoded = postcard::to_allocvec(&state.to_snapshot())
-            .map_err(|e| AppError::Index(format!("snapshot encode: {e}")))?;
-        let mut buf = Vec::with_capacity(HEADER + encoded.len());
-        buf.extend_from_slice(MAGIC);
-        buf.extend_from_slice(&VERSION.to_le_bytes());
-        buf.extend_from_slice(&state.usn_checkpoint.to_le_bytes());
-        buf.extend_from_slice(&(encoded.len() as u64).to_le_bytes());
-        buf.extend_from_slice(&encoded);
-        drop(encoded);
         // Write-then-rename so a crash mid-write keeps the previous snapshot.
         let path = data_dir.join("index.bin");
-        let tmp  = data_dir.join("index.bin.tmp");
-        std::fs::write(&tmp, &buf).map_err(AppError::Io)?;
+        let tmp = data_dir.join("index.bin.tmp");
+        let write = || -> std::io::Result<()> {
+            let mut w = BufWriter::with_capacity(1 << 20, File::create(&tmp)?);
+            w.write_all(MAGIC)?;
+            w.write_all(&VERSION.to_le_bytes())?;
+            w.write_all(&state.usn_checkpoint.to_le_bytes())?;
+            // data_len is patched in once the body has been streamed out.
+            w.write_all(&0u64.to_le_bytes())?;
+            let len = snapshot::write(&mut w, &state.to_snapshot())?;
+            let mut file = w.into_inner().map_err(|e| e.into_error())?;
+            file.seek(SeekFrom::Start((HEADER - 8) as u64))?;
+            file.write_all(&len.to_le_bytes())?;
+            file.sync_all()
+        };
+        write().map_err(AppError::Io)?;
         std::fs::rename(&tmp, &path).map_err(AppError::Io)?;
         tracing::info!(
             "memory store: flushed {} records (checkpoint={}) to {}",

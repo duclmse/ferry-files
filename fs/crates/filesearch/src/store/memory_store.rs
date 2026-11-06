@@ -17,6 +17,7 @@ use super::{CmpOp, DupeKind, FileRecord, FuzzyRank, MetaFilters, RecordView, Sql
 mod crud;
 mod matching;
 mod search;
+mod snapshot;
 mod state;
 #[cfg(test)]
 mod tests;

@@ -4,6 +4,7 @@ use std::hash::BuildHasher;
 use hashbrown::{DefaultHashBuilder, HashTable};
 use serde::{Deserialize, Serialize};
 
+use super::snapshot::{Snapshot, SnapshotRef};
 use super::{FileRecord, RecordView};
 
 // ---------------------------------------------------------------------------
@@ -41,6 +42,18 @@ pub(super) struct Entry {
     flags:       u8,
     /// Crawl generation that last saw this entry; 0 = never tagged by a crawl.
     pub(super) generation: u32,
+}
+
+impl Entry {
+    pub(super) fn path_range(&self) -> std::ops::Range<usize> {
+        let start = self.path_off as usize;
+        start..start + self.path_len as usize
+    }
+
+    pub(super) fn with_path_off(mut self, off: u64) -> Self {
+        self.path_off = off;
+        self
+    }
 }
 
 /// Fields that are rare, or that do not follow the crawler's path layout.
@@ -337,30 +350,6 @@ impl IndexState {
         }
         Ok(st)
     }
-}
-
-// ---------------------------------------------------------------------------
-// Snapshot body (index.bin v3)
-// ---------------------------------------------------------------------------
-
-#[derive(Serialize)]
-pub(super) struct SnapshotRef<'a> {
-    arena:     &'a str,
-    entries:   &'a [Entry],
-    exts:      &'a [String],
-    extra:     Vec<(u32, &'a Extra)>,
-    meta:      Vec<(&'a String, &'a String)>,
-    crawl_gen: i64,
-}
-
-#[derive(Deserialize)]
-pub(super) struct Snapshot {
-    arena:     String,
-    entries:   Vec<Entry>,
-    exts:      Vec<String>,
-    extra:     Vec<(u32, Extra)>,
-    meta:      Vec<(String, String)>,
-    crawl_gen: i64,
 }
 
 // ---------------------------------------------------------------------------

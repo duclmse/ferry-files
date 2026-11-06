@@ -37,9 +37,14 @@
   entry. After a crawl, idle RSS is 741 MB because the allocator keeps the
   crawl's freed memory; that still meets the phase-3 target of roughly a third
   of the old 2.1 GB.
-- Follow-up: loading the snapshot peaks at 1.3 GB RSS because the whole file is
-  read and then decoded into new buffers. Reading straight into the arena (or
-  `mmap`) would remove that peak.
+- Follow-up, done: loading the snapshot read the whole file and then decoded
+  it into new buffers, and saving encoded it into one buffer, copied that into
+  a second, and compacted (copied) the arena first. `memory_store/snapshot.rs`
+  now streams both directions field by field in the same v3 format, reading
+  the arena straight into its final buffer and writing the arena without
+  garbage instead of compacting it. Peak RSS for a 2.59M-entry, 420 MB
+  snapshot: warm start and stop 1,578-1,602 MB → 598-599 MB; cold crawl
+  plus first save 1,541 MB → 806 MB.
 
 ## Phase 1 - Snapshot keeps metadata (Everything §2.7)
 
