@@ -198,6 +198,7 @@ pub async fn run_with_shutdown(
 
     // ── 13. Filesystem watcher → IndexEvent channel ────────────────────────
     let (ev_tx, mut ev_rx) = mpsc::channel::<IndexEvent>(1024);
+    let catchup_tx = ev_tx.clone();
     {
         let shutdown_c = shutdown.clone();
         let cfg_c      = Arc::clone(&shared_cfg);
@@ -314,24 +315,89 @@ pub async fn run_with_shutdown(
         }
     }
 
-    // ── 17. Initial full crawl (only if the index has never been built) ───────
-    // If last_crawl_time is present the index is warm; the watcher covers
-    // changes that happened during downtime via the startup backlog.
-    let needs_crawl = sqlite.get_meta("last_crawl_time")
-        .map(|v| v.is_none())
-        .unwrap_or(true); // on error assume uncrawled
-    if needs_crawl {
-        spawn_crawl(
-            &crawl_active,
-            Arc::clone(&sqlite),
-            Arc::clone(&tantivy),
-            Arc::clone(&metrics),
-            Arc::clone(&archive_registry),
-            Arc::clone(&shared_cfg),
-            shutdown.clone(),
-        );
-    } else {
-        tracing::info!("index already built, skipping initial crawl (use Reindex API to force)");
+    // ── 17. Initial crawl, or catch up on changes made while stopped ───────
+    // The live watcher only sees changes from now on; anything that happened
+    // while the daemon was down comes from the OS change log (journal.rs).
+    {
+        let needs_crawl = sqlite.get_meta("last_crawl_time")
+            .map(|v| v.is_none())
+            .unwrap_or(true); // on error assume uncrawled
+        let crawl_active = Arc::clone(&crawl_active);
+        let sqlite       = Arc::clone(&sqlite);
+        let tantivy      = Arc::clone(&tantivy);
+        let metrics      = Arc::clone(&metrics);
+        let registry     = Arc::clone(&archive_registry);
+        let cfg          = Arc::clone(&shared_cfg);
+        let shutdown     = shutdown.clone();
+        tokio::spawn(async move {
+            let crawl = |reason: &str| {
+                tracing::info!("full crawl: {reason}");
+                spawn_crawl(
+                    &crawl_active,
+                    Arc::clone(&sqlite),
+                    Arc::clone(&tantivy),
+                    Arc::clone(&metrics),
+                    Arc::clone(&registry),
+                    Arc::clone(&cfg),
+                    shutdown.clone(),
+                );
+            };
+            let (roots, formats) = {
+                let c = cfg.read().await;
+                (c.watch_paths.clone(), c.archive_index.formats.clone())
+            };
+            let now = {
+                let roots = roots.clone();
+                tokio::task::spawn_blocking(move || watcher::journal::current_position(&roots))
+                    .await
+                    .ok()
+                    .flatten()
+            };
+            let stored = sqlite.get_meta(watcher::journal::META_KEY)
+                .ok()
+                .flatten()
+                .and_then(|s| watcher::journal::Position::from_json(&s));
+
+            match (needs_crawl, &now, stored) {
+                (true, _, _) => crawl("index has never been built"),
+                (false, None, _) => tracing::info!(
+                    "index already built; no change log here, so changes made while \
+                     stopped are not picked up (use the Reindex API)"
+                ),
+                (false, Some(_), None) => crawl("no change-log position stored yet"),
+                (false, Some(now), Some(stored)) => {
+                    let store = Arc::clone(&sqlite);
+                    let (now, start) = (now.clone(), std::time::Instant::now());
+                    let plan = tokio::task::spawn_blocking(move || {
+                        watcher::journal::catch_up(&stored, &now, &formats, |dir| {
+                            store.paths_under(dir).unwrap_or_default()
+                        })
+                    }).await;
+                    match plan {
+                        Ok(watcher::journal::CatchUp::UpToDate) => {
+                            tracing::info!("catch-up: no changes while stopped");
+                        }
+                        Ok(watcher::journal::CatchUp::Events(events)) => {
+                            tracing::info!(
+                                "catch-up: replaying {} changes made while stopped ({:.1}s)",
+                                events.len(),
+                                start.elapsed().as_secs_f64(),
+                            );
+                            for ev in events {
+                                if catchup_tx.send(ev).await.is_err() {
+                                    return;
+                                }
+                            }
+                        }
+                        Ok(watcher::journal::CatchUp::FullCrawl(reason)) => crawl(&reason),
+                        Err(e) => crawl(&format!("catch-up failed: {e}")),
+                    }
+                }
+            }
+            if let Some(now) = now {
+                keep_journal_position(sqlite, roots, now, crawl_active, shutdown).await;
+            }
+        });
     }
 
     // ── 18. Main event loop ────────────────────────────────────────────────
@@ -419,6 +485,51 @@ pub async fn run_with_shutdown(
 
     tracing::info!("filesearch daemon stopped");
     Ok(())
+}
+
+// ---------------------------------------------------------------------------
+// Change-log position
+// ---------------------------------------------------------------------------
+
+/// How often the stored change-log position advances. It lags by one to two
+/// intervals (more if the daemon ran for less than that), so a restart may
+/// replay changes that were already applied; replay is idempotent.
+const JOURNAL_POSITION_INTERVAL: Duration = Duration::from_secs(60);
+
+/// Periodically stores the position captured one interval earlier. By then
+/// every event before it has passed the debouncer and been applied, so the
+/// stored position is safe even after a crash. Positions are discarded while
+/// a crawl runs: until it finishes the index may not reflect the changes the
+/// crawl was started to pick up, and the old position (or none) must stay so
+/// the next start crawls again.
+async fn keep_journal_position(
+    store:        Arc<FileStore>,
+    roots:        Vec<PathBuf>,
+    first:        watcher::journal::Position,
+    crawl_active: Arc<AtomicBool>,
+    shutdown:     CancellationToken,
+) {
+    let mut prev = (!crawl_active.load(Ordering::Acquire)).then_some(first);
+    loop {
+        tokio::select! {
+            _ = shutdown.cancelled() => return,
+            _ = tokio::time::sleep(JOURNAL_POSITION_INTERVAL) => {}
+        }
+        if crawl_active.load(Ordering::Acquire) {
+            prev = None;
+            continue;
+        }
+        if let Some(p) = prev.take() {
+            if let Err(e) = store.set_meta(watcher::journal::META_KEY, &p.to_json()) {
+                tracing::warn!("store change-log position: {e}");
+            }
+        }
+        let roots = roots.clone();
+        prev = tokio::task::spawn_blocking(move || watcher::journal::current_position(&roots))
+            .await
+            .ok()
+            .flatten();
+    }
 }
 
 // ---------------------------------------------------------------------------

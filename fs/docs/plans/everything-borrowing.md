@@ -1,6 +1,6 @@
 # Plan: Borrowing Everything's Techniques
 
-> **Status:** phases 1-4 implemented, phase 6 partly (crawl writer); phases 5, 7 and platform enumeration open (Nov 2026). Background:
+> **Status:** phases 1-4 implemented; phase 5 on macOS; phase 6 crawl-writer fix; open: phase 5 on Windows/Linux, platform enumeration, phase 7 (Nov 2026). Background:
 > [research/everything-internals.md](../research/everything-internals.md).
 > Measurements: RSS and CPU time sampled every 250 ms plus `/usr/bin/time -l`
 > peaks, on `~/projects` (2.38M files, 191k dirs), macOS, 8 cores, with 8
@@ -15,7 +15,7 @@
 | 2   | `fuzzy:` copies up to 50,000 full `FileRecord`s per query before scoring                             | RSS 169 → 758 MB under 8 concurrent fuzzy clients, kept after load | 2     |
 | 3   | Memory store stores each path 3x plus a watch-root copy, `name`/`extension` as separate strings      | ~850 B/entry, 2.1 GB idle for 2.56M entries                        | 3     |
 | 4   | SQLite crawl maintains 5 secondary indexes row by row                                                | 110-136 s initial crawl                                            | 4     |
-| 5   | Changes made while the daemon is stopped are missed (SQLite) or cost a full recrawl (memory)         | correctness + restart cost                                         | 5     |
+| 5   | Changes made while the daemon is stopped are missed (both stores)                                    | correctness + restart cost                                         | 5     |
 | 6   | Crawl does one `stat` per entry                                                                      | crawl CPU                                                          | 6     |
 
 ## Results (phases 1-3)
@@ -150,16 +150,44 @@ Tried and rejected:
 Benchmark hygiene: a run on a 98 %-full disk produced 2-3x slower, very
 noisy numbers. Delete each run's data directory before the next.
 
-## Phase 5 - Catch up from the OS change log (Everything §2.2) - open
+## Phase 5 - Catch up from the OS change log (Everything §2.2) - macOS done
 
-Persist a journal position with the index and replay from it on start instead of
-rescanning.
+Before: on a warm start the daemon skipped the crawl, and a comment claimed
+the watcher would deliver a "startup backlog". It does not - `notify`'s
+FSEvents stream starts at "now" - so changes made while the daemon was
+stopped were never indexed, in either store, until a manual Reindex.
 
-| Platform | Source                                                                                       | Position stored                                                        | Fallback                                                             |
-| -------- | -------------------------------------------------------------------------------------------- | ---------------------------------------------------------------------- | -------------------------------------------------------------------- |
-| Windows  | NTFS USN journal (`FSCTL_READ_USN_JOURNAL`)                                                  | journal ID + next USN per volume (the existing `usn_checkpoint` field) | full crawl if journal ID changed or USN truncated                    |
-| macOS    | FSEvents with `sinceWhen` = last event ID (needs `fsevent-sys`; `notify` does not expose it) | last event ID + volume UUID                                            | full crawl on `kFSEventStreamEventFlagMustScanSubDirs` / history gap |
-| Linux    | none persistent                                                                              | per-directory `mtime`                                                  | rescan that skips unchanged directories' entries                     |
+Now (`watcher/journal.rs`, wired in `daemon.rs` step 17):
+
+- A `journal_position` meta entry stores the FSEvents event id plus, per
+  watch root, the FSEvents UUID of its volume. It is stored every 60 s,
+  lagging one interval behind so every earlier event has been through the
+  debouncer; this makes it crash-safe without a shutdown hook. While a crawl
+  runs no position is stored, so an interrupted recovery crawl is redone.
+- On a warm start the history since that id is replayed
+  (`FSEventStreamCreate` with `sinceWhen`, file-level events, until
+  `HistoryDone`). Each changed path is checked on disk and becomes a
+  `Modified`/`Deleted` (or archive) event through the normal event pipeline;
+  a removed directory also deletes its indexed children, and a
+  `MustScanSubDirs` below a root rescans just that subtree.
+- A reconcile crawl runs instead when the roots or a volume UUID changed,
+  events were dropped or ids wrapped, a root itself must be rescanned, more
+  than 200,000 paths changed, or no position is stored yet (first start
+  after upgrading).
+- Replay paths are mapped back from resolved form (`/private/tmp/...`) to
+  the configured root.
+
+Verified end to end on both stores: delete, rename, `rm -rf` of a directory,
+a new nested directory and a content change made while stopped all appear
+after restart (replay of 11-14 changes: 0.3 s). Unit tests cover the
+planner on every platform and a real FSEvents replay on macOS.
+
+Still open:
+
+| Platform | Source | Fallback today |
+| -------- | ------ | -------------- |
+| Windows | NTFS USN journal (`FSCTL_READ_USN_JOURNAL`): journal ID + next USN per volume | changes while stopped missed; no Windows toolchain here to build or test |
+| Linux | none persistent; rescan that skips directories whose `mtime` is unchanged (as `updatedb` does) - misses in-place content edits | changes while stopped missed |
 
 ## Phase 6 - Faster enumeration (Everything §2.1) - macOS measured; writer fixed
 
