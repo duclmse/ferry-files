@@ -226,7 +226,7 @@ Still open: replaying the NTFS USN journal (`FSCTL_READ_USN_JOURNAL`, journal
 ID + next USN per volume) would make the Windows catch-up cost proportional
 to the changes instead of the tree.
 
-## Phase 6 - Faster enumeration (Everything §2.1) - macOS measured; writer fixed
+## Phase 6 - Faster enumeration (Everything §2.1) - writer fixed; platform enumeration deferred
 
 Measured before building platform enumeration. On macOS the bare `ignore`
 parallel walk of the 2.58M-entry tree takes 16 s with `metadata()` and 7.5 s
@@ -256,13 +256,16 @@ Two causes, both fixed:
 
 Peak RSS did not change (481-540 MB across all runs).
 
-Still open, and now lower priority:
+Platform enumeration was not built (Nov 2026):
 
-- macOS `getattrlistbulk` could save at most ~9 s of the 16 s walk, which now
-  overlaps the writer.
-- Windows `FSCTL_ENUM_USN_DATA` over the MFT (service mode) is where
-  enumeration matters most and is untested here.
-- Linux: `statx` with a minimal mask.
+- macOS `getattrlistbulk` could save at most ~9 s of the 16 s walk. The walk
+  now overlaps the writer, and warm starts replay FSEvents instead of walking,
+  so only an initial or reconcile crawl would gain, by less than that.
+- Linux and Windows warm starts do walk (phase 5 timestamp scan, ~16 s for
+  2.6M entries), so faster enumeration would pay there: `statx` with a minimal
+  mask on Linux, `FSCTL_ENUM_USN_DATA` over the MFT on Windows (service mode;
+  USN journal replay would remove the walk altogether). Neither can be
+  measured on this machine, so both stay open until they can be.
 
 ## Phase 7 - Optional extras (Everything §2.4) - done
 
