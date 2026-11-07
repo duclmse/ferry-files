@@ -182,6 +182,6 @@ echo "Content indexed:    $CONTENT_INDEXED"
 echo "Throughput:         ${FILES_PER_SEC} files/sec, ${ENTRIES_PER_SEC} entries/sec"
 if [ "$KEEP_DB" -eq 1 ]; then
     echo "Data dir kept at:   $WORKDIR"
-    echo "  Query it with:    scripts/bench-query.sh $WORKDIR"
+    echo "Query it with:      scripts/bench-query.sh $WORKDIR"
 fi
 echo "=============================================================="

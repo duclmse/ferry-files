@@ -7,7 +7,7 @@ archive processing.
 | ------------ | ------------ | ------------------------------------------------------------------------------------------------------------------ |
 | `filesearch` | `filesearch` | Cross-platform file-search daemon - indexes 1–10M files, exposes REST/gRPC/IPC APIs with < 50ms search latency     |
 | `rar2zip`    | `rar2zip`    | Windows service - watches a folder, converts RAR/7Z/TAR archives to ZIP, and transfers them to remote SFTP servers |
-| `common`     | - | Shared logger, error types, and constants                                                                          |
+| `common`     | -            | Shared logger, error types, and constants                                                                          |
 
 ---
 
@@ -110,7 +110,7 @@ GET  /health
 
 ### gRPC
 
-Proto at `crates/filesearch/proto/filesearch.proto`. Reflection enabled - 
+Proto at `crates/filesearch/proto/filesearch.proto`. Reflection enabled -
 compatible with `grpcurl`.
 
 ---
