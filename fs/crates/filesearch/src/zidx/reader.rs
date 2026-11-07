@@ -10,7 +10,7 @@ use crate::zidx::ZidxError;
 // ---------------------------------------------------------------------------
 
 const HEADER_SIZE: usize = 20;
-const NODE_SIZE:   usize = 48;
+const NODE_SIZE: usize = 48;
 const FORMAT_VERSION: u32 = 2;
 
 // ---------------------------------------------------------------------------
@@ -19,16 +19,16 @@ const FORMAT_VERSION: u32 = 2;
 
 #[derive(Debug, Clone)]
 pub struct NodeData {
-    pub parent:              u32,
-    pub first_child:         u32,
-    pub next_sibling:        u32,
-    pub name_off:            u32,
-    pub name_len:            u16,
+    pub parent: u32,
+    pub first_child: u32,
+    pub next_sibling: u32,
+    pub name_off: u32,
+    pub name_len: u16,
     /// 0 = file, 1 = dir
-    pub kind:                u8,
-    pub compression:         u16,
-    pub compressed_size:     u64,
-    pub uncompressed_size:   u64,
+    pub kind: u8,
+    pub compression: u16,
+    pub compressed_size: u64,
+    pub uncompressed_size: u64,
     pub local_header_offset: u64,
 }
 
@@ -37,7 +37,7 @@ pub struct NodeData {
 // ---------------------------------------------------------------------------
 
 pub struct ChildIter<'a> {
-    index:   &'a ZidxIndex,
+    index: &'a ZidxIndex,
     current: u32,
 }
 
@@ -74,13 +74,13 @@ fn le_bytes<const N: usize>(b: &[u8], off: usize) -> [u8; N] {
 // ---------------------------------------------------------------------------
 
 pub struct ZidxIndex {
-    mmap:           Mmap,
+    mmap: Mmap,
     pub node_count: u32,
-    nodes_offset:   usize, // = HEADER_SIZE (20)
+    nodes_offset: usize,   // = HEADER_SIZE (20)
     strings_offset: usize, // = HEADER_SIZE + node_count * NODE_SIZE (48)
     /// O(1) lookup accelerator: (parent_id, name) → child_id.
     /// Built once in `open`; avoids linear child scans in `lookup`.
-    lookup_index:   HashMap<(u32, Box<str>), u32>,
+    lookup_index: HashMap<(u32, Box<str>), u32>,
 }
 
 impl std::fmt::Debug for ZidxIndex {
@@ -111,7 +111,7 @@ impl ZidxIndex {
                 "unsupported .zidx version {version} (expected {FORMAT_VERSION}); rebuild the index"
             )));
         }
-        let node_count   = u32::from_le_bytes(le_bytes(&mmap, 8));
+        let node_count = u32::from_le_bytes(le_bytes(&mmap, 8));
         let string_bytes = u32::from_le_bytes(le_bytes(&mmap, 12));
 
         let expected_len = HEADER_SIZE
@@ -124,7 +124,7 @@ impl ZidxIndex {
             )));
         }
 
-        let nodes_offset   = HEADER_SIZE;
+        let nodes_offset = HEADER_SIZE;
         let strings_offset = HEADER_SIZE + node_count as usize * NODE_SIZE;
 
         let mut this = Self {
@@ -172,17 +172,17 @@ impl ZidxIndex {
         // 32..40  uncompressed_size u64  ← was u32 in v1
         // 40..48  local_header_offset u64
         Ok(NodeData {
-            parent:              u32::from_le_bytes(le_bytes(b, 0)),
-            first_child:         u32::from_le_bytes(le_bytes(b, 4)),
-            next_sibling:        u32::from_le_bytes(le_bytes(b, 8)),
-            name_off:            u32::from_le_bytes(le_bytes(b, 12)),
-            name_len:            u16::from_le_bytes(le_bytes(b, 16)),
-            kind:                b[18],
+            parent: u32::from_le_bytes(le_bytes(b, 0)),
+            first_child: u32::from_le_bytes(le_bytes(b, 4)),
+            next_sibling: u32::from_le_bytes(le_bytes(b, 8)),
+            name_off: u32::from_le_bytes(le_bytes(b, 12)),
+            name_len: u16::from_le_bytes(le_bytes(b, 16)),
+            kind: b[18],
             // b[19] = _pad
-            compression:         u16::from_le_bytes(le_bytes(b, 20)),
+            compression: u16::from_le_bytes(le_bytes(b, 20)),
             // b[22..24] = _pad2
-            compressed_size:     u64::from_le_bytes(le_bytes(b, 24)),
-            uncompressed_size:   u64::from_le_bytes(le_bytes(b, 32)),
+            compressed_size: u64::from_le_bytes(le_bytes(b, 24)),
+            uncompressed_size: u64::from_le_bytes(le_bytes(b, 32)),
             local_header_offset: u64::from_le_bytes(le_bytes(b, 40)),
         })
     }
@@ -190,10 +190,11 @@ impl ZidxIndex {
     /// Borrow the name of a node zero-copy from the string pool.
     pub fn name<'a>(&'a self, node: &NodeData) -> Result<&'a str, ZidxError> {
         let start = self.strings_offset + node.name_off as usize;
-        let end   = start + node.name_len as usize;
+        let end = start + node.name_len as usize;
         if end > self.mmap.len() {
             return Err(ZidxError::Corrupt(format!(
-                "name offset {} out of range", node.name_off
+                "name offset {} out of range",
+                node.name_off
             )));
         }
         std::str::from_utf8(&self.mmap[start..end])
@@ -202,10 +203,14 @@ impl ZidxIndex {
 
     /// Iterate the direct children of `parent_id` via first_child / next_sibling.
     pub fn children(&self, parent_id: u32) -> ChildIter<'_> {
-        let first = self.node(parent_id)
+        let first = self
+            .node(parent_id)
             .map(|n| n.first_child)
             .unwrap_or(u32::MAX);
-        ChildIter { index: self, current: first }
+        ChildIter {
+            index: self,
+            current: first,
+        }
     }
 
     /// Walk from root to find the node for `path`. Returns `Ok(None)` when the
@@ -218,7 +223,7 @@ impl ZidxIndex {
         for part in path.split('/').filter(|s| !s.is_empty()) {
             match self.lookup_index.get(&(current_id, part.into())) {
                 Some(&child_id) => current_id = child_id,
-                None            => return Ok(None),
+                None => return Ok(None),
             }
         }
         Ok(Some(current_id))
@@ -239,8 +244,8 @@ mod tests {
 
     fn make_zip_bytes(entries: &[(&str, &[u8])]) -> Vec<u8> {
         let mut buf = std::io::Cursor::new(Vec::new());
-        let mut zw  = zip::ZipWriter::new(&mut buf);
-        let opts    = zip::write::FileOptions::<()>::default()
+        let mut zw = zip::ZipWriter::new(&mut buf);
+        let opts = zip::write::FileOptions::<()>::default()
             .compression_method(zip::CompressionMethod::Stored);
         for (name, data) in entries {
             zw.start_file(*name, opts).unwrap();
@@ -251,14 +256,18 @@ mod tests {
     }
 
     fn fixture() -> (TempDir, std::path::PathBuf, ZidxIndex) {
-        let dir      = TempDir::new().unwrap();
+        let dir = TempDir::new().unwrap();
         let zip_path = dir.path().join("fix.zip");
         let idx_path = dir.path().join("fix.zidx");
-        std::fs::write(&zip_path, make_zip_bytes(&[
-            ("src/main.rs", b"fn main() {}"),
-            ("src/lib.rs",  b"pub fn foo() {}"),
-            ("README.md",   b"# readme"),
-        ])).unwrap();
+        std::fs::write(
+            &zip_path,
+            make_zip_bytes(&[
+                ("src/main.rs", b"fn main() {}"),
+                ("src/lib.rs", b"pub fn foo() {}"),
+                ("README.md", b"# readme"),
+            ]),
+        )
+        .unwrap();
         ZidxBuilder::build(&zip_path, &idx_path).unwrap();
         let idx = ZidxIndex::open(&idx_path).unwrap();
         (dir, idx_path, idx)
@@ -271,20 +280,30 @@ mod tests {
 
     #[test]
     fn open_wrong_magic_returns_corrupt() {
-        let dir      = TempDir::new().unwrap();
+        let dir = TempDir::new().unwrap();
         let bad_path = dir.path().join("bad.zidx");
-        std::fs::write(&bad_path, b"XXXX\x01\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00").unwrap();
+        std::fs::write(
+            &bad_path,
+            b"XXXX\x01\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00",
+        )
+        .unwrap();
         let err = ZidxIndex::open(&bad_path).unwrap_err();
-        assert!(matches!(err, ZidxError::Corrupt(_)), "expected Corrupt, got {err}");
+        assert!(
+            matches!(err, ZidxError::Corrupt(_)),
+            "expected Corrupt, got {err}"
+        );
     }
 
     #[test]
     fn open_truncated_file_returns_corrupt() {
-        let dir      = TempDir::new().unwrap();
+        let dir = TempDir::new().unwrap();
         let bad_path = dir.path().join("trunc.zidx");
         std::fs::write(&bad_path, b"ZIDX").unwrap(); // only 4 bytes
         let err = ZidxIndex::open(&bad_path).unwrap_err();
-        assert!(matches!(err, ZidxError::Corrupt(_)), "expected Corrupt, got {err}");
+        assert!(
+            matches!(err, ZidxError::Corrupt(_)),
+            "expected Corrupt, got {err}"
+        );
     }
 
     #[test]
@@ -308,12 +327,12 @@ mod tests {
         // Collect all names from the tree.
         let mut names = Vec::new();
         for id in 0..idx.node_count {
-            let n    = idx.node(id).unwrap();
+            let n = idx.node(id).unwrap();
             let name = idx.name(&n).unwrap();
             names.push(name.to_owned());
         }
-        assert!(names.contains(&"/".to_owned()),       "root name '/'");
-        assert!(names.contains(&"src".to_owned()),     "dir name 'src'");
+        assert!(names.contains(&"/".to_owned()), "root name '/'");
+        assert!(names.contains(&"src".to_owned()), "dir name 'src'");
         assert!(names.contains(&"main.rs".to_owned()), "file name 'main.rs'");
     }
 
@@ -321,10 +340,11 @@ mod tests {
     fn children_iteration_matches_file_list() {
         let (_dir, _, idx) = fixture();
         // Root children: README.md and src/
-        let root_children: Vec<String> = idx.children(0)
+        let root_children: Vec<String> = idx
+            .children(0)
             .map(|r| {
-                let id   = r.unwrap();
-                let n    = idx.node(id).unwrap();
+                let id = r.unwrap();
+                let n = idx.node(id).unwrap();
                 idx.name(&n).unwrap().to_owned()
             })
             .collect();

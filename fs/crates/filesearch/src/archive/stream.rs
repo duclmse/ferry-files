@@ -8,7 +8,7 @@ use tokio::sync::mpsc;
 use tokio_stream::wrappers::ReceiverStream;
 
 use super::decoder::create_decoder;
-use super::meta::{EntryMeta, parse_local_header_offset};
+use super::meta::{parse_local_header_offset, EntryMeta};
 use super::source::ByteSource;
 
 /// Streaming entry extractor.
@@ -48,7 +48,7 @@ impl<S: ByteSource + 'static> StreamExtractor for ZipStreamExtractor<S> {
         on_finish: Option<Box<dyn FnOnce() + Send>>,
     ) -> io::Result<Self::Stream> {
         let source = Arc::clone(&self.source);
-        let meta   = meta.clone();
+        let meta = meta.clone();
         // 4 × 64 KB = 256 KB max in-flight between inflate and HTTP send.
         let (tx, rx) = mpsc::channel::<io::Result<Bytes>>(4);
 
@@ -70,20 +70,20 @@ impl<S: ByteSource + 'static> StreamExtractor for ZipStreamExtractor<S> {
 /// any `Err` to the channel so the consumer sees the error.
 async fn pump_inflate<S: ByteSource>(
     source: Arc<S>,
-    meta:   EntryMeta,
-    tx:     &mpsc::Sender<io::Result<Bytes>>,
+    meta: EntryMeta,
+    tx: &mpsc::Sender<io::Result<Bytes>>,
 ) -> io::Result<()> {
     let data_start = parse_local_header_offset(source.as_ref(), meta.local_header_offset).await?;
 
-    let mut remaining          = meta.compressed_size;
-    let mut offset             = data_start;
-    let mut decoder            = create_decoder(meta.compression)?;
+    let mut remaining = meta.compressed_size;
+    let mut offset = data_start;
+    let mut decoder = create_decoder(meta.compression)?;
     let mut decompressed_total = 0u64;
 
     while remaining > 0 {
         let chunk_size = remaining.min(64 * 1024) as usize;
         let compressed = source.read_range(offset, chunk_size).await?;
-        offset    += chunk_size as u64;
+        offset += chunk_size as u64;
         remaining -= chunk_size as u64;
 
         let decoded = decoder.feed(&compressed)?;
@@ -117,16 +117,15 @@ async fn pump_inflate<S: ByteSource>(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use std::io::Write as _;
     use futures::StreamExt;
+    use std::io::Write as _;
     use tempfile::NamedTempFile;
 
     fn make_zip(entries: &[(&str, &[u8], zip::CompressionMethod)]) -> Vec<u8> {
         let mut buf = std::io::Cursor::new(Vec::new());
-        let mut zw  = zip::ZipWriter::new(&mut buf);
+        let mut zw = zip::ZipWriter::new(&mut buf);
         for (name, data, method) in entries {
-            let opts = zip::write::FileOptions::<()>::default()
-                .compression_method(*method);
+            let opts = zip::write::FileOptions::<()>::default().compression_method(*method);
             zw.start_file(*name, opts).unwrap();
             zw.write_all(data).unwrap();
         }
@@ -148,13 +147,13 @@ mod tests {
         let entry = archive.by_index(0).unwrap();
 
         let meta = EntryMeta {
-            compression:         match entry.compression() {
-                zip::CompressionMethod::Stored   => 0,
+            compression: match entry.compression() {
+                zip::CompressionMethod::Stored => 0,
                 zip::CompressionMethod::Deflated => 8,
-                _                                => 0,
+                _ => 0,
             },
-            compressed_size:     entry.compressed_size(),
-            uncompressed_size:   entry.size(),
+            compressed_size: entry.compressed_size(),
+            uncompressed_size: entry.size(),
             local_header_offset: entry.header_start(),
         };
         (f, meta)
@@ -172,39 +171,39 @@ mod tests {
     #[tokio::test]
     async fn stored_entry_roundtrip() {
         let content = b"hello from stored entry";
-        let (f, meta) = zip_to_file_and_meta(&[
-            ("file.txt", content, zip::CompressionMethod::Stored),
-        ]);
-        let source    = Arc::new(super::super::source::LocalFileSource::new(f.path().to_path_buf()).unwrap());
+        let (f, meta) =
+            zip_to_file_and_meta(&[("file.txt", content, zip::CompressionMethod::Stored)]);
+        let source =
+            Arc::new(super::super::source::LocalFileSource::new(f.path().to_path_buf()).unwrap());
         let extractor = ZipStreamExtractor { source };
-        let stream    = extractor.stream(&meta, None).unwrap();
-        let got       = collect_stream(stream).await.unwrap();
+        let stream = extractor.stream(&meta, None).unwrap();
+        let got = collect_stream(stream).await.unwrap();
         assert_eq!(got, content);
     }
 
     #[tokio::test]
     async fn deflated_entry_roundtrip() {
         let content = b"compress me please ".repeat(50);
-        let (f, meta) = zip_to_file_and_meta(&[
-            ("data.bin", &content, zip::CompressionMethod::Deflated),
-        ]);
-        let source    = Arc::new(super::super::source::LocalFileSource::new(f.path().to_path_buf()).unwrap());
+        let (f, meta) =
+            zip_to_file_and_meta(&[("data.bin", &content, zip::CompressionMethod::Deflated)]);
+        let source =
+            Arc::new(super::super::source::LocalFileSource::new(f.path().to_path_buf()).unwrap());
         let extractor = ZipStreamExtractor { source };
-        let stream    = extractor.stream(&meta, None).unwrap();
-        let got       = collect_stream(stream).await.unwrap();
+        let stream = extractor.stream(&meta, None).unwrap();
+        let got = collect_stream(stream).await.unwrap();
         assert_eq!(got, content);
     }
 
     #[tokio::test]
     async fn total_size_matches_uncompressed_size() {
         let content = b"size check ".repeat(100);
-        let (f, meta) = zip_to_file_and_meta(&[
-            ("check.bin", &content, zip::CompressionMethod::Deflated),
-        ]);
-        let source    = Arc::new(super::super::source::LocalFileSource::new(f.path().to_path_buf()).unwrap());
+        let (f, meta) =
+            zip_to_file_and_meta(&[("check.bin", &content, zip::CompressionMethod::Deflated)]);
+        let source =
+            Arc::new(super::super::source::LocalFileSource::new(f.path().to_path_buf()).unwrap());
         let extractor = ZipStreamExtractor { source };
-        let stream    = extractor.stream(&meta, None).unwrap();
-        let got       = collect_stream(stream).await.unwrap();
+        let stream = extractor.stream(&meta, None).unwrap();
+        let got = collect_stream(stream).await.unwrap();
         assert_eq!(got.len() as u64, meta.uncompressed_size);
     }
 
@@ -212,7 +211,7 @@ mod tests {
     async fn wrong_local_header_signature_yields_error() {
         use super::super::source::MmapSource;
 
-        let content   = b"data";
+        let content = b"data";
         let zip_bytes = make_zip(&[("f.txt", content, zip::CompressionMethod::Stored)]);
         let mut corrupt = zip_bytes.clone();
         corrupt[0] = 0xFF;
@@ -226,16 +225,16 @@ mod tests {
         };
 
         let meta = EntryMeta {
-            compression:         0,
-            compressed_size:     content.len() as u64,
-            uncompressed_size:   content.len() as u64,
+            compression: 0,
+            compressed_size: content.len() as u64,
+            uncompressed_size: content.len() as u64,
             local_header_offset: 0,
         };
 
-        let source    = Arc::new(MmapSource::new(Arc::new(mmap)));
+        let source = Arc::new(MmapSource::new(Arc::new(mmap)));
         let extractor = ZipStreamExtractor { source };
-        let stream    = extractor.stream(&meta, None).unwrap();
-        let result    = collect_stream(stream).await;
+        let stream = extractor.stream(&meta, None).unwrap();
+        let result = collect_stream(stream).await;
         assert!(result.is_err(), "expected error for corrupt signature");
     }
 
@@ -244,13 +243,13 @@ mod tests {
         // Verify the extractor only reads ahead by the channel capacity (4 chunks).
         // Use a stored entry large enough to fill >4 chunks at 64 KB each: 5 × 64 KB.
         let content = vec![0xABu8; 5 * 64 * 1024];
-        let (f, meta) = zip_to_file_and_meta(&[
-            ("big.bin", &content, zip::CompressionMethod::Stored),
-        ]);
-        let source    = Arc::new(super::super::source::LocalFileSource::new(f.path().to_path_buf()).unwrap());
+        let (f, meta) =
+            zip_to_file_and_meta(&[("big.bin", &content, zip::CompressionMethod::Stored)]);
+        let source =
+            Arc::new(super::super::source::LocalFileSource::new(f.path().to_path_buf()).unwrap());
         let extractor = ZipStreamExtractor { source };
-        let stream    = extractor.stream(&meta, None).unwrap();
-        let got       = collect_stream(stream).await.unwrap();
+        let stream = extractor.stream(&meta, None).unwrap();
+        let got = collect_stream(stream).await.unwrap();
         assert_eq!(got, content);
     }
 
@@ -259,20 +258,20 @@ mod tests {
         use std::sync::atomic::{AtomicBool, Ordering};
 
         let content = vec![0xCDu8; 5 * 64 * 1024];
-        let (f, meta) = zip_to_file_and_meta(&[
-            ("big.bin", &content, zip::CompressionMethod::Stored),
-        ]);
-        let source    = Arc::new(super::super::source::LocalFileSource::new(f.path().to_path_buf()).unwrap());
+        let (f, meta) =
+            zip_to_file_and_meta(&[("big.bin", &content, zip::CompressionMethod::Stored)]);
+        let source =
+            Arc::new(super::super::source::LocalFileSource::new(f.path().to_path_buf()).unwrap());
         let extractor = ZipStreamExtractor { source };
 
-        let finished        = Arc::new(AtomicBool::new(false));
+        let finished = Arc::new(AtomicBool::new(false));
         let finished_writer = Arc::clone(&finished);
         let on_finish: Option<Box<dyn FnOnce() + Send>> = Some(Box::new(move || {
             finished_writer.store(true, Ordering::SeqCst);
         }));
 
         let stream = extractor.stream(&meta, on_finish).unwrap();
-        let got    = collect_stream(stream).await.unwrap();
+        let got = collect_stream(stream).await.unwrap();
         assert_eq!(got, content);
 
         // The decode task's on_finish call races the channel's last `send`
@@ -283,6 +282,9 @@ mod tests {
             }
             tokio::time::sleep(std::time::Duration::from_millis(1)).await;
         }
-        assert!(finished.load(Ordering::SeqCst), "on_finish must run once the decode task exits");
+        assert!(
+            finished.load(Ordering::SeqCst),
+            "on_finish must run once the decode task exits"
+        );
     }
 }

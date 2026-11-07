@@ -23,9 +23,7 @@ use lexer::tokenize;
 /// Pre-process the query string (macro expansion) then parse into an AST.
 pub fn parse(raw: &str, macros: &MacroConfig) -> Result<Expr> {
     // Expand character escape macros
-    let expanded = raw
-        .replace("quot:", "\"")
-        .replace("apos:", "'");
+    let expanded = raw.replace("quot:", "\"").replace("apos:", "'");
 
     // Expand user-defined macros (single pass, no recursion)
     let expanded = expand_user_macros(&expanded, macros);

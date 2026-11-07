@@ -7,13 +7,13 @@ use crate::queue::Job;
 pub fn render(
     queue_depth: &HashMap<String, i64>,
     recent_jobs: &[Job],
-    metrics:     &Metrics,
+    metrics: &Metrics,
 ) -> String {
-    let pending      = queue_depth.get("pending").copied().unwrap_or(0);
-    let converting   = queue_depth.get("converting").copied().unwrap_or(0);
+    let pending = queue_depth.get("pending").copied().unwrap_or(0);
+    let converting = queue_depth.get("converting").copied().unwrap_or(0);
     let transferring = queue_depth.get("transferring").copied().unwrap_or(0);
-    let done         = queue_depth.get("done").copied().unwrap_or(0);
-    let failed       = queue_depth.get("failed").copied().unwrap_or(0);
+    let done = queue_depth.get("done").copied().unwrap_or(0);
+    let failed = queue_depth.get("failed").copied().unwrap_or(0);
 
     let fp = metrics.files_processed.load(Ordering::Relaxed);
     let bt = metrics.bytes_transferred.load(Ordering::Relaxed);
@@ -101,11 +101,11 @@ pub fn render(
 
 fn status_badge(status: &str) -> (&'static str, &'static str) {
     match status {
-        "done"         => ("#28a745", "#fff"),
-        "failed"       => ("#dc3545", "#fff"),
-        "converting"   => ("#ffc107", "#000"),
+        "done" => ("#28a745", "#fff"),
+        "failed" => ("#dc3545", "#fff"),
+        "converting" => ("#ffc107", "#000"),
         "transferring" => ("#fd7e14", "#fff"),
-        _              => ("#6c757d", "#fff"),
+        _ => ("#6c757d", "#fff"),
     }
 }
 

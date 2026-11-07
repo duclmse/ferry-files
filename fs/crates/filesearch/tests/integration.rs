@@ -64,14 +64,14 @@ fn ipc_path_for(id: u16) -> String {
 
 fn write_test_config(
     watch_dir: &Path,
-    dir:       &Path,
+    dir: &Path,
     rest_port: u16,
     grpc_port: u16,
-    ipc:       &str,
+    ipc: &str,
 ) -> std::path::PathBuf {
     let watch = watch_dir.to_string_lossy().replace('\\', "/");
-    let data  = dir.join("data").to_string_lossy().replace('\\', "/");
-    let logs  = dir.join("logs").to_string_lossy().replace('\\', "/");
+    let data = dir.join("data").to_string_lossy().replace('\\', "/");
+    let logs = dir.join("logs").to_string_lossy().replace('\\', "/");
 
     // IPC path in TOML: wrap in single quotes (literal string) so Windows
     // backslashes are not interpreted as escape sequences.
@@ -112,9 +112,9 @@ txt  = 131072
 
 struct TestDaemon {
     rest_base: String,
-    shutdown:  CancellationToken,
-    _dir:      TempDir,    // keeps temp dir alive for duration of test
-    _permit:   OwnedSemaphorePermit, // released on drop, unblocks next test
+    shutdown: CancellationToken,
+    _dir: TempDir,                 // keeps temp dir alive for duration of test
+    _permit: OwnedSemaphorePermit, // released on drop, unblocks next test
 }
 
 impl TestDaemon {
@@ -122,21 +122,21 @@ impl TestDaemon {
         // Serialize daemon startups: acquire before spawning threads.
         let _permit = test_gate().acquire_owned().await.unwrap();
 
-        let id        = next_id();
+        let id = next_id();
         let rest_port = free_port();
         let grpc_port = free_port();
-        let ipc       = ipc_path_for(id);
+        let ipc = ipc_path_for(id);
 
         let config_path = write_test_config(watch_dir, dir.path(), rest_port, grpc_port, &ipc);
 
-        let shutdown   = CancellationToken::new();
+        let shutdown = CancellationToken::new();
         let shutdown_c = shutdown.clone();
         tokio::spawn(async move {
             let _ = filesearch::daemon::run_with_shutdown(config_path, shutdown_c).await;
         });
 
         let rest_base = format!("http://127.0.0.1:{rest_port}");
-        let client    = reqwest::Client::new();
+        let client = reqwest::Client::new();
 
         // Poll /health until the REST server is up (max 30 s).
         let deadline = std::time::Instant::now() + Duration::from_secs(30);
@@ -146,12 +146,22 @@ impl TestDaemon {
                 std::time::Instant::now() < deadline,
                 "daemon did not start within 30 s"
             );
-            if client.get(format!("{rest_base}/health")).send().await.is_ok() {
+            if client
+                .get(format!("{rest_base}/health"))
+                .send()
+                .await
+                .is_ok()
+            {
                 break;
             }
         }
 
-        Self { rest_base, shutdown, _dir: dir, _permit }
+        Self {
+            rest_base,
+            shutdown,
+            _dir: dir,
+            _permit,
+        }
     }
 
     fn url(&self, path: &str) -> String {
@@ -207,35 +217,35 @@ impl Drop for TestDaemon {
 
 #[derive(Debug, Deserialize)]
 struct StatsResponse {
-    total_files:             u64,
+    total_files: u64,
     #[allow(dead_code)]
-    total_dirs:              u64,
-    content_indexed:         u64,
+    total_dirs: u64,
+    content_indexed: u64,
     archive_entries_indexed: u64,
     #[allow(dead_code)]
-    archives_crawled:        u64,
-    events_processed:        u64,
+    archives_crawled: u64,
+    events_processed: u64,
     #[allow(dead_code)]
-    last_crawl_secs:         u64,
+    last_crawl_secs: u64,
 }
 
 #[derive(Debug, Deserialize)]
 struct SearchResponse {
     result: Vec<SearchHit>,
-    total:  usize,
+    total: usize,
     #[allow(dead_code)]
     took_ms: u64,
     #[allow(dead_code)]
-    mode:    String,
+    mode: String,
 }
 
 #[derive(Debug, Deserialize)]
 struct SearchHit {
-    path:          String,
+    path: String,
     #[allow(dead_code)]
-    name:          String,
+    name: String,
     #[allow(dead_code)]
-    archive_path:  Option<String>,
+    archive_path: Option<String>,
     archive_entry: Option<String>,
 }
 
@@ -247,7 +257,7 @@ struct OpenBody {
 #[derive(Debug, Deserialize)]
 struct OpenResponse {
     #[allow(dead_code)]
-    opened:    bool,
+    opened: bool,
     temp_path: Option<String>,
 }
 
@@ -278,15 +288,23 @@ fn make_zip(entries: &[(&str, &[u8])]) -> Vec<u8> {
 /// Full crawl: 10 files created before daemon starts → all appear in index.
 #[tokio::test]
 async fn test_full_crawl_and_search() {
-    let dir       = TempDir::new().unwrap();
+    let dir = TempDir::new().unwrap();
     let watch_dir = TempDir::new().unwrap();
 
     // Create 6 .rs and 4 .toml files.
     for i in 0..6 {
-        std::fs::write(watch_dir.path().join(format!("main{i}.rs")), b"fn main() {}").unwrap();
+        std::fs::write(
+            watch_dir.path().join(format!("main{i}.rs")),
+            b"fn main() {}",
+        )
+        .unwrap();
     }
     for i in 0..4 {
-        std::fs::write(watch_dir.path().join(format!("config{i}.toml")), b"key = \"val\"").unwrap();
+        std::fs::write(
+            watch_dir.path().join(format!("config{i}.toml")),
+            b"key = \"val\"",
+        )
+        .unwrap();
     }
 
     let daemon = TestDaemon::start(watch_dir.path(), dir).await;
@@ -298,7 +316,12 @@ async fn test_full_crawl_and_search() {
 
     // ── query: *.rs → 6 results ──────────────────────────────────────────
     let resp = daemon.search("*.rs").await;
-    assert_eq!(resp.result.len(), 6, "expected 6 .rs files, got {}", resp.result.len());
+    assert_eq!(
+        resp.result.len(),
+        6,
+        "expected 6 .rs files, got {}",
+        resp.result.len()
+    );
     assert!(resp.result.iter().all(|h| h.path.ends_with(".rs")));
 
     // ── query: *.toml → 4 results ────────────────────────────────────────
@@ -317,7 +340,7 @@ async fn test_full_crawl_and_search() {
 /// Incremental update: new file → appears; deleted → disappears.
 #[tokio::test]
 async fn test_incremental_update() {
-    let dir       = TempDir::new().unwrap();
+    let dir = TempDir::new().unwrap();
     let watch_dir = TempDir::new().unwrap();
 
     // Start with an empty watch dir.
@@ -348,7 +371,11 @@ async fn test_incremental_update() {
         .await;
 
     let resp = daemon.search("new_file.rs").await;
-    assert_eq!(resp.result.len(), 0, "old name must not appear after rename");
+    assert_eq!(
+        resp.result.len(),
+        0,
+        "old name must not appear after rename"
+    );
 
     let resp = daemon.search("renamed_file.rs").await;
     assert_eq!(resp.result.len(), 1, "new name must appear after rename");
@@ -362,13 +389,17 @@ async fn test_incremental_update() {
         .await;
 
     let resp = daemon.search("renamed_file.rs").await;
-    assert_eq!(resp.result.len(), 0, "deleted file must disappear from search");
+    assert_eq!(
+        resp.result.len(),
+        0,
+        "deleted file must disappear from search"
+    );
 }
 
 /// Content search: file containing "TODO: fix this" → returned by content:TODO.
 #[tokio::test]
 async fn test_content_search() {
-    let dir       = TempDir::new().unwrap();
+    let dir = TempDir::new().unwrap();
     let watch_dir = TempDir::new().unwrap();
 
     std::fs::write(
@@ -398,15 +429,15 @@ async fn test_content_search() {
 /// ZIP inner-file indexing: archive entries are searchable.
 #[tokio::test]
 async fn test_zip_inner_file_search() {
-    let dir       = TempDir::new().unwrap();
+    let dir = TempDir::new().unwrap();
     let watch_dir = TempDir::new().unwrap();
 
     // Create a ZIP with 3 .rs files and 1 .png.
     // main.rs contains "TODO" so step 6 (archive content search) can find it.
     let zip_bytes = make_zip(&[
-        ("src/main.rs",  b"// TODO: implement\nfn main() {}"),
-        ("src/lib.rs",   b"pub mod foo;"),
-        ("src/foo.rs",   b"pub fn foo() {}"),
+        ("src/main.rs", b"// TODO: implement\nfn main() {}"),
+        ("src/lib.rs", b"pub mod foo;"),
+        ("src/foo.rs", b"pub fn foo() {}"),
         ("assets/img.png", b"\x89PNG\r\n\x1a\n"),
     ]);
     let zip_path = watch_dir.path().join("project.zip");
@@ -423,7 +454,8 @@ async fn test_zip_inner_file_search() {
     // ── archive: *.rs → 3 inner .rs files ───────────────────────────────
     let resp = daemon.search("archive: *.rs").await;
     assert_eq!(
-        resp.result.len(), 3,
+        resp.result.len(),
+        3,
         "expected 3 inner .rs entries, got {} - hits: {:?}",
         resp.result.len(),
         resp.result.iter().map(|h| &h.path).collect::<Vec<_>>()
@@ -435,7 +467,11 @@ async fn test_zip_inner_file_search() {
 
     // ── noarchive: *.rs → 0 (no real .rs files on disk) ─────────────────
     let resp = daemon.search("noarchive: *.rs").await;
-    assert_eq!(resp.result.len(), 0, "noarchive: *.rs must return 0 results");
+    assert_eq!(
+        resp.result.len(),
+        0,
+        "noarchive: *.rs must return 0 results"
+    );
 
     // ── step 6: archive: content:TODO → main.rs inner entry ──────────────
     daemon
@@ -460,7 +496,9 @@ async fn test_zip_inner_file_search() {
     let client = reqwest::Client::new();
     let open_resp = client
         .post(daemon.url("/open"))
-        .json(&OpenBody { path: inner_hit.path.clone() })
+        .json(&OpenBody {
+            path: inner_hit.path.clone(),
+        })
         .send()
         .await
         .unwrap();
@@ -480,13 +518,16 @@ async fn test_zip_inner_file_search() {
     let events_before = daemon.stats().await.events_processed;
     std::fs::remove_file(&zip_path).unwrap();
     daemon
-        .wait_until(Duration::from_secs(10), |s| s.events_processed > events_before)
+        .wait_until(Duration::from_secs(10), |s| {
+            s.events_processed > events_before
+        })
         .await;
     // Give the indexer a moment to process the removal of inner entries.
     tokio::time::sleep(Duration::from_secs(1)).await;
     let resp = daemon.search("archive: *.rs").await;
     assert_eq!(
-        resp.result.len(), 0,
+        resp.result.len(),
+        0,
         "after ZIP deletion all inner entries must be removed from search"
     );
 }
@@ -494,7 +535,7 @@ async fn test_zip_inner_file_search() {
 /// Query acceptance: all spec §5 query forms parse without error.
 #[tokio::test]
 async fn test_everything_query_acceptance() {
-    let dir       = TempDir::new().unwrap();
+    let dir = TempDir::new().unwrap();
     let watch_dir = TempDir::new().unwrap();
 
     let daemon = TestDaemon::start(watch_dir.path(), dir).await;
@@ -527,13 +568,7 @@ async fn test_everything_query_acceptance() {
 
     for q in queries {
         let url = daemon.url(&format!("/search?q={q}&limit=10"));
-        let status = reqwest::get(&url)
-            .await
-            .unwrap()
-            .status();
-        assert!(
-            status.is_success(),
-            "query {q:?} returned HTTP {status}"
-        );
+        let status = reqwest::get(&url).await.unwrap().status();
+        assert!(status.is_success(), "query {q:?} returned HTTP {status}");
     }
 }

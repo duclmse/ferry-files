@@ -12,16 +12,16 @@ impl AlertLevel {
     fn label(&self) -> &'static str {
         match self {
             AlertLevel::Warning => "WARNING",
-            AlertLevel::Error   => "ERROR",
+            AlertLevel::Error => "ERROR",
         }
     }
 }
 
 #[derive(Debug, Clone)]
 pub struct AlertPayload {
-    pub job_id:  String,
+    pub job_id: String,
     pub message: String,
-    pub level:   AlertLevel,
+    pub level: AlertLevel,
 }
 
 // ---------------------------------------------------------------------------
@@ -29,8 +29,8 @@ pub struct AlertPayload {
 /// Fire webhook and/or email. Errors are logged but never propagated.
 pub async fn notify(
     payload: AlertPayload,
-    config:  &ObservabilityConfig,
-    smtp:    &Option<SmtpConfig>,
+    config: &ObservabilityConfig,
+    smtp: &Option<SmtpConfig>,
 ) {
     if let Some(url) = &config.webhook_url {
         send_webhook(url, &payload).await;
@@ -45,7 +45,7 @@ pub async fn notify(
 // ---------------------------------------------------------------------------
 
 async fn send_webhook(url: &str, payload: &AlertPayload) {
-    let url  = url.to_string();
+    let url = url.to_string();
     let body = format!(
         r#"{{"text":"[rar2zip] {}: {}","job_id":"{}"}}"#,
         payload.level.label(),
@@ -63,9 +63,9 @@ async fn send_webhook(url: &str, payload: &AlertPayload) {
     .await;
 
     match result {
-        Ok(Ok(_))  => {}
+        Ok(Ok(_)) => {}
         Ok(Err(e)) => tracing::warn!("webhook delivery failed: {e}"),
-        Err(e)     => tracing::warn!("webhook task panicked: {e}"),
+        Err(e) => tracing::warn!("webhook task panicked: {e}"),
     }
 }
 
@@ -105,7 +105,7 @@ async fn send_email(to: &str, cfg: &SmtpConfig, payload: &AlertPayload) {
         .header(ContentType::TEXT_PLAIN)
         .body(payload.message.clone())
     {
-        Ok(m)  => m,
+        Ok(m) => m,
         Err(e) => {
             tracing::warn!("alert email: message build failed: {e}");
             return;
@@ -114,7 +114,7 @@ async fn send_email(to: &str, cfg: &SmtpConfig, payload: &AlertPayload) {
 
     let creds = Credentials::new(cfg.user.clone(), cfg.password.clone());
     let mailer = match AsyncSmtpTransport::<Tokio1Executor>::relay(&cfg.host) {
-        Ok(b)  => b.port(cfg.port).credentials(creds).build(),
+        Ok(b) => b.port(cfg.port).credentials(creds).build(),
         Err(e) => {
             tracing::warn!("alert email: SMTP transport build failed: {e}");
             return;
@@ -142,14 +142,14 @@ mod tests {
     #[tokio::test]
     async fn notify_with_no_webhook_or_email_does_not_panic() {
         let cfg = ObservabilityConfig {
-            webhook_url:  None,
-            alert_email:  None,
+            webhook_url: None,
+            alert_email: None,
             ..Default::default()
         };
         let payload = AlertPayload {
-            job_id:  "test-job".into(),
+            job_id: "test-job".into(),
             message: "test message".into(),
-            level:   AlertLevel::Warning,
+            level: AlertLevel::Warning,
         };
         notify(payload, &cfg, &None).await; // must complete without panic
     }

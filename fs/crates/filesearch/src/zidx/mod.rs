@@ -40,7 +40,7 @@ pub enum ZidxError {
 /// Uses blake3(zip_path_as_str) as the filename stem so paths stay flat and
 /// never collide regardless of the ZIP's directory depth.
 pub fn zidx_path_for(zidx_dir: &Path, zip_path: &Path) -> PathBuf {
-    let key  = zip_path.to_string_lossy();
+    let key = zip_path.to_string_lossy();
     let hash = blake3::hash(key.as_bytes());
     zidx_dir.join(format!("{}.zidx", hash.to_hex()))
 }

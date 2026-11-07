@@ -124,11 +124,11 @@ pub fn current_position(roots: &[PathBuf]) -> Option<Position> {
 /// is the crawler's exclusion test (`path`, `is_hidden`). Blocking; run it on
 /// a blocking thread.
 pub fn catch_up(
-    stored:  &Position,
-    now:     &Position,
+    stored: &Position,
+    now: &Position,
     formats: &[String],
-    skip:    &(dyn Fn(&Path, bool) -> bool + Sync),
-    index:   &dyn IndexLookup,
+    skip: &(dyn Fn(&Path, bool) -> bool + Sync),
+    index: &dyn IndexLookup,
 ) -> CatchUp {
     if stored.roots != now.roots {
         return CatchUp::FullCrawl("watch roots or volume history changed".into());
@@ -142,7 +142,9 @@ pub fn catch_up(
         if roots.iter().all(|r| r.symlink_metadata().is_ok()) {
             match usn::replay(&roots, &stored.usn, &now.usn) {
                 Ok(changed) => return plan(changed, &roots, formats, |d| index.paths_under(d)),
-                Err(reason) => tracing::info!("USN journal replay not possible ({reason}); scanning timestamps"),
+                Err(reason) => tracing::info!(
+                    "USN journal replay not possible ({reason}); scanning timestamps"
+                ),
             }
         }
         // Seconds, not a log offset: a restart within the same second must
@@ -168,9 +170,9 @@ pub fn catch_up(
 /// order of the original events does not matter.
 #[cfg_attr(not(any(target_os = "macos", windows)), allow(dead_code))]
 fn plan(
-    changed:     HashMap<PathBuf, u32>,
-    roots:       &[PathBuf],
-    formats:     &[String],
+    changed: HashMap<PathBuf, u32>,
+    roots: &[PathBuf],
+    formats: &[String],
     paths_under: impl Fn(&str) -> Vec<String>,
 ) -> CatchUp {
     if changed.is_empty() {
@@ -183,7 +185,9 @@ fn plan(
 
     let mut events = Vec::new();
     for (path, flags) in changed {
-        let Some(path_str) = path.to_str() else { continue };
+        let Some(path_str) = path.to_str() else {
+            continue;
+        };
         // Component-wise, so it also holds for Windows separators.
         if !roots.iter().any(|r| path.starts_with(r)) {
             continue;
@@ -219,12 +223,15 @@ fn plan(
 /// are gone are deleted.
 #[cfg_attr(not(any(target_os = "macos", windows)), allow(dead_code))]
 fn rescan(
-    dir:         &Path,
-    formats:     &[String],
+    dir: &Path,
+    formats: &[String],
     paths_under: &impl Fn(&str) -> Vec<String>,
-    events:      &mut Vec<IndexEvent>,
+    events: &mut Vec<IndexEvent>,
 ) {
-    let walker = ignore::WalkBuilder::new(dir).hidden(false).git_ignore(false).build();
+    let walker = ignore::WalkBuilder::new(dir)
+        .hidden(false)
+        .git_ignore(false)
+        .build();
     for entry in walker.flatten() {
         events.push(changed_event(entry.into_path(), formats));
     }
@@ -269,8 +276,8 @@ mod fsevents {
     use std::path::{Path, PathBuf};
     use std::time::{Duration, Instant};
 
-    use fsevent_sys as fse;
     use fse::core_foundation as cf;
+    use fsevent_sys as fse;
 
     use super::Position;
 
@@ -301,7 +308,11 @@ mod fsevents {
             let dev = std::fs::metadata(root).ok()?.dev();
             out.push((root.to_str()?.to_owned(), volume_uuid(dev as i32)?));
         }
-        Some(Position { event_id, roots: out, usn: Vec::new() })
+        Some(Position {
+            event_id,
+            roots: out,
+            usn: Vec::new(),
+        })
     }
 
     fn volume_uuid(dev: i32) -> Option<String> {
@@ -318,7 +329,12 @@ mod fsevents {
                 return None;
             }
             let mut buf = [0 as c_char; 64];
-            let ok = cf::CFStringGetCString(s, buf.as_mut_ptr(), buf.len() as cf::CFIndex, cf::kCFStringEncodingUTF8);
+            let ok = cf::CFStringGetCString(
+                s,
+                buf.as_mut_ptr(),
+                buf.len() as cf::CFIndex,
+                cf::kCFStringEncodingUTF8,
+            );
             cf::CFRelease(s);
             ok.then(|| CStr::from_ptr(buf.as_ptr()).to_string_lossy().into_owned())
         }
@@ -329,16 +345,24 @@ mod fsevents {
         /// `(resolved prefix, configured root)` maps them back to the paths
         /// the index stores.
         prefixes: Vec<(PathBuf, PathBuf)>,
-        changed:  HashMap<PathBuf, u32>,
-        done:     bool,
+        changed: HashMap<PathBuf, u32>,
+        done: bool,
     }
 
     impl Collector {
         fn add(&mut self, path: &Path, flags: u32) {
-            let path = self.prefixes.iter()
-                .find_map(|(real, root)| path.strip_prefix(real).ok().map(|rest| {
-                    if rest.as_os_str().is_empty() { root.clone() } else { root.join(rest) }
-                }))
+            let path = self
+                .prefixes
+                .iter()
+                .find_map(|(real, root)| {
+                    path.strip_prefix(real).ok().map(|rest| {
+                        if rest.as_os_str().is_empty() {
+                            root.clone()
+                        } else {
+                            root.join(rest)
+                        }
+                    })
+                })
                 .unwrap_or_else(|| path.to_path_buf());
             *self.changed.entry(path).or_insert(0) |= flags;
         }
@@ -346,11 +370,11 @@ mod fsevents {
 
     extern "C" fn callback(
         _stream: fse::FSEventStreamRef,
-        info:    *mut c_void,
-        count:   usize,
-        paths:   *mut c_void,
-        flags:   *const fse::FSEventStreamEventFlags,
-        _ids:    *const fse::FSEventStreamEventId,
+        info: *mut c_void,
+        count: usize,
+        paths: *mut c_void,
+        flags: *const fse::FSEventStreamEventFlags,
+        _ids: *const fse::FSEventStreamEventId,
     ) {
         // SAFETY: `info` is the `Collector` passed in the stream context and
         // outlives the stream; without kFSEventStreamCreateFlagUseCFTypes
@@ -375,7 +399,8 @@ mod fsevents {
     /// event flags.
     pub(super) fn replay(roots: &[PathBuf], since: u64) -> Result<HashMap<PathBuf, u32>, String> {
         let mut col = Collector {
-            prefixes: roots.iter()
+            prefixes: roots
+                .iter()
                 .filter_map(|r| Some((r.canonicalize().ok()?, r.clone())))
                 .collect(),
             changed: HashMap::new(),
@@ -396,10 +421,15 @@ mod fsevents {
         // the path array and its strings are released after stream creation
         // (the stream keeps its own copy).
         unsafe {
-            let array = cf::CFArrayCreateMutable(cf::kCFAllocatorDefault, 0, &cf::kCFTypeArrayCallBacks);
+            let array =
+                cf::CFArrayCreateMutable(cf::kCFAllocatorDefault, 0, &cf::kCFTypeArrayCallBacks);
             for root in roots {
                 let c = CString::new(root.as_os_str().as_bytes()).map_err(|e| e.to_string())?;
-                let s = cf::CFStringCreateWithCString(cf::kCFAllocatorDefault, c.as_ptr(), cf::kCFStringEncodingUTF8);
+                let s = cf::CFStringCreateWithCString(
+                    cf::kCFAllocatorDefault,
+                    c.as_ptr(),
+                    cf::kCFStringEncodingUTF8,
+                );
                 cf::CFArrayAppendValue(array, s);
                 cf::CFRelease(s);
             }
@@ -416,7 +446,11 @@ mod fsevents {
             if stream.is_null() {
                 return Err("FSEventStreamCreate failed".into());
             }
-            fse::FSEventStreamScheduleWithRunLoop(stream, cf::CFRunLoopGetCurrent(), cf::kCFRunLoopDefaultMode);
+            fse::FSEventStreamScheduleWithRunLoop(
+                stream,
+                cf::CFRunLoopGetCurrent(),
+                cf::kCFRunLoopDefaultMode,
+            );
             if fse::FSEventStreamStart(stream) == 0 {
                 fse::FSEventStreamInvalidate(stream);
                 fse::FSEventStreamRelease(stream);
@@ -432,7 +466,10 @@ mod fsevents {
         if col.done {
             Ok(col.changed)
         } else {
-            Err(format!("FSEvents history replay timed out after {}s", REPLAY_TIMEOUT.as_secs()))
+            Err(format!(
+                "FSEvents history replay timed out after {}s",
+                REPLAY_TIMEOUT.as_secs()
+            ))
         }
     }
 }
@@ -456,7 +493,9 @@ mod tests {
     }
 
     fn kinds(c: &CatchUp) -> Vec<String> {
-        let CatchUp::Events(ev) = c else { return vec![format!("{c:?}")] };
+        let CatchUp::Events(ev) = c else {
+            return vec![format!("{c:?}")];
+        };
         let mut v: Vec<String> = ev.iter().map(|e| format!("{e:?}")).collect();
         v.sort();
         v
@@ -474,12 +513,21 @@ mod tests {
             (root.join("gone.txt"), 0x200),
             (PathBuf::from("/elsewhere/x"), 0x100),
         ]);
-        let out = plan(changed, std::slice::from_ref(&root), &["zip".into()], |_| vec![]);
+        let out = plan(
+            changed,
+            std::slice::from_ref(&root),
+            &["zip".into()],
+            |_| vec![],
+        );
         let k = kinds(&out);
         assert_eq!(k.len(), 3, "{k:?}");
         assert!(k.iter().any(|e| e.starts_with("ArchiveModified")));
-        assert!(k.iter().any(|e| e.starts_with("Modified") && e.contains("kept.txt")));
-        assert!(k.iter().any(|e| e.starts_with("Deleted") && e.contains("gone.txt")));
+        assert!(k
+            .iter()
+            .any(|e| e.starts_with("Modified") && e.contains("kept.txt")));
+        assert!(k
+            .iter()
+            .any(|e| e.starts_with("Deleted") && e.contains("gone.txt")));
     }
 
     #[test]
@@ -489,18 +537,37 @@ mod tests {
         let sub = root.join("sub");
         let sub_s = sub.to_str().unwrap().to_owned();
         let children = vec![format!("{sub_s}/a"), format!("{sub_s}/b/c")];
-        let out = plan(HashMap::from([(sub.clone(), 0x200 | ITEM_IS_DIR)]), &[root], &[], |d| {
-            if d == sub_s { children.clone() } else { vec![] }
-        });
+        let out = plan(
+            HashMap::from([(sub.clone(), 0x200 | ITEM_IS_DIR)]),
+            &[root],
+            &[],
+            |d| {
+                if d == sub_s {
+                    children.clone()
+                } else {
+                    vec![]
+                }
+            },
+        );
         assert_eq!(kinds(&out).len(), 3);
     }
 
     #[test]
     fn dropped_events_or_root_rescan_force_a_crawl() {
         let root = PathBuf::from("/w");
-        let dropped = plan(HashMap::from([(root.join("x"), KERNEL_DROPPED)]), std::slice::from_ref(&root), &[], |_| vec![]);
+        let dropped = plan(
+            HashMap::from([(root.join("x"), KERNEL_DROPPED)]),
+            std::slice::from_ref(&root),
+            &[],
+            |_| vec![],
+        );
         assert!(matches!(dropped, CatchUp::FullCrawl(_)));
-        let rescan = plan(HashMap::from([(root.clone(), MUST_SCAN_SUBDIRS)]), &[root], &[], |_| vec![]);
+        let rescan = plan(
+            HashMap::from([(root.clone(), MUST_SCAN_SUBDIRS)]),
+            &[root],
+            &[],
+            |_| vec![],
+        );
         assert!(matches!(rescan, CatchUp::FullCrawl(_)));
     }
 
@@ -512,10 +579,23 @@ mod tests {
         std::fs::create_dir(&sub).unwrap();
         std::fs::write(sub.join("new.txt"), b"x").unwrap();
         let stale = format!("{}/old.txt", sub.display());
-        let out = plan(HashMap::from([(sub.clone(), MUST_SCAN_SUBDIRS)]), &[root], &[], |_| vec![stale.clone()]);
+        let out = plan(
+            HashMap::from([(sub.clone(), MUST_SCAN_SUBDIRS)]),
+            &[root],
+            &[],
+            |_| vec![stale.clone()],
+        );
         let k = kinds(&out);
-        assert!(k.iter().any(|e| e.starts_with("Modified") && e.contains("new.txt")), "{k:?}");
-        assert!(k.iter().any(|e| e.starts_with("Deleted") && e.contains("old.txt")), "{k:?}");
+        assert!(
+            k.iter()
+                .any(|e| e.starts_with("Modified") && e.contains("new.txt")),
+            "{k:?}"
+        );
+        assert!(
+            k.iter()
+                .any(|e| e.starts_with("Deleted") && e.contains("old.txt")),
+            "{k:?}"
+        );
     }
 
     #[test]
@@ -523,23 +603,51 @@ mod tests {
         let dir = tempfile::TempDir::new().unwrap();
         let root = dir.path().to_path_buf();
         let gone = root.join("gone");
-        let out = plan(HashMap::from([(gone, MUST_SCAN_SUBDIRS | ITEM_IS_DIR)]), &[root], &[], |_| vec![]);
+        let out = plan(
+            HashMap::from([(gone, MUST_SCAN_SUBDIRS | ITEM_IS_DIR)]),
+            &[root],
+            &[],
+            |_| vec![],
+        );
         let k = kinds(&out);
         assert!(k.len() == 1 && k[0].starts_with("Deleted"), "{k:?}");
     }
 
     #[test]
     fn changed_roots_force_a_crawl() {
-        let a = Position { event_id: 1, roots: vec![("/w".into(), "U1".into())], usn: vec![] };
-        let b = Position { event_id: 9, roots: vec![("/w".into(), "U2".into())], usn: vec![] };
-        assert!(matches!(catch_up(&a, &b, &[], &|_, _| false, &NoIndex), CatchUp::FullCrawl(_)));
+        let a = Position {
+            event_id: 1,
+            roots: vec![("/w".into(), "U1".into())],
+            usn: vec![],
+        };
+        let b = Position {
+            event_id: 9,
+            roots: vec![("/w".into(), "U2".into())],
+            usn: vec![],
+        };
+        assert!(matches!(
+            catch_up(&a, &b, &[], &|_, _| false, &NoIndex),
+            CatchUp::FullCrawl(_)
+        ));
         #[cfg(target_os = "macos")]
-        assert!(matches!(catch_up(&b, &b, &[], &|_, _| false, &NoIndex), CatchUp::UpToDate));
+        assert!(matches!(
+            catch_up(&b, &b, &[], &|_, _| false, &NoIndex),
+            CatchUp::UpToDate
+        ));
         assert_eq!(Position::from_json(&a.to_json()), Some(a));
         // Positions stored before the USN field existed still load.
         let old = r#"{"event_id":5,"roots":[["/w","U1"]]}"#;
         assert_eq!(Position::from_json(old).map(|p| p.usn), Some(vec![]));
-        let win = Position { usn: vec![Some(usn::UsnPos { journal: 7, next: 42 }), None], ..b };
+        let win = Position {
+            usn: vec![
+                Some(usn::UsnPos {
+                    journal: 7,
+                    next: 42,
+                }),
+                None,
+            ],
+            ..b
+        };
         assert_eq!(Position::from_json(&win.to_json()), Some(win));
     }
 
@@ -559,7 +667,15 @@ mod tests {
         let now = current_position(std::slice::from_ref(&root)).expect("position");
         let out = catch_up(&start, &now, &[], &|_, _| false, &NoIndex);
         let k = kinds(&out);
-        assert!(k.iter().any(|e| e.starts_with("Modified") && e.contains("after.txt")), "{k:?}");
-        assert!(k.iter().any(|e| e.starts_with("Deleted") && e.contains("before.txt")), "{k:?}");
+        assert!(
+            k.iter()
+                .any(|e| e.starts_with("Modified") && e.contains("after.txt")),
+            "{k:?}"
+        );
+        assert!(
+            k.iter()
+                .any(|e| e.starts_with("Deleted") && e.contains("before.txt")),
+            "{k:?}"
+        );
     }
 }

@@ -21,11 +21,11 @@ pub(super) struct ErrorBody {
 /// One entry returned by `GET /fs/read` when the path is a directory.
 #[derive(Serialize)]
 pub(super) struct DirEntry {
-    pub(super) name:       String,
-    pub(super) path:       String,
-    pub(super) is_dir:     bool,
+    pub(super) name: String,
+    pub(super) path: String,
+    pub(super) is_dir: bool,
     #[serde(skip_serializing_if = "Option::is_none")]
-    pub(super) size:       Option<u64>,
+    pub(super) size: Option<u64>,
     pub(super) mtime_secs: u64,
 }
 
@@ -33,16 +33,16 @@ pub(super) struct DirEntry {
 #[derive(Serialize, Clone)]
 pub struct ProgressEvent {
     pub processed: usize,
-    pub total:     usize,
-    pub current:   String,
-    pub done:      bool,
+    pub total: usize,
+    pub current: String,
+    pub done: bool,
     #[serde(skip_serializing_if = "Option::is_none")]
-    pub error:     Option<String>,
+    pub error: Option<String>,
 }
 
 #[derive(Deserialize)]
 pub(super) struct PathParam {
-    pub(super) path:   Option<String>,
+    pub(super) path: Option<String>,
     #[serde(default)]
     pub(super) stream: bool,
 }
@@ -54,7 +54,10 @@ pub(super) struct StreamParam {
 }
 
 pub(super) fn bad_request(msg: impl Into<String>) -> (StatusCode, Json<ErrorBody>) {
-    (StatusCode::BAD_REQUEST, Json(ErrorBody { error: msg.into() }))
+    (
+        StatusCode::BAD_REQUEST,
+        Json(ErrorBody { error: msg.into() }),
+    )
 }
 
 pub(super) fn not_found(msg: impl Into<String>) -> (StatusCode, Json<ErrorBody>) {
@@ -62,7 +65,10 @@ pub(super) fn not_found(msg: impl Into<String>) -> (StatusCode, Json<ErrorBody>)
 }
 
 pub(super) fn internal(msg: impl Into<String>) -> (StatusCode, Json<ErrorBody>) {
-    (StatusCode::INTERNAL_SERVER_ERROR, Json(ErrorBody { error: msg.into() }))
+    (
+        StatusCode::INTERNAL_SERVER_ERROR,
+        Json(ErrorBody { error: msg.into() }),
+    )
 }
 
 // ---------------------------------------------------------------------------
@@ -91,16 +97,23 @@ pub(super) fn validate_path(raw: &str) -> Result<PathBuf, String> {
 // ---------------------------------------------------------------------------
 
 pub(super) fn mime_for_path(path: &Path) -> &'static str {
-    match path.extension().and_then(|e| e.to_str()).map(str::to_ascii_lowercase).as_deref() {
-        Some("txt" | "md" | "rs" | "toml" | "yaml" | "yml" | "json" | "xml"
-            | "csv" | "log" | "ini" | "cfg" | "conf" | "sh" | "ps1" | "py"
-            | "js" | "ts" | "html" | "css" | "c" | "cpp" | "h" | "go") => "text/plain; charset=utf-8",
-        Some("png")       => "image/png",
+    match path
+        .extension()
+        .and_then(|e| e.to_str())
+        .map(str::to_ascii_lowercase)
+        .as_deref()
+    {
+        Some(
+            "txt" | "md" | "rs" | "toml" | "yaml" | "yml" | "json" | "xml" | "csv" | "log" | "ini"
+            | "cfg" | "conf" | "sh" | "ps1" | "py" | "js" | "ts" | "html" | "css" | "c" | "cpp"
+            | "h" | "go",
+        ) => "text/plain; charset=utf-8",
+        Some("png") => "image/png",
         Some("jpg" | "jpeg") => "image/jpeg",
-        Some("gif")       => "image/gif",
-        Some("pdf")       => "application/pdf",
-        Some("zip")       => "application/zip",
-        _                 => "application/octet-stream",
+        Some("gif") => "image/gif",
+        Some("pdf") => "application/pdf",
+        Some("zip") => "application/zip",
+        _ => "application/octet-stream",
     }
 }
 
@@ -135,7 +148,9 @@ pub(crate) fn parse_range(range: &str, file_size: u64) -> Option<(u64, u64)> {
         } else {
             end_str.parse::<u64>().ok()?.min(file_size - 1)
         };
-        if start > end { return None; }
+        if start > end {
+            return None;
+        }
         Some((start, end))
     }
 }
@@ -145,10 +160,10 @@ pub(crate) fn parse_range(range: &str, file_size: u64) -> Option<(u64, u64)> {
 // ---------------------------------------------------------------------------
 
 pub(super) struct FileMeta {
-    pub(super) size:       u64,
+    pub(super) size: u64,
     pub(super) mtime_secs: u64,
-    pub(super) is_dir:     bool,
-    pub(super) mode_str:   String,
+    pub(super) is_dir: bool,
+    pub(super) mode_str: String,
 }
 
 pub(super) fn extract_meta(meta: &std::fs::Metadata) -> FileMeta {
@@ -172,5 +187,10 @@ pub(super) fn extract_meta(meta: &std::fs::Metadata) -> FileMeta {
     #[cfg(not(any(unix, windows)))]
     let mode_str = String::new();
 
-    FileMeta { size: meta.len(), mtime_secs, is_dir: meta.is_dir(), mode_str }
+    FileMeta {
+        size: meta.len(),
+        mtime_secs,
+        is_dir: meta.is_dir(),
+        mode_str,
+    }
 }

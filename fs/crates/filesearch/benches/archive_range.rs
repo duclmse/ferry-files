@@ -13,7 +13,7 @@ use criterion::{black_box, criterion_group, criterion_main, Criterion, Throughpu
 use tempfile::TempDir;
 
 use filesearch::archive::inflate::SimdDeflateDecoder;
-use filesearch::archive::{Decoder, LocalFileSource, ByteSource};
+use filesearch::archive::{ByteSource, Decoder, LocalFileSource};
 
 // ---------------------------------------------------------------------------
 // Fixture: write a deflate-compressed 1 MB blob to disk
@@ -25,7 +25,7 @@ fn make_deflated_file() -> (TempDir, PathBuf, Vec<u8>, u64) {
     enc.write_all(&original).unwrap();
     let compressed = enc.finish().unwrap();
 
-    let dir  = TempDir::new().unwrap();
+    let dir = TempDir::new().unwrap();
     let path = dir.path().join("payload.deflate");
     std::fs::write(&path, &compressed).unwrap();
     let file_len = compressed.len() as u64;
@@ -50,8 +50,8 @@ fn bench_range_read(c: &mut Criterion) {
         b.to_async(&rt).iter(|| {
             let p = path.clone();
             async move {
-                let src    = LocalFileSource::new(p).unwrap();
-                let chunk  = 65_536usize;
+                let src = LocalFileSource::new(p).unwrap();
+                let chunk = 65_536usize;
                 let mut dec = SimdDeflateDecoder::new();
                 let mut out = Vec::new();
                 let mut offset = 0u64;
@@ -93,8 +93,8 @@ fn bench_partial_inflate(c: &mut Criterion) {
         b.to_async(&rt).iter(|| {
             let p = path.clone();
             async move {
-                let src   = LocalFileSource::new(p).unwrap();
-                let take  = 65_536usize.min(file_len as usize);
+                let src = LocalFileSource::new(p).unwrap();
+                let take = 65_536usize.min(file_len as usize);
                 let bytes = src.read_range(0, take).await.unwrap();
                 let mut dec = SimdDeflateDecoder::new();
                 let out = dec.feed(black_box(&bytes)).unwrap();

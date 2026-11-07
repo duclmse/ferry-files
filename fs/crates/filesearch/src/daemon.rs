@@ -20,7 +20,7 @@ use crate::error::AppError;
 use crate::indexer::crawler::{full_crawl, process_event, IndexEvent, IndexMetrics};
 use crate::indexer::exclusions::ExclusionEngine;
 use crate::scheduler::{ArchiveSemaphores, ClientRateLimiter, SchedulerMetrics};
-use crate::store::{FileStore, tantivy_store::TantivyStore};
+use crate::store::{tantivy_store::TantivyStore, FileStore};
 use crate::watcher;
 use crate::zidx::zidx_path_for;
 
@@ -31,15 +31,19 @@ use crate::zidx::zidx_path_for;
 #[cfg(windows)]
 mod win_guard {
     use super::AppError;
-    use windows::Win32::Foundation::{CloseHandle, GetLastError, BOOL, ERROR_ALREADY_EXISTS, HANDLE};
-    use windows::Win32::System::Threading::CreateMutexW;
     use windows::core::PCWSTR;
+    use windows::Win32::Foundation::{
+        CloseHandle, GetLastError, BOOL, ERROR_ALREADY_EXISTS, HANDLE,
+    };
+    use windows::Win32::System::Threading::CreateMutexW;
 
     pub struct InstanceGuard(HANDLE);
 
     impl Drop for InstanceGuard {
         fn drop(&mut self) {
-            unsafe { let _ = CloseHandle(self.0); }
+            unsafe {
+                let _ = CloseHandle(self.0);
+            }
         }
     }
 
@@ -51,7 +55,9 @@ mod win_guard {
             // A valid handle with ERROR_ALREADY_EXISTS means another instance owns the mutex.
             if GetLastError() == ERROR_ALREADY_EXISTS {
                 let _ = CloseHandle(handle);
-                return Err(AppError::Config("filesearch daemon is already running".into()));
+                return Err(AppError::Config(
+                    "filesearch daemon is already running".into(),
+                ));
             }
             Ok(InstanceGuard(handle))
         }
@@ -76,7 +82,7 @@ pub async fn run(config_path: PathBuf) -> Result<(), AppError> {
 /// embedders) can cancel the daemon programmatically.
 pub async fn run_with_shutdown(
     config_path: PathBuf,
-    shutdown:    CancellationToken,
+    shutdown: CancellationToken,
 ) -> Result<(), AppError> {
     // ── 1. Load & validate config ──────────────────────────────────────────
     let cfg = config::load(&config_path)?;
@@ -114,20 +120,27 @@ pub async fn run_with_shutdown(
 
     // ── 4-5. Stores ────────────────────────────────────────────────────────
     tracing::info!("store mode: {:?}", cfg.store.mode);
-    let sqlite  = Arc::new(FileStore::from_config(&cfg)?);
+    let sqlite = Arc::new(FileStore::from_config(&cfg)?);
     let tantivy = Arc::new(TantivyStore::new(&cfg.data_dir.join("tantivy"))?);
     let metrics = IndexMetrics::new();
 
     // ── 5b. Archive registry ───────────────────────────────────────────────
     let archive_registry: Arc<ArchiveRegistry> = {
         if cfg.archive_service.enabled {
-            let zidx_dir = cfg.archive_service.zidx_dir.clone()
+            let zidx_dir = cfg
+                .archive_service
+                .zidx_dir
+                .clone()
                 .unwrap_or_else(|| cfg.data_dir.join("zidx"));
             std::fs::create_dir_all(&zidx_dir).map_err(AppError::Io)?;
             let cache_size = cfg.archive_service.index_cache_size;
-            let dzx_dir = cfg.archive_service.dzx_dir.clone()
+            let dzx_dir = cfg
+                .archive_service
+                .dzx_dir
+                .clone()
                 .unwrap_or_else(|| cfg.data_dir.join("dzx"));
-            let reg = Arc::new(ArchiveRegistry::new(zidx_dir.clone(), cache_size).with_dzx_dir(dzx_dir));
+            let reg =
+                Arc::new(ArchiveRegistry::new(zidx_dir.clone(), cache_size).with_dzx_dir(dzx_dir));
             // Warm the registry from existing .zidx files without a full re-crawl.
             if let Ok(zip_paths) = sqlite.list_archive_paths() {
                 for zip_str in zip_paths {
@@ -172,9 +185,9 @@ pub async fn run_with_shutdown(
 
     // ── 11. Tantivy commit loop ────────────────────────────────────────────
     {
-        let tantivy_c  = Arc::clone(&tantivy);
+        let tantivy_c = Arc::clone(&tantivy);
         let shutdown_c = shutdown.clone();
-        let cfg_c      = Arc::clone(&shared_cfg);
+        let cfg_c = Arc::clone(&shared_cfg);
         tokio::spawn(async move {
             loop {
                 let interval_secs = cfg_c.read().await.indexer.commit_interval_secs;
@@ -192,7 +205,7 @@ pub async fn run_with_shutdown(
 
     // ── 12. Config hot-reload watcher ──────────────────────────────────────
     {
-        let shutdown_c  = shutdown.clone();
+        let shutdown_c = shutdown.clone();
         let shared_cfg2 = Arc::clone(&shared_cfg);
         tokio::spawn(config::watch_config(config_path, shared_cfg2, shutdown_c));
     }
@@ -202,7 +215,7 @@ pub async fn run_with_shutdown(
     let catchup_tx = ev_tx.clone();
     {
         let shutdown_c = shutdown.clone();
-        let cfg_c      = Arc::clone(&shared_cfg);
+        let cfg_c = Arc::clone(&shared_cfg);
         tokio::spawn(async move {
             if let Err(e) = watcher::run_watcher(cfg_c, ev_tx, shutdown_c).await {
                 tracing::error!("watcher error: {e}");
@@ -214,14 +227,22 @@ pub async fn run_with_shutdown(
     {
         let api_cfg = shared_cfg.read().await.api.clone();
         if api_cfg.ipc_enabled {
-            let shutdown_c  = shutdown.clone();
-            let cfg_c       = Arc::clone(&shared_cfg);
-            let sqlite_c    = Arc::clone(&sqlite);
-            let tantivy_c   = Arc::clone(&tantivy);
-            let metrics_c   = Arc::clone(&metrics);
+            let shutdown_c = shutdown.clone();
+            let cfg_c = Arc::clone(&shared_cfg);
+            let sqlite_c = Arc::clone(&sqlite);
+            let tantivy_c = Arc::clone(&tantivy);
+            let metrics_c = Arc::clone(&metrics);
             let reindex_ipc = reindex_tx.clone();
             tokio::spawn(async move {
-                run_ipc_server(cfg_c, sqlite_c, tantivy_c, metrics_c, reindex_ipc, shutdown_c).await;
+                run_ipc_server(
+                    cfg_c,
+                    sqlite_c,
+                    tantivy_c,
+                    metrics_c,
+                    reindex_ipc,
+                    shutdown_c,
+                )
+                .await;
             });
         } else {
             tracing::info!("IPC server disabled");
@@ -234,33 +255,36 @@ pub async fn run_with_shutdown(
         if api_cfg.rest_enabled {
             let (sched_max_per_archive, rate_per_client, burst_per_client) = {
                 let cfg = shared_cfg.read().await;
-                let s   = &cfg.archive_service.scheduler;
+                let s = &cfg.archive_service.scheduler;
                 (s.max_per_archive, s.rate_per_client, s.burst_per_client)
             };
-            let scheduler_metrics  = SchedulerMetrics::new();
+            let scheduler_metrics = SchedulerMetrics::new();
             let archive_semaphores = ArchiveSemaphores::new(sched_max_per_archive);
-            let rate_limiter       = Arc::new(ClientRateLimiter::new(rate_per_client, burst_per_client));
+            let rate_limiter = Arc::new(ClientRateLimiter::new(rate_per_client, burst_per_client));
 
             let app_state = AppState {
-                sqlite:              Arc::clone(&sqlite),
-                tantivy:             Arc::clone(&tantivy),
-                config:              Arc::clone(&shared_cfg),
-                metrics:             Arc::clone(&metrics),
-                reindex_tx:          reindex_tx.clone(),
-                archive_registry:    Arc::clone(&archive_registry),
+                sqlite: Arc::clone(&sqlite),
+                tantivy: Arc::clone(&tantivy),
+                config: Arc::clone(&shared_cfg),
+                metrics: Arc::clone(&metrics),
+                reindex_tx: reindex_tx.clone(),
+                archive_registry: Arc::clone(&archive_registry),
                 archive_semaphores,
                 scheduler_metrics,
                 rate_limiter,
             };
             let shutdown_c = shutdown.clone();
-            let rest_port  = api_cfg.rest_port;
+            let rest_port = api_cfg.rest_port;
             tokio::spawn(async move {
                 let router = crate::api::rest::router(app_state);
-                let addr   = std::net::SocketAddr::from(([0, 0, 0, 0], rest_port));
+                let addr = std::net::SocketAddr::from(([0, 0, 0, 0], rest_port));
                 tracing::info!("REST listening on {addr}");
                 let listener = match tokio::net::TcpListener::bind(addr).await {
                     Ok(l) => l,
-                    Err(e) => { tracing::error!("REST bind error: {e}"); return; }
+                    Err(e) => {
+                        tracing::error!("REST bind error: {e}");
+                        return;
+                    }
                 };
                 if let Err(e) = axum::serve(listener, router)
                     .with_graceful_shutdown(async move { shutdown_c.cancelled().await })
@@ -279,10 +303,10 @@ pub async fn run_with_shutdown(
         let api_cfg = shared_cfg.read().await.api.clone();
         if api_cfg.grpc_enabled {
             let svc = FileSearchService {
-                sqlite:     Arc::clone(&sqlite),
-                tantivy:    Arc::clone(&tantivy),
-                config:     Arc::clone(&shared_cfg),
-                metrics:    Arc::clone(&metrics),
+                sqlite: Arc::clone(&sqlite),
+                tantivy: Arc::clone(&tantivy),
+                config: Arc::clone(&shared_cfg),
+                metrics: Arc::clone(&metrics),
                 reindex_tx: reindex_tx.clone(),
             };
             let reflection = tonic_reflection::server::Builder::configure()
@@ -290,7 +314,7 @@ pub async fn run_with_shutdown(
                 .build()
                 .expect("gRPC reflection service build");
             let shutdown_c = shutdown.clone();
-            let grpc_port  = api_cfg.grpc_port;
+            let grpc_port = api_cfg.grpc_port;
             tokio::spawn(async move {
                 let addr = std::net::SocketAddr::from(([0, 0, 0, 0], grpc_port));
                 tracing::info!("gRPC listening on {addr}");
@@ -321,16 +345,17 @@ pub async fn run_with_shutdown(
     // while the daemon was down comes from the OS change log or a timestamp
     // scan (journal.rs).
     {
-        let needs_crawl = sqlite.get_meta("last_crawl_time")
+        let needs_crawl = sqlite
+            .get_meta("last_crawl_time")
             .map(|v| v.is_none())
             .unwrap_or(true); // on error assume uncrawled
         let crawl_active = Arc::clone(&crawl_active);
-        let sqlite       = Arc::clone(&sqlite);
-        let tantivy      = Arc::clone(&tantivy);
-        let metrics      = Arc::clone(&metrics);
-        let registry     = Arc::clone(&archive_registry);
-        let cfg          = Arc::clone(&shared_cfg);
-        let shutdown     = shutdown.clone();
+        let sqlite = Arc::clone(&sqlite);
+        let tantivy = Arc::clone(&tantivy);
+        let metrics = Arc::clone(&metrics);
+        let registry = Arc::clone(&archive_registry);
+        let cfg = Arc::clone(&shared_cfg);
+        let shutdown = shutdown.clone();
         tokio::spawn(async move {
             let crawl = |reason: &str| {
                 tracing::info!("full crawl: {reason}");
@@ -346,7 +371,11 @@ pub async fn run_with_shutdown(
             };
             let (roots, formats, exclusions) = {
                 let c = cfg.read().await;
-                (c.watch_paths.clone(), c.archive_index.formats.clone(), c.exclusions.clone())
+                (
+                    c.watch_paths.clone(),
+                    c.archive_index.formats.clone(),
+                    c.exclusions.clone(),
+                )
             };
             let now = {
                 let roots = roots.clone();
@@ -355,7 +384,8 @@ pub async fn run_with_shutdown(
                     .ok()
                     .flatten()
             };
-            let stored = sqlite.get_meta(watcher::journal::META_KEY)
+            let stored = sqlite
+                .get_meta(watcher::journal::META_KEY)
                 .ok()
                 .flatten()
                 .and_then(|s| watcher::journal::Position::from_json(&s));
@@ -374,12 +404,16 @@ pub async fn run_with_shutdown(
                         let excl = match ExclusionEngine::new(&exclusions) {
                             Ok(e) => e,
                             Err(e) => {
-                                return watcher::journal::CatchUp::FullCrawl(format!("exclusions: {e}"))
+                                return watcher::journal::CatchUp::FullCrawl(format!(
+                                    "exclusions: {e}"
+                                ))
                             }
                         };
-                        let skip = |p: &std::path::Path, hidden: bool| excl.should_exclude(p, hidden);
+                        let skip =
+                            |p: &std::path::Path, hidden: bool| excl.should_exclude(p, hidden);
                         watcher::journal::catch_up(&stored, &now, &formats, &skip, &*store)
-                    }).await;
+                    })
+                    .await;
                     match plan {
                         Ok(watcher::journal::CatchUp::UpToDate) => {
                             tracing::info!("catch-up: no changes while stopped");
@@ -465,11 +499,11 @@ pub async fn run_with_shutdown(
     while tokio::time::Instant::now() < drain_deadline {
         match ev_rx.try_recv() {
             Ok(event) => {
-                let sqlite_e  = Arc::clone(&sqlite);
+                let sqlite_e = Arc::clone(&sqlite);
                 let tantivy_e = Arc::clone(&tantivy);
                 let metrics_e = Arc::clone(&metrics);
-                let cfg_e     = Arc::clone(&shared_cfg);
-                let reg_e     = Arc::clone(&archive_registry);
+                let cfg_e = Arc::clone(&shared_cfg);
+                let reg_e = Arc::clone(&archive_registry);
                 process_event(event, cfg_e, sqlite_e, tantivy_e, metrics_e, reg_e).await;
             }
             Err(_) => break,
@@ -488,7 +522,9 @@ pub async fn run_with_shutdown(
     }
 
     #[cfg(unix)]
-    { let _ = std::fs::remove_file(&pid_path); }
+    {
+        let _ = std::fs::remove_file(&pid_path);
+    }
 
     tracing::info!("filesearch daemon stopped");
     Ok(())
@@ -519,11 +555,11 @@ const JOURNAL_CRAWL_POLL: Duration = Duration::from_secs(2);
 /// captured before the crawl started, so once the crawl is done everything
 /// before it has been crawled and everything after it is in the log.
 async fn keep_journal_position(
-    store:        Arc<FileStore>,
-    roots:        Vec<PathBuf>,
-    first:        watcher::journal::Position,
+    store: Arc<FileStore>,
+    roots: Vec<PathBuf>,
+    first: watcher::journal::Position,
     crawl_active: Arc<AtomicBool>,
-    shutdown:     CancellationToken,
+    shutdown: CancellationToken,
 ) {
     let mut prev = Some(first);
     loop {
@@ -563,12 +599,12 @@ async fn keep_journal_position(
 
 fn spawn_crawl(
     crawl_active: &Arc<AtomicBool>,
-    sqlite:       Arc<FileStore>,
-    tantivy:      Arc<TantivyStore>,
-    metrics:      Arc<IndexMetrics>,
-    registry:     Arc<ArchiveRegistry>,
-    cfg:          Arc<RwLock<crate::config::Config>>,
-    shutdown:     CancellationToken,
+    sqlite: Arc<FileStore>,
+    tantivy: Arc<TantivyStore>,
+    metrics: Arc<IndexMetrics>,
+    registry: Arc<ArchiveRegistry>,
+    cfg: Arc<RwLock<crate::config::Config>>,
+    shutdown: CancellationToken,
 ) {
     // Set the flag so concurrent reindex requests are rejected until done.
     crawl_active.store(true, Ordering::Release);
@@ -597,7 +633,7 @@ fn spawn_crawl(
             match tokio::task::spawn_blocking(move || store.end_bulk_load()).await {
                 Ok(Ok(())) => {}
                 Ok(Err(e)) => tracing::error!("bulk load index rebuild failed: {e}"),
-                Err(e)     => tracing::error!("bulk load index rebuild panicked: {e}"),
+                Err(e) => tracing::error!("bulk load index rebuild panicked: {e}"),
             }
         }
         ca.store(false, Ordering::Release);
@@ -615,8 +651,11 @@ fn spawn_crawl(
 async fn wait_for_shutdown_signal() {
     #[cfg(unix)]
     {
-        use tokio::signal::unix::{SignalKind, signal};
-        match (signal(SignalKind::terminate()), signal(SignalKind::interrupt())) {
+        use tokio::signal::unix::{signal, SignalKind};
+        match (
+            signal(SignalKind::terminate()),
+            signal(SignalKind::interrupt()),
+        ) {
             (Ok(mut sigterm), Ok(mut sigint)) => {
                 tokio::select! {
                     _ = sigterm.recv() => tracing::info!("SIGTERM received, shutting down"),

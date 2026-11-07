@@ -7,10 +7,7 @@
 //! length-prefixed postcard frames, dispatched to query/metrics helpers, and
 //! the response is written back as a single length-prefixed frame.
 
-use std::sync::{
-    atomic::Ordering,
-    Arc,
-};
+use std::sync::{atomic::Ordering, Arc};
 
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use tokio::sync::{watch, RwLock};
@@ -19,11 +16,11 @@ use tokio_util::sync::CancellationToken;
 use crate::config::Config;
 use crate::indexer::crawler::IndexMetrics;
 use crate::query::{evaluator, parser};
-use crate::store::{FileStore, tantivy_store::TantivyStore, FileRecord};
+use crate::store::{tantivy_store::TantivyStore, FileRecord, FileStore};
 
 use super::ipc_protocol::{
     decode_payload, encode_frame, DecodeError, IpcEnvelope, IpcMessage, IpcRequest, IpcResponse,
-    MAX_FRAME_BYTES, SearchHitDto, SearchResponse, StatsResponse,
+    SearchHitDto, SearchResponse, StatsResponse, MAX_FRAME_BYTES,
 };
 
 // ---------------------------------------------------------------------------
@@ -32,12 +29,12 @@ use super::ipc_protocol::{
 
 /// Run the IPC listener until `shutdown` is cancelled.
 pub async fn run_ipc_server(
-    cfg:        Arc<RwLock<Config>>,
-    sqlite:     Arc<FileStore>,
-    tantivy:    Arc<TantivyStore>,
-    metrics:    Arc<IndexMetrics>,
+    cfg: Arc<RwLock<Config>>,
+    sqlite: Arc<FileStore>,
+    tantivy: Arc<TantivyStore>,
+    metrics: Arc<IndexMetrics>,
     reindex_tx: watch::Sender<bool>,
-    shutdown:   CancellationToken,
+    shutdown: CancellationToken,
 ) {
     let ipc_path = cfg.read().await.api.ipc_path.clone();
 
@@ -134,10 +131,10 @@ pub async fn run_ipc_server(
 // ---------------------------------------------------------------------------
 
 struct ConnCtx {
-    cfg:        Arc<RwLock<Config>>,
-    sqlite:     Arc<FileStore>,
-    tantivy:    Arc<TantivyStore>,
-    metrics:    Arc<IndexMetrics>,
+    cfg: Arc<RwLock<Config>>,
+    sqlite: Arc<FileStore>,
+    tantivy: Arc<TantivyStore>,
+    metrics: Arc<IndexMetrics>,
     reindex_tx: watch::Sender<bool>,
 }
 
@@ -167,7 +164,7 @@ where
             let err_env = IpcEnvelope::new(
                 0,
                 IpcMessage::Response(IpcResponse::Error {
-                    code:    "FRAME_TOO_LARGE".into(),
+                    code: "FRAME_TOO_LARGE".into(),
                     message: format!("frame {payload_len} exceeds max {MAX_FRAME_BYTES}"),
                 }),
             );
@@ -227,9 +224,11 @@ where
 
 async fn dispatch(req: IpcRequest, request_id: u128, ctx: &ConnCtx) -> IpcEnvelope {
     match req {
-        IpcRequest::Search { query, limit, offset } => {
-            search_handler(request_id, query, limit, offset, ctx).await
-        }
+        IpcRequest::Search {
+            query,
+            limit,
+            offset,
+        } => search_handler(request_id, query, limit, offset, ctx).await,
         IpcRequest::Stats => stats_handler(request_id, ctx),
         IpcRequest::Reindex { full } => reindex_handler(request_id, full, ctx),
         IpcRequest::Open { path } => open_handler(request_id, path, ctx).await,
@@ -238,10 +237,10 @@ async fn dispatch(req: IpcRequest, request_id: u128, ctx: &ConnCtx) -> IpcEnvelo
 
 async fn search_handler(
     request_id: u128,
-    query_str:  String,
-    limit:      u32,
-    offset:     u32,
-    ctx:        &ConnCtx,
+    query_str: String,
+    limit: u32,
+    offset: u32,
+    ctx: &ConnCtx,
 ) -> IpcEnvelope {
     let macros = ctx.cfg.read().await.macros.clone();
     let expr = match parser::parse(&query_str, &macros) {
@@ -253,7 +252,7 @@ async fn search_handler(
         Ok(p) => p,
         Err(e) => return error_response(request_id, "PLAN_ERROR", e.to_string()),
     };
-    plan.limit  = Some(limit as usize);
+    plan.limit = Some(limit as usize);
     plan.offset = offset as usize;
 
     match evaluator::execute_plan(
@@ -287,13 +286,13 @@ fn stats_handler(request_id: u128, ctx: &ConnCtx) -> IpcEnvelope {
     IpcEnvelope::new(
         request_id,
         IpcMessage::Response(IpcResponse::Stats(StatsResponse {
-            total_files:             m.total_files.load(Ordering::Relaxed),
-            total_dirs:              m.total_dirs.load(Ordering::Relaxed),
-            content_indexed:         m.content_indexed.load(Ordering::Relaxed),
+            total_files: m.total_files.load(Ordering::Relaxed),
+            total_dirs: m.total_dirs.load(Ordering::Relaxed),
+            content_indexed: m.content_indexed.load(Ordering::Relaxed),
             archive_entries_indexed: m.archive_entries_indexed.load(Ordering::Relaxed),
-            archives_crawled:        m.archives_crawled.load(Ordering::Relaxed),
-            events_processed:        m.events_processed.load(Ordering::Relaxed),
-            last_crawl_secs:         m.last_crawl_secs.load(Ordering::Relaxed),
+            archives_crawled: m.archives_crawled.load(Ordering::Relaxed),
+            events_processed: m.events_processed.load(Ordering::Relaxed),
+            last_crawl_secs: m.last_crawl_secs.load(Ordering::Relaxed),
         })),
     )
 }
@@ -309,7 +308,7 @@ fn reindex_handler(request_id: u128, full: bool, ctx: &ConnCtx) -> IpcEnvelope {
 async fn open_handler(request_id: u128, path: String, ctx: &ConnCtx) -> IpcEnvelope {
     match ctx.sqlite.get_by_path(&path) {
         Ok(None) => return error_response(request_id, "NOT_FOUND", "path not in index"),
-        Err(e)   => return error_response(request_id, "STORE_ERROR", e.to_string()),
+        Err(e) => return error_response(request_id, "STORE_ERROR", e.to_string()),
         Ok(Some(_)) => {}
     }
 
@@ -317,7 +316,10 @@ async fn open_handler(request_id: u128, path: String, ctx: &ConnCtx) -> IpcEnvel
         match super::rest::extract_and_open(&path).await {
             Ok(temp) => IpcEnvelope::new(
                 request_id,
-                IpcMessage::Response(IpcResponse::Open { opened: true, temp_path: Some(temp) }),
+                IpcMessage::Response(IpcResponse::Open {
+                    opened: true,
+                    temp_path: Some(temp),
+                }),
             ),
             Err(e) => error_response(request_id, "OPEN_ERROR", e),
         }
@@ -325,7 +327,10 @@ async fn open_handler(request_id: u128, path: String, ctx: &ConnCtx) -> IpcEnvel
         match super::rest::open_with_os(&path).await {
             Ok(()) => IpcEnvelope::new(
                 request_id,
-                IpcMessage::Response(IpcResponse::Open { opened: true, temp_path: None }),
+                IpcMessage::Response(IpcResponse::Open {
+                    opened: true,
+                    temp_path: None,
+                }),
             ),
             Err(e) => error_response(request_id, "OPEN_ERROR", e),
         }
@@ -338,31 +343,38 @@ async fn open_handler(request_id: u128, path: String, ctx: &ConnCtx) -> IpcEnvel
 
 fn file_record_to_dto(r: &FileRecord) -> SearchHitDto {
     SearchHitDto {
-        path:         r.path.clone(),
-        name:         r.name.clone(),
-        extension:    r.extension.clone(),
-        size_bytes:   r.size_bytes,
-        mtime:        r.mtime,
-        is_dir:       r.is_dir,
+        path: r.path.clone(),
+        name: r.name.clone(),
+        extension: r.extension.clone(),
+        size_bytes: r.size_bytes,
+        mtime: r.mtime,
+        is_dir: r.is_dir,
         archive_path: r.archive_path.clone(),
-        snippet:      None,
+        snippet: None,
     }
 }
 
-fn error_response(request_id: u128, code: impl Into<String>, msg: impl Into<String>) -> IpcEnvelope {
+fn error_response(
+    request_id: u128,
+    code: impl Into<String>,
+    msg: impl Into<String>,
+) -> IpcEnvelope {
     IpcEnvelope::new(
         request_id,
-        IpcMessage::Response(IpcResponse::Error { code: code.into(), message: msg.into() }),
+        IpcMessage::Response(IpcResponse::Error {
+            code: code.into(),
+            message: msg.into(),
+        }),
     )
 }
 
 fn decode_err_code(e: &DecodeError) -> &'static str {
     match e {
-        DecodeError::Postcard(_)        => "DECODE_ERROR",
-        DecodeError::FrameTooLarge(_)   => "FRAME_TOO_LARGE",
-        DecodeError::BadMagic(_)        => "BAD_MAGIC",
+        DecodeError::Postcard(_) => "DECODE_ERROR",
+        DecodeError::FrameTooLarge(_) => "FRAME_TOO_LARGE",
+        DecodeError::BadMagic(_) => "BAD_MAGIC",
         DecodeError::VersionMismatch(_) => "VERSION_MISMATCH",
-        DecodeError::Io(_)              => "IO_ERROR",
+        DecodeError::Io(_) => "IO_ERROR",
     }
 }
 
@@ -375,21 +387,21 @@ mod tests {
 
     fn make_record(path: &str, archive_path: Option<&str>) -> FileRecord {
         FileRecord {
-            id:              None,
-            path:            path.into(),
-            name:            path.rsplit('/').next().unwrap_or(path).into(),
-            extension:       Some("rs".into()),
-            size_bytes:      2048,
-            mtime:           1_700_000_000,
-            ctime:           1_700_000_000,
-            is_dir:          false,
-            is_hidden:       false,
-            is_symlink:      false,
-            attrib_bitmask:  0,
+            id: None,
+            path: path.into(),
+            name: path.rsplit('/').next().unwrap_or(path).into(),
+            extension: Some("rs".into()),
+            size_bytes: 2048,
+            mtime: 1_700_000_000,
+            ctime: 1_700_000_000,
+            is_dir: false,
+            is_hidden: false,
+            is_symlink: false,
+            attrib_bitmask: 0,
             content_indexed: false,
-            tantivy_id:      None,
-            indexed_at:      0,
-            archive_path:    archive_path.map(str::to_string),
+            tantivy_id: None,
+            indexed_at: 0,
+            archive_path: archive_path.map(str::to_string),
         }
     }
 
@@ -407,13 +419,26 @@ mod tests {
     #[test]
     fn decode_err_code_all_variants() {
         use crate::api::ipc_protocol::DecodeError;
-        assert_eq!(decode_err_code(&DecodeError::Postcard(postcard::Error::WontImplement)), "DECODE_ERROR");
-        assert_eq!(decode_err_code(&DecodeError::FrameTooLarge(99)), "FRAME_TOO_LARGE");
-        assert_eq!(decode_err_code(&DecodeError::BadMagic(*b"XXXX")), "BAD_MAGIC");
-        assert_eq!(decode_err_code(&DecodeError::VersionMismatch(99)), "VERSION_MISMATCH");
-        assert_eq!(decode_err_code(&DecodeError::Io(
-            std::io::Error::other("io")
-        )), "IO_ERROR");
+        assert_eq!(
+            decode_err_code(&DecodeError::Postcard(postcard::Error::WontImplement)),
+            "DECODE_ERROR"
+        );
+        assert_eq!(
+            decode_err_code(&DecodeError::FrameTooLarge(99)),
+            "FRAME_TOO_LARGE"
+        );
+        assert_eq!(
+            decode_err_code(&DecodeError::BadMagic(*b"XXXX")),
+            "BAD_MAGIC"
+        );
+        assert_eq!(
+            decode_err_code(&DecodeError::VersionMismatch(99)),
+            "VERSION_MISMATCH"
+        );
+        assert_eq!(
+            decode_err_code(&DecodeError::Io(std::io::Error::other("io"))),
+            "IO_ERROR"
+        );
     }
 
     #[test]

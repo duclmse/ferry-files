@@ -17,8 +17,8 @@
 //!   Ctrl+C/Esc - exit
 //!   F5 - force re-index
 
-mod app;
 mod actions;
+mod app;
 mod render;
 #[cfg(test)]
 mod tests;

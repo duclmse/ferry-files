@@ -38,7 +38,7 @@ const ATTRIBUTE_DIRECTORY: u32 = 0x0000_0010;
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 pub struct UsnPos {
     pub journal: u64,
-    pub next:    i64,
+    pub next: i64,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -46,7 +46,7 @@ pub(super) struct Record {
     pub parent: u64,
     pub reason: u32,
     pub is_dir: bool,
-    pub name:   String,
+    pub name: String,
 }
 
 fn u16_at(b: &[u8], at: usize) -> Option<u16> {
@@ -84,7 +84,7 @@ pub(super) fn parse(buf: &[u8], out: &mut Vec<Record>) -> Option<i64> {
             parent: u64_at(rec, 16)?,
             reason: u32_at(rec, 40)?,
             is_dir: u32_at(rec, 52)? & ATTRIBUTE_DIRECTORY != 0,
-            name:   String::from_utf16_lossy(&units),
+            name: String::from_utf16_lossy(&units),
         });
         // Records are 8-byte aligned; RecordLength already includes padding.
         at += len;
@@ -113,7 +113,7 @@ pub(super) fn map_to_root(path: &str, prefixes: &[(String, PathBuf)]) -> Option<
 /// current path of a directory FRN, already passed through `map_to_root`
 /// (`None` when it is gone or outside every root).
 pub(super) fn fold(
-    records:     &[Record],
+    records: &[Record],
     mut resolve: impl FnMut(u64) -> Option<PathBuf>,
 ) -> Result<HashMap<PathBuf, u32>, String> {
     let mut parents: HashMap<u64, Option<PathBuf>> = HashMap::new();
@@ -145,11 +145,17 @@ pub(super) fn strip_verbatim(p: &str) -> &str {
 }
 
 /// Groups roots by the volume they live on, keeping each root's index.
-fn by_volume(roots: &[PathBuf], volume_of: impl Fn(&Path) -> Option<String>) -> Option<Vec<(String, Vec<usize>)>> {
+fn by_volume(
+    roots: &[PathBuf],
+    volume_of: impl Fn(&Path) -> Option<String>,
+) -> Option<Vec<(String, Vec<usize>)>> {
     let mut out: Vec<(String, Vec<usize>)> = Vec::new();
     for (i, r) in roots.iter().enumerate() {
         let v = volume_of(r)?;
-        match out.iter_mut().find(|(name, _)| name.eq_ignore_ascii_case(&v)) {
+        match out
+            .iter_mut()
+            .find(|(name, _)| name.eq_ignore_ascii_case(&v))
+        {
             Some((_, idx)) => idx.push(i),
             None => out.push((v, vec![i])),
         }
@@ -167,12 +173,14 @@ mod imp {
     use std::path::{Path, PathBuf};
 
     use windows::core::PCWSTR;
-    use windows::Win32::Foundation::{CloseHandle, ERROR_JOURNAL_ENTRY_DELETED, GENERIC_READ, HANDLE};
+    use windows::Win32::Foundation::{
+        CloseHandle, ERROR_JOURNAL_ENTRY_DELETED, GENERIC_READ, HANDLE,
+    };
     use windows::Win32::Storage::FileSystem::{
         CreateFileW, FileIdType, GetFinalPathNameByHandleW, GetVolumePathNameW, OpenFileById,
-        FILE_FLAG_BACKUP_SEMANTICS, FILE_FLAGS_AND_ATTRIBUTES, FILE_ID_DESCRIPTOR,
-        FILE_ID_DESCRIPTOR_0, FILE_NAME_NORMALIZED, GETFINALPATHNAMEBYHANDLE_FLAGS, FILE_SHARE_DELETE, FILE_SHARE_READ,
-        FILE_SHARE_WRITE, OPEN_EXISTING, VOLUME_NAME_DOS,
+        FILE_FLAGS_AND_ATTRIBUTES, FILE_FLAG_BACKUP_SEMANTICS, FILE_ID_DESCRIPTOR,
+        FILE_ID_DESCRIPTOR_0, FILE_NAME_NORMALIZED, FILE_SHARE_DELETE, FILE_SHARE_READ,
+        FILE_SHARE_WRITE, GETFINALPATHNAMEBYHANDLE_FLAGS, OPEN_EXISTING, VOLUME_NAME_DOS,
     };
     use windows::Win32::System::Ioctl::{
         FSCTL_QUERY_USN_JOURNAL, FSCTL_READ_USN_JOURNAL, READ_USN_JOURNAL_DATA_V0,
@@ -265,7 +273,10 @@ mod imp {
                 *by_vol.entry(v.clone()).or_insert_with(|| {
                     let vol = open_volume(&v).ok()?;
                     let d = query(&vol).ok()?;
-                    Some(UsnPos { journal: d.UsnJournalID, next: d.NextUsn })
+                    Some(UsnPos {
+                        journal: d.UsnJournalID,
+                        next: d.NextUsn,
+                    })
                 })
             })
             .collect()
@@ -273,12 +284,12 @@ mod imp {
 
     fn read(vol: &Handle, journal: u64, from: i64, to: i64) -> Result<Vec<Record>, String> {
         let mut req = READ_USN_JOURNAL_DATA_V0 {
-            StartUsn:          from,
-            ReasonMask:        u32::MAX,
+            StartUsn: from,
+            ReasonMask: u32::MAX,
             ReturnOnlyOnClose: 0,
-            Timeout:           0,
-            BytesToWaitFor:    0,
-            UsnJournalID:      journal,
+            Timeout: 0,
+            BytesToWaitFor: 0,
+            UsnJournalID: journal,
         };
         let mut buf = vec![0u8; READ_BUF];
         let mut records = Vec::new();
@@ -306,8 +317,8 @@ mod imp {
                 });
             }
             let before = records.len();
-            let next = parse(&buf[..got as usize], &mut records)
-                .ok_or("unexpected USN record format")?;
+            let next =
+                parse(&buf[..got as usize], &mut records).ok_or("unexpected USN record format")?;
             if records.len() == before || next <= req.StartUsn {
                 break;
             }
@@ -318,8 +329,8 @@ mod imp {
 
     fn path_of(vol: &Handle, frn: u64) -> Option<String> {
         let id = FILE_ID_DESCRIPTOR {
-            dwSize:    size_of::<FILE_ID_DESCRIPTOR>() as u32,
-            Type:      FileIdType,
+            dwSize: size_of::<FILE_ID_DESCRIPTOR>() as u32,
+            Type: FileIdType,
             Anonymous: FILE_ID_DESCRIPTOR_0 { FileId: frn as i64 },
         };
         // SAFETY: `id` is a valid descriptor that outlives the call.
@@ -338,7 +349,13 @@ mod imp {
         let mut buf = vec![0u16; 512];
         loop {
             // SAFETY: `buf` is a valid output slice.
-            let n = unsafe { GetFinalPathNameByHandleW(h.0, &mut buf, GETFINALPATHNAMEBYHANDLE_FLAGS(VOLUME_NAME_DOS.0 | FILE_NAME_NORMALIZED.0)) } as usize;
+            let n = unsafe {
+                GetFinalPathNameByHandleW(
+                    h.0,
+                    &mut buf,
+                    GETFINALPATHNAMEBYHANDLE_FLAGS(VOLUME_NAME_DOS.0 | FILE_NAME_NORMALIZED.0),
+                )
+            } as usize;
             if n == 0 {
                 return None;
             }
@@ -353,9 +370,9 @@ mod imp {
 
     /// Changes under `roots` since `stored`, as `path -> flags` for `plan`.
     pub(in crate::watcher::journal) fn replay(
-        roots:  &[PathBuf],
+        roots: &[PathBuf],
         stored: &[Option<UsnPos>],
-        now:    &[Option<UsnPos>],
+        now: &[Option<UsnPos>],
     ) -> Result<HashMap<PathBuf, u32>, String> {
         if stored.len() != roots.len() || now.len() != roots.len() {
             return Err("no USN position stored".into());
@@ -391,7 +408,9 @@ mod imp {
             let vol = open_volume(&volume)?;
             let data = query(&vol)?;
             if data.UsnJournalID != journal || from < data.FirstUsn {
-                return Err(format!("USN journal on {volume} no longer reaches the stored position"));
+                return Err(format!(
+                    "USN journal on {volume} no longer reaches the stored position"
+                ));
             }
             let records = read(&vol, journal, from, to)?;
             let part = fold(&records, |frn| {
@@ -433,13 +452,31 @@ mod tests {
     fn parses_v2_records_and_rejects_others() {
         let mut buf = 777i64.to_le_bytes().to_vec();
         buf.extend(record(5, 0x100, 0, "a.txt"));
-        buf.extend(record(6, REASON_RENAME_NEW_NAME, ATTRIBUTE_DIRECTORY, "dïr"));
+        buf.extend(record(
+            6,
+            REASON_RENAME_NEW_NAME,
+            ATTRIBUTE_DIRECTORY,
+            "dïr",
+        ));
         let mut out = Vec::new();
         assert_eq!(parse(&buf, &mut out), Some(777));
-        assert_eq!(out, vec![
-            Record { parent: 5, reason: 0x100, is_dir: false, name: "a.txt".into() },
-            Record { parent: 6, reason: REASON_RENAME_NEW_NAME, is_dir: true, name: "dïr".into() },
-        ]);
+        assert_eq!(
+            out,
+            vec![
+                Record {
+                    parent: 5,
+                    reason: 0x100,
+                    is_dir: false,
+                    name: "a.txt".into()
+                },
+                Record {
+                    parent: 6,
+                    reason: REASON_RENAME_NEW_NAME,
+                    is_dir: true,
+                    name: "dïr".into()
+                },
+            ]
+        );
 
         let mut v3 = buf.clone();
         v3[12..14].copy_from_slice(&3u16.to_le_bytes());
@@ -450,8 +487,14 @@ mod tests {
 
     #[test]
     fn maps_resolved_paths_onto_configured_roots() {
-        let prefixes = vec![(r"C:\Users\Me\Docs".to_owned(), PathBuf::from(r"c:\users\me\docs"))];
-        assert_eq!(map_to_root(r"C:\Users\Me\Docs", &prefixes), Some(PathBuf::from(r"c:\users\me\docs")));
+        let prefixes = vec![(
+            r"C:\Users\Me\Docs".to_owned(),
+            PathBuf::from(r"c:\users\me\docs"),
+        )];
+        assert_eq!(
+            map_to_root(r"C:\Users\Me\Docs", &prefixes),
+            Some(PathBuf::from(r"c:\users\me\docs"))
+        );
         assert!(map_to_root(r"c:\USERS\me\docs\x", &prefixes).is_some());
         assert_eq!(map_to_root(r"C:\Users\Me\Docs2", &prefixes), None);
         assert_eq!(map_to_root(r"D:\Users\Me\Docs", &prefixes), None);
@@ -461,11 +504,36 @@ mod tests {
     #[test]
     fn fold_flags_moved_in_directories_and_skips_unresolvable_parents() {
         let recs = vec![
-            Record { parent: 1, reason: 0x100, is_dir: false, name: "f".into() },
-            Record { parent: 1, reason: 0x2, is_dir: false, name: "f".into() },
-            Record { parent: 1, reason: REASON_RENAME_NEW_NAME, is_dir: true, name: "d".into() },
-            Record { parent: 1, reason: 0x200, is_dir: true, name: "gone".into() },
-            Record { parent: 2, reason: 0x200, is_dir: false, name: "orphan".into() },
+            Record {
+                parent: 1,
+                reason: 0x100,
+                is_dir: false,
+                name: "f".into(),
+            },
+            Record {
+                parent: 1,
+                reason: 0x2,
+                is_dir: false,
+                name: "f".into(),
+            },
+            Record {
+                parent: 1,
+                reason: REASON_RENAME_NEW_NAME,
+                is_dir: true,
+                name: "d".into(),
+            },
+            Record {
+                parent: 1,
+                reason: 0x200,
+                is_dir: true,
+                name: "gone".into(),
+            },
+            Record {
+                parent: 2,
+                reason: 0x200,
+                is_dir: false,
+                name: "orphan".into(),
+            },
         ];
         let mut lookups = 0;
         let out = fold(&recs, |frn| {
@@ -483,8 +551,17 @@ mod tests {
     #[test]
     fn groups_roots_by_volume() {
         let roots = [PathBuf::from("a"), PathBuf::from("b"), PathBuf::from("c")];
-        let g = by_volume(&roots, |p| Some(if p == Path::new("b") { "D:\\" } else { "c:\\" }.into())).unwrap();
-        assert_eq!(g, vec![("c:\\".to_owned(), vec![0, 2]), ("D:\\".to_owned(), vec![1])]);
+        let g = by_volume(&roots, |p| {
+            Some(if p == Path::new("b") { "D:\\" } else { "c:\\" }.into())
+        })
+        .unwrap();
+        assert_eq!(
+            g,
+            vec![
+                ("c:\\".to_owned(), vec![0, 2]),
+                ("D:\\".to_owned(), vec![1])
+            ]
+        );
         assert!(by_volume(&roots, |_| None).is_none());
     }
 }

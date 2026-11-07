@@ -7,14 +7,14 @@ fn make_app() -> App {
 
 fn make_hit(path: &str, archive_path: Option<&str>) -> SearchHitDto {
     SearchHitDto {
-        path:         path.into(),
-        name:         path.rsplit('/').next().unwrap_or(path).into(),
-        extension:    Some("rs".into()),
-        size_bytes:   1024,
-        mtime:        0,
-        is_dir:       false,
+        path: path.into(),
+        name: path.rsplit('/').next().unwrap_or(path).into(),
+        extension: Some("rs".into()),
+        size_bytes: 1024,
+        mtime: 0,
+        is_dir: false,
         archive_path: archive_path.map(str::to_string),
-        snippet:      None,
+        snippet: None,
     }
 }
 
@@ -22,25 +22,32 @@ fn make_hit(path: &str, archive_path: Option<&str>) -> SearchHitDto {
 
 #[test]
 fn mode_prefix_all_variants() {
-    assert_eq!(Mode::Exact.prefix(),   "");
-    assert_eq!(Mode::Fuzzy.prefix(),   "fuzzy:");
-    assert_eq!(Mode::Regex.prefix(),   "regex:");
+    assert_eq!(Mode::Exact.prefix(), "");
+    assert_eq!(Mode::Fuzzy.prefix(), "fuzzy:");
+    assert_eq!(Mode::Regex.prefix(), "regex:");
     assert_eq!(Mode::Content.prefix(), "content:");
     assert_eq!(Mode::Archive.prefix(), "archive:");
 }
 
 #[test]
 fn mode_label_all_variants() {
-    assert_eq!(Mode::Exact.label(),   "exact");
-    assert_eq!(Mode::Fuzzy.label(),   "fuzzy");
-    assert_eq!(Mode::Regex.label(),   "regex");
+    assert_eq!(Mode::Exact.label(), "exact");
+    assert_eq!(Mode::Fuzzy.label(), "fuzzy");
+    assert_eq!(Mode::Regex.label(), "regex");
     assert_eq!(Mode::Content.label(), "content");
     assert_eq!(Mode::Archive.label(), "archive");
 }
 
 #[test]
 fn mode_next_cycles_through_all_and_wraps() {
-    let cycle = [Mode::Exact, Mode::Fuzzy, Mode::Regex, Mode::Content, Mode::Archive, Mode::Exact];
+    let cycle = [
+        Mode::Exact,
+        Mode::Fuzzy,
+        Mode::Regex,
+        Mode::Content,
+        Mode::Archive,
+        Mode::Exact,
+    ];
     for pair in cycle.windows(2) {
         assert_eq!(pair[0].next(), pair[1]);
     }
@@ -58,7 +65,7 @@ fn full_query_exact_mode_returns_raw_input() {
 #[test]
 fn full_query_fuzzy_mode_prepends_prefix() {
     let mut app = make_app();
-    app.mode  = Mode::Fuzzy;
+    app.mode = Mode::Fuzzy;
     app.input = "mian".into();
     assert_eq!(app.full_query(), "fuzzy:mian");
 }
@@ -66,7 +73,7 @@ fn full_query_fuzzy_mode_prepends_prefix() {
 #[test]
 fn full_query_non_exact_mode_with_empty_input_returns_empty() {
     let mut app = make_app();
-    app.mode  = Mode::Content;
+    app.mode = Mode::Content;
     app.input = String::new();
     assert_eq!(app.full_query(), "");
 }
@@ -108,7 +115,11 @@ fn selected_path_none_when_nothing_selected() {
 #[test]
 fn selected_path_returns_path_of_selected_row() {
     let mut app = make_app();
-    app.load_hits(vec![make_hit("/first.rs", None), make_hit("/second.rs", None)], 2, 5);
+    app.load_hits(
+        vec![make_hit("/first.rs", None), make_hit("/second.rs", None)],
+        2,
+        5,
+    );
     app.list_state.select(Some(1));
     assert_eq!(app.selected_path(), Some("/second.rs".into()));
 }
@@ -118,7 +129,11 @@ fn selected_path_returns_path_of_selected_row() {
 #[test]
 fn load_hits_populates_rows_and_auto_selects() {
     let mut app = make_app();
-    app.load_hits(vec![make_hit("/a.rs", None), make_hit("/b.rs", None)], 42, 7);
+    app.load_hits(
+        vec![make_hit("/a.rs", None), make_hit("/b.rs", None)],
+        42,
+        7,
+    );
     assert_eq!(app.rows.len(), 2);
     assert_eq!(app.total_hits, 42);
     assert_eq!(app.last_took_ms, Some(7));
@@ -140,10 +155,14 @@ fn load_hits_empty_clears_selection() {
 #[test]
 fn load_hits_marks_archive_entries() {
     let mut app = make_app();
-    app.load_hits(vec![
-        make_hit("/archive.zip!/main.rs", Some("/archive.zip")),
-        make_hit("/real.rs", None),
-    ], 2, 1);
+    app.load_hits(
+        vec![
+            make_hit("/archive.zip!/main.rs", Some("/archive.zip")),
+            make_hit("/real.rs", None),
+        ],
+        2,
+        1,
+    );
     assert!(app.rows[0].is_archive);
     assert!(!app.rows[1].is_archive);
 }
@@ -164,9 +183,9 @@ fn clear_hits_resets_all_state() {
 
 #[test]
 fn humanize_size_boundaries() {
-    assert_eq!(humanize_size(0),           "0B");
-    assert_eq!(humanize_size(1023),        "1023B");
-    assert_eq!(humanize_size(1024),        "1.0KB");
+    assert_eq!(humanize_size(0), "0B");
+    assert_eq!(humanize_size(1023), "1023B");
+    assert_eq!(humanize_size(1024), "1.0KB");
     assert_eq!(humanize_size(1024 * 1024 - 1), "1024.0KB");
     assert_eq!(humanize_size(1024 * 1024), "1.0MB");
     assert_eq!(humanize_size(1024 * 1024 * 1024), "1.0GB");
@@ -189,15 +208,15 @@ fn cycle_mode_updates_title_and_sets_pending() {
 
 #[test]
 fn humanize_count_below_thousand() {
-    assert_eq!(humanize_count(0),   "0");
-    assert_eq!(humanize_count(1),   "1");
+    assert_eq!(humanize_count(0), "0");
+    assert_eq!(humanize_count(1), "1");
     assert_eq!(humanize_count(999), "999");
 }
 
 #[test]
 fn humanize_count_thousands() {
-    assert_eq!(humanize_count(1_000),   "1.0k");
-    assert_eq!(humanize_count(1_500),   "1.5k");
+    assert_eq!(humanize_count(1_000), "1.0k");
+    assert_eq!(humanize_count(1_500), "1.5k");
     assert_eq!(humanize_count(999_999), "1000.0k");
 }
 
@@ -223,7 +242,11 @@ fn load_stats_updates_counters_and_rebuilds_status() {
 #[test]
 fn rebuild_status_shows_result_count_took_and_mode() {
     let mut app = make_app();
-    app.load_hits(vec![make_hit("/a.rs", None), make_hit("/b.rs", None)], 99, 42);
+    app.load_hits(
+        vec![make_hit("/a.rs", None), make_hit("/b.rs", None)],
+        99,
+        42,
+    );
     assert!(app.status_msg.contains("2 results"));
     assert!(app.status_msg.contains("total: 99"));
     assert!(app.status_msg.contains("42ms"));
@@ -255,19 +278,30 @@ fn render_tags_only_archive_rows_with_zip() {
     use ratatui::{backend::TestBackend, Terminal};
 
     let mut app = make_app();
-    app.load_hits(vec![
-        make_hit("/archive.zip!/main.rs", Some("/archive.zip")),
-        make_hit("/real.rs", None),
-    ], 2, 1);
+    app.load_hits(
+        vec![
+            make_hit("/archive.zip!/main.rs", Some("/archive.zip")),
+            make_hit("/real.rs", None),
+        ],
+        2,
+        1,
+    );
 
     let mut term = Terminal::new(TestBackend::new(80, 10)).unwrap();
     term.draw(|f| super::render::render(f, &mut app)).unwrap();
 
     let buf = term.backend().buffer();
-    let line = |y: u16| (0..buf.area.width).map(|x| buf.get(x, y).symbol()).collect::<String>();
+    let line = |y: u16| {
+        (0..buf.area.width)
+            .map(|x| buf.get(x, y).symbol())
+            .collect::<String>()
+    };
     let lines: Vec<String> = (0..buf.area.height).map(line).collect();
-    let archive = lines.iter().find(|l| l.contains("/archive.zip!/main.rs")).unwrap();
-    let real    = lines.iter().find(|l| l.contains("/real.rs")).unwrap();
+    let archive = lines
+        .iter()
+        .find(|l| l.contains("/archive.zip!/main.rs"))
+        .unwrap();
+    let real = lines.iter().find(|l| l.contains("/real.rs")).unwrap();
     assert!(archive.contains("[zip]"), "{archive}");
     assert!(!real.contains("[zip]"), "{real}");
 }

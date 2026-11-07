@@ -1,5 +1,5 @@
-use super::*;
 use super::schema::parent_of;
+use super::*;
 use crate::store::{FileRecord, MetaFilters};
 use std::path::Path;
 use std::sync::Arc;
@@ -10,21 +10,21 @@ fn make_store() -> SqliteStore {
 
 fn sample_record(path: &str) -> FileRecord {
     FileRecord {
-        id:              None,
-        path:            path.to_owned(),
-        name:            path.split('/').next_back().unwrap_or(path).to_owned(),
-        extension:       Some("rs".into()),
-        size_bytes:      1024,
-        mtime:           1_000_000,
-        ctime:           1_000_000,
-        is_dir:          false,
-        is_hidden:       false,
-        is_symlink:      false,
-        attrib_bitmask:  0,
+        id: None,
+        path: path.to_owned(),
+        name: path.split('/').next_back().unwrap_or(path).to_owned(),
+        extension: Some("rs".into()),
+        size_bytes: 1024,
+        mtime: 1_000_000,
+        ctime: 1_000_000,
+        is_dir: false,
+        is_hidden: false,
+        is_symlink: false,
+        attrib_bitmask: 0,
         content_indexed: false,
-        tantivy_id:      None,
-        indexed_at:      1_000_000,
-        archive_path:    None,
+        tantivy_id: None,
+        indexed_at: 1_000_000,
+        archive_path: None,
     }
 }
 
@@ -51,7 +51,9 @@ fn remove_directory_removes_children() {
     let store = make_store();
     store.upsert_file(&sample_record("/proj/src/a.rs")).unwrap();
     store.upsert_file(&sample_record("/proj/src/b.rs")).unwrap();
-    store.upsert_file(&sample_record("/proj/README.md")).unwrap();
+    store
+        .upsert_file(&sample_record("/proj/README.md"))
+        .unwrap();
     let removed = store.remove_directory("/proj/src").unwrap();
     assert_eq!(removed, 2);
     assert!(store.get_by_path("/proj/src/a.rs").unwrap().is_none());
@@ -128,7 +130,9 @@ fn concurrent_upserts_all_succeed() {
 #[test]
 fn has_child_uses_parent_index() {
     let store = make_store();
-    store.upsert_file(&sample_record("/proj/src/main.rs")).unwrap();
+    store
+        .upsert_file(&sample_record("/proj/src/main.rs"))
+        .unwrap();
     assert!(store.has_child("/proj/src", "main.rs").unwrap());
     assert!(!store.has_child("/proj/src", "other.rs").unwrap());
     // Grandchild must not appear as direct child of /proj
@@ -141,7 +145,10 @@ fn upsert_inner_file_and_get() {
     let mut rec = sample_record("/archive.zip!/inner/file.rs");
     rec.archive_path = Some("/archive.zip".into());
     store.upsert_file(&rec).unwrap();
-    let got = store.get_by_path("/archive.zip!/inner/file.rs").unwrap().unwrap();
+    let got = store
+        .get_by_path("/archive.zip!/inner/file.rs")
+        .unwrap()
+        .unwrap();
     assert_eq!(got.archive_path, Some("/archive.zip".into()));
 }
 
@@ -197,7 +204,10 @@ fn crawl_generation_begin_increments() {
     let store = make_store();
     let g1 = store.begin_crawl_generation().unwrap();
     let g2 = store.begin_crawl_generation().unwrap();
-    assert!(g2 > g1, "each call must return a strictly larger generation");
+    assert!(
+        g2 > g1,
+        "each call must return a strictly larger generation"
+    );
 }
 
 #[test]
@@ -220,16 +230,20 @@ fn parent_of_archive_entry() {
 fn name_search_partitioned_matches_unpartitioned_semantics() {
     use crate::store::SqlCondition;
 
-    let dir   = tempfile::tempdir().unwrap();
+    let dir = tempfile::tempdir().unwrap();
     let store = SqliteStore::new(&dir.path().join("index.db")).unwrap();
-    let gen   = store.begin_crawl_generation().unwrap();
+    let gen = store.begin_crawl_generation().unwrap();
 
     // Enough rows for several sampled partitions; every 997th name carries the
     // needle, and leading letters spread the hits across all name ranges.
     let batch: Vec<(FileRecord, String)> = (0..40_000)
         .map(|i| {
             let lead = (b'a' + (i % 26) as u8) as char;
-            let name = if i % 997 == 0 { format!("{lead}_needle_{i}.rs") } else { format!("{lead}_file_{i}.txt") };
+            let name = if i % 997 == 0 {
+                format!("{lead}_needle_{i}.rs")
+            } else {
+                format!("{lead}_file_{i}.txt")
+            };
             let mut r = sample_record(&format!("/root/d{}/{name}", i % 50));
             r.extension = Some(if name.ends_with(".rs") { "rs" } else { "txt" }.into());
             (r, "/root".to_owned())
@@ -238,7 +252,8 @@ fn name_search_partitioned_matches_unpartitioned_semantics() {
     store.batch_upsert_crawl(&batch, gen).unwrap();
 
     let expected: Vec<String> = {
-        let mut v: Vec<String> = batch.iter()
+        let mut v: Vec<String> = batch
+            .iter()
             .map(|(r, _)| r.name.clone())
             .filter(|n| n.contains("needle"))
             .collect();
@@ -247,16 +262,28 @@ fn name_search_partitioned_matches_unpartitioned_semantics() {
     };
 
     let like = SqlCondition::NameLike("%NEEDLE%".into());
-    let mut got: Vec<String> = store.search_conditions(std::slice::from_ref(&like), 1_000).unwrap()
-        .into_iter().map(|r| r.name).collect();
+    let mut got: Vec<String> = store
+        .search_conditions(std::slice::from_ref(&like), 1_000)
+        .unwrap()
+        .into_iter()
+        .map(|r| r.name)
+        .collect();
     got.sort();
-    assert_eq!(got, expected, "LIKE is case-insensitive and every partition contributes");
+    assert_eq!(
+        got, expected,
+        "LIKE is case-insensitive and every partition contributes"
+    );
 
-    let limited = store.search_conditions(std::slice::from_ref(&like), 7).unwrap();
+    let limited = store
+        .search_conditions(std::slice::from_ref(&like), 7)
+        .unwrap();
     assert_eq!(limited.len(), 7);
 
     let with_ext = store
-        .search_conditions(&[like.clone(), SqlCondition::ExtIn(vec!["txt".into()])], 1_000)
+        .search_conditions(
+            &[like.clone(), SqlCondition::ExtIn(vec!["txt".into()])],
+            1_000,
+        )
         .unwrap();
     assert!(with_ext.is_empty(), "non-name conditions still apply");
 
@@ -269,15 +296,22 @@ fn name_search_partitioned_matches_unpartitioned_semantics() {
 fn clustered_name_matches_stop_the_other_ranges_cleanly() {
     use crate::store::SqlCondition;
 
-    let dir   = tempfile::tempdir().unwrap();
+    let dir = tempfile::tempdir().unwrap();
     let store = SqliteStore::new(&dir.path().join("index.db")).unwrap();
-    let gen   = store.begin_crawl_generation().unwrap();
+    let gen = store.begin_crawl_generation().unwrap();
     // Hits all sort into one name range, as `%readme%` does in a real tree.
     let batch: Vec<(FileRecord, String)> = (0..60_000)
         .map(|i| {
             let lead = (b'a' + (i % 26) as u8) as char;
-            let name = if i % 20 == 0 { format!("readme_{i}.md") } else { format!("{lead}_file_{i}.txt") };
-            (sample_record(&format!("/root/d{}/{name}", i % 50)), "/root".to_owned())
+            let name = if i % 20 == 0 {
+                format!("readme_{i}.md")
+            } else {
+                format!("{lead}_file_{i}.txt")
+            };
+            (
+                sample_record(&format!("/root/d{}/{name}", i % 50)),
+                "/root".to_owned(),
+            )
         })
         .collect();
     store.batch_upsert_crawl(&batch, gen).unwrap();

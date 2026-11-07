@@ -683,7 +683,11 @@ impl IndexState {
         st.entries.reserve(s.entries.len());
         for i in order {
             let e = &s.entries[i as usize];
-            let x = if e.flags & F_EXTRA != 0 { extra.remove(&i) } else { None };
+            let x = if e.flags & F_EXTRA != 0 {
+                extra.remove(&i)
+            } else {
+                None
+            };
             let x = x.unwrap_or_default();
             let start = e.path_off as usize;
             let path = &s.arena[start..start + e.path_len as usize];
@@ -769,7 +773,9 @@ impl<'a> EntryRef<'a> {
         if let Some(n) = self.extra().and_then(|x| x.name.as_deref()) {
             return n;
         }
-        self.tail().get(self.e.name_off as usize..).unwrap_or_default()
+        self.tail()
+            .get(self.e.name_off as usize..)
+            .unwrap_or_default()
     }
 
     pub(super) fn ext_str(&self) -> Option<&'a str> {
@@ -829,7 +835,10 @@ impl RecordView for EntryRef<'_> {
         let mut j = self.i;
         loop {
             let e = &self.st.entries[j as usize];
-            n += tail_in(&self.st.tails, e).bytes().filter(|&b| b == b'/').count();
+            n += tail_in(&self.st.tails, e)
+                .bytes()
+                .filter(|&b| b == b'/')
+                .count();
             match e.parent {
                 NO_PARENT => return n,
                 p => j = p,

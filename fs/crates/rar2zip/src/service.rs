@@ -13,8 +13,8 @@ pub mod windows {
     use windows_service::{
         define_windows_service,
         service::{
-            ServiceControl, ServiceControlAccept, ServiceExitCode, ServiceState,
-            ServiceStatus, ServiceType,
+            ServiceControl, ServiceControlAccept, ServiceExitCode, ServiceState, ServiceStatus,
+            ServiceType,
         },
         service_control_handler::{self, ServiceControlHandlerResult},
         service_dispatcher,
@@ -45,18 +45,16 @@ pub mod windows {
         let shutdown = CancellationToken::new();
         let shutdown_svc = shutdown.clone();
 
-        let status_handle = service_control_handler::register(
-            SERVICE_NAME,
-            move |control| match control {
+        let status_handle =
+            service_control_handler::register(SERVICE_NAME, move |control| match control {
                 ServiceControl::Stop | ServiceControl::Shutdown => {
                     shutdown_svc.cancel();
                     ServiceControlHandlerResult::NoError
                 }
                 ServiceControl::Interrogate => ServiceControlHandlerResult::NoError,
                 _ => ServiceControlHandlerResult::NotImplemented,
-            },
-        )
-        .expect("register service control handler");
+            })
+            .expect("register service control handler");
 
         set_status(
             &status_handle,
@@ -68,11 +66,14 @@ pub mod windows {
         let rt = tokio::runtime::Runtime::new().expect("tokio runtime");
 
         let exit_code = rt.block_on(async {
-            let path = CONFIG_PATH.get().cloned().unwrap_or_else(|| PathBuf::from("config.toml"));
+            let path = CONFIG_PATH
+                .get()
+                .cloned()
+                .unwrap_or_else(|| PathBuf::from("config.toml"));
             match config::load(&path) {
                 Ok(cfg) => match crate::app::run(cfg, shutdown).await {
-                    Ok(())  => ServiceExitCode::Win32(0),
-                    Err(e)  => {
+                    Ok(()) => ServiceExitCode::Win32(0),
+                    Err(e) => {
                         tracing::error!("service error: {e}");
                         ServiceExitCode::ServiceSpecific(1)
                     }
@@ -93,19 +94,19 @@ pub mod windows {
     }
 
     fn set_status(
-        handle:   &windows_service::service_control_handler::ServiceStatusHandle,
-        state:    ServiceState,
+        handle: &windows_service::service_control_handler::ServiceStatusHandle,
+        state: ServiceState,
         controls: ServiceControlAccept,
-        exit:     ServiceExitCode,
+        exit: ServiceExitCode,
     ) {
         let _ = handle.set_service_status(ServiceStatus {
-            service_type:        ServiceType::OWN_PROCESS,
-            current_state:       state,
-            controls_accepted:   controls,
-            exit_code:           exit,
-            checkpoint:          0,
-            wait_hint:           Duration::default(),
-            process_id:          None,
+            service_type: ServiceType::OWN_PROCESS,
+            current_state: state,
+            controls_accepted: controls,
+            exit_code: exit,
+            checkpoint: 0,
+            wait_hint: Duration::default(),
+            process_id: None,
         });
     }
 }

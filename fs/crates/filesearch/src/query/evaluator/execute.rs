@@ -4,7 +4,7 @@ use tokio::sync::RwLock;
 
 use crate::config::Config;
 use crate::error::{AppError, Result};
-use crate::store::{FileRecord, FileStore, SqlCondition, tantivy_store::TantivyStore};
+use crate::store::{tantivy_store::TantivyStore, FileRecord, FileStore, SqlCondition};
 
 use super::postfilter::{apply_post_filters, fuzzy_rank};
 use super::types::{EvalStrategy, PostFilter, QueryPlan, QueryResult};
@@ -14,25 +14,28 @@ use super::types::{EvalStrategy, PostFilter, QueryPlan, QueryResult};
 // ---------------------------------------------------------------------------
 
 pub async fn execute_plan(
-    plan:    QueryPlan,
-    store:   Arc<FileStore>,
+    plan: QueryPlan,
+    store: Arc<FileStore>,
     tantivy: Arc<TantivyStore>,
-    config:  Arc<RwLock<Config>>,
+    config: Arc<RwLock<Config>>,
 ) -> Result<QueryResult> {
     let start = std::time::Instant::now();
-    let cfg   = config.read().await;
+    let cfg = config.read().await;
 
-    let limit  = plan.limit.unwrap_or(cfg.search.default_limit).min(cfg.search.max_limit);
+    let limit = plan
+        .limit
+        .unwrap_or(cfg.search.default_limit)
+        .min(cfg.search.max_limit);
     let offset = plan.offset;
 
     let mut post_filters = plan.post_filters;
     let records = match &plan.strategy {
         EvalStrategy::SqliteOnly => {
-            let conds   = plan.sql_conditions.clone();
-            let want    = limit + offset;
-            let cap     = cfg.search.max_filter_candidates;
+            let conds = plan.sql_conditions.clone();
+            let want = limit + offset;
+            let cap = cfg.search.max_filter_candidates;
             let filters = std::mem::take(&mut post_filters);
-            let store2  = Arc::clone(&store);
+            let store2 = Arc::clone(&store);
             tokio::task::spawn_blocking(move || {
                 fetch_filtered(&store2, &conds, &filters, want, cap)
             })
@@ -42,43 +45,37 @@ pub async fn execute_plan(
 
         EvalStrategy::TantivyThenSqlite => {
             let query = plan.tantivy_query.clone().unwrap_or_default();
-            let hits  = tokio::task::spawn_blocking({
+            let hits = tokio::task::spawn_blocking({
                 let tv = Arc::clone(&tantivy);
-                let q  = query.clone();
-                move || {
-                    tv.search_fulltext(&q, limit * 4, &crate::store::MetaFilters::default())
-                }
+                let q = query.clone();
+                move || tv.search_fulltext(&q, limit * 4, &crate::store::MetaFilters::default())
             })
             .await
             .map_err(|e| AppError::Query(e.to_string()))??;
 
-            let paths:  Vec<String> = hits.into_iter().map(|h| h.path).collect();
-            let store2  = Arc::clone(&store);
-            let conds   = plan.sql_conditions.clone();
-            tokio::task::spawn_blocking(move || {
-                store2.search_by_paths(&paths, &conds, limit)
-            })
-            .await
-            .map_err(|e| AppError::Query(e.to_string()))??
+            let paths: Vec<String> = hits.into_iter().map(|h| h.path).collect();
+            let store2 = Arc::clone(&store);
+            let conds = plan.sql_conditions.clone();
+            tokio::task::spawn_blocking(move || store2.search_by_paths(&paths, &conds, limit))
+                .await
+                .map_err(|e| AppError::Query(e.to_string()))??
         }
 
         EvalStrategy::DupeSearch(kind) => {
-            let kind2  = *kind;
-            let conds  = plan.sql_conditions.clone();
+            let kind2 = *kind;
+            let conds = plan.sql_conditions.clone();
             let store2 = Arc::clone(&store);
-            tokio::task::spawn_blocking(move || {
-                store2.find_dupes(kind2, &conds, limit)
-            })
-            .await
-            .map_err(|e| AppError::Query(e.to_string()))??
+            tokio::task::spawn_blocking(move || store2.find_dupes(kind2, &conds, limit))
+                .await
+                .map_err(|e| AppError::Query(e.to_string()))??
         }
 
         EvalStrategy::FuzzyFilter(term) => {
-            let conds        = plan.sql_conditions.clone();
-            let max_cands    = cfg.search.max_fuzzy_candidates;
-            let threshold    = cfg.search.fuzzy_threshold;
-            let term_clone   = term.clone();
-            let store2       = Arc::clone(&store);
+            let conds = plan.sql_conditions.clone();
+            let max_cands = cfg.search.max_fuzzy_candidates;
+            let threshold = cfg.search.fuzzy_threshold;
+            let term_clone = term.clone();
+            let store2 = Arc::clone(&store);
 
             tokio::task::spawn_blocking(move || {
                 store2.fuzzy_search(
@@ -96,16 +93,15 @@ pub async fn execute_plan(
 
     // Apply post-filters
     let store_ref = Arc::clone(&store);
-    let filters   = post_filters;
-    let filtered  = tokio::task::spawn_blocking(move || {
-        apply_post_filters(records, &filters, &store_ref)
-    })
-    .await
-    .map_err(|e| AppError::Query(e.to_string()))?;
+    let filters = post_filters;
+    let filtered =
+        tokio::task::spawn_blocking(move || apply_post_filters(records, &filters, &store_ref))
+            .await
+            .map_err(|e| AppError::Query(e.to_string()))?;
 
-    let total    = filtered.len();
-    let hits     = filtered.into_iter().skip(offset).take(limit).collect();
-    let took_ms  = start.elapsed().as_millis() as u64;
+    let total = filtered.len();
+    let hits = filtered.into_iter().skip(offset).take(limit).collect();
+    let took_ms = start.elapsed().as_millis() as u64;
 
     Ok(QueryResult {
         hits,
@@ -121,11 +117,11 @@ pub async fn execute_plan(
 /// Filters that run in Rust can reject most fetched rows (`!regex:x` on a
 /// large index), so fetching exactly `want` would return short pages.
 pub(super) fn fetch_filtered(
-    store:   &FileStore,
-    conds:   &[SqlCondition],
+    store: &FileStore,
+    conds: &[SqlCondition],
     filters: &[PostFilter],
-    want:    usize,
-    cap:     usize,
+    want: usize,
+    cap: usize,
 ) -> Result<Vec<FileRecord>> {
     if filters.is_empty() {
         return store.search_conditions(conds, want);
@@ -133,9 +129,9 @@ pub(super) fn fetch_filtered(
     let cap = if cap == 0 { usize::MAX } else { cap.max(want) };
     let mut fetch = want.max(FIRST_FILTERED_FETCH).min(cap);
     loop {
-        let rows      = store.search_conditions(conds, fetch)?;
+        let rows = store.search_conditions(conds, fetch)?;
         let exhausted = rows.len() < fetch;
-        let kept      = apply_post_filters(rows, filters, store);
+        let kept = apply_post_filters(rows, filters, store);
         if kept.len() >= want || exhausted || fetch >= cap {
             return Ok(kept);
         }

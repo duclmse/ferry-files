@@ -29,18 +29,23 @@ mod tests {
     // -----------------------------------------------------------------------
 
     struct SftpEnv {
-        host:        String,
-        user:        String,
+        host: String,
+        user: String,
         remote_path: String,
-        key_path:    PathBuf,
+        key_path: PathBuf,
     }
 
     fn sftp_env() -> Option<SftpEnv> {
-        let host        = std::env::var("TEST_SFTP_HOST").ok()?;
-        let user        = std::env::var("TEST_SFTP_USER").ok()?;
+        let host = std::env::var("TEST_SFTP_HOST").ok()?;
+        let user = std::env::var("TEST_SFTP_USER").ok()?;
         let remote_path = std::env::var("TEST_SFTP_REMOTE_PATH").ok()?;
-        let key_path    = PathBuf::from(std::env::var("TEST_SFTP_KEY").ok()?);
-        Some(SftpEnv { host, user, remote_path, key_path })
+        let key_path = PathBuf::from(std::env::var("TEST_SFTP_KEY").ok()?);
+        Some(SftpEnv {
+            host,
+            user,
+            remote_path,
+            key_path,
+        })
     }
 
     // -----------------------------------------------------------------------
@@ -48,35 +53,35 @@ mod tests {
     // -----------------------------------------------------------------------
 
     fn make_config(
-        watch:  &TempDir,
+        watch: &TempDir,
         failed: &TempDir,
-        sftp:   &SftpEnv,
+        sftp: &SftpEnv,
         stream_threshold_mb: u64,
     ) -> Config {
         Config {
-            watch_folder:      watch.path().to_path_buf(),
-            failed_folder:     failed.path().to_path_buf(),
+            watch_folder: watch.path().to_path_buf(),
+            failed_folder: failed.path().to_path_buf(),
             include_extensions: vec!["zip".into()],
-            exclude_patterns:  vec![],
-            watch_subdirs:     None,
+            exclude_patterns: vec![],
+            watch_subdirs: None,
             min_file_age_secs: 0,
             conversion: ConversionConfig {
-                compression_level:               6,
-                archive_password:                None,
+                compression_level: 6,
+                archive_password: None,
                 stream_to_transfer_threshold_mb: stream_threshold_mb,
-                multipart_timeout_hours:         24,
+                multipart_timeout_hours: 24,
             },
             destinations: vec![Destination {
-                host:         sftp.host.clone(),
-                port:         22,
-                user:         sftp.user.clone(),
-                remote_path:  sftp.remote_path.clone(),
+                host: sftp.host.clone(),
+                port: 22,
+                user: sftp.user.clone(),
+                remote_path: sftp.remote_path.clone(),
                 ssh_key_path: sftp.key_path.clone(),
             }],
             transfer: TransferConfig {
-                max_concurrent:       1,
-                max_retries:          1,
-                retry_delay_secs:     1,
+                max_concurrent: 1,
+                max_retries: 1,
+                retry_delay_secs: 1,
                 bandwidth_limit_kbps: 0,
             },
             observability: ObservabilityConfig::default(),
@@ -111,11 +116,14 @@ mod tests {
     // -----------------------------------------------------------------------
 
     async fn wait_for(timeout_secs: u64, mut predicate: impl FnMut() -> bool) -> bool {
-        let deadline = std::time::Instant::now()
-            + std::time::Duration::from_secs(timeout_secs);
+        let deadline = std::time::Instant::now() + std::time::Duration::from_secs(timeout_secs);
         loop {
-            if predicate() { return true; }
-            if std::time::Instant::now() >= deadline { return false; }
+            if predicate() {
+                return true;
+            }
+            if std::time::Instant::now() >= deadline {
+                return false;
+            }
             tokio::time::sleep(std::time::Duration::from_millis(500)).await;
         }
     }
@@ -131,11 +139,11 @@ mod tests {
             return;
         };
 
-        let watch  = TempDir::new().unwrap();
+        let watch = TempDir::new().unwrap();
         let failed = TempDir::new().unwrap();
 
         // Threshold 500 MB → a tiny fixture uses Disk strategy.
-        let config   = make_config(&watch, &failed, &sftp, 500);
+        let config = make_config(&watch, &failed, &sftp, 500);
         let shutdown = CancellationToken::new();
         let shutdown_c = shutdown.clone();
 
@@ -154,11 +162,17 @@ mod tests {
 
         shutdown.cancel();
 
-        assert!(removed, "source archive must be removed after successful Disk-strategy job");
+        assert!(
+            removed,
+            "source archive must be removed after successful Disk-strategy job"
+        );
 
         // Verify no failed/ entries.
         let failed_count = std::fs::read_dir(failed.path()).unwrap().count();
-        assert_eq!(failed_count, 0, "no jobs should be in failed/ for a clean transfer");
+        assert_eq!(
+            failed_count, 0,
+            "no jobs should be in failed/ for a clean transfer"
+        );
     }
 
     // -----------------------------------------------------------------------
@@ -172,11 +186,11 @@ mod tests {
             return;
         };
 
-        let watch  = TempDir::new().unwrap();
+        let watch = TempDir::new().unwrap();
         let failed = TempDir::new().unwrap();
 
         // Threshold 0 MB → all archives use Stream strategy (no local ZIP).
-        let config   = make_config(&watch, &failed, &sftp, 0);
+        let config = make_config(&watch, &failed, &sftp, 0);
         let shutdown = CancellationToken::new();
         let shutdown_c = shutdown.clone();
 
@@ -196,20 +210,21 @@ mod tests {
 
         shutdown.cancel();
 
-        assert!(removed, "source archive must be removed after successful Stream-strategy job");
+        assert!(
+            removed,
+            "source archive must be removed after successful Stream-strategy job"
+        );
 
         // No .zip files should have been created locally (stream goes directly to SFTP).
         let zip_count = std::fs::read_dir(&watch_path)
             .unwrap()
             .filter_map(|e| e.ok())
-            .filter(|e| {
-                e.path()
-                    .extension()
-                    .map(|x| x == "zip")
-                    .unwrap_or(false)
-            })
+            .filter(|e| e.path().extension().map(|x| x == "zip").unwrap_or(false))
             .count();
-        assert_eq!(zip_count, 0, "Stream strategy must not create a local ZIP file");
+        assert_eq!(
+            zip_count, 0,
+            "Stream strategy must not create a local ZIP file"
+        );
 
         let failed_count = std::fs::read_dir(failed.path()).unwrap().count();
         assert_eq!(failed_count, 0, "no jobs should be in failed/");

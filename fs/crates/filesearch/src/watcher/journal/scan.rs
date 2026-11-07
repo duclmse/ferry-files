@@ -46,7 +46,11 @@ pub(super) fn current_position(roots: &[PathBuf]) -> Option<Position> {
     for root in roots {
         out.push((root.to_str()?.to_owned(), volume_id(root)?));
     }
-    Some(Position { event_id: now, roots: out, usn: Vec::new() })
+    Some(Position {
+        event_id: now,
+        roots: out,
+        usn: Vec::new(),
+    })
 }
 
 /// A different device means a different filesystem was mounted on the root:
@@ -93,9 +97,9 @@ fn is_hidden(path: &Path) -> bool {
 /// after `threshold`, with whether each is a directory. `None` past
 /// `MAX_REPLAY_PATHS`.
 fn changed_since(
-    roots:     &[PathBuf],
+    roots: &[PathBuf],
     threshold: i64,
-    skip:      &(dyn Fn(&Path, bool) -> bool + Sync),
+    skip: &(dyn Fn(&Path, bool) -> bool + Sync),
 ) -> Option<Vec<(PathBuf, bool)>> {
     let first = roots.first()?;
     let mut wb = ignore::WalkBuilder::new(first);
@@ -106,14 +110,24 @@ fn changed_since(
     let overflow = AtomicBool::new(false);
     wb.hidden(false).git_ignore(false).build_parallel().run(|| {
         Box::new(|entry| {
-            let Ok(entry) = entry else { return ignore::WalkState::Continue };
-            let Ok(meta) = entry.metadata() else { return ignore::WalkState::Continue };
+            let Ok(entry) = entry else {
+                return ignore::WalkState::Continue;
+            };
+            let Ok(meta) = entry.metadata() else {
+                return ignore::WalkState::Continue;
+            };
             let path = entry.path();
             if skip(path, is_hidden(path)) {
-                return if meta.is_dir() { ignore::WalkState::Skip } else { ignore::WalkState::Continue };
+                return if meta.is_dir() {
+                    ignore::WalkState::Skip
+                } else {
+                    ignore::WalkState::Continue
+                };
             }
             if newest_time(&meta) >= threshold {
-                let Ok(mut found) = found.lock() else { return ignore::WalkState::Quit };
+                let Ok(mut found) = found.lock() else {
+                    return ignore::WalkState::Quit;
+                };
                 found.push((path.to_path_buf(), meta.is_dir()));
                 if found.len() > MAX_REPLAY_PATHS {
                     overflow.store(true, Ordering::Relaxed);
@@ -133,16 +147,18 @@ fn changed_since(
 }
 
 pub(super) fn reconcile(
-    roots:   &[PathBuf],
-    since:   u64,
+    roots: &[PathBuf],
+    since: u64,
     formats: &[String],
-    skip:    &(dyn Fn(&Path, bool) -> bool + Sync),
-    index:   &dyn IndexLookup,
+    skip: &(dyn Fn(&Path, bool) -> bool + Sync),
+    index: &dyn IndexLookup,
 ) -> CatchUp {
     if let Some(r) = roots.iter().find(|r| r.symlink_metadata().is_err()) {
         return CatchUp::FullCrawl(format!("watch root {} is missing", r.display()));
     }
-    let threshold = i64::try_from(since).unwrap_or(i64::MAX).saturating_sub(SLACK_SECS);
+    let threshold = i64::try_from(since)
+        .unwrap_or(i64::MAX)
+        .saturating_sub(SLACK_SECS);
     let Some(found) = changed_since(roots, threshold, skip) else {
         return CatchUp::FullCrawl(format!("more than {MAX_REPLAY_PATHS} changed paths"));
     };
@@ -224,19 +240,26 @@ mod tests {
             self.0.contains(path)
         }
         fn children_of(&self, dir: &str) -> Vec<String> {
-            self.0.iter()
+            self.0
+                .iter()
                 .filter(|p| Path::new(p).parent() == Some(Path::new(dir)))
                 .cloned()
                 .collect()
         }
         fn paths_under(&self, dir: &str) -> Vec<String> {
             let prefix = format!("{dir}/");
-            self.0.iter().filter(|p| p.starts_with(&prefix)).cloned().collect()
+            self.0
+                .iter()
+                .filter(|p| p.starts_with(&prefix))
+                .cloned()
+                .collect()
         }
     }
 
     fn events(c: &CatchUp) -> Vec<String> {
-        let CatchUp::Events(ev) = c else { return vec![format!("{c:?}")] };
+        let CatchUp::Events(ev) = c else {
+            return vec![format!("{c:?}")];
+        };
         let mut v: Vec<String> = ev.iter().map(|e| format!("{e:?}")).collect();
         v.sort();
         v
@@ -247,7 +270,12 @@ mod tests {
         let dir = tempfile::TempDir::new().unwrap();
         let root = dir.path().join("root");
         let elsewhere = dir.path().join("elsewhere");
-        for d in [root.join("keep"), root.join("gone"), root.join("node_modules"), elsewhere.join("old")] {
+        for d in [
+            root.join("keep"),
+            root.join("gone"),
+            root.join("node_modules"),
+            elsewhere.join("old"),
+        ] {
             std::fs::create_dir_all(d).unwrap();
         }
         for f in [
@@ -280,9 +308,16 @@ mod tests {
         std::fs::write(root.join("node_modules/skip.js"), b"x").unwrap();
 
         let skip = |p: &Path, _hidden: bool| p.ends_with("node_modules");
-        let out = reconcile(std::slice::from_ref(&root), pos.event_id, &[], &skip, &index);
+        let out = reconcile(
+            std::slice::from_ref(&root),
+            pos.event_id,
+            &[],
+            &skip,
+            &index,
+        );
         let ev = events(&out);
-        let has = |kind: &str, name: &str| ev.iter().any(|e| e.starts_with(kind) && e.contains(name));
+        let has =
+            |kind: &str, name: &str| ev.iter().any(|e| e.starts_with(kind) && e.contains(name));
         assert!(has("Modified", "new.txt"), "{ev:?}");
         assert!(has("Modified", "edited.txt"), "{ev:?}");
         assert!(has("Deleted", "gone\")"), "{ev:?}");
@@ -301,7 +336,13 @@ mod tests {
 
     #[test]
     fn missing_root_forces_a_crawl() {
-        let out = reconcile(&[PathBuf::from("/no/such/root")], 0, &[], &|_, _| false, &Fake(HashSet::new()));
+        let out = reconcile(
+            &[PathBuf::from("/no/such/root")],
+            0,
+            &[],
+            &|_, _| false,
+            &Fake(HashSet::new()),
+        );
         assert!(matches!(out, CatchUp::FullCrawl(_)));
     }
 }

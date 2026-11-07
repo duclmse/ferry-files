@@ -8,8 +8,8 @@
 //!   `SimdDeflateDecoder` - `Decoder` impl: flate2 parses tokens, SIMD copies output bytes
 //!   `InflateStats` - per-thread counters gated by `FILESEARCH_INFLATE_STATS=1`
 
-use std::io;
 use bytes::Bytes;
+use std::io;
 
 use super::decoder::Decoder;
 
@@ -26,12 +26,15 @@ pub struct RingBuffer {
 
 impl RingBuffer {
     pub fn new() -> Self {
-        Self { buf: Box::new([0u8; WINDOW * 2]), pos: 0 }
+        Self {
+            buf: Box::new([0u8; WINDOW * 2]),
+            pos: 0,
+        }
     }
 
     #[inline]
     pub fn write_byte(&mut self, b: u8) {
-        self.buf[self.pos]          = b;
+        self.buf[self.pos] = b;
         self.buf[self.pos + WINDOW] = b; // mirror keeps slice_at contiguous
         self.pos = (self.pos + 1) & (WINDOW - 1);
     }
@@ -48,7 +51,9 @@ impl RingBuffer {
 }
 
 impl Default for RingBuffer {
-    fn default() -> Self { Self::new() }
+    fn default() -> Self {
+        Self::new()
+    }
 }
 
 // ---------------------------------------------------------------------------
@@ -80,7 +85,7 @@ pub fn copy_simd(dst: &mut Vec<u8>, src: &[u8], len: usize) {
 #[cfg(all(target_arch = "x86_64", target_feature = "avx2"))]
 #[target_feature(enable = "avx2")]
 unsafe fn copy_simd_avx2(dst: *mut u8, src: *const u8, len: usize) {
-    use std::arch::x86_64::{_mm256_loadu_si256, _mm256_storeu_si256, __m256i};
+    use std::arch::x86_64::{__m256i, _mm256_loadu_si256, _mm256_storeu_si256};
     let mut i = 0;
     while i + 32 <= len {
         let v = _mm256_loadu_si256(src.add(i) as *const __m256i);
@@ -111,7 +116,7 @@ pub fn copy_match(dst: &mut Vec<u8>, ring: &RingBuffer, dist: usize, len: usize)
         let mut copied = 0;
         while copied < len {
             let chunk = (len - copied).min(dist);
-            let src   = ring.slice_at(dist, chunk);
+            let src = ring.slice_at(dist, chunk);
             copy_simd(dst, src, chunk);
             copied += chunk;
         }
@@ -134,15 +139,27 @@ impl HuffmanTable {
     pub fn fixed_literal_length() -> Self {
         // Fixed code lengths: 0-143→8, 144-255→9, 256-279→7, 280-287→8
         let mut lengths = [0u8; 288];
-        for l in lengths[0..=143].iter_mut()   { *l = 8; }
-        for l in lengths[144..=255].iter_mut() { *l = 9; }
-        for l in lengths[256..=279].iter_mut() { *l = 7; }
-        for l in lengths[280..=287].iter_mut() { *l = 8; }
-        Self { fast: build_fast_table(&lengths) }
+        for l in lengths[0..=143].iter_mut() {
+            *l = 8;
+        }
+        for l in lengths[144..=255].iter_mut() {
+            *l = 9;
+        }
+        for l in lengths[256..=279].iter_mut() {
+            *l = 7;
+        }
+        for l in lengths[280..=287].iter_mut() {
+            *l = 8;
+        }
+        Self {
+            fast: build_fast_table(&lengths),
+        }
     }
 
     pub fn new_empty() -> Self {
-        Self { fast: Box::new([0u16; 512]) }
+        Self {
+            fast: Box::new([0u16; 512]),
+        }
     }
 
     /// Look up up to 9 bits. Returns `(symbol, code_len)` or `None` for long
@@ -150,7 +167,9 @@ impl HuffmanTable {
     #[inline]
     pub fn decode(&self, bits: u32) -> Option<(u16, u8)> {
         let entry = self.fast[(bits & 0x1FF) as usize];
-        if entry == 0 { return None; }
+        if entry == 0 {
+            return None;
+        }
         Some((entry >> 4, (entry & 0xF) as u8))
     }
 }
@@ -160,7 +179,11 @@ impl HuffmanTable {
 fn build_fast_table(lengths: &[u8]) -> Box<[u16; 512]> {
     // Count codes of each length.
     let mut bl_count = [0u32; 16];
-    for &l in lengths { if l > 0 { bl_count[l as usize] += 1; } }
+    for &l in lengths {
+        if l > 0 {
+            bl_count[l as usize] += 1;
+        }
+    }
 
     // Compute starting code for each length.
     let mut next_code = [0u32; 16];
@@ -172,12 +195,14 @@ fn build_fast_table(lengths: &[u8]) -> Box<[u16; 512]> {
 
     let mut table = Box::new([0u16; 512]);
     for (sym, &len) in lengths.iter().enumerate() {
-        if len == 0 || len > 9 { continue; }
+        if len == 0 || len > 9 {
+            continue;
+        }
         let c = next_code[len as usize];
         next_code[len as usize] += 1;
 
         // Reverse bits for LSB-first reading.
-        let rev  = reverse_bits(c, len);
+        let rev = reverse_bits(c, len);
         let reps = 1usize << (9 - len as usize);
         for i in 0..reps {
             let idx = (rev as usize) | (i << len as usize);
@@ -208,28 +233,30 @@ fn reverse_bits(val: u32, len: u8) -> u32 {
 /// parsing and LZ77 match-copy (approach b from §13.4), then `copy_simd` for
 /// the bulk transfer of each chunk's decompressed output.
 pub struct SimdDeflateDecoder {
-    inner:   flate2::Decompress,
+    inner: flate2::Decompress,
     out_buf: Vec<u8>,
 }
 
 impl SimdDeflateDecoder {
     pub fn new() -> Self {
         Self {
-            inner:   flate2::Decompress::new(false), // raw deflate
+            inner: flate2::Decompress::new(false), // raw deflate
             out_buf: Vec::with_capacity(65_536),
         }
     }
 }
 
 impl Default for SimdDeflateDecoder {
-    fn default() -> Self { Self::new() }
+    fn default() -> Self {
+        Self::new()
+    }
 }
 
 impl Decoder for SimdDeflateDecoder {
     fn feed(&mut self, input: &[u8]) -> io::Result<Bytes> {
         use flate2::{FlushDecompress, Status};
 
-        let t0      = stats_now();
+        let t0 = stats_now();
         let mut pos = 0usize;
 
         while pos < input.len() {
@@ -238,12 +265,15 @@ impl Decoder for SimdDeflateDecoder {
             self.out_buf.reserve(65_536);
 
             let before = self.inner.total_in();
-            let status = self.inner
+            let status = self
+                .inner
                 .decompress_vec(&input[pos..], &mut self.out_buf, FlushDecompress::None)
                 .map_err(|e| io::Error::new(io::ErrorKind::InvalidData, e.to_string()))?;
             let consumed = (self.inner.total_in() - before) as usize;
             pos += consumed;
-            if matches!(status, Status::StreamEnd) || consumed == 0 { break; }
+            if matches!(status, Status::StreamEnd) || consumed == 0 {
+                break;
+            }
         }
 
         let decode_ns = stats_elapsed(t0);
@@ -251,10 +281,10 @@ impl Decoder for SimdDeflateDecoder {
         // Swap out_buf with a fresh Vec to hand the data to the caller with
         // zero copies. The replacement retains the same capacity so the next
         // feed call does not need to reallocate.
-        let t1       = stats_now();
-        let cap      = self.out_buf.capacity();
+        let t1 = stats_now();
+        let cap = self.out_buf.capacity();
         let out_data = std::mem::replace(&mut self.out_buf, Vec::with_capacity(cap));
-        let copy_ns  = stats_elapsed(t1);
+        let copy_ns = stats_elapsed(t1);
 
         record_stats(decode_ns, copy_ns, out_data.len() as u64);
         Ok(Bytes::from(out_data))
@@ -280,9 +310,9 @@ impl Decoder for SimdDeflateDecoder {
 
 #[derive(Default, Clone, Debug)]
 pub struct InflateStats {
-    pub io_ns:     u64,
+    pub io_ns: u64,
     pub decode_ns: u64,
-    pub copy_ns:   u64,
+    pub copy_ns: u64,
     pub bytes_out: u64,
 }
 
@@ -298,7 +328,9 @@ pub fn stats_enabled() -> bool {
 
 /// Read and reset the thread-local stats. Returns `None` when stats are disabled.
 pub fn take_stats() -> Option<InflateStats> {
-    if !stats_enabled() { return None; }
+    if !stats_enabled() {
+        return None;
+    }
     INFLATE_STATS.with(|s| {
         let snapshot = s.borrow().clone();
         *s.borrow_mut() = InflateStats::default();
@@ -308,23 +340,32 @@ pub fn take_stats() -> Option<InflateStats> {
 
 #[inline]
 fn stats_now() -> u64 {
-    if !stats_enabled() { return 0; }
+    if !stats_enabled() {
+        return 0;
+    }
     use std::time::{SystemTime, UNIX_EPOCH};
-    SystemTime::now().duration_since(UNIX_EPOCH).map(|d| d.as_nanos() as u64).unwrap_or(0)
+    SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .map(|d| d.as_nanos() as u64)
+        .unwrap_or(0)
 }
 
 #[inline]
 fn stats_elapsed(start: u64) -> u64 {
-    if start == 0 { return 0; }
+    if start == 0 {
+        return 0;
+    }
     stats_now().saturating_sub(start)
 }
 
 fn record_stats(decode_ns: u64, copy_ns: u64, bytes_out: u64) {
-    if !stats_enabled() { return; }
+    if !stats_enabled() {
+        return;
+    }
     INFLATE_STATS.with(|s| {
-        let mut s   = s.borrow_mut();
+        let mut s = s.borrow_mut();
         s.decode_ns += decode_ns;
-        s.copy_ns   += copy_ns;
+        s.copy_ns += copy_ns;
         s.bytes_out += bytes_out;
     });
 }
@@ -343,7 +384,7 @@ mod tests {
     fn copy_simd_various_lengths() {
         for &len in &[1usize, 31, 32, 33, 128, 255] {
             let src: Vec<u8> = (0..len).map(|i| i as u8).collect();
-            let mut dst      = Vec::new();
+            let mut dst = Vec::new();
             copy_simd(&mut dst, &src, len);
             assert_eq!(dst, src, "copy_simd failed for len={len}");
         }
@@ -352,7 +393,9 @@ mod tests {
     // ── copy_match ───────────────────────────────────────────────────────────
 
     fn fill_ring(ring: &mut RingBuffer, data: &[u8]) {
-        for &b in data { ring.write_byte(b); }
+        for &b in data {
+            ring.write_byte(b);
+        }
     }
 
     #[test]
@@ -362,7 +405,7 @@ mod tests {
         fill_ring(&mut ring, &payload);
 
         let dist = 100usize;
-        let len  = 50usize;
+        let len = 50usize;
         let mut dst = Vec::new();
         copy_match(&mut dst, &ring, dist, len);
 
@@ -375,7 +418,9 @@ mod tests {
     fn copy_match_overlap_expanding_run() {
         // dist=3, len=9 → pattern abcabcabc
         let mut ring = RingBuffer::new();
-        for b in b"abc" { ring.write_byte(*b); }
+        for b in b"abc" {
+            ring.write_byte(*b);
+        }
 
         let mut dst = Vec::new();
         copy_match(&mut dst, &ring, 3, 9);
@@ -399,8 +444,12 @@ mod tests {
     fn ring_write_32k_slice_at_wraps() {
         let mut ring = RingBuffer::new();
         // Fill exactly 32 KB with 0x00, then write 64 bytes of 0xFF.
-        for _ in 0..WINDOW { ring.write_byte(0x00); }
-        for _ in 0..64     { ring.write_byte(0xFF); }
+        for _ in 0..WINDOW {
+            ring.write_byte(0x00);
+        }
+        for _ in 0..64 {
+            ring.write_byte(0xFF);
+        }
         // The last 64 bytes are 0xFF.
         let s = ring.slice_at(64, 64);
         assert!(s.iter().all(|&b| b == 0xFF));
@@ -410,7 +459,9 @@ mod tests {
     fn ring_slice_at_is_contiguous() {
         let mut ring = RingBuffer::new();
         let data: Vec<u8> = (0..100u8).collect();
-        for &b in &data { ring.write_byte(b); }
+        for &b in &data {
+            ring.write_byte(b);
+        }
         // slice_at(100, 100) should be contiguous and equal data.
         let s = ring.slice_at(100, 100);
         assert_eq!(s, &data[..]);
@@ -420,7 +471,7 @@ mod tests {
 
     #[test]
     fn huffman_fixed_symbol_256_length_7() {
-        let table   = HuffmanTable::fixed_literal_length();
+        let table = HuffmanTable::fixed_literal_length();
         // Symbol 256 (end-of-block) has the first length-7 code (= 0b0000000,
         // reversed = 0).  All 9-bit patterns 0, 128, 256, 384 map to it.
         let (sym, len) = table.decode(0).expect("entry should be present");
@@ -456,7 +507,7 @@ mod tests {
 
     #[test]
     fn simd_decoder_matches_flate2_reference() {
-        let original   = b"the quick brown fox jumps over the lazy dog".repeat(20);
+        let original = b"the quick brown fox jumps over the lazy dog".repeat(20);
         let compressed = deflate_compress(&original);
 
         let mut dec = SimdDeflateDecoder::new();
@@ -468,7 +519,7 @@ mod tests {
 
     #[test]
     fn simd_decoder_one_byte_chunks_matches_single_chunk() {
-        let original   = b"hello world repeat ".repeat(30);
+        let original = b"hello world repeat ".repeat(30);
         let compressed = deflate_compress(&original);
 
         let mut dec_chunked = SimdDeflateDecoder::new();
@@ -483,7 +534,7 @@ mod tests {
     #[test]
     fn simd_decoder_large_input_correct_size() {
         let original: Vec<u8> = (0u8..=255).cycle().take(1024 * 1024).collect();
-        let compressed        = deflate_compress(&original);
+        let compressed = deflate_compress(&original);
 
         let mut dec = SimdDeflateDecoder::new();
         let mut out = Vec::new();

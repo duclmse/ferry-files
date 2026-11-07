@@ -56,7 +56,11 @@ pub async fn extract_content(path: &Path, max_bytes: u64) -> Result<Option<Strin
 
     let buf: Vec<u8> = if file_size <= 1024 * 1024 {
         let full = tokio::fs::read(path).await.map_err(AppError::Io)?;
-        if full.len() > limit { full[..limit].to_vec() } else { full }
+        if full.len() > limit {
+            full[..limit].to_vec()
+        } else {
+            full
+        }
     } else {
         let path_buf = path.to_path_buf();
         tokio::task::spawn_blocking(move || -> Result<Vec<u8>> {

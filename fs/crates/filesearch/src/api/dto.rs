@@ -11,8 +11,10 @@ use crate::store::FileRecord;
 /// Returns an empty string for real filesystem files.
 pub fn archive_entry(r: &FileRecord) -> String {
     match r.archive_path {
-        None    => String::new(),
-        Some(_) => r.path.find("!/")
+        None => String::new(),
+        Some(_) => r
+            .path
+            .find("!/")
             .map(|i| r.path[i + 2..].to_owned())
             .unwrap_or_default(),
     }
@@ -22,7 +24,8 @@ pub fn archive_entry(r: &FileRecord) -> String {
 /// Preferred for REST responses that use `Option<String>`.
 pub fn archive_entry_opt(r: &FileRecord) -> Option<String> {
     r.archive_path.as_ref().map(|_| {
-        r.path.find("!/")
+        r.path
+            .find("!/")
             .map(|i| r.path[i + 2..].to_owned())
             .unwrap_or_default()
     })
@@ -36,15 +39,29 @@ mod tests {
 
     fn real_record(path: &str) -> FileRecord {
         FileRecord {
-            id: None, path: path.into(), name: "f".into(), extension: None,
-            size_bytes: 0, mtime: 0, ctime: 0, is_dir: false, is_hidden: false,
-            is_symlink: false, attrib_bitmask: 0, content_indexed: false,
-            tantivy_id: None, indexed_at: 0, archive_path: None,
+            id: None,
+            path: path.into(),
+            name: "f".into(),
+            extension: None,
+            size_bytes: 0,
+            mtime: 0,
+            ctime: 0,
+            is_dir: false,
+            is_hidden: false,
+            is_symlink: false,
+            attrib_bitmask: 0,
+            content_indexed: false,
+            tantivy_id: None,
+            indexed_at: 0,
+            archive_path: None,
         }
     }
 
     fn zip_record(path: &str, archive_path: &str) -> FileRecord {
-        FileRecord { archive_path: Some(archive_path.into()), ..real_record(path) }
+        FileRecord {
+            archive_path: Some(archive_path.into()),
+            ..real_record(path)
+        }
     }
 
     // ── archive_entry ─────────────────────────────────────────────────────────

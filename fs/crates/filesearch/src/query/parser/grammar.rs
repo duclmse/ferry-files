@@ -12,7 +12,7 @@ use super::predicate::build_predicate;
 
 pub(super) struct Parser {
     tokens: Vec<Token>,
-    pos:    usize,
+    pos: usize,
 }
 
 impl Parser {
@@ -82,8 +82,11 @@ impl Parser {
             Token::QuotedPhrase(_) => {
                 if let Token::QuotedPhrase(s) = self.advance() {
                     Ok(Expr::Predicate(Predicate {
-                        kind:      PredicateKind::Term(s),
-                        modifiers: Modifiers { whole_filename: Some(true), ..Default::default() },
+                        kind: PredicateKind::Term(s),
+                        modifiers: Modifiers {
+                            whole_filename: Some(true),
+                            ..Default::default()
+                        },
                     }))
                 } else {
                     unreachable!()
@@ -103,16 +106,14 @@ impl Parser {
             let tok = match self.peek().clone() {
                 Token::Word(w) => w,
                 other => {
-                    return Err(AppError::Query(format!(
-                        "expected term, got {other:?}"
-                    )));
+                    return Err(AppError::Query(format!("expected term, got {other:?}")));
                 }
             };
             self.advance();
 
             // Split on first colon
             if let Some(colon) = tok.find(':') {
-                let kw      = tok[..colon].to_ascii_lowercase();
+                let kw = tok[..colon].to_ascii_lowercase();
                 let raw_val = tok[colon + 1..].to_owned();
 
                 // Modifier keyword - accumulate and loop
@@ -135,7 +136,7 @@ impl Parser {
 
             // Plain word - Term predicate
             return Ok(Expr::Predicate(Predicate {
-                kind:      PredicateKind::Term(tok),
+                kind: PredicateKind::Term(tok),
                 modifiers: mods,
             }));
         }
@@ -150,8 +151,14 @@ impl Parser {
 /// followed by the rest of the value word. Returns the reconstructed string.
 fn absorb_cmp_op(parser: &mut Parser) -> String {
     let op = match parser.peek().clone() {
-        Token::RAngle => { parser.advance(); '>' }
-        Token::LAngle => { parser.advance(); '<' }
+        Token::RAngle => {
+            parser.advance();
+            '>'
+        }
+        Token::LAngle => {
+            parser.advance();
+            '<'
+        }
         _ => return String::new(),
     };
     let rest = if let Token::Word(w) = parser.peek().clone() {

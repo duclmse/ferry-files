@@ -49,7 +49,11 @@ struct EarlyStop {
 
 impl EarlyStop {
     fn new(limit: usize) -> Self {
-        Self { limit, found: AtomicUsize::new(0), running: Mutex::new(Some(Vec::new())) }
+        Self {
+            limit,
+            found: AtomicUsize::new(0),
+            running: Mutex::new(Some(Vec::new())),
+        }
     }
 
     fn key(conn: &rusqlite::Connection) -> usize {
@@ -58,7 +62,9 @@ impl EarlyStop {
 
     /// False if the limit was already reached and the range need not run.
     fn register(&self, conn: &rusqlite::Connection) -> bool {
-        let Ok(mut running) = self.running.lock() else { return true };
+        let Ok(mut running) = self.running.lock() else {
+            return true;
+        };
         match running.as_mut() {
             Some(list) => {
                 list.push((Self::key(conn), conn.get_interrupt_handle()));

@@ -16,23 +16,23 @@ use axum::{
     http::{header, Request, Response, StatusCode},
     middleware::Next,
     response::IntoResponse,
-    Json, Router,
     routing::get,
+    Json, Router,
 };
 use serde::{Deserialize, Serialize};
 use tokio_util::io::ReaderStream;
 
 use crate::api::rest::AppState;
-use crate::query::{evaluator, parser};
-use crate::query::ast::{Expr, Function, Modifiers, Predicate, PredicateKind};
 use crate::archive::StreamExtractor;
+use crate::query::ast::{Expr, Function, Modifiers, Predicate, PredicateKind};
+use crate::query::{evaluator, parser};
 
-mod registry;
 mod handlers;
+mod registry;
 #[cfg(test)]
 mod tests;
 
-pub use registry::{ArchiveRegistry, ArchiveSummary, archive_id};
+pub use registry::{archive_id, ArchiveRegistry, ArchiveSummary};
 
 // ---------------------------------------------------------------------------
 // Router
@@ -40,10 +40,10 @@ pub use registry::{ArchiveRegistry, ArchiveSummary, archive_id};
 
 pub fn router(state: AppState) -> Router<AppState> {
     Router::new()
-        .route("/archive",            get(handlers::list_archives))
-        .route("/archive/:id/index",  get(handlers::get_index))
-        .route("/archive/:id/dir",    get(handlers::list_dir))
-        .route("/archive/:id/file",   get(handlers::stream_file))
+        .route("/archive", get(handlers::list_archives))
+        .route("/archive/:id/index", get(handlers::get_index))
+        .route("/archive/:id/dir", get(handlers::list_dir))
+        .route("/archive/:id/file", get(handlers::stream_file))
         .route("/archive/:id/search", get(handlers::search_archive))
         .layer(axum::middleware::from_fn_with_state(
             state.clone(),
@@ -58,8 +58,8 @@ pub fn router(state: AppState) -> Router<AppState> {
 
 async fn rate_limit_middleware(
     State(state): State<AppState>,
-    req:          Request<Body>,
-    next:         Next,
+    req: Request<Body>,
+    next: Next,
 ) -> axum::response::Response {
     let enabled = {
         let cfg = state.config.read().await;
@@ -77,8 +77,7 @@ async fn rate_limit_middleware(
 
     if state.rate_limiter.check(ip, 1).is_err() {
         state.scheduler_metrics.inc_rejected();
-        return (StatusCode::TOO_MANY_REQUESTS, "rate limit exceeded")
-            .into_response();
+        return (StatusCode::TOO_MANY_REQUESTS, "rate limit exceeded").into_response();
     }
 
     next.run(req).await
@@ -92,31 +91,40 @@ async fn rate_limit_middleware(
 struct ErrorBody {
     error: String,
     #[serde(skip_serializing_if = "Option::is_none")]
-    id:    Option<String>,
+    id: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
-    node:  Option<u32>,
+    node: Option<u32>,
 }
 
 fn err_not_found(id: &str) -> (StatusCode, Json<ErrorBody>) {
-    (StatusCode::NOT_FOUND, Json(ErrorBody {
-        error: "archive not found".into(),
-        id:    Some(id.to_string()),
-        node:  None,
-    }))
+    (
+        StatusCode::NOT_FOUND,
+        Json(ErrorBody {
+            error: "archive not found".into(),
+            id: Some(id.to_string()),
+            node: None,
+        }),
+    )
 }
 
 fn err_bad_node(msg: impl Into<String>, node: u32) -> (StatusCode, Json<ErrorBody>) {
-    (StatusCode::BAD_REQUEST, Json(ErrorBody {
-        error: msg.into(),
-        id:    None,
-        node:  Some(node),
-    }))
+    (
+        StatusCode::BAD_REQUEST,
+        Json(ErrorBody {
+            error: msg.into(),
+            id: None,
+            node: Some(node),
+        }),
+    )
 }
 
 fn err_internal(msg: impl Into<String>) -> (StatusCode, Json<ErrorBody>) {
-    (StatusCode::INTERNAL_SERVER_ERROR, Json(ErrorBody {
-        error: msg.into(),
-        id:    None,
-        node:  None,
-    }))
+    (
+        StatusCode::INTERNAL_SERVER_ERROR,
+        Json(ErrorBody {
+            error: msg.into(),
+            id: None,
+            node: None,
+        }),
+    )
 }

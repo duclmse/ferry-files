@@ -1,39 +1,53 @@
 use super::*;
+use crate::config::MacroConfig;
 use crate::query::ast::Modifiers;
 use crate::query::parser::parse;
-use crate::config::MacroConfig;
 
-fn empty_mods() -> Modifiers { Modifiers::default() }
+fn empty_mods() -> Modifiers {
+    Modifiers::default()
+}
 
 fn parse_plan(q: &str) -> QueryPlan {
     let macros = MacroConfig::default();
-    let expr   = parse(q, &macros).unwrap();
+    let expr = parse(q, &macros).unwrap();
     plan(&expr, &empty_mods()).unwrap()
 }
 
 #[test]
 fn plain_term_produces_name_like() {
     let p = parse_plan("main");
-    assert!(p.sql_conditions.iter().any(|c| matches!(c, SqlCondition::NameLike(_))));
+    assert!(p
+        .sql_conditions
+        .iter()
+        .any(|c| matches!(c, SqlCondition::NameLike(_))));
     assert!(matches!(p.strategy, EvalStrategy::SqliteOnly));
 }
 
 #[test]
 fn wildcard_produces_glob() {
     let p = parse_plan("*.rs");
-    assert!(p.sql_conditions.iter().any(|c| matches!(c, SqlCondition::NameGlob(_))));
+    assert!(p
+        .sql_conditions
+        .iter()
+        .any(|c| matches!(c, SqlCondition::NameGlob(_))));
 }
 
 #[test]
 fn ext_produces_ext_in() {
     let p = parse_plan("ext:jpg;png");
-    assert!(p.sql_conditions.iter().any(|c| matches!(c, SqlCondition::ExtIn(_))));
+    assert!(p
+        .sql_conditions
+        .iter()
+        .any(|c| matches!(c, SqlCondition::ExtIn(_))));
 }
 
 #[test]
 fn size_large_produces_size_range() {
     let p = parse_plan("size:large");
-    assert!(p.sql_conditions.iter().any(|c| matches!(c, SqlCondition::SizeRange(_, _))));
+    assert!(p
+        .sql_conditions
+        .iter()
+        .any(|c| matches!(c, SqlCondition::SizeRange(_, _))));
 }
 
 #[test]
@@ -64,19 +78,28 @@ fn count_sets_limit() {
 #[test]
 fn archive_entry_only_condition() {
     let p = parse_plan("archive: *.rs");
-    assert!(p.sql_conditions.iter().any(|c| matches!(c, SqlCondition::IsArchiveEntry)));
+    assert!(p
+        .sql_conditions
+        .iter()
+        .any(|c| matches!(c, SqlCondition::IsArchiveEntry)));
 }
 
 #[test]
 fn noarchive_post_filter() {
     let p = parse_plan("noarchive: *.log");
-    assert!(p.post_filters.iter().any(|f| matches!(f, PostFilter::ArchiveExclude)));
+    assert!(p
+        .post_filters
+        .iter()
+        .any(|f| matches!(f, PostFilter::ArchiveExclude)));
 }
 
 #[test]
 fn archiveof_produces_condition() {
     let p = parse_plan("archiveof:project.zip");
-    assert!(p.sql_conditions.iter().any(|c| matches!(c, SqlCondition::ArchiveOf(_))));
+    assert!(p
+        .sql_conditions
+        .iter()
+        .any(|c| matches!(c, SqlCondition::ArchiveOf(_))));
 }
 
 #[test]
@@ -89,14 +112,20 @@ fn select_strategy_disk_below_threshold() {
 #[test]
 fn dm_today_produces_mtime_range() {
     let p = parse_plan("dm:today");
-    assert!(p.sql_conditions.iter().any(|c| matches!(c, SqlCondition::MtimeRange(_, _))));
+    assert!(p
+        .sql_conditions
+        .iter()
+        .any(|c| matches!(c, SqlCondition::MtimeRange(_, _))));
     assert!(matches!(p.strategy, EvalStrategy::SqliteOnly));
 }
 
 #[test]
 fn size_gt_1mb_produces_size_op() {
     let p = parse_plan("size:>1mb");
-    assert!(p.sql_conditions.iter().any(|c| matches!(c, SqlCondition::SizeOp(CmpOp::Gt, 1_048_576))));
+    assert!(p
+        .sql_conditions
+        .iter()
+        .any(|c| matches!(c, SqlCondition::SizeOp(CmpOp::Gt, 1_048_576))));
 }
 
 // ---------------------------------------------------------------------------
@@ -105,25 +134,38 @@ fn size_gt_1mb_produces_size_op() {
 
 mod boolean {
     use super::*;
-    use crate::store::{memory_store::MemoryStore, sqlite_store::SqliteStore, FileRecord, FileStore};
+    use crate::store::{
+        memory_store::MemoryStore, sqlite_store::SqliteStore, FileRecord, FileStore,
+    };
     use std::sync::Arc;
 
     fn rec(path: &str, ext: Option<&str>, is_dir: bool) -> FileRecord {
         FileRecord {
-            id: None, path: path.into(), name: path.rsplit('/').next().unwrap_or(path).into(),
-            extension: ext.map(Into::into), size_bytes: 10, mtime: 0, ctime: 0, is_dir,
-            is_hidden: false, is_symlink: false, attrib_bitmask: 0, content_indexed: false,
-            tantivy_id: None, indexed_at: 0, archive_path: None,
+            id: None,
+            path: path.into(),
+            name: path.rsplit('/').next().unwrap_or(path).into(),
+            extension: ext.map(Into::into),
+            size_bytes: 10,
+            mtime: 0,
+            ctime: 0,
+            is_dir,
+            is_hidden: false,
+            is_symlink: false,
+            attrib_bitmask: 0,
+            content_indexed: false,
+            tantivy_id: None,
+            indexed_at: 0,
+            archive_path: None,
         }
     }
 
     fn fill(store: &FileStore) {
         for r in [
-            rec("/p/main.rs",   Some("rs"),  false),
-            rec("/p/lib.rs",    Some("rs"),  false),
+            rec("/p/main.rs", Some("rs"), false),
+            rec("/p/lib.rs", Some("rs"), false),
             rec("/p/notes.txt", Some("txt"), false),
-            rec("/p/README",    None,        false),
-            rec("/p/src",       None,        true),
+            rec("/p/README", None, false),
+            rec("/p/src", None, true),
         ] {
             store.upsert_file(&r).unwrap();
         }
@@ -133,7 +175,9 @@ mod boolean {
         let p = parse_plan(q);
         let rows = store.search_conditions(&p.sql_conditions, 1000).unwrap();
         let mut names: Vec<String> = apply_post_filters(rows, &p.post_filters, store)
-            .into_iter().map(|r| r.name).collect();
+            .into_iter()
+            .map(|r| r.name)
+            .collect();
         names.sort();
         names
     }
@@ -141,14 +185,17 @@ mod boolean {
     fn check(store: &FileStore) {
         fill(store);
         let cases: &[(&str, &[&str])] = &[
-            ("main.rs | lib.rs",          &["lib.rs", "main.rs"]),
-            ("main.rs | lib.rs | README", &["README", "lib.rs", "main.rs"]),
-            ("!main.rs",                  &["README", "lib.rs", "notes.txt", "src"]),
-            ("!ext:rs",                   &["README", "notes.txt", "src"]),
-            ("*.rs !lib",                 &["main.rs"]),
-            ("!<main | lib>",             &["README", "notes.txt", "src"]),
+            ("main.rs | lib.rs", &["lib.rs", "main.rs"]),
+            (
+                "main.rs | lib.rs | README",
+                &["README", "lib.rs", "main.rs"],
+            ),
+            ("!main.rs", &["README", "lib.rs", "notes.txt", "src"]),
+            ("!ext:rs", &["README", "notes.txt", "src"]),
+            ("*.rs !lib", &["main.rs"]),
+            ("!<main | lib>", &["README", "notes.txt", "src"]),
             (r"main | regex:notes\.txt$", &["main.rs", "notes.txt"]),
-            (r"!regex:\.rs$",             &["README", "notes.txt", "src"]),
+            (r"!regex:\.rs$", &["README", "notes.txt", "src"]),
         ];
         for (q, want) in cases {
             assert_eq!(run(store, q), *want, "query {q:?}");
@@ -165,7 +212,9 @@ mod boolean {
     #[test]
     fn memory_backend() {
         let dir = tempfile::TempDir::new().unwrap();
-        check(&FileStore::Memory(Arc::new(MemoryStore::new(dir.path()).unwrap())));
+        check(&FileStore::Memory(Arc::new(
+            MemoryStore::new(dir.path()).unwrap(),
+        )));
     }
 
     fn fuzzy(store: &FileStore) {
@@ -177,8 +226,14 @@ mod boolean {
         assert_eq!(hits.first().map(|r| r.path.as_str()), Some("/p/main.rs"));
         let cond = parse_plan("ext:txt").sql_conditions;
         let hits = store.fuzzy_search(&cond, 1000, &rank("notes")).unwrap();
-        assert_eq!(hits.iter().map(|r| r.name.as_str()).collect::<Vec<_>>(), ["notes.txt"]);
-        assert!(store.fuzzy_search(&cond, 1000, &rank("main")).unwrap().is_empty());
+        assert_eq!(
+            hits.iter().map(|r| r.name.as_str()).collect::<Vec<_>>(),
+            ["notes.txt"]
+        );
+        assert!(store
+            .fuzzy_search(&cond, 1000, &rank("main"))
+            .unwrap()
+            .is_empty());
     }
 
     #[test]
@@ -191,17 +246,35 @@ mod boolean {
     #[test]
     fn fuzzy_memory_backend() {
         let dir = tempfile::TempDir::new().unwrap();
-        fuzzy(&FileStore::Memory(Arc::new(MemoryStore::new(dir.path()).unwrap())));
+        fuzzy(&FileStore::Memory(Arc::new(
+            MemoryStore::new(dir.path()).unwrap(),
+        )));
     }
 
     fn buried_matches(store: &FileStore) {
         // 2000 rejected rows come first, so a fetch of exactly `want` rows
         // would see none of the 10 that survive the filter.
-        for i in 0..2000 { store.upsert_file(&rec(&format!("/b/skip_{i}.rs"), Some("rs"), false)).unwrap(); }
-        for i in 0..10   { store.upsert_file(&rec(&format!("/b/hit_{i}.rs"),  Some("rs"), false)).unwrap(); }
+        for i in 0..2000 {
+            store
+                .upsert_file(&rec(&format!("/b/skip_{i}.rs"), Some("rs"), false))
+                .unwrap();
+        }
+        for i in 0..10 {
+            store
+                .upsert_file(&rec(&format!("/b/hit_{i}.rs"), Some("rs"), false))
+                .unwrap();
+        }
         let p = parse_plan("!regex:skip_");
-        let got = |want, cap| super::super::execute::fetch_filtered(
-            store, &p.sql_conditions, &p.post_filters, want, cap).unwrap();
+        let got = |want, cap| {
+            super::super::execute::fetch_filtered(
+                store,
+                &p.sql_conditions,
+                &p.post_filters,
+                want,
+                cap,
+            )
+            .unwrap()
+        };
 
         assert!(got(5, 0).len() >= 5, "grows until enough rows survive");
         assert_eq!(got(100, 0).len(), 10, "stops when the store runs out");
@@ -211,13 +284,17 @@ mod boolean {
     #[test]
     fn filtered_fetch_grows_sqlite() {
         let dir = tempfile::TempDir::new().unwrap();
-        buried_matches(&FileStore::Sqlite(Arc::new(SqliteStore::new(&dir.path().join("i.db")).unwrap())));
+        buried_matches(&FileStore::Sqlite(Arc::new(
+            SqliteStore::new(&dir.path().join("i.db")).unwrap(),
+        )));
     }
 
     #[test]
     fn filtered_fetch_grows_memory() {
         let dir = tempfile::TempDir::new().unwrap();
-        buried_matches(&FileStore::Memory(Arc::new(MemoryStore::new(dir.path()).unwrap())));
+        buried_matches(&FileStore::Memory(Arc::new(
+            MemoryStore::new(dir.path()).unwrap(),
+        )));
     }
 
     #[test]
@@ -231,7 +308,10 @@ mod boolean {
         let macros = MacroConfig::default();
         for q in ["content:x | main", "!fuzzy:mian", "dupe: | main"] {
             let expr = parse(q, &macros).unwrap();
-            assert!(plan(&expr, &empty_mods()).is_err(), "{q:?} should be rejected");
+            assert!(
+                plan(&expr, &empty_mods()).is_err(),
+                "{q:?} should be rejected"
+            );
         }
     }
 }

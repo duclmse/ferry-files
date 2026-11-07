@@ -16,11 +16,11 @@
 use std::sync::Arc;
 
 use criterion::{criterion_group, criterion_main, Criterion};
-use tokio::sync::RwLock;
 use tokio::runtime::Runtime;
+use tokio::sync::RwLock;
 
 use filesearch::config::Config;
-use filesearch::store::{FileStore, sqlite_store::SqliteStore, tantivy_store::TantivyStore};
+use filesearch::store::{sqlite_store::SqliteStore, tantivy_store::TantivyStore, FileStore};
 
 // ---------------------------------------------------------------------------
 // Setup helpers
@@ -48,10 +48,8 @@ log_dir     = "{dir}/logs"
 
 /// Populate SQLite with `count` synthetic records and return the store.
 fn setup_sqlite(count: usize) -> Arc<FileStore> {
-    let inner = Arc::new(
-        SqliteStore::new(std::path::Path::new(":memory:"))
-            .expect("sqlite in-memory"),
-    );
+    let inner =
+        Arc::new(SqliteStore::new(std::path::Path::new(":memory:")).expect("sqlite in-memory"));
     inner.populate_for_bench(count).expect("populate");
     Arc::new(FileStore::Sqlite(inner))
 }
@@ -66,12 +64,12 @@ fn setup_tantivy(dir: &tempfile::TempDir) -> Arc<TantivyStore> {
 // ---------------------------------------------------------------------------
 
 fn bench_exact_search(c: &mut Criterion) {
-    let rt      = build_runtime();
-    let watch   = tempfile::TempDir::new().unwrap();
+    let rt = build_runtime();
+    let watch = tempfile::TempDir::new().unwrap();
     let tantivy_dir = tempfile::TempDir::new().unwrap();
-    let sqlite  = setup_sqlite(500_000);
+    let sqlite = setup_sqlite(500_000);
     let tantivy = setup_tantivy(&tantivy_dir);
-    let config  = minimal_config(watch.path());
+    let config = minimal_config(watch.path());
 
     c.bench_function("exact_search_500k_files", |b| {
         b.to_async(&rt).iter(|| {
@@ -86,12 +84,12 @@ fn bench_exact_search(c: &mut Criterion) {
 }
 
 fn bench_extension_filter(c: &mut Criterion) {
-    let rt      = build_runtime();
-    let watch   = tempfile::TempDir::new().unwrap();
+    let rt = build_runtime();
+    let watch = tempfile::TempDir::new().unwrap();
     let tantivy_dir = tempfile::TempDir::new().unwrap();
-    let sqlite  = setup_sqlite(500_000);
+    let sqlite = setup_sqlite(500_000);
     let tantivy = setup_tantivy(&tantivy_dir);
-    let config  = minimal_config(watch.path());
+    let config = minimal_config(watch.path());
 
     c.bench_function("ext_filter_500k_files", |b| {
         b.to_async(&rt).iter(|| {
@@ -106,12 +104,12 @@ fn bench_extension_filter(c: &mut Criterion) {
 }
 
 fn bench_fuzzy_search(c: &mut Criterion) {
-    let rt      = build_runtime();
-    let watch   = tempfile::TempDir::new().unwrap();
+    let rt = build_runtime();
+    let watch = tempfile::TempDir::new().unwrap();
     let tantivy_dir = tempfile::TempDir::new().unwrap();
-    let sqlite  = setup_sqlite(500_000);
+    let sqlite = setup_sqlite(500_000);
     let tantivy = setup_tantivy(&tantivy_dir);
-    let config  = minimal_config(watch.path());
+    let config = minimal_config(watch.path());
 
     c.bench_function("fuzzy_search_500k_files", |b| {
         b.to_async(&rt).iter(|| {
@@ -126,12 +124,12 @@ fn bench_fuzzy_search(c: &mut Criterion) {
 }
 
 fn bench_size_filter(c: &mut Criterion) {
-    let rt      = build_runtime();
-    let watch   = tempfile::TempDir::new().unwrap();
+    let rt = build_runtime();
+    let watch = tempfile::TempDir::new().unwrap();
     let tantivy_dir = tempfile::TempDir::new().unwrap();
-    let sqlite  = setup_sqlite(500_000);
+    let sqlite = setup_sqlite(500_000);
     let tantivy = setup_tantivy(&tantivy_dir);
-    let config  = minimal_config(watch.path());
+    let config = minimal_config(watch.path());
 
     c.bench_function("size_filter_500k_files", |b| {
         b.to_async(&rt).iter(|| {
@@ -146,12 +144,12 @@ fn bench_size_filter(c: &mut Criterion) {
 }
 
 fn bench_regex_search(c: &mut Criterion) {
-    let rt      = build_runtime();
-    let watch   = tempfile::TempDir::new().unwrap();
+    let rt = build_runtime();
+    let watch = tempfile::TempDir::new().unwrap();
     let tantivy_dir = tempfile::TempDir::new().unwrap();
-    let sqlite  = setup_sqlite(500_000);
+    let sqlite = setup_sqlite(500_000);
     let tantivy = setup_tantivy(&tantivy_dir);
-    let config  = minimal_config(watch.path());
+    let config = minimal_config(watch.path());
 
     // Spec target: regex search < 200 ms on 1 M files (500 K used here).
     c.bench_function("regex_search_500k_files", |b| {

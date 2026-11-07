@@ -5,7 +5,7 @@ use tempfile::TempDir;
 fn make_store(dir: &TempDir) -> Arc<FileStore> {
     use crate::store::sqlite_store::SqliteStore;
     Arc::new(FileStore::Sqlite(Arc::new(
-        SqliteStore::new(&dir.path().join("test.db")).unwrap()
+        SqliteStore::new(&dir.path().join("test.db")).unwrap(),
     )))
 }
 
@@ -20,7 +20,9 @@ fn make_config(watch: &Path) -> Arc<RwLock<Config>> {
         data_dir: watch.join("data"),
         log_dir: watch.join("logs"),
         exclusions: ExclusionConfig::default(),
-        content: ContentConfig { extension_limits: [("txt".to_string(), 65536)].into() },
+        content: ContentConfig {
+            extension_limits: [("txt".to_string(), 65536)].into(),
+        },
         api: ApiConfig::default(),
         search: SearchConfig::default(),
         indexer: IndexerConfig::default(),
@@ -37,14 +39,16 @@ async fn full_crawl_indexes_all_files() {
     for i in 0..5 {
         std::fs::write(dir.path().join(format!("{i}.txt")), b"hello").unwrap();
     }
-    let store   = make_store(&dir);
+    let store = make_store(&dir);
     let tantivy = make_tantivy(&dir);
     let metrics = IndexMetrics::new();
-    let config  = make_config(dir.path());
-    let token   = CancellationToken::new();
+    let config = make_config(dir.path());
+    let token = CancellationToken::new();
 
     let registry = Arc::new(ArchiveRegistry::disabled());
-    full_crawl(config, store.clone(), tantivy, metrics, registry, token).await.unwrap();
+    full_crawl(config, store.clone(), tantivy, metrics, registry, token)
+        .await
+        .unwrap();
 
     let total = store.total_files().unwrap();
     assert!(total >= 5, "expected ≥5 files, got {total}");
@@ -67,7 +71,9 @@ async fn excluded_pattern_not_indexed() {
             max_content_size_bytes: 0,
             skip_network_content: false,
         },
-        content: ContentConfig { extension_limits: Default::default() },
+        content: ContentConfig {
+            extension_limits: Default::default(),
+        },
         api: ApiConfig::default(),
         search: SearchConfig::default(),
         indexer: IndexerConfig::default(),
@@ -78,16 +84,21 @@ async fn excluded_pattern_not_indexed() {
     }));
 
     let tmpdir2 = TempDir::new().unwrap();
-    let store    = make_store(&tmpdir2);
-    let tantivy  = make_tantivy(&tmpdir2);
-    let metrics  = IndexMetrics::new();
+    let store = make_store(&tmpdir2);
+    let tantivy = make_tantivy(&tmpdir2);
+    let metrics = IndexMetrics::new();
     let registry = Arc::new(ArchiveRegistry::disabled());
-    let token    = CancellationToken::new();
+    let token = CancellationToken::new();
 
-    full_crawl(config, store.clone(), tantivy, metrics, registry, token).await.unwrap();
+    full_crawl(config, store.clone(), tantivy, metrics, registry, token)
+        .await
+        .unwrap();
 
     let skip_path = dir.path().join("skip.log").to_string_lossy().into_owned();
-    assert!(store.get_by_path(&skip_path).unwrap().is_none(), "excluded file should not be indexed");
+    assert!(
+        store.get_by_path(&skip_path).unwrap().is_none(),
+        "excluded file should not be indexed"
+    );
 }
 
 #[tokio::test]
@@ -97,10 +108,10 @@ async fn delete_event_removes_record() {
     std::fs::write(&file, b"bye").unwrap();
 
     let tmpdir2 = TempDir::new().unwrap();
-    let store   = make_store(&tmpdir2);
+    let store = make_store(&tmpdir2);
     let tantivy = make_tantivy(&tmpdir2);
     let metrics = IndexMetrics::new();
-    let config  = make_config(dir.path());
+    let config = make_config(dir.path());
 
     // Insert the record manually
     let meta = std::fs::metadata(&file).unwrap();
@@ -116,7 +127,8 @@ async fn delete_event_removes_record() {
         tantivy,
         metrics,
         registry,
-    ).await;
+    )
+    .await;
 
     let path_str = file.to_string_lossy().into_owned();
     assert!(store.get_by_path(&path_str).unwrap().is_none());

@@ -1,9 +1,7 @@
 use chrono::Local;
 
 use crate::error::{AppError, Result};
-use crate::query::ast::{
-    DateExpr, Expr, Function, Modifiers, Predicate, PredicateKind, RangeExpr,
-};
+use crate::query::ast::{DateExpr, Expr, Function, Modifiers, Predicate, PredicateKind, RangeExpr};
 use crate::query::date::resolve_date_constant;
 use crate::query::glob::{glob_to_sqlite, has_wildcards};
 use crate::query::macros::expand_type_macro;
@@ -19,11 +17,11 @@ use super::types::{Branch, EvalStrategy, PostFilter, QueryPlan};
 pub fn plan(expr: &Expr, default_mods: &Modifiers) -> Result<QueryPlan> {
     let mut p = QueryPlan {
         sql_conditions: Vec::new(),
-        tantivy_query:  None,
-        post_filters:   Vec::new(),
-        limit:          None,
-        offset:         0,
-        strategy:       EvalStrategy::SqliteOnly,
+        tantivy_query: None,
+        post_filters: Vec::new(),
+        limit: None,
+        offset: 0,
+        strategy: EvalStrategy::SqliteOnly,
     };
     walk(expr, default_mods, &mut p)?;
     Ok(p)
@@ -44,10 +42,19 @@ fn walk(expr: &Expr, inherited: &Modifiers, p: &mut QueryPlan) -> Result<()> {
                 // Flatten `a | b | c` into one OR instead of nesting.
                 match <[SqlCondition; 1]>::try_from(sp.sql_conditions) {
                     Ok([SqlCondition::Or(inner)]) if sp.post_filters.is_empty() => {
-                        branches.extend(inner.into_iter().map(|sql| Branch { sql, post: Vec::new() }));
+                        branches.extend(inner.into_iter().map(|sql| Branch {
+                            sql,
+                            post: Vec::new(),
+                        }));
                     }
-                    Ok(one) => branches.push(Branch { sql: one.into(), post: sp.post_filters }),
-                    Err(sql) => branches.push(Branch { sql, post: sp.post_filters }),
+                    Ok(one) => branches.push(Branch {
+                        sql: one.into(),
+                        post: sp.post_filters,
+                    }),
+                    Err(sql) => branches.push(Branch {
+                        sql,
+                        post: sp.post_filters,
+                    }),
                 }
             }
             // Each branch's SQL alone is a superset of the branch, so the OR of
@@ -68,7 +75,7 @@ fn walk(expr: &Expr, inherited: &Modifiers, p: &mut QueryPlan) -> Result<()> {
             } else {
                 // NOT of a superset is a subset, so SQL cannot narrow here.
                 p.post_filters.push(PostFilter::Not(Branch {
-                    sql:  np.sql_conditions,
+                    sql: np.sql_conditions,
                     post: np.post_filters,
                 }));
             }
@@ -84,11 +91,11 @@ fn walk(expr: &Expr, inherited: &Modifiers, p: &mut QueryPlan) -> Result<()> {
 fn sub_plan(expr: &Expr, inherited: &Modifiers) -> Result<QueryPlan> {
     let mut p = QueryPlan {
         sql_conditions: Vec::new(),
-        tantivy_query:  None,
-        post_filters:   Vec::new(),
-        limit:          None,
-        offset:         0,
-        strategy:       EvalStrategy::SqliteOnly,
+        tantivy_query: None,
+        post_filters: Vec::new(),
+        limit: None,
+        offset: 0,
+        strategy: EvalStrategy::SqliteOnly,
     };
     walk(expr, inherited, &mut p)?;
     Ok(p)
@@ -119,7 +126,7 @@ fn emit_predicate(pred: &Predicate, mods: &Modifiers, p: &mut QueryPlan) -> Resu
         p.sql_conditions.push(SqlCondition::IsDir(true));
     }
     match mods.archive_only {
-        Some(true)  => p.sql_conditions.push(SqlCondition::IsArchiveEntry),
+        Some(true) => p.sql_conditions.push(SqlCondition::IsArchiveEntry),
         Some(false) => {
             // archive_path IS NULL - not directly representable; use post-filter
             p.post_filters.push(PostFilter::ArchiveExclude);
@@ -132,18 +139,20 @@ fn emit_predicate(pred: &Predicate, mods: &Modifiers, p: &mut QueryPlan) -> Resu
     match &pred.kind {
         PredicateKind::Term(s) => {
             let case_sensitive = mods.case_sensitive.unwrap_or(false);
-            let match_path     = mods.match_path.unwrap_or(false);
-            let whole_fn       = mods.whole_filename.unwrap_or(false);
-            let whole_word     = mods.whole_word.unwrap_or(false);
+            let match_path = mods.match_path.unwrap_or(false);
+            let whole_fn = mods.whole_filename.unwrap_or(false);
+            let whole_word = mods.whole_word.unwrap_or(false);
 
             if has_wildcards(s) {
                 let glob = glob_to_sqlite(s, whole_fn || has_wildcards(s));
                 if match_path {
-                    p.sql_conditions.push(SqlCondition::PathLike(format!("%{s}%")));
+                    p.sql_conditions
+                        .push(SqlCondition::PathLike(format!("%{s}%")));
                 } else if case_sensitive {
                     p.sql_conditions.push(SqlCondition::NameGlob(glob));
                 } else {
-                    p.sql_conditions.push(SqlCondition::NameGlob(glob.to_ascii_lowercase()));
+                    p.sql_conditions
+                        .push(SqlCondition::NameGlob(glob.to_ascii_lowercase()));
                 }
             } else {
                 let pattern = if match_path {
@@ -161,7 +170,8 @@ fn emit_predicate(pred: &Predicate, mods: &Modifiers, p: &mut QueryPlan) -> Resu
             }
 
             if whole_word {
-                p.post_filters.push(PostFilter::WholeWord(s.clone(), case_sensitive));
+                p.post_filters
+                    .push(PostFilter::WholeWord(s.clone(), case_sensitive));
             }
         }
 
@@ -190,10 +200,10 @@ fn emit_predicate(pred: &Predicate, mods: &Modifiers, p: &mut QueryPlan) -> Resu
 }
 
 fn emit_function(
-    func:   &Function,
-    _mods:  &Modifiers,
-    p:      &mut QueryPlan,
-    now:    chrono::DateTime<chrono::FixedOffset>,
+    func: &Function,
+    _mods: &Modifiers,
+    p: &mut QueryPlan,
+    now: chrono::DateTime<chrono::FixedOffset>,
 ) -> Result<()> {
     match func {
         Function::DateModified(de) => {
@@ -209,28 +219,28 @@ fn emit_function(
             let (lo, hi) = date_expr_to_range(de, now);
             p.sql_conditions.push(SqlCondition::MtimeRange(lo, hi));
         }
-        Function::Size(range) => {
-            match range {
-                RangeExpr::Eq(v)       => p.sql_conditions.push(SqlCondition::SizeOp(CmpOp::Eq, *v)),
-                RangeExpr::Lt(v)       => p.sql_conditions.push(SqlCondition::SizeOp(CmpOp::Lt, *v)),
-                RangeExpr::Lte(v)      => p.sql_conditions.push(SqlCondition::SizeOp(CmpOp::Lte, *v)),
-                RangeExpr::Gt(v)       => p.sql_conditions.push(SqlCondition::SizeOp(CmpOp::Gt, *v)),
-                RangeExpr::Gte(v)      => p.sql_conditions.push(SqlCondition::SizeOp(CmpOp::Gte, *v)),
-                RangeExpr::Between(a, b) => p.sql_conditions.push(SqlCondition::SizeRange(*a, *b)),
-            }
-        }
+        Function::Size(range) => match range {
+            RangeExpr::Eq(v) => p.sql_conditions.push(SqlCondition::SizeOp(CmpOp::Eq, *v)),
+            RangeExpr::Lt(v) => p.sql_conditions.push(SqlCondition::SizeOp(CmpOp::Lt, *v)),
+            RangeExpr::Lte(v) => p.sql_conditions.push(SqlCondition::SizeOp(CmpOp::Lte, *v)),
+            RangeExpr::Gt(v) => p.sql_conditions.push(SqlCondition::SizeOp(CmpOp::Gt, *v)),
+            RangeExpr::Gte(v) => p.sql_conditions.push(SqlCondition::SizeOp(CmpOp::Gte, *v)),
+            RangeExpr::Between(a, b) => p.sql_conditions.push(SqlCondition::SizeRange(*a, *b)),
+        },
         Function::Ext(exts) => {
             p.sql_conditions.push(SqlCondition::ExtIn(exts.clone()));
         }
         Function::Path(path) => {
-            p.sql_conditions.push(SqlCondition::PathLike(format!("{path}%")));
+            p.sql_conditions
+                .push(SqlCondition::PathLike(format!("{path}%")));
         }
         Function::Parent(path) => {
-            p.sql_conditions.push(SqlCondition::ParentPath(path.clone()));
+            p.sql_conditions
+                .push(SqlCondition::ParentPath(path.clone()));
         }
         Function::Content(text) => {
             p.tantivy_query = Some(text.clone());
-            p.strategy      = EvalStrategy::TantivyThenSqlite;
+            p.strategy = EvalStrategy::TantivyThenSqlite;
         }
         Function::Dupe(kind) => {
             p.strategy = EvalStrategy::DupeSearch(*kind);
@@ -269,14 +279,14 @@ fn emit_function(
 
 fn date_expr_to_range(de: &DateExpr, now: chrono::DateTime<chrono::FixedOffset>) -> (i64, i64) {
     match de {
-        DateExpr::Constant(c)        => resolve_date_constant(c, now),
-        DateExpr::Range(lo, hi)      => (*lo, *hi),
+        DateExpr::Constant(c) => resolve_date_constant(c, now),
+        DateExpr::Range(lo, hi) => (*lo, *hi),
         DateExpr::Comparison(op, ts) => match op {
-            CmpOp::Lt  => (i64::MIN, *ts - 1),
+            CmpOp::Lt => (i64::MIN, *ts - 1),
             CmpOp::Lte => (i64::MIN, *ts),
-            CmpOp::Gt  => (*ts + 1, i64::MAX),
+            CmpOp::Gt => (*ts + 1, i64::MAX),
             CmpOp::Gte => (*ts, i64::MAX),
-            CmpOp::Eq  => (*ts, *ts),
+            CmpOp::Eq => (*ts, *ts),
         },
     }
 }
@@ -287,13 +297,13 @@ fn date_expr_to_range(de: &DateExpr, now: chrono::DateTime<chrono::FixedOffset>)
 
 fn merge_mods(parent: &Modifiers, child: &Modifiers) -> Modifiers {
     Modifiers {
-        case_sensitive:    child.case_sensitive.or(parent.case_sensitive),
-        match_path:        child.match_path.or(parent.match_path),
-        files_only:        child.files_only.or(parent.files_only),
-        folders_only:      child.folders_only.or(parent.folders_only),
-        whole_filename:    child.whole_filename.or(parent.whole_filename),
-        whole_word:        child.whole_word.or(parent.whole_word),
+        case_sensitive: child.case_sensitive.or(parent.case_sensitive),
+        match_path: child.match_path.or(parent.match_path),
+        files_only: child.files_only.or(parent.files_only),
+        folders_only: child.folders_only.or(parent.folders_only),
+        whole_filename: child.whole_filename.or(parent.whole_filename),
+        whole_word: child.whole_word.or(parent.whole_word),
         ignore_diacritics: child.ignore_diacritics.or(parent.ignore_diacritics),
-        archive_only:      child.archive_only.or(parent.archive_only),
+        archive_only: child.archive_only.or(parent.archive_only),
     }
 }

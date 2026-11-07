@@ -3,9 +3,9 @@ use rar2zip::config;
 
 #[derive(Parser)]
 #[command(
-    name    = "rar2zip",
+    name = "rar2zip",
     version,
-    about   = "Watch folder → convert archives → SFTP transfer"
+    about = "Watch folder → convert archives → SFTP transfer"
 )]
 struct Cli {
     #[arg(short, long, default_value = "config.toml")]
@@ -37,8 +37,11 @@ fn main() {
         // ------------------------------------------------------------------
         Command::ValidateConfig => {
             let cfg = match config::load(&cli.config) {
-                Ok(c)  => c,
-                Err(e) => { eprintln!("Failed to load config: {e}"); std::process::exit(1); }
+                Ok(c) => c,
+                Err(e) => {
+                    eprintln!("Failed to load config: {e}");
+                    std::process::exit(1);
+                }
             };
             let errors = config::validate(&cfg);
             if !errors.is_empty() {
@@ -60,9 +63,15 @@ fn main() {
                     )
                     .await;
                     match result {
-                        Ok(Ok(_))  => println!("  OK  {addr}"),
-                        Ok(Err(e)) => { eprintln!("  FAIL {addr}: {e}"); ping_ok = false; }
-                        Err(_)     => { eprintln!("  FAIL {addr}: timed out"); ping_ok = false; }
+                        Ok(Ok(_)) => println!("  OK  {addr}"),
+                        Ok(Err(e)) => {
+                            eprintln!("  FAIL {addr}: {e}");
+                            ping_ok = false;
+                        }
+                        Err(_) => {
+                            eprintln!("  FAIL {addr}: timed out");
+                            ping_ok = false;
+                        }
                     }
                 }
             });
@@ -79,9 +88,7 @@ fn main() {
             // Windows Service dispatcher (blocks until the service stops)
             #[cfg(target_os = "windows")]
             if service {
-                if let Err(e) =
-                    rar2zip::service::windows::run_as_service(cli.config)
-                {
+                if let Err(e) = rar2zip::service::windows::run_as_service(cli.config) {
                     eprintln!("Service dispatcher error: {e}");
                     std::process::exit(1);
                 }
@@ -95,7 +102,7 @@ fn main() {
 
             // Direct (non-service) run
             let cfg = match config::load(&cli.config) {
-                Ok(c)  => c,
+                Ok(c) => c,
                 Err(e) => {
                     eprintln!("Failed to load config: {e}");
                     std::process::exit(1);
@@ -104,7 +111,7 @@ fn main() {
 
             let rt = tokio::runtime::Runtime::new().expect("tokio runtime");
             rt.block_on(async {
-                let shutdown      = tokio_util::sync::CancellationToken::new();
+                let shutdown = tokio_util::sync::CancellationToken::new();
                 let shutdown_ctrl = shutdown.clone();
                 tokio::spawn(async move {
                     tokio::signal::ctrl_c().await.ok();
@@ -121,40 +128,62 @@ fn main() {
         // ------------------------------------------------------------------
         Command::Status => {
             let cfg = match config::load(&cli.config) {
-                Ok(c)  => c,
-                Err(e) => { eprintln!("Failed to load config: {e}"); std::process::exit(1); }
+                Ok(c) => c,
+                Err(e) => {
+                    eprintln!("Failed to load config: {e}");
+                    std::process::exit(1);
+                }
             };
             let db = cfg.watch_folder.join(".rar2zip.db");
             let queue = match rar2zip::queue::JobQueue::new(&db) {
-                Ok(q)  => q,
-                Err(e) => { eprintln!("Error opening queue: {e}"); std::process::exit(1); }
+                Ok(q) => q,
+                Err(e) => {
+                    eprintln!("Error opening queue: {e}");
+                    std::process::exit(1);
+                }
             };
             match queue.queue_depth() {
                 Ok(depth) => {
                     println!("{:<14} COUNT", "STATUS");
                     println!("{}", "-".repeat(20));
                     for status in &["pending", "converting", "transferring", "done", "failed"] {
-                        println!("{:<14} {}", status, depth.get(*status).copied().unwrap_or(0));
+                        println!(
+                            "{:<14} {}",
+                            status,
+                            depth.get(*status).copied().unwrap_or(0)
+                        );
                     }
                 }
-                Err(e) => { eprintln!("Error: {e}"); std::process::exit(1); }
+                Err(e) => {
+                    eprintln!("Error: {e}");
+                    std::process::exit(1);
+                }
             }
         }
 
         // ------------------------------------------------------------------
         Command::RetryFailed => {
             let cfg = match config::load(&cli.config) {
-                Ok(c)  => c,
-                Err(e) => { eprintln!("Failed to load config: {e}"); std::process::exit(1); }
+                Ok(c) => c,
+                Err(e) => {
+                    eprintln!("Failed to load config: {e}");
+                    std::process::exit(1);
+                }
             };
             let db = cfg.watch_folder.join(".rar2zip.db");
             let queue = match rar2zip::queue::JobQueue::new(&db) {
-                Ok(q)  => q,
-                Err(e) => { eprintln!("Error opening queue: {e}"); std::process::exit(1); }
+                Ok(q) => q,
+                Err(e) => {
+                    eprintln!("Error opening queue: {e}");
+                    std::process::exit(1);
+                }
             };
             match queue.reset_failed() {
-                Ok(n)  => println!("Reset {n} failed job(s) to pending."),
-                Err(e) => { eprintln!("Error: {e}"); std::process::exit(1); }
+                Ok(n) => println!("Reset {n} failed job(s) to pending."),
+                Err(e) => {
+                    eprintln!("Error: {e}");
+                    std::process::exit(1);
+                }
             }
         }
     }

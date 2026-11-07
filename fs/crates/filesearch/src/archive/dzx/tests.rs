@@ -1,5 +1,5 @@
-use super::*;
 use super::builder::Window;
+use super::*;
 use std::io::Write as _;
 
 // -----------------------------------------------------------------------
@@ -30,13 +30,13 @@ fn deflate_with_sync_flush(data: &[u8], flush_every: usize) -> Vec<u8> {
 /// Build a minimal ZIP local file header + compressed data in memory.
 /// Returns (full_bytes, compressed_size, uncompressed_size, data_offset).
 fn make_local_entry(data: &[u8]) -> (Vec<u8>, u64, u64, u64) {
-    let compressed   = deflate(data);
-    let fname        = b"test.bin";
+    let compressed = deflate(data);
+    let fname = b"test.bin";
     let extra: &[u8] = &[];
 
     let mut out = Vec::new();
     out.extend_from_slice(b"PK\x03\x04"); // signature
-    out.extend_from_slice(&[0u8; 22]);     // fields up to filename_len
+    out.extend_from_slice(&[0u8; 22]); // fields up to filename_len
     out.extend_from_slice(&(fname.len() as u16).to_le_bytes());
     out.extend_from_slice(&(extra.len() as u16).to_le_bytes());
     out.extend_from_slice(fname);
@@ -44,7 +44,7 @@ fn make_local_entry(data: &[u8]) -> (Vec<u8>, u64, u64, u64) {
     let data_offset = out.len() as u64;
     out.extend_from_slice(&compressed);
 
-    let comp_size   = compressed.len() as u64;
+    let comp_size = compressed.len() as u64;
     let uncomp_size = data.len() as u64;
     (out, comp_size, uncomp_size, data_offset)
 }
@@ -55,7 +55,8 @@ struct MemSource(Vec<u8>);
 impl ByteSource for MemSource {
     async fn read_range(&self, offset: u64, len: usize) -> io::Result<Bytes> {
         let s = offset as usize;
-        let e = s.checked_add(len)
+        let e = s
+            .checked_add(len)
             .filter(|&e| e <= self.0.len())
             .ok_or_else(|| io::Error::new(io::ErrorKind::UnexpectedEof, "eof"))?;
         Ok(Bytes::copy_from_slice(&self.0[s..e]))
@@ -65,9 +66,9 @@ impl ByteSource for MemSource {
 fn make_source_and_meta(data: &[u8]) -> (MemSource, EntryMeta) {
     let (bytes, comp_size, uncomp_size, _) = make_local_entry(data);
     let meta = EntryMeta {
-        compression:         8,
-        compressed_size:     comp_size,
-        uncompressed_size:   uncomp_size,
+        compression: 8,
+        compressed_size: comp_size,
+        uncompressed_size: uncomp_size,
         local_header_offset: 0,
     };
     (MemSource(bytes), meta)
@@ -77,7 +78,7 @@ fn make_source_and_meta(data: &[u8]) -> (MemSource, EntryMeta) {
 /// so the recorded `comp_offset` values are valid deflate restart points.
 fn make_source_and_meta_synced(data: &[u8], block_size: u32) -> (MemSource, EntryMeta) {
     let compressed = deflate_with_sync_flush(data, block_size as usize);
-    let fname        = b"test.bin";
+    let fname = b"test.bin";
     let extra: &[u8] = &[];
     let mut out = Vec::new();
     out.extend_from_slice(b"PK\x03\x04");
@@ -88,9 +89,9 @@ fn make_source_and_meta_synced(data: &[u8], block_size: u32) -> (MemSource, Entr
     out.extend_from_slice(extra);
     out.extend_from_slice(&compressed);
     let meta = EntryMeta {
-        compression:         8,
-        compressed_size:     compressed.len() as u64,
-        uncompressed_size:   data.len() as u64,
+        compression: 8,
+        compressed_size: compressed.len() as u64,
+        uncompressed_size: data.len() as u64,
         local_header_offset: 0,
     };
     (MemSource(out), meta)
@@ -118,7 +119,7 @@ fn window_short_fill_snapshot_prefix() {
 #[test]
 fn window_wrap_around_snapshot_is_linearised() {
     let mut w = Window::new();
-    let first  = vec![0u8; WINDOW_SIZE];
+    let first = vec![0u8; WINDOW_SIZE];
     let second = vec![1u8; 100];
     w.push_slice(&first);
     w.push_slice(&second);
@@ -134,34 +135,37 @@ fn window_wrap_around_snapshot_is_linearised() {
 
 #[tokio::test]
 async fn build_single_block_entry() {
-    let data          = b"hello world, this is test content for dzx".repeat(10);
-    let (src, meta)   = make_source_and_meta(&data);
-    let tmp           = tempfile::NamedTempFile::new().unwrap();
-    let builder       = DzxBuilder::new(DEFAULT_BLOCK_SIZE);
-    let block_count   = builder.build(&src, &meta, tmp.path()).await.unwrap();
-    assert_eq!(block_count, 1, "data smaller than block_size → single block");
+    let data = b"hello world, this is test content for dzx".repeat(10);
+    let (src, meta) = make_source_and_meta(&data);
+    let tmp = tempfile::NamedTempFile::new().unwrap();
+    let builder = DzxBuilder::new(DEFAULT_BLOCK_SIZE);
+    let block_count = builder.build(&src, &meta, tmp.path()).await.unwrap();
+    assert_eq!(
+        block_count, 1,
+        "data smaller than block_size → single block"
+    );
 }
 
 #[tokio::test]
 async fn build_multi_block_correct_count() {
-    let block_size    = 1024u32;
-    let data          = vec![0xABu8; 3500]; // ceil(3500/1024) = 4 blocks
-    let (src, meta)   = make_source_and_meta_synced(&data, block_size);
-    let tmp           = tempfile::NamedTempFile::new().unwrap();
-    let builder       = DzxBuilder::new(block_size);
-    let count         = builder.build(&src, &meta, tmp.path()).await.unwrap();
+    let block_size = 1024u32;
+    let data = vec![0xABu8; 3500]; // ceil(3500/1024) = 4 blocks
+    let (src, meta) = make_source_and_meta_synced(&data, block_size);
+    let tmp = tempfile::NamedTempFile::new().unwrap();
+    let builder = DzxBuilder::new(block_size);
+    let count = builder.build(&src, &meta, tmp.path()).await.unwrap();
     assert_eq!(count, 4);
 }
 
 #[tokio::test]
 async fn build_and_open_find_first_block() {
-    let data          = b"abcdefghij".repeat(200);
-    let (src, meta)   = make_source_and_meta(&data);
-    let tmp           = tempfile::NamedTempFile::new().unwrap();
-    let builder       = DzxBuilder::new(DEFAULT_BLOCK_SIZE);
+    let data = b"abcdefghij".repeat(200);
+    let (src, meta) = make_source_and_meta(&data);
+    let tmp = tempfile::NamedTempFile::new().unwrap();
+    let builder = DzxBuilder::new(DEFAULT_BLOCK_SIZE);
     builder.build(&src, &meta, tmp.path()).await.unwrap();
 
-    let idx   = DzxIndex::open(tmp.path()).unwrap();
+    let idx = DzxIndex::open(tmp.path()).unwrap();
     let block = idx.find_block(0).unwrap();
     assert_eq!(block.comp_offset, 0);
     assert_eq!(block.uncomp_offset, 0);
@@ -169,14 +173,14 @@ async fn build_and_open_find_first_block() {
 
 #[tokio::test]
 async fn find_block_mid_offset() {
-    let block_size    = 512u32;
-    let data          = vec![42u8; 2000];
-    let (src, meta)   = make_source_and_meta_synced(&data, block_size);
-    let tmp           = tempfile::NamedTempFile::new().unwrap();
-    let builder       = DzxBuilder::new(block_size);
+    let block_size = 512u32;
+    let data = vec![42u8; 2000];
+    let (src, meta) = make_source_and_meta_synced(&data, block_size);
+    let tmp = tempfile::NamedTempFile::new().unwrap();
+    let builder = DzxBuilder::new(block_size);
     builder.build(&src, &meta, tmp.path()).await.unwrap();
 
-    let idx   = DzxIndex::open(tmp.path()).unwrap();
+    let idx = DzxIndex::open(tmp.path()).unwrap();
     let block = idx.find_block(700).unwrap();
     assert!(block.uncomp_offset <= 700);
     assert!(block.uncomp_offset + block.uncomp_size as u64 > 700);
@@ -184,15 +188,15 @@ async fn find_block_mid_offset() {
 
 #[tokio::test]
 async fn find_block_last_offset() {
-    let block_size    = 512u32;
-    let data          = vec![7u8; 1500];
-    let (src, meta)   = make_source_and_meta_synced(&data, block_size);
-    let tmp           = tempfile::NamedTempFile::new().unwrap();
-    let builder       = DzxBuilder::new(block_size);
+    let block_size = 512u32;
+    let data = vec![7u8; 1500];
+    let (src, meta) = make_source_and_meta_synced(&data, block_size);
+    let tmp = tempfile::NamedTempFile::new().unwrap();
+    let builder = DzxBuilder::new(block_size);
     builder.build(&src, &meta, tmp.path()).await.unwrap();
 
-    let idx   = DzxIndex::open(tmp.path()).unwrap();
-    let last  = data.len() as u64 - 1;
+    let idx = DzxIndex::open(tmp.path()).unwrap();
+    let last = data.len() as u64 - 1;
     let block = idx.find_block(last).unwrap();
     assert!(block.uncomp_offset <= last);
 }
@@ -203,39 +207,48 @@ async fn find_block_last_offset() {
 
 #[tokio::test]
 async fn read_range_from_zero_matches_full_inflate() {
-    let block_size    = 512u32;
+    let block_size = 512u32;
     let data: Vec<u8> = (0u8..=255).cycle().take(2000).collect();
-    let (src, meta)   = make_source_and_meta_synced(&data, block_size);
-    let tmp           = tempfile::NamedTempFile::new().unwrap();
-    DzxBuilder::new(block_size).build(&src, &meta, tmp.path()).await.unwrap();
+    let (src, meta) = make_source_and_meta_synced(&data, block_size);
+    let tmp = tempfile::NamedTempFile::new().unwrap();
+    DzxBuilder::new(block_size)
+        .build(&src, &meta, tmp.path())
+        .await
+        .unwrap();
 
-    let dzx    = DzxIndex::open(tmp.path()).unwrap();
+    let dzx = DzxIndex::open(tmp.path()).unwrap();
     let result = read_range(&src, &meta, &dzx, 0, data.len()).await.unwrap();
     assert_eq!(&result[..], &data[..]);
 }
 
 #[tokio::test]
 async fn read_range_mid_matches_slice() {
-    let block_size    = 256u32;
+    let block_size = 256u32;
     let data: Vec<u8> = (0u8..=255).cycle().take(1000).collect();
-    let (src, meta)   = make_source_and_meta_synced(&data, block_size);
-    let tmp           = tempfile::NamedTempFile::new().unwrap();
-    DzxBuilder::new(block_size).build(&src, &meta, tmp.path()).await.unwrap();
+    let (src, meta) = make_source_and_meta_synced(&data, block_size);
+    let tmp = tempfile::NamedTempFile::new().unwrap();
+    DzxBuilder::new(block_size)
+        .build(&src, &meta, tmp.path())
+        .await
+        .unwrap();
 
-    let dzx    = DzxIndex::open(tmp.path()).unwrap();
+    let dzx = DzxIndex::open(tmp.path()).unwrap();
     let result = read_range(&src, &meta, &dzx, 300, 200).await.unwrap();
     assert_eq!(&result[..], &data[300..500]);
 }
 
 #[tokio::test]
 async fn read_range_crosses_block_boundary() {
-    let block_size    = 256u32;
+    let block_size = 256u32;
     let data: Vec<u8> = (0u8..=255).cycle().take(1000).collect();
-    let (src, meta)   = make_source_and_meta_synced(&data, block_size);
-    let tmp           = tempfile::NamedTempFile::new().unwrap();
-    DzxBuilder::new(block_size).build(&src, &meta, tmp.path()).await.unwrap();
+    let (src, meta) = make_source_and_meta_synced(&data, block_size);
+    let tmp = tempfile::NamedTempFile::new().unwrap();
+    DzxBuilder::new(block_size)
+        .build(&src, &meta, tmp.path())
+        .await
+        .unwrap();
 
-    let dzx    = DzxIndex::open(tmp.path()).unwrap();
+    let dzx = DzxIndex::open(tmp.path()).unwrap();
     // 200..400 crosses the 256-byte boundary
     let result = read_range(&src, &meta, &dzx, 200, 200).await.unwrap();
     assert_eq!(&result[..], &data[200..400]);
@@ -243,12 +256,15 @@ async fn read_range_crosses_block_boundary() {
 
 #[tokio::test]
 async fn read_range_zero_len_is_empty() {
-    let data          = b"anything".to_vec();
-    let (src, meta)   = make_source_and_meta(&data);
-    let tmp           = tempfile::NamedTempFile::new().unwrap();
-    DzxBuilder::new(DEFAULT_BLOCK_SIZE).build(&src, &meta, tmp.path()).await.unwrap();
+    let data = b"anything".to_vec();
+    let (src, meta) = make_source_and_meta(&data);
+    let tmp = tempfile::NamedTempFile::new().unwrap();
+    DzxBuilder::new(DEFAULT_BLOCK_SIZE)
+        .build(&src, &meta, tmp.path())
+        .await
+        .unwrap();
 
-    let dzx    = DzxIndex::open(tmp.path()).unwrap();
+    let dzx = DzxIndex::open(tmp.path()).unwrap();
     let result = read_range(&src, &meta, &dzx, 0, 0).await.unwrap();
     assert!(result.is_empty());
 }
@@ -279,7 +295,7 @@ async fn open_truncated_is_error() {
 fn dzx_path_has_dzx_extension() {
     use std::path::Path;
     let dir = Path::new("/tmp/dzx");
-    let p   = dzx_path_for(dir, Path::new("/data/archive.zip"), 12345);
+    let p = dzx_path_for(dir, Path::new("/data/archive.zip"), 12345);
     assert_eq!(p.extension().and_then(|e| e.to_str()), Some("dzx"));
     assert!(p.parent() == Some(dir));
 }
@@ -288,7 +304,7 @@ fn dzx_path_has_dzx_extension() {
 fn dzx_path_different_offsets_differ() {
     use std::path::Path;
     let dir = Path::new("/tmp/dzx");
-    let p1  = dzx_path_for(dir, Path::new("/data/archive.zip"), 0);
-    let p2  = dzx_path_for(dir, Path::new("/data/archive.zip"), 999);
+    let p1 = dzx_path_for(dir, Path::new("/data/archive.zip"), 0);
+    let p2 = dzx_path_for(dir, Path::new("/data/archive.zip"), 999);
     assert_ne!(p1, p2);
 }

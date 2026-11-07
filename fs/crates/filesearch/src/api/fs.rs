@@ -26,17 +26,17 @@ use crate::api::rest::AppState;
 mod common;
 mod drives;
 mod read;
-mod write;
 #[cfg(test)]
 mod tests;
+mod write;
 
 use drives::drives_handler;
 use read::{head_handler, read_handler};
 use write::{copy_handler, delete_handler, mkdir_handler, move_handler, write_handler};
 
+pub(crate) use common::parse_range;
 pub use common::ProgressEvent;
 pub use drives::DriveInfo;
-pub(crate) use common::parse_range;
 
 // ---------------------------------------------------------------------------
 // Router
@@ -44,12 +44,12 @@ pub(crate) use common::parse_range;
 
 pub fn router(state: AppState) -> Router<AppState> {
     Router::new()
-        .route("/fs/read",   get(read_handler).head(head_handler))
-        .route("/fs/write",  put(write_handler))
-        .route("/fs/copy",   post(copy_handler))
-        .route("/fs/move",   post(move_handler))
+        .route("/fs/read", get(read_handler).head(head_handler))
+        .route("/fs/write", put(write_handler))
+        .route("/fs/copy", post(copy_handler))
+        .route("/fs/move", post(move_handler))
         .route("/fs/delete", delete(delete_handler))
-        .route("/fs/mkdir",  post(mkdir_handler))
+        .route("/fs/mkdir", post(mkdir_handler))
         .route("/fs/drives", get(drives_handler))
         .with_state(state)
 }

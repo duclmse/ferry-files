@@ -3,12 +3,8 @@ use std::sync::atomic::Ordering;
 
 use crate::api::archive::ArchiveRegistry;
 use crate::error::Result;
-use crate::indexer::archive::{ArchiveCrawler, archive_entry_to_record};
-use crate::store::{
-    FileRecord,
-    FileStore,
-    tantivy_store::TantivyStore,
-};
+use crate::indexer::archive::{archive_entry_to_record, ArchiveCrawler};
+use crate::store::{tantivy_store::TantivyStore, FileRecord, FileStore};
 
 use super::dzx_sidecars::build_dzx_sidecars;
 use super::metrics::IndexMetrics;
@@ -23,7 +19,7 @@ pub(super) struct SidecarConfig<'a> {
     pub(super) zidx_dir: Option<&'a Path>,
     pub(super) registry: Option<&'a ArchiveRegistry>,
     /// `(dzx_dir, dzx_min_entry_bytes, dzx_max_concurrent_builds)`
-    pub(super) dzx:      Option<(&'a Path, u64, usize)>,
+    pub(super) dzx: Option<(&'a Path, u64, usize)>,
 }
 
 /// `tag` is `Some((watch_root, generation))` when called from a full crawl
@@ -34,22 +30,22 @@ pub(super) struct SidecarConfig<'a> {
 /// generation.
 pub(super) fn crawl_archive_sync(
     archive_path: &Path,
-    crawler:      &ArchiveCrawler<'_>,
-    store:        &FileStore,
-    tantivy:      &TantivyStore,
-    metrics:      &IndexMetrics,
-    sidecars:     SidecarConfig<'_>,
-    tag:          Option<(&str, i64)>,
+    crawler: &ArchiveCrawler<'_>,
+    store: &FileStore,
+    tantivy: &TantivyStore,
+    metrics: &IndexMetrics,
+    sidecars: SidecarConfig<'_>,
+    tag: Option<(&str, i64)>,
 ) -> Result<()> {
     let archive_str = archive_path.to_str().unwrap_or_default();
     store.remove_archive_entries(archive_str)?;
 
-    let mut records_batch: Vec<FileRecord>         = Vec::new();
+    let mut records_batch: Vec<FileRecord> = Vec::new();
     let mut content_batch: Vec<(FileRecord, String)> = Vec::new();
 
     for entry_result in crawler.crawl(archive_path, 0)? {
         let entry = match entry_result {
-            Ok(e)  => e,
+            Ok(e) => e,
             Err(e) => {
                 tracing::warn!("archive entry error in {}: {e}", archive_path.display());
                 continue;
@@ -62,7 +58,9 @@ pub(super) fn crawl_archive_sync(
             content_batch.push((r, content));
         }
         records_batch.push(record);
-        metrics.archive_entries_indexed.fetch_add(1, Ordering::Relaxed);
+        metrics
+            .archive_entries_indexed
+            .fetch_add(1, Ordering::Relaxed);
     }
 
     store.upsert_archive_batch(&records_batch, tag)?;
@@ -87,7 +85,13 @@ pub(super) fn crawl_archive_sync(
             }
             if let Some((dzx_dir, min_entry_bytes, max_concurrent_builds)) = sidecars.dzx {
                 if min_entry_bytes > 0 {
-                    build_dzx_sidecars(archive_path, &idx_path, dzx_dir, min_entry_bytes, max_concurrent_builds);
+                    build_dzx_sidecars(
+                        archive_path,
+                        &idx_path,
+                        dzx_dir,
+                        min_entry_bytes,
+                        max_concurrent_builds,
+                    );
                 }
             }
         }

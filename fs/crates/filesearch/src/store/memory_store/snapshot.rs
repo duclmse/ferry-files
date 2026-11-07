@@ -105,7 +105,11 @@ pub(super) fn write(w: impl Write, s: &SnapshotRef<'_>) -> io::Result<u64> {
     let live: u64 = kept().map(|e| e.tail_range().len() as u64).sum();
     write_varint(&mut w, live)?;
     for e in kept() {
-        w.write_all(arena.get(e.tail_range()).ok_or_else(|| invalid("entry outside arena"))?)?;
+        w.write_all(
+            arena
+                .get(e.tail_range())
+                .ok_or_else(|| invalid("entry outside arena"))?,
+        )?;
     }
     write_varint(&mut w, kept().count() as u64)?;
     let mut buf = [0u8; MAX_ENTRY];
@@ -120,7 +124,12 @@ pub(super) fn write(w: impl Write, s: &SnapshotRef<'_>) -> io::Result<u64> {
         let used = postcard::to_slice(&moved, &mut buf).map_err(|e| invalid(e.to_string()))?;
         w.write_all(used)?;
     }
-    let tail = TailRef { exts: s.exts, extra: &s.extra, meta: &s.meta, crawl_gen: s.crawl_gen };
+    let tail = TailRef {
+        exts: s.exts,
+        extra: &s.extra,
+        meta: &s.meta,
+        crawl_gen: s.crawl_gen,
+    };
     let tail = postcard::to_allocvec(&tail).map_err(|e| invalid(e.to_string()))?;
     w.write_all(&tail)?;
     w.flush()?;
@@ -195,7 +204,12 @@ struct Chunks<R> {
 
 impl<R: Read> Chunks<R> {
     fn new(inner: R) -> Self {
-        Self { inner, buf: vec![0; 1 << 20].into_boxed_slice(), pos: 0, end: 0 }
+        Self {
+            inner,
+            buf: vec![0; 1 << 20].into_boxed_slice(),
+            pos: 0,
+            end: 0,
+        }
     }
 
     fn avail(&self) -> &[u8] {
@@ -265,10 +279,21 @@ mod tests {
 
     fn rec(i: usize) -> FileRecord {
         FileRecord {
-            id: None, path: format!("/dir/sub/file{i}.rs"), name: format!("file{i}.rs"),
-            extension: Some("rs".into()), size_bytes: i as u64, mtime: -(i as i64), ctime: 0,
-            is_dir: false, is_hidden: false, is_symlink: false, attrib_bitmask: 0,
-            content_indexed: false, tantivy_id: None, indexed_at: i64::MAX, archive_path: None,
+            id: None,
+            path: format!("/dir/sub/file{i}.rs"),
+            name: format!("file{i}.rs"),
+            extension: Some("rs".into()),
+            size_bytes: i as u64,
+            mtime: -(i as i64),
+            ctime: 0,
+            is_dir: false,
+            is_hidden: false,
+            is_symlink: false,
+            attrib_bitmask: 0,
+            content_indexed: false,
+            tantivy_id: None,
+            indexed_at: i64::MAX,
+            archive_path: None,
         }
     }
 
@@ -290,10 +315,16 @@ mod tests {
 
         let back = IndexState::from_snapshot(read(&out[..], out.len() as u64).unwrap(), 0).unwrap();
         assert_eq!(back.len(), 5000);
-        assert_eq!(back.meta.get("last_crawl_time").map(String::as_str), Some("9"));
+        assert_eq!(
+            back.meta.get("last_crawl_time").map(String::as_str),
+            Some("9")
+        );
         assert_eq!(back.crawl_gen, 4);
         let i = back.find("/dir/sub/file4321.rs").unwrap();
-        assert_eq!(format!("{:?}", back.view(i).to_record()), format!("{:?}", rec(4321)));
+        assert_eq!(
+            format!("{:?}", back.view(i).to_record()),
+            format!("{:?}", rec(4321))
+        );
     }
 
     #[test]
@@ -312,14 +343,20 @@ mod tests {
             assert_eq!(back.find(&rec(i).path).is_some(), i % 10 != 0, "{i}");
         }
         let i = back.find("/dir/sub/file99.rs").unwrap();
-        assert_eq!(format!("{:?}", back.view(i).to_record()), format!("{:?}", rec(99)));
+        assert_eq!(
+            format!("{:?}", back.view(i).to_record()),
+            format!("{:?}", rec(99))
+        );
     }
 
     #[test]
     fn truncated_or_lying_body_is_an_error() {
         let out = encode(&IndexState::from_records((0..500).map(rec).collect()));
         for cut in [1, out.len() / 2, out.len() - 1] {
-            assert!(read::<Entry>(&out[..cut], cut as u64).is_err(), "cut at {cut}");
+            assert!(
+                read::<Entry>(&out[..cut], cut as u64).is_err(),
+                "cut at {cut}"
+            );
         }
         // A huge entry count must not be trusted for the allocation.
         let mut lie = Vec::new();

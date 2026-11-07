@@ -20,7 +20,7 @@ pub async fn run(ipc_path: &Path) -> anyhow::Result<()> {
     enable_raw_mode()?;
     let mut stdout = std::io::stdout();
     execute!(stdout, EnterAlternateScreen)?;
-    let backend  = CrosstermBackend::new(stdout);
+    let backend = CrosstermBackend::new(stdout);
     let mut term = Terminal::new(backend)?;
 
     let result = event_loop(&mut term, ipc_path).await;
@@ -36,11 +36,11 @@ pub async fn run(ipc_path: &Path) -> anyhow::Result<()> {
 // Event loop
 // ---------------------------------------------------------------------------
 
-const DEBOUNCE:     Duration = Duration::from_millis(100);
+const DEBOUNCE: Duration = Duration::from_millis(100);
 const POLL_TIMEOUT: Duration = Duration::from_millis(20);
 
 async fn event_loop(
-    term:     &mut Terminal<CrosstermBackend<std::io::Stdout>>,
+    term: &mut Terminal<CrosstermBackend<std::io::Stdout>>,
     ipc_path: &Path,
 ) -> anyhow::Result<()> {
     let mut app = App::new(ipc_path);
@@ -52,7 +52,7 @@ async fn event_loop(
         if let Some(last) = app.last_key_at {
             if app.search_pending && last.elapsed() >= DEBOUNCE {
                 app.search_pending = false;
-                app.last_key_at    = None;
+                app.last_key_at = None;
                 let q = app.full_query();
                 if !q.is_empty() {
                     search(&mut app, q).await;
@@ -86,7 +86,7 @@ async fn handle_key(app: &mut App, key: KeyEvent) -> anyhow::Result<bool> {
 
         // Navigate results
         KeyCode::Down => app.select_next(),
-        KeyCode::Up   => app.select_prev(),
+        KeyCode::Up => app.select_prev(),
 
         // Open selected file
         KeyCode::Enter => {
@@ -109,12 +109,12 @@ async fn handle_key(app: &mut App, key: KeyEvent) -> anyhow::Result<bool> {
         KeyCode::Char(c) => {
             app.input.push(c);
             app.search_pending = true;
-            app.last_key_at    = Some(Instant::now());
+            app.last_key_at = Some(Instant::now());
         }
         KeyCode::Backspace => {
             app.input.pop();
             app.search_pending = true;
-            app.last_key_at    = Some(Instant::now());
+            app.last_key_at = Some(Instant::now());
         }
 
         _ => {}
@@ -128,14 +128,23 @@ async fn handle_key(app: &mut App, key: KeyEvent) -> anyhow::Result<bool> {
 
 async fn search(app: &mut App, query: String) {
     let t0 = Instant::now();
-    match app.send(IpcRequest::Search { query, limit: app.limit, offset: 0 }).await {
+    match app
+        .send(IpcRequest::Search {
+            query,
+            limit: app.limit,
+            offset: 0,
+        })
+        .await
+    {
         Ok(IpcResponse::Search(sr)) => {
             let took_ms = t0.elapsed().as_millis() as u64;
             app.load_hits(sr.hits, sr.total_hits, took_ms);
             fetch_stats(app).await;
         }
         Ok(_) => {}
-        Err(e) => { app.status_msg = format!("search error: {e}"); }
+        Err(e) => {
+            app.status_msg = format!("search error: {e}");
+        }
     }
 }
 
@@ -147,10 +156,16 @@ async fn fetch_stats(app: &mut App) {
 
 async fn open_file(app: &mut App, path: String) {
     match app.send(IpcRequest::Open { path }).await {
-        Ok(IpcResponse::Open { opened: true,  .. }) => { app.status_msg = "file opened".into(); }
-        Ok(IpcResponse::Open { opened: false, .. }) => { app.status_msg = "daemon could not open file".into(); }
-        Ok(_)  => {}
-        Err(e) => { app.status_msg = format!("open error: {e}"); }
+        Ok(IpcResponse::Open { opened: true, .. }) => {
+            app.status_msg = "file opened".into();
+        }
+        Ok(IpcResponse::Open { opened: false, .. }) => {
+            app.status_msg = "daemon could not open file".into();
+        }
+        Ok(_) => {}
+        Err(e) => {
+            app.status_msg = format!("open error: {e}");
+        }
     }
 }
 

@@ -32,8 +32,8 @@ pub mod windows {
 
     use crate::error::{AppError, Result};
 
-    pub const SERVICE_NAME:        &str = "FilesearchDaemon";
-    pub const SERVICE_DISPLAY:     &str = "Filesearch Daemon";
+    pub const SERVICE_NAME: &str = "FilesearchDaemon";
+    pub const SERVICE_DISPLAY: &str = "Filesearch Daemon";
     pub const SERVICE_DESCRIPTION: &str = "Cross-platform file-search indexer daemon";
 
     // Config path is stashed here before the SCM dispatcher hijacks the thread.
@@ -65,9 +65,7 @@ pub mod windows {
             match control {
                 // PRESHUTDOWN fires first and gives ~20s - enough to flush the index.
                 // Cancelling the token triggers daemon graceful shutdown (flush + commit).
-                ServiceControl::Preshutdown
-                | ServiceControl::Stop
-                | ServiceControl::Shutdown => {
+                ServiceControl::Preshutdown | ServiceControl::Stop | ServiceControl::Shutdown => {
                     shutdown_svc.cancel();
                     ServiceControlHandlerResult::NoError
                 }
@@ -112,19 +110,19 @@ pub mod windows {
     }
 
     fn set_status(
-        handle:   &service_control_handler::ServiceStatusHandle,
-        state:    ServiceState,
+        handle: &service_control_handler::ServiceStatusHandle,
+        state: ServiceState,
         controls: ServiceControlAccept,
-        exit:     ServiceExitCode,
+        exit: ServiceExitCode,
     ) {
         let _ = handle.set_service_status(ServiceStatus {
-            service_type:      ServiceType::OWN_PROCESS,
-            current_state:     state,
+            service_type: ServiceType::OWN_PROCESS,
+            current_state: state,
             controls_accepted: controls,
-            exit_code:         exit,
-            checkpoint:        0,
-            wait_hint:         Duration::from_secs(30),
-            process_id:        None,
+            exit_code: exit,
+            checkpoint: 0,
+            wait_hint: Duration::from_secs(30),
+            process_id: None,
         });
     }
 
@@ -136,8 +134,9 @@ pub mod windows {
     /// `exe_path` should be the absolute path to `filesearch.exe`.
     /// `config_path` will be passed as `--config <path>`.
     pub fn install(exe_path: &std::path::Path, config_path: &std::path::Path) -> Result<()> {
-        let manager = ServiceManager::local_computer(None::<&str>, ServiceManagerAccess::CREATE_SERVICE)
-            .map_err(|e| AppError::Config(format!("open service manager: {e}")))?;
+        let manager =
+            ServiceManager::local_computer(None::<&str>, ServiceManagerAccess::CREATE_SERVICE)
+                .map_err(|e| AppError::Config(format!("open service manager: {e}")))?;
 
         let binary_path = std::ffi::OsString::from(format!(
             "\"{}\" --config \"{}\" daemon --service",
@@ -146,15 +145,15 @@ pub mod windows {
         ));
 
         let info = ServiceInfo {
-            name:             OsString::from(SERVICE_NAME),
-            display_name:     OsString::from(SERVICE_DISPLAY),
-            service_type:     ServiceType::OWN_PROCESS,
-            start_type:       ServiceStartType::AutoStart,
-            error_control:    ServiceErrorControl::Normal,
-            executable_path:  PathBuf::from(&binary_path),
+            name: OsString::from(SERVICE_NAME),
+            display_name: OsString::from(SERVICE_DISPLAY),
+            service_type: ServiceType::OWN_PROCESS,
+            start_type: ServiceStartType::AutoStart,
+            error_control: ServiceErrorControl::Normal,
+            executable_path: PathBuf::from(&binary_path),
             launch_arguments: vec![],
-            dependencies:     vec![],
-            account_name:     None,
+            dependencies: vec![],
+            account_name: None,
             account_password: None,
         };
 

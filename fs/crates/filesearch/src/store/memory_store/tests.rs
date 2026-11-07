@@ -336,12 +336,20 @@ fn paths(records: Vec<FileRecord>) -> Vec<String> {
 #[test]
 fn removed_parent_keeps_children_resolvable_and_revives() {
     let store = make_store();
-    for r in [dir("/w"), dir("/w/src"), sample("/w/src/a.rs"), sample("/w/src/b.rs")] {
+    for r in [
+        dir("/w"),
+        dir("/w/src"),
+        sample("/w/src/a.rs"),
+        sample("/w/src/b.rs"),
+    ] {
         store.upsert_file(&r);
     }
     assert!(store.remove_file("/w/src"));
     assert!(store.get_by_path("/w/src").unwrap().is_none());
-    assert_same(store.get_by_path("/w/src/a.rs").unwrap(), &sample("/w/src/a.rs"));
+    assert_same(
+        store.get_by_path("/w/src/a.rs").unwrap(),
+        &sample("/w/src/a.rs"),
+    );
     let under = [SqlCondition::ParentPath("/w/src".into())];
     assert_eq!(
         paths(store.search_conditions(&under, 10).unwrap()),
@@ -361,7 +369,13 @@ fn removed_parent_keeps_children_resolvable_and_revives() {
 #[test]
 fn prefix_predicates_match_whole_components_only() {
     let store = make_store();
-    for r in [dir("/a"), sample("/a/x.rs"), dir("/ab"), sample("/ab/y.rs"), sample("/a/d/z.rs")] {
+    for r in [
+        dir("/a"),
+        sample("/a/x.rs"),
+        dir("/ab"),
+        sample("/ab/y.rs"),
+        sample("/a/d/z.rs"),
+    ] {
         store.upsert_file(&r);
     }
     assert_eq!(store.paths_under("/a").unwrap().len(), 2);
@@ -370,9 +384,15 @@ fn prefix_predicates_match_whole_components_only() {
     assert!(!store.has_child("/a", "z%").unwrap());
     assert_eq!(store.children_of("").unwrap().len(), 2);
     let depth = [SqlCondition::DepthOp(CmpOp::Eq, 3)];
-    assert_eq!(paths(store.search_conditions(&depth, 10).unwrap()), ["/a/d/z.rs"]);
+    assert_eq!(
+        paths(store.search_conditions(&depth, 10).unwrap()),
+        ["/a/d/z.rs"]
+    );
     let like = [SqlCondition::PathLike("%b/y%".into())];
-    assert_eq!(paths(store.search_conditions(&like, 10).unwrap()), ["/ab/y.rs"]);
+    assert_eq!(
+        paths(store.search_conditions(&like, 10).unwrap()),
+        ["/ab/y.rs"]
+    );
 }
 
 #[test]
@@ -473,7 +493,13 @@ fn v3_snapshot_upgrades() {
         entries: vec![
             entry(0, child, 5, 0, 0),
             entry(child.len() as u64, parent, 3, 0, 1),
-            entry((child.len() + parent.len()) as u64, member, 11, child.len() as u32, 0),
+            entry(
+                (child.len() + parent.len()) as u64,
+                member,
+                11,
+                child.len() as u32,
+                0,
+            ),
         ],
         exts: vec!["rs".into()],
         extra: vec![],

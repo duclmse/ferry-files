@@ -26,7 +26,7 @@ use crate::config::Config;
 use crate::indexer::crawler::IndexMetrics;
 use crate::query::{evaluator, parser};
 use crate::scheduler::{ArchiveSemaphores, ClientRateLimiter, SchedulerMetrics};
-use crate::store::{FileStore, tantivy_store::TantivyStore, FileRecord};
+use crate::store::{tantivy_store::TantivyStore, FileRecord, FileStore};
 
 use super::dto::archive_entry_opt;
 
@@ -36,15 +36,15 @@ use super::dto::archive_entry_opt;
 
 #[derive(Clone)]
 pub struct AppState {
-    pub sqlite:               Arc<FileStore>,
-    pub tantivy:              Arc<TantivyStore>,
-    pub config:               Arc<RwLock<Config>>,
-    pub metrics:              Arc<IndexMetrics>,
-    pub reindex_tx:           watch::Sender<bool>,
-    pub archive_registry:     Arc<ArchiveRegistry>,
-    pub archive_semaphores:   Arc<ArchiveSemaphores>,
-    pub scheduler_metrics:    Arc<SchedulerMetrics>,
-    pub rate_limiter:         Arc<ClientRateLimiter>,
+    pub sqlite: Arc<FileStore>,
+    pub tantivy: Arc<TantivyStore>,
+    pub config: Arc<RwLock<Config>>,
+    pub metrics: Arc<IndexMetrics>,
+    pub reindex_tx: watch::Sender<bool>,
+    pub archive_registry: Arc<ArchiveRegistry>,
+    pub archive_semaphores: Arc<ArchiveSemaphores>,
+    pub scheduler_metrics: Arc<SchedulerMetrics>,
+    pub rate_limiter: Arc<ClientRateLimiter>,
 }
 
 // ---------------------------------------------------------------------------
@@ -53,35 +53,35 @@ pub struct AppState {
 
 #[derive(Serialize)]
 pub struct SearchHit {
-    pub path:          String,
-    pub name:          String,
-    pub size_bytes:    u64,
-    pub mtime:         i64,
+    pub path: String,
+    pub name: String,
+    pub size_bytes: u64,
+    pub mtime: i64,
     #[serde(rename = "type")]
-    pub kind:          &'static str,
-    pub score:         f32,
-    pub snippet:       Option<String>,
-    pub archive_path:  Option<String>,
+    pub kind: &'static str,
+    pub score: f32,
+    pub snippet: Option<String>,
+    pub archive_path: Option<String>,
     pub archive_entry: Option<String>,
 }
 
 #[derive(Serialize)]
 pub struct SearchApiResponse {
-    pub result:  Vec<SearchHit>,
-    pub total:   usize,
+    pub result: Vec<SearchHit>,
+    pub total: usize,
     pub took_ms: u64,
-    pub mode:    &'static str,
+    pub mode: &'static str,
 }
 
 #[derive(Serialize)]
 pub struct StatsApiResponse {
-    pub total_files:             u64,
-    pub total_dirs:              u64,
-    pub content_indexed:         u64,
+    pub total_files: u64,
+    pub total_dirs: u64,
+    pub content_indexed: u64,
     pub archive_entries_indexed: u64,
-    pub archives_crawled:        u64,
-    pub events_processed:        u64,
-    pub last_crawl_secs:         u64,
+    pub archives_crawled: u64,
+    pub events_processed: u64,
+    pub last_crawl_secs: u64,
 }
 
 #[derive(Serialize)]
@@ -109,13 +109,13 @@ fn api_error(status: StatusCode, msg: impl Into<String>) -> impl IntoResponse {
 
 pub fn router(state: AppState) -> Router {
     let mut r = Router::new()
-        .route("/search",  get(search_handler))
-        .route("/stats",   get(stats_handler))
+        .route("/search", get(search_handler))
+        .route("/stats", get(stats_handler))
         .route("/reindex", post(reindex_handler))
-        .route("/health",  get(health_handler))
+        .route("/health", get(health_handler))
         .route("/metrics", get(metrics_handler))
-        .route("/file",    get(file_handler))
-        .route("/open",    post(open_handler))
+        .route("/file", get(file_handler))
+        .route("/open", post(open_handler))
         .merge(crate::api::fs::router(state.clone()));
 
     if state.archive_registry.is_enabled() {
@@ -131,8 +131,8 @@ pub fn router(state: AppState) -> Router {
 
 #[derive(Deserialize)]
 pub struct SearchParams {
-    q:      Option<String>,
-    limit:  Option<usize>,
+    q: Option<String>,
+    limit: Option<usize>,
     offset: Option<usize>,
 }
 
@@ -142,8 +142,10 @@ async fn search_handler(
 ) -> impl IntoResponse {
     let q = match params.q {
         Some(q) if !q.is_empty() => q,
-        _ => return api_error(StatusCode::BAD_REQUEST, "missing query parameter 'q'")
-            .into_response(),
+        _ => {
+            return api_error(StatusCode::BAD_REQUEST, "missing query parameter 'q'")
+                .into_response()
+        }
     };
 
     // Single config lock - reads both macros and search limits in one pass.
@@ -161,7 +163,7 @@ async fn search_handler(
         Ok(p) => p,
         Err(e) => return api_error(StatusCode::BAD_REQUEST, e.to_string()).into_response(),
     };
-    plan.limit  = Some(params.limit.unwrap_or(default_limit));
+    plan.limit = Some(params.limit.unwrap_or(default_limit));
     plan.offset = params.offset.unwrap_or(0);
 
     let mode = eval_strategy_mode(&plan.strategy);
@@ -170,8 +172,8 @@ async fn search_handler(
         Ok(result) => {
             let hits = result.hits.iter().map(file_record_to_hit).collect();
             Json(SearchApiResponse {
-                result:  hits,
-                total:   result.total,
+                result: hits,
+                total: result.total,
                 took_ms: result.took_ms,
                 mode,
             })
@@ -185,13 +187,13 @@ async fn stats_handler(State(state): State<AppState>) -> impl IntoResponse {
     // All fields read from in-process atomics - no DB round-trip.
     let m = &state.metrics;
     Json(StatsApiResponse {
-        total_files:             m.total_files.load(Ordering::Relaxed),
-        total_dirs:              m.total_dirs.load(Ordering::Relaxed),
-        content_indexed:         m.content_indexed.load(Ordering::Relaxed),
+        total_files: m.total_files.load(Ordering::Relaxed),
+        total_dirs: m.total_dirs.load(Ordering::Relaxed),
+        content_indexed: m.content_indexed.load(Ordering::Relaxed),
         archive_entries_indexed: m.archive_entries_indexed.load(Ordering::Relaxed),
-        archives_crawled:        m.archives_crawled.load(Ordering::Relaxed),
-        events_processed:        m.events_processed.load(Ordering::Relaxed),
-        last_crawl_secs:         m.last_crawl_secs.load(Ordering::Relaxed),
+        archives_crawled: m.archives_crawled.load(Ordering::Relaxed),
+        events_processed: m.events_processed.load(Ordering::Relaxed),
+        last_crawl_secs: m.last_crawl_secs.load(Ordering::Relaxed),
     })
     .into_response()
 }
@@ -217,7 +219,10 @@ async fn health_handler() -> impl IntoResponse {
 async fn metrics_handler(State(state): State<AppState>) -> impl IntoResponse {
     use axum::http::header::CONTENT_TYPE;
     let body = state.scheduler_metrics.prometheus_text();
-    ([(CONTENT_TYPE, "text/plain; version=0.0.4; charset=utf-8")], body)
+    (
+        [(CONTENT_TYPE, "text/plain; version=0.0.4; charset=utf-8")],
+        body,
+    )
 }
 
 #[derive(Deserialize)]
@@ -236,8 +241,8 @@ async fn file_handler(
 
     match state.sqlite.get_by_path(&path) {
         Ok(Some(r)) => Json(file_record_to_hit(&r)).into_response(),
-        Ok(None)    => api_error(StatusCode::NOT_FOUND, "path not in index").into_response(),
-        Err(e)      => api_error(StatusCode::INTERNAL_SERVER_ERROR, e.to_string()).into_response(),
+        Ok(None) => api_error(StatusCode::NOT_FOUND, "path not in index").into_response(),
+        Err(e) => api_error(StatusCode::INTERNAL_SERVER_ERROR, e.to_string()).into_response(),
     }
 }
 
@@ -248,7 +253,7 @@ pub struct OpenBody {
 
 #[derive(Serialize)]
 pub struct OpenResponse {
-    opened:    bool,
+    opened: bool,
     temp_path: Option<String>,
 }
 
@@ -258,20 +263,29 @@ async fn open_handler(
 ) -> impl IntoResponse {
     // Verify path exists in index.
     match state.sqlite.get_by_path(&body.path) {
-        Ok(None)    => return api_error(StatusCode::BAD_REQUEST, "path not in index").into_response(),
-        Err(e)      => return api_error(StatusCode::INTERNAL_SERVER_ERROR, e.to_string()).into_response(),
+        Ok(None) => return api_error(StatusCode::BAD_REQUEST, "path not in index").into_response(),
+        Err(e) => {
+            return api_error(StatusCode::INTERNAL_SERVER_ERROR, e.to_string()).into_response()
+        }
         Ok(Some(_)) => {}
     }
 
     if body.path.contains("!/") {
         match extract_and_open(&body.path).await {
-            Ok(temp_path) => Json(OpenResponse { opened: true, temp_path: Some(temp_path) })
-                .into_response(),
+            Ok(temp_path) => Json(OpenResponse {
+                opened: true,
+                temp_path: Some(temp_path),
+            })
+            .into_response(),
             Err(e) => api_error(StatusCode::BAD_REQUEST, e).into_response(),
         }
     } else {
         match open_with_os(&body.path).await {
-            Ok(()) => Json(OpenResponse { opened: true, temp_path: None }).into_response(),
+            Ok(()) => Json(OpenResponse {
+                opened: true,
+                temp_path: None,
+            })
+            .into_response(),
             Err(e) => api_error(StatusCode::INTERNAL_SERVER_ERROR, e).into_response(),
         }
     }
@@ -282,8 +296,8 @@ async fn open_handler(
 // ---------------------------------------------------------------------------
 
 pub(crate) async fn open_with_os(path: &str) -> Result<(), String> {
-    let (prog, args) = os_open_command(path)
-        .ok_or_else(|| "open not supported on this platform".to_owned())?;
+    let (prog, args) =
+        os_open_command(path).ok_or_else(|| "open not supported on this platform".to_owned())?;
     tokio::process::Command::new(prog)
         .args(args)
         .spawn()
@@ -361,24 +375,24 @@ async fn extract_to_temp(virtual_path: &str) -> Result<String, String> {
 
 fn file_record_to_hit(r: &FileRecord) -> SearchHit {
     SearchHit {
-        path:          r.path.clone(),
-        name:          r.name.clone(),
-        size_bytes:    r.size_bytes,
-        mtime:         r.mtime,
-        kind:          if r.is_dir { "dir" } else { "file" },
-        score:         0.0,
-        snippet:       None,
-        archive_path:  r.archive_path.clone(),
+        path: r.path.clone(),
+        name: r.name.clone(),
+        size_bytes: r.size_bytes,
+        mtime: r.mtime,
+        kind: if r.is_dir { "dir" } else { "file" },
+        score: 0.0,
+        snippet: None,
+        archive_path: r.archive_path.clone(),
         archive_entry: archive_entry_opt(r),
     }
 }
 
 fn eval_strategy_mode(strategy: &evaluator::EvalStrategy) -> &'static str {
     match strategy {
-        evaluator::EvalStrategy::SqliteOnly        => "exact",
+        evaluator::EvalStrategy::SqliteOnly => "exact",
         evaluator::EvalStrategy::TantivyThenSqlite => "content",
-        evaluator::EvalStrategy::DupeSearch(_)     => "dupes",
-        evaluator::EvalStrategy::FuzzyFilter(_)    => "fuzzy",
+        evaluator::EvalStrategy::DupeSearch(_) => "dupes",
+        evaluator::EvalStrategy::FuzzyFilter(_) => "fuzzy",
     }
 }
 
@@ -392,21 +406,21 @@ mod tests {
 
     fn make_record(path: &str, is_dir: bool, archive_path: Option<&str>) -> FileRecord {
         FileRecord {
-            id:              None,
-            path:            path.into(),
-            name:            path.rsplit('/').next().unwrap_or(path).into(),
-            extension:       Some("rs".into()),
-            size_bytes:      4096,
-            mtime:           1_700_000_000,
-            ctime:           1_700_000_000,
+            id: None,
+            path: path.into(),
+            name: path.rsplit('/').next().unwrap_or(path).into(),
+            extension: Some("rs".into()),
+            size_bytes: 4096,
+            mtime: 1_700_000_000,
+            ctime: 1_700_000_000,
             is_dir,
-            is_hidden:       false,
-            is_symlink:      false,
-            attrib_bitmask:  0,
+            is_hidden: false,
+            is_symlink: false,
+            attrib_bitmask: 0,
             content_indexed: false,
-            tantivy_id:      None,
-            indexed_at:      0,
-            archive_path:    archive_path.map(str::to_string),
+            tantivy_id: None,
+            indexed_at: 0,
+            archive_path: archive_path.map(str::to_string),
         }
     }
 
@@ -431,7 +445,11 @@ mod tests {
 
     #[test]
     fn file_record_to_hit_archive_entry() {
-        let r = make_record("/data/archive.zip!/src/main.rs", false, Some("/data/archive.zip"));
+        let r = make_record(
+            "/data/archive.zip!/src/main.rs",
+            false,
+            Some("/data/archive.zip"),
+        );
         let hit = file_record_to_hit(&r);
         assert_eq!(hit.archive_path, Some("/data/archive.zip".into()));
         assert_eq!(hit.archive_entry, Some("src/main.rs".into()));
@@ -439,10 +457,19 @@ mod tests {
 
     #[test]
     fn eval_strategy_mode_all_variants() {
-        assert_eq!(eval_strategy_mode(&EvalStrategy::SqliteOnly),        "exact");
-        assert_eq!(eval_strategy_mode(&EvalStrategy::TantivyThenSqlite), "content");
-        assert_eq!(eval_strategy_mode(&EvalStrategy::DupeSearch(DupeKind::Name)), "dupes");
-        assert_eq!(eval_strategy_mode(&EvalStrategy::FuzzyFilter("x".into())),   "fuzzy");
+        assert_eq!(eval_strategy_mode(&EvalStrategy::SqliteOnly), "exact");
+        assert_eq!(
+            eval_strategy_mode(&EvalStrategy::TantivyThenSqlite),
+            "content"
+        );
+        assert_eq!(
+            eval_strategy_mode(&EvalStrategy::DupeSearch(DupeKind::Name)),
+            "dupes"
+        );
+        assert_eq!(
+            eval_strategy_mode(&EvalStrategy::FuzzyFilter("x".into())),
+            "fuzzy"
+        );
     }
 
     #[tokio::test]
@@ -456,7 +483,8 @@ mod tests {
         use std::io::Write;
         let path = dir.join("bundle.zip");
         let mut zw = zip::ZipWriter::new(std::fs::File::create(&path).unwrap());
-        zw.start_file("inner/lib.rs", zip::write::SimpleFileOptions::default()).unwrap();
+        zw.start_file("inner/lib.rs", zip::write::SimpleFileOptions::default())
+            .unwrap();
         zw.write_all(b"pub fn hello() {}\n").unwrap();
         zw.finish().unwrap();
         path.to_string_lossy().into_owned()
@@ -466,7 +494,9 @@ mod tests {
     async fn extract_to_temp_writes_inner_entry() {
         let dir = tempfile::tempdir().unwrap();
         let zip = write_zip(dir.path());
-        let out = extract_to_temp(&format!("{zip}!/inner/lib.rs")).await.unwrap();
+        let out = extract_to_temp(&format!("{zip}!/inner/lib.rs"))
+            .await
+            .unwrap();
         assert!(out.ends_with("_lib.rs"), "{out}");
         assert_eq!(std::fs::read(&out).unwrap(), b"pub fn hello() {}\n");
         std::fs::remove_file(&out).unwrap();
@@ -476,7 +506,9 @@ mod tests {
     async fn extract_to_temp_missing_entry_is_err() {
         let dir = tempfile::tempdir().unwrap();
         let zip = write_zip(dir.path());
-        let err = extract_to_temp(&format!("{zip}!/nope.txt")).await.unwrap_err();
+        let err = extract_to_temp(&format!("{zip}!/nope.txt"))
+            .await
+            .unwrap_err();
         assert!(err.contains("entry not found"), "{err}");
     }
 }

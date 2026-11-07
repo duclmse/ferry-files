@@ -55,7 +55,10 @@ fn classify(filename: &str) -> MultipartClass {
     {
         let nn = (bytes[len - 2] - b'0') as u32 * 10 + (bytes[len - 1] - b'0') as u32;
         let base = filename[..len - 4].to_string();
-        return MultipartClass::OldStylePart { base, part_num: nn + 1 };
+        return MultipartClass::OldStylePart {
+            base,
+            part_num: nn + 1,
+        };
     }
 
     MultipartClass::Single
@@ -130,7 +133,11 @@ pub async fn hash_file(path: &Path) -> Result<String> {
 /// causing repeated decompress/recompress cycles. Prefer `Strategy::Disk` in
 /// that case so the converted ZIP is written once and then sent to all
 /// destinations independently.
-pub fn select_strategy(file_size_bytes: u64, threshold_mb: u64, destination_count: usize) -> Strategy {
+pub fn select_strategy(
+    file_size_bytes: u64,
+    threshold_mb: u64,
+    destination_count: usize,
+) -> Strategy {
     if destination_count > 1 {
         // Avoid recompressing the source archive once per destination.
         return Strategy::Disk;
@@ -152,12 +159,22 @@ fn passes_filters(path: &Path, cfg: &Config) -> bool {
         .and_then(|e| e.to_str())
         .map(|e| e.to_lowercase())
         .unwrap_or_default();
-    if !cfg.include_extensions.iter().any(|inc| inc.eq_ignore_ascii_case(&ext)) {
+    if !cfg
+        .include_extensions
+        .iter()
+        .any(|inc| inc.eq_ignore_ascii_case(&ext))
+    {
         return false;
     }
-    let name = path.file_name().and_then(|n| n.to_str()).unwrap_or_default();
+    let name = path
+        .file_name()
+        .and_then(|n| n.to_str())
+        .unwrap_or_default();
     for pat in &cfg.exclude_patterns {
-        if glob::Pattern::new(pat).map(|p| p.matches(name)).unwrap_or(false) {
+        if glob::Pattern::new(pat)
+            .map(|p| p.matches(name))
+            .unwrap_or(false)
+        {
             return false;
         }
     }
@@ -169,7 +186,7 @@ fn passes_filters(path: &Path, cfg: &Config) -> bool {
 // ---------------------------------------------------------------------------
 
 pub struct IntakeProcessor {
-    queue:  Arc<JobQueue>,
+    queue: Arc<JobQueue>,
     config: Arc<RwLock<Config>>,
 }
 
@@ -239,13 +256,21 @@ impl IntakeProcessor {
 
         // Dedup check
         if self.queue.is_duplicate(&hash)? {
-            tracing::info!("skipping duplicate: {} (hash {})", path.display(), &hash[..12]);
+            tracing::info!(
+                "skipping duplicate: {} (hash {})",
+                path.display(),
+                &hash[..12]
+            );
             return Ok(());
         }
 
-        let size  = std::fs::metadata(path).map(|m| m.len()).unwrap_or(0);
+        let size = std::fs::metadata(path).map(|m| m.len()).unwrap_or(0);
         let dests: Vec<String> = cfg.destinations.iter().map(|d| d.host.clone()).collect();
-        let strategy = select_strategy(size, cfg.conversion.stream_to_transfer_threshold_mb, dests.len());
+        let strategy = select_strategy(
+            size,
+            cfg.conversion.stream_to_transfer_threshold_mb,
+            dests.len(),
+        );
 
         let id = self.queue.enqueue(path, &hash, strategy.clone(), &dests)?;
         tracing::info!(
@@ -301,9 +326,9 @@ mod tests {
     async fn single_rar_enqueued_immediately() {
         let dir = TempDir::new().unwrap();
         let qdir = TempDir::new().unwrap();
-        let queue  = make_queue(&qdir);
+        let queue = make_queue(&qdir);
         let config = make_config(dir.path());
-        let proc   = IntakeProcessor::new(Arc::clone(&queue), config);
+        let proc = IntakeProcessor::new(Arc::clone(&queue), config);
 
         let path = write_file(&dir, "archive.rar");
         proc.process(path).await.unwrap();
@@ -317,9 +342,9 @@ mod tests {
     async fn excluded_file_not_enqueued() {
         let dir = TempDir::new().unwrap();
         let qdir = TempDir::new().unwrap();
-        let queue  = make_queue(&qdir);
+        let queue = make_queue(&qdir);
         let config = make_config(dir.path());
-        let proc   = IntakeProcessor::new(Arc::clone(&queue), config);
+        let proc = IntakeProcessor::new(Arc::clone(&queue), config);
 
         let path = write_file(&dir, "partial.tmp");
         proc.process(path).await.unwrap();
@@ -332,16 +357,18 @@ mod tests {
     async fn duplicate_hash_not_enqueued_twice() {
         let dir = TempDir::new().unwrap();
         let qdir = TempDir::new().unwrap();
-        let queue  = make_queue(&qdir);
+        let queue = make_queue(&qdir);
         let config = make_config(dir.path());
-        let proc   = IntakeProcessor::new(Arc::clone(&queue), config);
+        let proc = IntakeProcessor::new(Arc::clone(&queue), config);
 
         let path = write_file(&dir, "archive.rar");
 
         // Pre-seed the queue with this hash as a completed job (simulates prior run)
         let hash = hash_file(&path).await.unwrap();
         let id = queue.enqueue(&path, &hash, Strategy::Disk, &[]).unwrap();
-        queue.set_status(&id, crate::queue::Status::Done, None).unwrap();
+        queue
+            .set_status(&id, crate::queue::Status::Done, None)
+            .unwrap();
 
         // Intake should recognise the duplicate and not create a new pending job
         proc.process(path).await.unwrap();
@@ -378,16 +405,20 @@ mod tests {
     async fn new_style_multipart_not_enqueued_until_complete() {
         let dir = TempDir::new().unwrap();
         let qdir = TempDir::new().unwrap();
-        let queue  = make_queue(&qdir);
+        let queue = make_queue(&qdir);
         let config = make_config(dir.path());
-        let proc   = IntakeProcessor::new(Arc::clone(&queue), config);
+        let proc = IntakeProcessor::new(Arc::clone(&queue), config);
 
         // Only part1 arrives - part2 not yet on disk
         let p1 = write_file(&dir, "movie.part1.rar");
         proc.process(p1).await.unwrap();
 
         let depth = queue.queue_depth().unwrap();
-        assert_eq!(depth.values().sum::<i64>(), 0, "should not enqueue until complete");
+        assert_eq!(
+            depth.values().sum::<i64>(),
+            0,
+            "should not enqueue until complete"
+        );
 
         // part2 arrives - now complete (no part3 on disk)
         let _p2 = write_file(&dir, "movie.part2.rar");
@@ -448,17 +479,17 @@ mod tests {
 
     fn filters_cfg(extensions: &[&str], excludes: &[&str]) -> crate::config::Config {
         crate::config::Config {
-            watch_folder:       "/tmp".into(),
-            failed_folder:      "/tmp/failed".into(),
-            exclude_patterns:   excludes.iter().map(|s| s.to_string()).collect(),
+            watch_folder: "/tmp".into(),
+            failed_folder: "/tmp/failed".into(),
+            exclude_patterns: excludes.iter().map(|s| s.to_string()).collect(),
             include_extensions: extensions.iter().map(|s| s.to_string()).collect(),
-            watch_subdirs:      None,
-            min_file_age_secs:  0,
-            conversion:         crate::config::ConversionConfig::default(),
-            destinations:       vec![],
-            transfer:           crate::config::TransferConfig::default(),
-            observability:      crate::config::ObservabilityConfig::default(),
-            smtp:               None,
+            watch_subdirs: None,
+            min_file_age_secs: 0,
+            conversion: crate::config::ConversionConfig::default(),
+            destinations: vec![],
+            transfer: crate::config::TransferConfig::default(),
+            observability: crate::config::ObservabilityConfig::default(),
+            smtp: None,
         }
     }
 

@@ -31,15 +31,16 @@ pub enum IpcClientError {
 impl std::fmt::Display for IpcClientError {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
-            IpcClientError::Connect(e)            => write!(f, "connect: {e}"),
-            IpcClientError::Encode(e)             => write!(f, "encode: {e}"),
-            IpcClientError::Write(e)              => write!(f, "write: {e}"),
-            IpcClientError::Read(e)               => write!(f, "read: {e}"),
-            IpcClientError::Decode(e)             => write!(f, "decode: {e}"),
-            IpcClientError::FrameTooLarge(n)      => write!(f, "response frame too large: {n}"),
-            IpcClientError::DaemonError { code, message } =>
-                write!(f, "daemon error [{code}]: {message}"),
-            IpcClientError::UnexpectedMessage     => write!(f, "unexpected message from daemon"),
+            IpcClientError::Connect(e) => write!(f, "connect: {e}"),
+            IpcClientError::Encode(e) => write!(f, "encode: {e}"),
+            IpcClientError::Write(e) => write!(f, "write: {e}"),
+            IpcClientError::Read(e) => write!(f, "read: {e}"),
+            IpcClientError::Decode(e) => write!(f, "decode: {e}"),
+            IpcClientError::FrameTooLarge(n) => write!(f, "response frame too large: {n}"),
+            IpcClientError::DaemonError { code, message } => {
+                write!(f, "daemon error [{code}]: {message}")
+            }
+            IpcClientError::UnexpectedMessage => write!(f, "unexpected message from daemon"),
         }
     }
 }
@@ -99,7 +100,7 @@ impl IpcClient {
         static NEXT_ID: AtomicU64 = AtomicU64::new(1);
         let request_id = NEXT_ID.fetch_add(1, Ordering::Relaxed) as u128;
 
-        let env   = IpcEnvelope::new(request_id, IpcMessage::Request(req));
+        let env = IpcEnvelope::new(request_id, IpcMessage::Request(req));
         let frame = encode_frame(&env).map_err(IpcClientError::Encode)?;
 
         self.stream
@@ -114,7 +115,7 @@ impl IpcClient {
                 Err(IpcClientError::DaemonError { code, message })
             }
             IpcMessage::Response(resp) => Ok(resp),
-            IpcMessage::Request(_)     => Err(IpcClientError::UnexpectedMessage),
+            IpcMessage::Request(_) => Err(IpcClientError::UnexpectedMessage),
         }
     }
 
@@ -152,9 +153,14 @@ mod tests {
 
     #[test]
     fn is_connection_error_true_for_transport_variants() {
-        assert!(IpcClientError::Connect(io_err(std::io::ErrorKind::ConnectionRefused)).is_connection_error());
+        assert!(
+            IpcClientError::Connect(io_err(std::io::ErrorKind::ConnectionRefused))
+                .is_connection_error()
+        );
         assert!(IpcClientError::Read(io_err(std::io::ErrorKind::BrokenPipe)).is_connection_error());
-        assert!(IpcClientError::Write(io_err(std::io::ErrorKind::BrokenPipe)).is_connection_error());
+        assert!(
+            IpcClientError::Write(io_err(std::io::ErrorKind::BrokenPipe)).is_connection_error()
+        );
     }
 
     #[test]
@@ -162,9 +168,10 @@ mod tests {
         assert!(!IpcClientError::UnexpectedMessage.is_connection_error());
         assert!(!IpcClientError::FrameTooLarge(1024).is_connection_error());
         assert!(!IpcClientError::DaemonError {
-            code:    "NOT_FOUND".into(),
+            code: "NOT_FOUND".into(),
             message: "no such file".into(),
-        }.is_connection_error());
+        }
+        .is_connection_error());
     }
 
     #[test]
@@ -175,7 +182,10 @@ mod tests {
             IpcClientError::Read(io_err(std::io::ErrorKind::UnexpectedEof)),
             IpcClientError::FrameTooLarge(999),
             IpcClientError::UnexpectedMessage,
-            IpcClientError::DaemonError { code: "E".into(), message: "m".into() },
+            IpcClientError::DaemonError {
+                code: "E".into(),
+                message: "m".into(),
+            },
         ];
         for v in variants {
             assert!(!v.to_string().is_empty(), "Display empty for {v:?}");

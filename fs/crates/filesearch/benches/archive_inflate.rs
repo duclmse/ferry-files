@@ -134,5 +134,10 @@ fn bench_copy_simd(c: &mut Criterion) {
 
 // ---------------------------------------------------------------------------
 
-criterion_group!(benches, bench_inflate_simd, bench_copy_match, bench_copy_simd,);
+criterion_group!(
+    benches,
+    bench_inflate_simd,
+    bench_copy_match,
+    bench_copy_simd,
+);
 criterion_main!(benches);

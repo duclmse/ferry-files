@@ -10,38 +10,40 @@ use crate::error::{AppError, Result};
 
 #[derive(Debug, Clone, Deserialize)]
 pub struct Config {
-    pub watch_folder:      PathBuf,
-    pub failed_folder:     PathBuf,
+    pub watch_folder: PathBuf,
+    pub failed_folder: PathBuf,
     #[serde(default)]
-    pub exclude_patterns:  Vec<String>,
+    pub exclude_patterns: Vec<String>,
     #[serde(default = "default_include_extensions")]
     pub include_extensions: Vec<String>,
     #[serde(default)]
-    pub watch_subdirs:     Option<Vec<String>>,
+    pub watch_subdirs: Option<Vec<String>>,
     #[serde(default = "default_min_file_age")]
     pub min_file_age_secs: u64,
 
-    pub conversion:    ConversionConfig,
-    pub destinations:  Vec<Destination>,
+    pub conversion: ConversionConfig,
+    pub destinations: Vec<Destination>,
     #[serde(default)]
-    pub transfer:      TransferConfig,
+    pub transfer: TransferConfig,
     #[serde(default)]
     pub observability: ObservabilityConfig,
     #[serde(default)]
-    pub smtp:          Option<SmtpConfig>,
+    pub smtp: Option<SmtpConfig>,
 }
 
 fn default_include_extensions() -> Vec<String> {
     vec!["rar".into(), "7z".into(), "tar.gz".into()]
 }
-fn default_min_file_age() -> u64 { 5 }
+fn default_min_file_age() -> u64 {
+    5
+}
 
 #[derive(Debug, Clone, Deserialize)]
 pub struct ConversionConfig {
     #[serde(default = "default_compression_level")]
-    pub compression_level:               u8,
+    pub compression_level: u8,
     #[serde(default)]
-    pub archive_password:                Option<String>,
+    pub archive_password: Option<String>,
     /// Files larger than this (MB) use Strategy::Stream (no zip on disk).
     /// 0 = always use Disk strategy.
     #[serde(default = "default_stream_threshold")]
@@ -49,58 +51,72 @@ pub struct ConversionConfig {
     /// Multi-part groups older than this many hours are moved to failed/.
     /// 0 = never expire.
     #[serde(default = "default_multipart_timeout")]
-    pub multipart_timeout_hours:         u64,
+    pub multipart_timeout_hours: u64,
 }
 
-fn default_compression_level() -> u8 { 6 }
-fn default_stream_threshold() -> u64 { 500 }
-fn default_multipart_timeout() -> u64 { 24 }
+fn default_compression_level() -> u8 {
+    6
+}
+fn default_stream_threshold() -> u64 {
+    500
+}
+fn default_multipart_timeout() -> u64 {
+    24
+}
 
 impl Default for ConversionConfig {
     fn default() -> Self {
         Self {
-            compression_level:               default_compression_level(),
-            archive_password:                None,
+            compression_level: default_compression_level(),
+            archive_password: None,
             stream_to_transfer_threshold_mb: default_stream_threshold(),
-            multipart_timeout_hours:         default_multipart_timeout(),
+            multipart_timeout_hours: default_multipart_timeout(),
         }
     }
 }
 
 #[derive(Debug, Clone, Deserialize)]
 pub struct Destination {
-    pub host:         String,
+    pub host: String,
     #[serde(default = "default_ssh_port")]
-    pub port:         u16,
-    pub user:         String,
-    pub remote_path:  String,
+    pub port: u16,
+    pub user: String,
+    pub remote_path: String,
     pub ssh_key_path: PathBuf,
 }
 
-fn default_ssh_port() -> u16 { 22 }
+fn default_ssh_port() -> u16 {
+    22
+}
 
 #[derive(Debug, Clone, Deserialize)]
 pub struct TransferConfig {
     #[serde(default = "default_max_concurrent")]
-    pub max_concurrent:       usize,
+    pub max_concurrent: usize,
     #[serde(default = "default_max_retries")]
-    pub max_retries:          u32,
+    pub max_retries: u32,
     #[serde(default = "default_retry_delay")]
-    pub retry_delay_secs:     u64,
+    pub retry_delay_secs: u64,
     #[serde(default)]
     pub bandwidth_limit_kbps: u64,
 }
 
-fn default_max_concurrent() -> usize { 3 }
-fn default_max_retries() -> u32 { 3 }
-fn default_retry_delay() -> u64 { 10 }
+fn default_max_concurrent() -> usize {
+    3
+}
+fn default_max_retries() -> u32 {
+    3
+}
+fn default_retry_delay() -> u64 {
+    10
+}
 
 impl Default for TransferConfig {
     fn default() -> Self {
         Self {
-            max_concurrent:       default_max_concurrent(),
-            max_retries:          default_max_retries(),
-            retry_delay_secs:     default_retry_delay(),
+            max_concurrent: default_max_concurrent(),
+            max_retries: default_max_retries(),
+            retry_delay_secs: default_retry_delay(),
             bandwidth_limit_kbps: 0,
         }
     }
@@ -109,28 +125,34 @@ impl Default for TransferConfig {
 #[derive(Debug, Clone, Deserialize)]
 pub struct ObservabilityConfig {
     #[serde(default = "default_metrics_port")]
-    pub metrics_port:                u16,
+    pub metrics_port: u16,
     #[serde(default = "default_dashboard_port")]
-    pub dashboard_port:              u16,
+    pub dashboard_port: u16,
     #[serde(default)]
-    pub webhook_url:                 Option<String>,
+    pub webhook_url: Option<String>,
     #[serde(default)]
-    pub alert_email:                 Option<String>,
+    pub alert_email: Option<String>,
     #[serde(default = "default_queue_depth_threshold")]
     pub alert_queue_depth_threshold: usize,
 }
 
-fn default_metrics_port() -> u16 { 9090 }
-fn default_dashboard_port() -> u16 { 8080 }
-fn default_queue_depth_threshold() -> usize { 50 }
+fn default_metrics_port() -> u16 {
+    9090
+}
+fn default_dashboard_port() -> u16 {
+    8080
+}
+fn default_queue_depth_threshold() -> usize {
+    50
+}
 
 impl Default for ObservabilityConfig {
     fn default() -> Self {
         Self {
-            metrics_port:                default_metrics_port(),
-            dashboard_port:              default_dashboard_port(),
-            webhook_url:                 None,
-            alert_email:                 None,
+            metrics_port: default_metrics_port(),
+            dashboard_port: default_dashboard_port(),
+            webhook_url: None,
+            alert_email: None,
             alert_queue_depth_threshold: default_queue_depth_threshold(),
         }
     }
@@ -138,11 +160,11 @@ impl Default for ObservabilityConfig {
 
 #[derive(Debug, Clone, Deserialize)]
 pub struct SmtpConfig {
-    pub host:     String,
-    pub port:     u16,
-    pub user:     String,
+    pub host: String,
+    pub port: u16,
+    pub user: String,
     pub password: String,
-    pub from:     String,
+    pub from: String,
 }
 
 // ---------------------------------------------------------------------------
@@ -199,11 +221,7 @@ pub fn validate(cfg: &Config) -> Vec<String> {
 /// Watch the config file for changes. On a valid change the shared config is
 /// atomically replaced. Invalid configs are logged and the current config is
 /// kept. Exits when `shutdown` is cancelled.
-pub async fn watch_config(
-    path: PathBuf,
-    config: Arc<RwLock<Config>>,
-    shutdown: CancellationToken,
-) {
+pub async fn watch_config(path: PathBuf, config: Arc<RwLock<Config>>, shutdown: CancellationToken) {
     use notify::{recommended_watcher, RecursiveMode, Watcher};
 
     let (tx, rx) = std::sync::mpsc::channel();
@@ -344,7 +362,8 @@ compression_level = 6
     async fn hot_reload_updates_config() {
         let dir = tempfile::tempdir().unwrap();
         let mut f = NamedTempFile::new_in(dir.path()).unwrap();
-        f.write_all(minimal_config_toml(dir.path()).as_bytes()).unwrap();
+        f.write_all(minimal_config_toml(dir.path()).as_bytes())
+            .unwrap();
         f.flush().unwrap();
 
         let cfg = load(f.path()).unwrap();

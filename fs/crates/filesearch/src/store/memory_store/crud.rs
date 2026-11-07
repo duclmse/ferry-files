@@ -113,7 +113,8 @@ impl MemoryStore {
         if file_len - (data_offset as u64) < data_len {
             return Err(AppError::Index("corrupt index.bin: truncated data".into()));
         }
-        file.seek(SeekFrom::Start(data_offset as u64)).map_err(AppError::Io)?;
+        file.seek(SeekFrom::Start(data_offset as u64))
+            .map_err(AppError::Io)?;
         let decode = |e: std::io::Error| AppError::Index(format!("snapshot decode: {e}"));
         let corrupt = |e: String| AppError::Index(format!("corrupt index.bin: {e}"));
         if version == 4 {
@@ -125,7 +126,9 @@ impl MemoryStore {
             return IndexState::from_v3(snap, usn_checkpoint).map_err(corrupt);
         }
         let mut body = Vec::new();
-        file.take(data_len).read_to_end(&mut body).map_err(AppError::Io)?;
+        file.take(data_len)
+            .read_to_end(&mut body)
+            .map_err(AppError::Io)?;
         let records: Vec<FileRecord> = postcard::from_bytes(&body)
             .map_err(|e| AppError::Index(format!("snapshot decode: {e}")))?;
         let mut state = IndexState::from_records(records);
@@ -185,7 +188,11 @@ impl MemoryStore {
 
     fn remove_where(&self, pred: impl Fn(&super::state::EntryRef<'_>) -> bool) -> usize {
         let mut state = self.write_state();
-        let hits: Vec<u32> = state.iter().filter(|e| pred(e)).map(|e| e.index()).collect();
+        let hits: Vec<u32> = state
+            .iter()
+            .filter(|e| pred(e))
+            .map(|e| e.index())
+            .collect();
         for &i in &hits {
             state.remove_at(i);
         }

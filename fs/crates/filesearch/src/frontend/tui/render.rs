@@ -16,9 +16,9 @@ pub(super) fn render(f: &mut Frame, app: &mut App) {
     let chunks = Layout::default()
         .direction(Direction::Vertical)
         .constraints([
-            Constraint::Length(3),  // search box
-            Constraint::Min(0),     // results
-            Constraint::Length(1),  // status bar
+            Constraint::Length(3), // search box
+            Constraint::Min(0),    // results
+            Constraint::Length(1), // status bar
         ])
         .split(f.size());
 
@@ -42,32 +42,43 @@ pub(super) fn render(f: &mut Frame, app: &mut App) {
 
     // ── Results list ─────────────────────────────────────────────────────
     // Borrows pre-computed strings - no clone, no format! per row per frame.
-    let items: Vec<ListItem> = app.rows.iter().map(|row| {
-        let zip_tag = if row.is_archive {
-            Span::styled(" [zip]", Style::default().fg(Color::DarkGray).add_modifier(Modifier::DIM))
-        } else {
-            Span::raw("")
-        };
-        let line = Line::from(vec![
-            Span::raw(row.path.as_str()),
-            Span::styled(row.meta.as_str(), Style::default().fg(Color::DarkGray)),
-            zip_tag,
-        ]);
-        ListItem::new(line)
-    }).collect();
+    let items: Vec<ListItem> = app
+        .rows
+        .iter()
+        .map(|row| {
+            let zip_tag = if row.is_archive {
+                Span::styled(
+                    " [zip]",
+                    Style::default()
+                        .fg(Color::DarkGray)
+                        .add_modifier(Modifier::DIM),
+                )
+            } else {
+                Span::raw("")
+            };
+            let line = Line::from(vec![
+                Span::raw(row.path.as_str()),
+                Span::styled(row.meta.as_str(), Style::default().fg(Color::DarkGray)),
+                zip_tag,
+            ]);
+            ListItem::new(line)
+        })
+        .collect();
 
-    let results_block = Block::default()
-        .borders(Borders::ALL)
-        .title(" Results ");
+    let results_block = Block::default().borders(Borders::ALL).title(" Results ");
     let list = List::new(items)
         .block(results_block)
-        .highlight_style(Style::default().bg(Color::Blue).add_modifier(Modifier::BOLD))
+        .highlight_style(
+            Style::default()
+                .bg(Color::Blue)
+                .add_modifier(Modifier::BOLD),
+        )
         .highlight_symbol("> ");
     f.render_stateful_widget(list, chunks[1], &mut app.list_state);
 
     // ── Status bar ────────────────────────────────────────────────────────
-    let status = Paragraph::new(app.status_msg.as_str())
-        .style(Style::default().fg(Color::DarkGray));
+    let status =
+        Paragraph::new(app.status_msg.as_str()).style(Style::default().fg(Color::DarkGray));
     f.render_widget(status, chunks[2]);
 }
 

@@ -11,36 +11,36 @@ use crate::error::{AppError, Result};
 
 #[derive(Debug, Clone, Deserialize)]
 pub struct Config {
-    pub watch_paths:   Vec<PathBuf>,
-    pub data_dir:      PathBuf,
-    pub log_dir:       PathBuf,
+    pub watch_paths: Vec<PathBuf>,
+    pub data_dir: PathBuf,
+    pub log_dir: PathBuf,
 
     #[serde(default)]
-    pub exclusions:    ExclusionConfig,
+    pub exclusions: ExclusionConfig,
 
     #[serde(default)]
-    pub content:       ContentConfig,
+    pub content: ContentConfig,
 
     #[serde(default)]
-    pub api:           ApiConfig,
+    pub api: ApiConfig,
 
     #[serde(default)]
-    pub search:        SearchConfig,
+    pub search: SearchConfig,
 
     #[serde(default)]
-    pub indexer:       IndexerConfig,
+    pub indexer: IndexerConfig,
 
     #[serde(default)]
     pub archive_index: ArchiveIndexConfig,
 
     #[serde(default)]
-    pub macros:          MacroConfig,
+    pub macros: MacroConfig,
 
     #[serde(default)]
     pub archive_service: ArchiveServiceConfig,
 
     #[serde(default)]
-    pub store:           StoreConfig,
+    pub store: StoreConfig,
 }
 
 /// Which backend persists the file-metadata index.
@@ -70,7 +70,10 @@ pub struct StoreConfig {
 
 impl Default for StoreConfig {
     fn default() -> Self {
-        Self { mode: StoreMode::default(), indexes: default_sqlite_indexes() }
+        Self {
+            mode: StoreMode::default(),
+            indexes: default_sqlite_indexes(),
+        }
     }
 }
 
@@ -85,8 +88,13 @@ pub enum SqliteIndex {
 }
 
 impl SqliteIndex {
-    pub const ALL: [SqliteIndex; 5] =
-        [Self::Name, Self::Extension, Self::Mtime, Self::Size, Self::Attrib];
+    pub const ALL: [SqliteIndex; 5] = [
+        Self::Name,
+        Self::Extension,
+        Self::Mtime,
+        Self::Size,
+        Self::Attrib,
+    ];
 }
 
 fn default_sqlite_indexes() -> Vec<SqliteIndex> {
@@ -96,16 +104,16 @@ fn default_sqlite_indexes() -> Vec<SqliteIndex> {
 #[derive(Debug, Clone, Deserialize, Default)]
 pub struct ExclusionConfig {
     #[serde(default)]
-    pub path_patterns:          Vec<String>,
+    pub path_patterns: Vec<String>,
 
     #[serde(default)]
-    pub exclude_hidden:         bool,
+    pub exclude_hidden: bool,
 
     #[serde(default)]
     pub max_content_size_bytes: u64,
 
     #[serde(default)]
-    pub skip_network_content:   bool,
+    pub skip_network_content: bool,
 }
 
 #[derive(Debug, Clone, Deserialize, Default)]
@@ -118,34 +126,37 @@ pub struct ContentConfig {
 #[derive(Debug, Clone, Deserialize)]
 pub struct ApiConfig {
     #[serde(default = "default_rest_port")]
-    pub rest_port:         u16,
+    pub rest_port: u16,
 
     #[serde(default = "default_grpc_port")]
-    pub grpc_port:         u16,
+    pub grpc_port: u16,
 
     #[serde(default = "default_ipc_path")]
-    pub ipc_path:          PathBuf,
+    pub ipc_path: PathBuf,
 
     #[serde(default = "default_cors_origins")]
     pub rest_cors_origins: Vec<String>,
 
     /// Enable the REST HTTP API (default: true).
     #[serde(default = "default_true")]
-
-    pub rest_enabled:      bool,
+    pub rest_enabled: bool,
     /// Enable the gRPC API (default: true).
 
     #[serde(default = "default_true")]
-    pub grpc_enabled:      bool,
+    pub grpc_enabled: bool,
 
     /// Enable the Named-Pipe / Unix-socket IPC API (default: true).
     #[serde(default = "default_true")]
-    pub ipc_enabled:       bool,
+    pub ipc_enabled: bool,
 }
 
-fn default_rest_port() -> u16 { 7700 }
+fn default_rest_port() -> u16 {
+    7700
+}
 
-fn default_grpc_port() -> u16 { 7701 }
+fn default_grpc_port() -> u16 {
+    7701
+}
 
 fn default_ipc_path() -> PathBuf {
     #[cfg(windows)]
@@ -154,18 +165,20 @@ fn default_ipc_path() -> PathBuf {
     return PathBuf::from("/tmp/filesearch.sock");
 }
 
-fn default_cors_origins() -> Vec<String> { vec!["*".into()] }
+fn default_cors_origins() -> Vec<String> {
+    vec!["*".into()]
+}
 
 impl Default for ApiConfig {
     fn default() -> Self {
         Self {
-            rest_port:         default_rest_port(),
-            grpc_port:         default_grpc_port(),
-            ipc_path:          default_ipc_path(),
+            rest_port: default_rest_port(),
+            grpc_port: default_grpc_port(),
+            ipc_path: default_ipc_path(),
             rest_cors_origins: default_cors_origins(),
-            rest_enabled:      true,
-            grpc_enabled:      true,
-            ipc_enabled:       true,
+            rest_enabled: true,
+            grpc_enabled: true,
+            ipc_enabled: true,
         }
     }
 }
@@ -173,13 +186,13 @@ impl Default for ApiConfig {
 #[derive(Debug, Clone, Deserialize)]
 pub struct SearchConfig {
     #[serde(default = "default_default_limit")]
-    pub default_limit:        usize,
+    pub default_limit: usize,
 
     #[serde(default = "default_max_limit")]
-    pub max_limit:            usize,
+    pub max_limit: usize,
 
     #[serde(default = "default_fuzzy_threshold")]
-    pub fuzzy_threshold:      f32,
+    pub fuzzy_threshold: f32,
 
     /// Maximum number of candidate rows to score during a `fuzzy:` query.
     /// Caps memory usage for broad fuzzy searches; 0 means no cap.
@@ -192,22 +205,32 @@ pub struct SearchConfig {
     pub max_filter_candidates: usize,
 }
 
-fn default_default_limit() -> usize { 100 }
+fn default_default_limit() -> usize {
+    100
+}
 
-fn default_max_limit() -> usize { 10_000 }
+fn default_max_limit() -> usize {
+    10_000
+}
 
-fn default_fuzzy_threshold() -> f32 { 0.7 }
+fn default_fuzzy_threshold() -> f32 {
+    0.7
+}
 
-fn default_max_fuzzy_candidates() -> usize { 50_000 }
+fn default_max_fuzzy_candidates() -> usize {
+    50_000
+}
 
-fn default_max_filter_candidates() -> usize { 200_000 }
+fn default_max_filter_candidates() -> usize {
+    200_000
+}
 
 impl Default for SearchConfig {
     fn default() -> Self {
         Self {
-            default_limit:        default_default_limit(),
-            max_limit:            default_max_limit(),
-            fuzzy_threshold:      default_fuzzy_threshold(),
+            default_limit: default_default_limit(),
+            max_limit: default_max_limit(),
+            fuzzy_threshold: default_fuzzy_threshold(),
             max_fuzzy_candidates: default_max_fuzzy_candidates(),
             max_filter_candidates: default_max_filter_candidates(),
         }
@@ -217,16 +240,16 @@ impl Default for SearchConfig {
 #[derive(Debug, Clone, Deserialize)]
 pub struct IndexerConfig {
     #[serde(default = "default_threads")]
-    pub crawl_threads:        usize,
+    pub crawl_threads: usize,
 
     #[serde(default = "default_threads")]
-    pub content_threads:      usize,
+    pub content_threads: usize,
 
     #[serde(default = "default_commit_interval")]
     pub commit_interval_secs: u64,
 
     #[serde(default = "default_event_batch_size")]
-    pub event_batch_size:     usize,
+    pub event_batch_size: usize,
 }
 
 fn default_threads() -> usize {
@@ -236,16 +259,20 @@ fn default_threads() -> usize {
     .max(1)
         / 2
 }
-fn default_commit_interval() -> u64 { 5 }
-fn default_event_batch_size() -> usize { 100 }
+fn default_commit_interval() -> u64 {
+    5
+}
+fn default_event_batch_size() -> usize {
+    100
+}
 
 impl Default for IndexerConfig {
     fn default() -> Self {
         Self {
-            crawl_threads:        default_threads(),
-            content_threads:      default_threads(),
+            crawl_threads: default_threads(),
+            content_threads: default_threads(),
             commit_interval_secs: default_commit_interval(),
-            event_batch_size:     default_event_batch_size(),
+            event_batch_size: default_event_batch_size(),
         }
     }
 }
@@ -253,34 +280,40 @@ impl Default for IndexerConfig {
 #[derive(Debug, Clone, Deserialize)]
 pub struct ArchiveIndexConfig {
     #[serde(default = "default_true")]
-    pub enabled:                 bool,
+    pub enabled: bool,
     #[serde(default = "default_archive_formats")]
-    pub formats:                 Vec<String>,
+    pub formats: Vec<String>,
     #[serde(default)]
-    pub inner_extension_limits:  HashMap<String, u64>,
+    pub inner_extension_limits: HashMap<String, u64>,
     #[serde(default = "default_max_entries")]
     pub max_entries_per_archive: usize,
     #[serde(default)]
-    pub max_nesting_depth:       u8,
+    pub max_nesting_depth: u8,
     #[serde(default)]
-    pub passwords:               Vec<String>,
+    pub passwords: Vec<String>,
 }
 
-fn default_true() -> bool { true }
+fn default_true() -> bool {
+    true
+}
 
-fn default_archive_formats() -> Vec<String> { vec!["zip".into()] }
+fn default_archive_formats() -> Vec<String> {
+    vec!["zip".into()]
+}
 
-fn default_max_entries() -> usize { 10_000 }
+fn default_max_entries() -> usize {
+    10_000
+}
 
 impl Default for ArchiveIndexConfig {
     fn default() -> Self {
         Self {
-            enabled:                 true,
-            formats:                 default_archive_formats(),
-            inner_extension_limits:  HashMap::new(),
+            enabled: true,
+            formats: default_archive_formats(),
+            inner_extension_limits: HashMap::new(),
             max_entries_per_archive: default_max_entries(),
-            max_nesting_depth:       0,
-            passwords:               Vec::new(),
+            max_nesting_depth: 0,
+            passwords: Vec::new(),
         }
     }
 }
@@ -319,9 +352,15 @@ pub struct ArchiveServiceConfig {
     pub scheduler: crate::scheduler::SchedulerConfig,
 }
 
-fn default_index_cache_size() -> usize { 256 }
-fn default_dzx_min_entry_bytes() -> u64 { 10 * 1024 * 1024 }
-fn default_dzx_max_concurrent_builds() -> usize { 2 }
+fn default_index_cache_size() -> usize {
+    256
+}
+fn default_dzx_min_entry_bytes() -> u64 {
+    10 * 1024 * 1024
+}
+fn default_dzx_max_concurrent_builds() -> usize {
+    2
+}
 
 // ---------------------------------------------------------------------------
 
@@ -435,11 +474,7 @@ pub fn validate(cfg: &Config) -> Vec<String> {
 /// Watch the config file for changes. On a valid change the shared config is
 /// atomically replaced. Invalid configs are logged and the current config is
 /// kept. Exits when `shutdown` is cancelled.
-pub async fn watch_config(
-    path: PathBuf,
-    config: Arc<RwLock<Config>>,
-    shutdown: CancellationToken,
-) {
+pub async fn watch_config(path: PathBuf, config: Arc<RwLock<Config>>, shutdown: CancellationToken) {
     use notify::{recommended_watcher, RecursiveMode, Watcher};
 
     let (tx, rx) = std::sync::mpsc::channel();
@@ -536,13 +571,17 @@ log_dir     = "{dir}/logs"
         let base = minimal_config_toml(dir.path());
         let cfg = load(write_config(&base).path()).unwrap();
         assert_eq!(cfg.store.indexes, SqliteIndex::ALL);
-        let cfg = load(write_config(&format!("{base}[store]\nmode = \"sqlite\"\n")).path()).unwrap();
+        let cfg =
+            load(write_config(&format!("{base}[store]\nmode = \"sqlite\"\n")).path()).unwrap();
         assert_eq!(cfg.store.indexes, SqliteIndex::ALL);
         let some = format!("{base}[store]\nindexes = [\"name\", \"mtime\"]\n");
         let cfg = load(write_config(&some).path()).unwrap();
         assert_eq!(cfg.store.indexes, [SqliteIndex::Name, SqliteIndex::Mtime]);
         let bad = format!("{base}[store]\nindexes = [\"path\"]\n");
-        assert!(matches!(load(write_config(&bad).path()), Err(AppError::Config(_))));
+        assert!(matches!(
+            load(write_config(&bad).path()),
+            Err(AppError::Config(_))
+        ));
     }
 
     #[test]
@@ -599,7 +638,11 @@ log_dir     = "{dir}/logs"
             ));
             let cfg = load(f.path()).unwrap();
             let errs = validate(&cfg);
-            assert_eq!(errs.iter().any(|e| e.contains("max_nesting_depth")), bad, "{depth}: {errs:?}");
+            assert_eq!(
+                errs.iter().any(|e| e.contains("max_nesting_depth")),
+                bad,
+                "{depth}: {errs:?}"
+            );
         }
     }
 
@@ -667,7 +710,8 @@ log_dir     = "{dir}/logs"
     async fn hot_reload_updates_config() {
         let dir = tempfile::tempdir().unwrap();
         let mut f = NamedTempFile::new_in(dir.path()).unwrap();
-        f.write_all(minimal_config_toml(dir.path()).as_bytes()).unwrap();
+        f.write_all(minimal_config_toml(dir.path()).as_bytes())
+            .unwrap();
         f.flush().unwrap();
 
         let cfg = load(f.path()).unwrap();

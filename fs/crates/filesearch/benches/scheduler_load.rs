@@ -27,8 +27,8 @@ fn make_ip(i: u8) -> IpAddr {
 
 fn make_task(client: u8, archive: u8, priority: u8, cost: u32) -> Task {
     Task {
-        client:      make_ip(client),
-        archive:     format!("archive_{archive}.zip"),
+        client: make_ip(client),
+        archive: format!("archive_{archive}.zip"),
         cost,
         priority,
         enqueued_ns: now_ns(),
@@ -70,11 +70,13 @@ fn bench_dispatch_1000(c: &mut Criterion) {
     let now = now_ns();
     g.bench_function("dispatch_1000_tasks", |b| {
         b.iter_batched(
-            || filled_scheduler((0u8..10).flat_map(|client| {
-                (0u8..10).flat_map(move |archive| {
-                    (0..10).map(move |_| make_task(client, archive, 1, 10))
-                })
-            })),
+            || {
+                filled_scheduler((0u8..10).flat_map(|client| {
+                    (0u8..10).flat_map(move |archive| {
+                        (0..10).map(move |_| make_task(client, archive, 1, 10))
+                    })
+                }))
+            },
             |(mut sched, mut out)| {
                 drain(&mut sched, &mut out, now);
                 black_box(out)
@@ -125,12 +127,16 @@ fn bench_dispatch_imbalanced(c: &mut Criterion) {
     let now = now_ns();
     g.bench_function("dispatch_1000_imbalanced", |b| {
         b.iter_batched(
-            || filled_scheduler(
-                // Client 0 gets 900 bulk tasks; clients 1-9 get 11 each.
-                (0..900).map(|_| make_task(0, 0, 2, 1)).chain(
-                    (1u8..10).flat_map(|client| (0..11).map(move |_| make_task(client, client, 1, 1))),
-                ),
-            ),
+            || {
+                filled_scheduler(
+                    // Client 0 gets 900 bulk tasks; clients 1-9 get 11 each.
+                    (0..900).map(|_| make_task(0, 0, 2, 1)).chain(
+                        (1u8..10).flat_map(|client| {
+                            (0..11).map(move |_| make_task(client, client, 1, 1))
+                        }),
+                    ),
+                )
+            },
             |(mut sched, mut out)| {
                 drain(&mut sched, &mut out, now);
                 black_box(out)

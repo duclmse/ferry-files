@@ -1,15 +1,15 @@
 #[cfg(test)]
 use crate::store::{CmpOp, SqlCondition};
 
-mod types;
+mod execute;
 mod plan;
 mod postfilter;
-mod execute;
+mod types;
 
 #[cfg(test)]
 mod tests;
 
-pub use types::{EvalStrategy, PostFilter, QueryPlan, QueryResult};
+pub use execute::execute_plan;
 pub use plan::plan;
 pub use postfilter::apply_post_filters;
-pub use execute::execute_plan;
+pub use types::{EvalStrategy, PostFilter, QueryPlan, QueryResult};

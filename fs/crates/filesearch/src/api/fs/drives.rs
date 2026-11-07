@@ -7,12 +7,12 @@ use serde::Serialize;
 
 #[derive(Serialize)]
 pub struct DriveInfo {
-    pub letter:      String,
-    pub root:        String,
-    pub kind:        &'static str,
-    pub label:       Option<String>,
+    pub letter: String,
+    pub root: String,
+    pub kind: &'static str,
+    pub label: Option<String>,
     pub total_bytes: Option<u64>,
-    pub free_bytes:  Option<u64>,
+    pub free_bytes: Option<u64>,
 }
 
 pub(super) async fn drives_handler() -> impl IntoResponse {
@@ -25,17 +25,17 @@ pub(super) async fn drives_handler() -> impl IntoResponse {
 #[cfg(windows)]
 pub(super) fn list_drives() -> Vec<DriveInfo> {
     use windows::{
+        core::PCWSTR,
         Win32::Storage::FileSystem::{
             GetDiskFreeSpaceExW, GetDriveTypeW, GetLogicalDrives, GetVolumeInformationW,
         },
-        core::PCWSTR,
     };
 
     const DRIVE_REMOVABLE: u32 = 2;
-    const DRIVE_FIXED:     u32 = 3;
-    const DRIVE_REMOTE:    u32 = 4;
-    const DRIVE_CDROM:     u32 = 5;
-    const DRIVE_RAMDISK:   u32 = 6;
+    const DRIVE_FIXED: u32 = 3;
+    const DRIVE_REMOTE: u32 = 4;
+    const DRIVE_CDROM: u32 = 5;
+    const DRIVE_RAMDISK: u32 = 6;
 
     let mask = unsafe { GetLogicalDrives() };
     let mut out = Vec::new();
@@ -50,25 +50,18 @@ pub(super) fn list_drives() -> Vec<DriveInfo> {
         let root_pcwstr = PCWSTR(root_wide.as_ptr());
 
         let kind = match unsafe { GetDriveTypeW(root_pcwstr) } {
-            DRIVE_FIXED     => "fixed",
+            DRIVE_FIXED => "fixed",
             DRIVE_REMOVABLE => "removable",
-            DRIVE_REMOTE    => "network",
-            DRIVE_CDROM     => "cdrom",
-            DRIVE_RAMDISK   => "ramdisk",
-            _               => "unknown",
+            DRIVE_REMOTE => "network",
+            DRIVE_CDROM => "cdrom",
+            DRIVE_RAMDISK => "ramdisk",
+            _ => "unknown",
         };
 
         // Volume label (may fail for empty optical drives, etc.)
         let mut label_buf = vec![0u16; 256];
         let label = unsafe {
-            GetVolumeInformationW(
-                root_pcwstr,
-                Some(&mut label_buf),
-                None,
-                None,
-                None,
-                None,
-            )
+            GetVolumeInformationW(root_pcwstr, Some(&mut label_buf), None, None, None, None)
         }
         .ok()
         .and_then(|_| {
@@ -79,24 +72,18 @@ pub(super) fn list_drives() -> Vec<DriveInfo> {
 
         // Disk space (may fail for ejected media)
         let mut total = 0u64;
-        let mut free  = 0u64;
-        let space_ok = unsafe {
-            GetDiskFreeSpaceExW(
-                root_pcwstr,
-                None,
-                Some(&mut total),
-                Some(&mut free),
-            )
-        }
-        .is_ok();
+        let mut free = 0u64;
+        let space_ok =
+            unsafe { GetDiskFreeSpaceExW(root_pcwstr, None, Some(&mut total), Some(&mut free)) }
+                .is_ok();
 
         out.push(DriveInfo {
-            letter:      format!("{letter}:"),
-            root:        root_str,
+            letter: format!("{letter}:"),
+            root: root_str,
             kind,
             label,
             total_bytes: space_ok.then_some(total),
-            free_bytes:  space_ok.then_some(free),
+            free_bytes: space_ok.then_some(free),
         });
     }
     out

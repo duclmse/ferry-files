@@ -66,19 +66,15 @@ fn batch_to_events(
                     out.push(IndexEvent::Created(path));
                 }
             }
-            EventKind::Modify(notify::event::ModifyKind::Name(
-                notify::event::RenameMode::Both,
-            )) => {
+            EventKind::Modify(notify::event::ModifyKind::Name(notify::event::RenameMode::Both)) => {
                 if ev.paths.len() >= 2 {
                     out.push(IndexEvent::Renamed {
                         from: ev.paths[0].clone(),
-                        to:   ev.paths[1].clone(),
+                        to: ev.paths[1].clone(),
                     });
                 }
             }
-            EventKind::Modify(notify::event::ModifyKind::Name(
-                notify::event::RenameMode::From,
-            )) => {
+            EventKind::Modify(notify::event::ModifyKind::Name(notify::event::RenameMode::From)) => {
                 // The debouncer couldn't pair this with a matching `To` event
                 // (no tracker cookie / file-id match - routine on macOS's
                 // FSEvents backend). The path is gone, so treat it as a
@@ -115,11 +111,12 @@ fn batch_to_events(
 // ---------------------------------------------------------------------------
 
 pub async fn run_watcher(
-    config:   Arc<RwLock<Config>>,
-    tx:       mpsc::Sender<IndexEvent>,
+    config: Arc<RwLock<Config>>,
+    tx: mpsc::Sender<IndexEvent>,
     shutdown: CancellationToken,
 ) -> Result<()> {
-    let (debounce_tx, mut debounce_rx) = tokio::sync::mpsc::unbounded_channel::<DebounceEventResult>();
+    let (debounce_tx, mut debounce_rx) =
+        tokio::sync::mpsc::unbounded_channel::<DebounceEventResult>();
 
     let debounce_tx_clone = debounce_tx.clone();
     let mut debouncer = new_debouncer(

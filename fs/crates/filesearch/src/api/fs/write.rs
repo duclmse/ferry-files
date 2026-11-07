@@ -31,15 +31,15 @@ struct WriteResponse {
 
 pub(super) async fn write_handler(
     State(_state): State<AppState>,
-    Query(params):  Query<PathParam>,
-    request:        Request,
+    Query(params): Query<PathParam>,
+    request: Request,
 ) -> Response {
     let raw = match params.path {
         Some(p) if !p.is_empty() => p,
         _ => return bad_request("missing 'path' parameter").into_response(),
     };
     let path = match validate_path(&raw) {
-        Ok(p)  => p,
+        Ok(p) => p,
         Err(e) => return bad_request(e).into_response(),
     };
 
@@ -50,7 +50,7 @@ pub(super) async fn write_handler(
     }
 
     let bytes = match axum::body::to_bytes(request.into_body(), usize::MAX).await {
-        Ok(b)  => b,
+        Ok(b) => b,
         Err(e) => return internal(format!("body read error: {e}")).into_response(),
     };
     let written = bytes.len() as u64;
@@ -93,20 +93,20 @@ fn make_sse(rx: tokio::sync::mpsc::Receiver<ProgressEvent>) -> Response {
 #[derive(Deserialize)]
 pub(super) struct FromToBody {
     from: String,
-    to:   String,
+    to: String,
 }
 
 pub(super) async fn copy_handler(
     State(_state): State<AppState>,
-    Query(qp):     Query<StreamParam>,
-    Json(body):    Json<FromToBody>,
+    Query(qp): Query<StreamParam>,
+    Json(body): Json<FromToBody>,
 ) -> Response {
     let src = match validate_path(&body.from) {
-        Ok(p)  => p,
+        Ok(p) => p,
         Err(e) => return bad_request(format!("'from': {e}")).into_response(),
     };
     let dst = match validate_path(&body.to) {
-        Ok(p)  => p,
+        Ok(p) => p,
         Err(e) => return bad_request(format!("'to': {e}")).into_response(),
     };
 
@@ -114,21 +114,49 @@ pub(super) async fn copy_handler(
         let (tx, rx) = tokio::sync::mpsc::channel::<ProgressEvent>(16);
         tokio::task::spawn_blocking(move || {
             let total = count_entries(&src);
-            send_progress(&tx, ProgressEvent { processed: 0, total, current: String::new(), done: false, error: None });
+            send_progress(
+                &tx,
+                ProgressEvent {
+                    processed: 0,
+                    total,
+                    current: String::new(),
+                    done: false,
+                    error: None,
+                },
+            );
             let mut processed = 0;
             match copy_recursive_tracked(&src, &dst, &tx, &mut processed, total) {
-                Ok(()) => send_progress(&tx, ProgressEvent { processed: total, total, current: String::new(), done: true, error: None }),
-                Err(e) => send_progress(&tx, ProgressEvent { processed, total, current: String::new(), done: true, error: Some(e) }),
+                Ok(()) => send_progress(
+                    &tx,
+                    ProgressEvent {
+                        processed: total,
+                        total,
+                        current: String::new(),
+                        done: true,
+                        error: None,
+                    },
+                ),
+                Err(e) => send_progress(
+                    &tx,
+                    ProgressEvent {
+                        processed,
+                        total,
+                        current: String::new(),
+                        done: true,
+                        error: Some(e),
+                    },
+                ),
             }
         });
         make_sse(rx)
     } else {
         let r = tokio::task::spawn_blocking(move || copy_recursive(&src, &dst))
-            .await.map_err(|e| e.to_string());
+            .await
+            .map_err(|e| e.to_string());
         match r {
             Ok(Ok(())) => Json(OkResponse { ok: true }).into_response(),
             Ok(Err(e)) => internal(e).into_response(),
-            Err(e)     => internal(e).into_response(),
+            Err(e) => internal(e).into_response(),
         }
     }
 }
@@ -139,15 +167,15 @@ pub(super) async fn copy_handler(
 
 pub(super) async fn move_handler(
     State(_state): State<AppState>,
-    Query(qp):     Query<StreamParam>,
-    Json(body):    Json<FromToBody>,
+    Query(qp): Query<StreamParam>,
+    Json(body): Json<FromToBody>,
 ) -> Response {
     let src = match validate_path(&body.from) {
-        Ok(p)  => p,
+        Ok(p) => p,
         Err(e) => return bad_request(format!("'from': {e}")).into_response(),
     };
     let dst = match validate_path(&body.to) {
-        Ok(p)  => p,
+        Ok(p) => p,
         Err(e) => return bad_request(format!("'to': {e}")).into_response(),
     };
 
@@ -162,36 +190,76 @@ pub(super) async fn move_handler(
         tokio::task::spawn_blocking(move || {
             // Try atomic rename first (O(1), same filesystem).
             if std::fs::rename(&src, &dst).is_ok() {
-                send_progress(&tx, ProgressEvent { processed: 1, total: 1, current: src.display().to_string(), done: true, error: None });
+                send_progress(
+                    &tx,
+                    ProgressEvent {
+                        processed: 1,
+                        total: 1,
+                        current: src.display().to_string(),
+                        done: true,
+                        error: None,
+                    },
+                );
                 return;
             }
             // Fall back to copy+delete across filesystems.
             let total = count_entries(&src);
-            send_progress(&tx, ProgressEvent { processed: 0, total, current: String::new(), done: false, error: None });
+            send_progress(
+                &tx,
+                ProgressEvent {
+                    processed: 0,
+                    total,
+                    current: String::new(),
+                    done: false,
+                    error: None,
+                },
+            );
             let mut processed = 0;
-            let r = copy_recursive_tracked(&src, &dst, &tx, &mut processed, total)
-                .and_then(|()| std::fs::remove_dir_all(&src).map_err(|e| format!("remove source: {e}")));
+            let r = copy_recursive_tracked(&src, &dst, &tx, &mut processed, total).and_then(|()| {
+                std::fs::remove_dir_all(&src).map_err(|e| format!("remove source: {e}"))
+            });
             match r {
-                Ok(())  => send_progress(&tx, ProgressEvent { processed: total, total, current: String::new(), done: true, error: None }),
-                Err(e)  => send_progress(&tx, ProgressEvent { processed, total, current: String::new(), done: true, error: Some(e) }),
+                Ok(()) => send_progress(
+                    &tx,
+                    ProgressEvent {
+                        processed: total,
+                        total,
+                        current: String::new(),
+                        done: true,
+                        error: None,
+                    },
+                ),
+                Err(e) => send_progress(
+                    &tx,
+                    ProgressEvent {
+                        processed,
+                        total,
+                        current: String::new(),
+                        done: true,
+                        error: Some(e),
+                    },
+                ),
             }
         });
         make_sse(rx)
     } else {
         match tokio::fs::rename(&src, &dst).await {
             Ok(()) => return Json(OkResponse { ok: true }).into_response(),
-            Err(e) if e.kind() == std::io::ErrorKind::NotFound
-                   => return not_found(format!("source not found: {}", src.display())).into_response(),
+            Err(e) if e.kind() == std::io::ErrorKind::NotFound => {
+                return not_found(format!("source not found: {}", src.display())).into_response()
+            }
             Err(_) => {} // fallthrough: cross-filesystem rename
         }
         let r = tokio::task::spawn_blocking(move || {
             copy_recursive(&src, &dst)?;
             std::fs::remove_dir_all(&src).map_err(|e| format!("remove source: {e}"))
-        }).await.map_err(|e| e.to_string());
+        })
+        .await
+        .map_err(|e| e.to_string());
         match r {
             Ok(Ok(())) => Json(OkResponse { ok: true }).into_response(),
             Ok(Err(e)) => internal(e).into_response(),
-            Err(e)     => internal(e).into_response(),
+            Err(e) => internal(e).into_response(),
         }
     }
 }
@@ -209,14 +277,15 @@ pub(super) async fn delete_handler(
         _ => return bad_request("missing 'path' parameter").into_response(),
     };
     let path = match validate_path(&raw) {
-        Ok(p)  => p,
+        Ok(p) => p,
         Err(e) => return bad_request(e).into_response(),
     };
 
     let meta = match tokio::fs::metadata(&path).await {
-        Ok(m)  => m,
-        Err(e) if e.kind() == std::io::ErrorKind::NotFound
-               => return not_found(format!("path not found: {raw}")).into_response(),
+        Ok(m) => m,
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => {
+            return not_found(format!("path not found: {raw}")).into_response()
+        }
         Err(e) => return internal(e.to_string()).into_response(),
     };
 
@@ -224,11 +293,38 @@ pub(super) async fn delete_handler(
         let (tx, rx) = tokio::sync::mpsc::channel::<ProgressEvent>(16);
         tokio::task::spawn_blocking(move || {
             let total = count_entries(&path);
-            send_progress(&tx, ProgressEvent { processed: 0, total, current: String::new(), done: false, error: None });
+            send_progress(
+                &tx,
+                ProgressEvent {
+                    processed: 0,
+                    total,
+                    current: String::new(),
+                    done: false,
+                    error: None,
+                },
+            );
             let mut processed = 0;
             match delete_recursive_tracked(&path, &tx, &mut processed, total) {
-                Ok(()) => send_progress(&tx, ProgressEvent { processed: total, total, current: String::new(), done: true, error: None }),
-                Err(e) => send_progress(&tx, ProgressEvent { processed, total, current: String::new(), done: true, error: Some(e) }),
+                Ok(()) => send_progress(
+                    &tx,
+                    ProgressEvent {
+                        processed: total,
+                        total,
+                        current: String::new(),
+                        done: true,
+                        error: None,
+                    },
+                ),
+                Err(e) => send_progress(
+                    &tx,
+                    ProgressEvent {
+                        processed,
+                        total,
+                        current: String::new(),
+                        done: true,
+                        error: Some(e),
+                    },
+                ),
             }
         });
         make_sse(rx)
@@ -258,7 +354,7 @@ pub(super) async fn mkdir_handler(
         _ => return bad_request("missing 'path' parameter").into_response(),
     };
     let path = match validate_path(&raw) {
-        Ok(p)  => p,
+        Ok(p) => p,
         Err(e) => return bad_request(e).into_response(),
     };
 
@@ -290,15 +386,18 @@ fn count_entries(root: &Path) -> usize {
 }
 
 fn copy_recursive(src: &Path, dst: &Path) -> Result<(), String> {
-    let meta = std::fs::metadata(src)
-        .map_err(|e| format!("cannot read source: {e}"))?;
+    let meta = std::fs::metadata(src).map_err(|e| format!("cannot read source: {e}"))?;
     if meta.is_file() {
         if let Some(p) = dst.parent() {
-            std::fs::create_dir_all(p).map_err(|e| format!("cannot create destination directory: {e}"))?;
+            std::fs::create_dir_all(p)
+                .map_err(|e| format!("cannot create destination directory: {e}"))?;
         }
-        std::fs::copy(src, dst).map(|_| ()).map_err(|e| format!("copy failed: {e}"))
+        std::fs::copy(src, dst)
+            .map(|_| ())
+            .map_err(|e| format!("copy failed: {e}"))
     } else if meta.is_dir() {
-        std::fs::create_dir_all(dst).map_err(|e| format!("cannot create destination directory: {e}"))?;
+        std::fs::create_dir_all(dst)
+            .map_err(|e| format!("cannot create destination directory: {e}"))?;
         for entry in std::fs::read_dir(src).map_err(|e| e.to_string())? {
             let entry = entry.map_err(|e| e.to_string())?;
             copy_recursive(&entry.path(), &dst.join(entry.file_name()))?;
@@ -310,42 +409,50 @@ fn copy_recursive(src: &Path, dst: &Path) -> Result<(), String> {
 }
 
 fn copy_recursive_tracked(
-    src:       &Path,
-    dst:       &Path,
-    tx:        &ProgressTx,
+    src: &Path,
+    dst: &Path,
+    tx: &ProgressTx,
     processed: &mut usize,
-    total:     usize,
+    total: usize,
 ) -> Result<(), String> {
-    let meta = std::fs::metadata(src)
-        .map_err(|e| format!("cannot read source: {e}"))?;
+    let meta = std::fs::metadata(src).map_err(|e| format!("cannot read source: {e}"))?;
     if meta.is_file() {
         if let Some(p) = dst.parent() {
             std::fs::create_dir_all(p).map_err(|e| e.to_string())?;
         }
         std::fs::copy(src, dst).map_err(|e| format!("copy failed: {e}"))?;
         *processed += 1;
-        send_progress(tx, ProgressEvent {
-            processed: *processed,
-            total,
-            current:   src.display().to_string(),
-            done:      false,
-            error:     None,
-        });
+        send_progress(
+            tx,
+            ProgressEvent {
+                processed: *processed,
+                total,
+                current: src.display().to_string(),
+                done: false,
+                error: None,
+            },
+        );
     } else if meta.is_dir() {
         std::fs::create_dir_all(dst).map_err(|e| e.to_string())?;
         for entry in std::fs::read_dir(src).map_err(|e| e.to_string())? {
             let entry = entry.map_err(|e| e.to_string())?;
-            copy_recursive_tracked(&entry.path(), &dst.join(entry.file_name()), tx, processed, total)?;
+            copy_recursive_tracked(
+                &entry.path(),
+                &dst.join(entry.file_name()),
+                tx,
+                processed,
+                total,
+            )?;
         }
     }
     Ok(())
 }
 
 fn delete_recursive_tracked(
-    path:      &Path,
-    tx:        &ProgressTx,
+    path: &Path,
+    tx: &ProgressTx,
     processed: &mut usize,
-    total:     usize,
+    total: usize,
 ) -> Result<(), String> {
     if path.is_dir() {
         for entry in std::fs::read_dir(path).map_err(|e| e.to_string())? {
@@ -356,13 +463,16 @@ fn delete_recursive_tracked(
     } else {
         std::fs::remove_file(path).map_err(|e| e.to_string())?;
         *processed += 1;
-        send_progress(tx, ProgressEvent {
-            processed: *processed,
-            total,
-            current:   path.display().to_string(),
-            done:      false,
-            error:     None,
-        });
+        send_progress(
+            tx,
+            ProgressEvent {
+                processed: *processed,
+                total,
+                current: path.display().to_string(),
+                done: false,
+                error: None,
+            },
+        );
         Ok(())
     }
 }

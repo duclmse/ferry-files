@@ -10,7 +10,7 @@ pub enum Expr {
 
 #[derive(Debug, Clone)]
 pub struct Predicate {
-    pub kind:      PredicateKind,
+    pub kind: PredicateKind,
     pub modifiers: Modifiers,
 }
 
@@ -25,12 +25,12 @@ pub enum PredicateKind {
 
 #[derive(Debug, Clone, Default)]
 pub struct Modifiers {
-    pub case_sensitive:    Option<bool>,
-    pub match_path:        Option<bool>,
-    pub files_only:        Option<bool>,
-    pub folders_only:      Option<bool>,
-    pub whole_filename:    Option<bool>,
-    pub whole_word:        Option<bool>,
+    pub case_sensitive: Option<bool>,
+    pub match_path: Option<bool>,
+    pub files_only: Option<bool>,
+    pub folders_only: Option<bool>,
+    pub whole_filename: Option<bool>,
+    pub whole_word: Option<bool>,
     pub ignore_diacritics: Option<bool>,
     /// None = include both real files and inner archive entries.
     /// Some(true)  = inner-archive entries only.

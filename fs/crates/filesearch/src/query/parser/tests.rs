@@ -140,7 +140,9 @@ fn noarchive_modifier() {
     let e = parse_ok("noarchive: *.log");
     // Should produce And( noarchive_modifier_predicate, wildcard_predicate )
     // OR a predicate with archive_only set. Either way, parse should not error.
-    assert!(!matches!(e, Expr::Predicate(ref p) if matches!(p.kind, PredicateKind::Term(ref s) if s.is_empty())));
+    assert!(
+        !matches!(e, Expr::Predicate(ref p) if matches!(p.kind, PredicateKind::Term(ref s) if s.is_empty()))
+    );
 }
 
 #[test]
@@ -160,7 +162,10 @@ fn archiveof_function() {
 fn count_function() {
     let e = parse_ok("count:50");
     if let Expr::Predicate(p) = e {
-        assert!(matches!(p.kind, PredicateKind::Function(Function::Count(50))));
+        assert!(matches!(
+            p.kind,
+            PredicateKind::Function(Function::Count(50))
+        ));
         return;
     }
     panic!("expected Count(50)");

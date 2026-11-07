@@ -50,7 +50,9 @@ impl DeflateDecoder {
 }
 
 impl Default for DeflateDecoder {
-    fn default() -> Self { Self::new() }
+    fn default() -> Self {
+        Self::new()
+    }
 }
 
 impl Decoder for DeflateDecoder {
@@ -97,7 +99,8 @@ mod tests {
     use std::io::Write as _;
 
     fn deflate_compress(data: &[u8]) -> Vec<u8> {
-        let mut enc = flate2::write::DeflateEncoder::new(Vec::new(), flate2::Compression::default());
+        let mut enc =
+            flate2::write::DeflateEncoder::new(Vec::new(), flate2::Compression::default());
         enc.write_all(data).unwrap();
         enc.finish().unwrap()
     }
@@ -105,8 +108,8 @@ mod tests {
     #[test]
     fn stored_feed_returns_same_bytes() {
         let mut dec = StoredDecoder;
-        let input   = b"hello world";
-        let out     = dec.feed(input).unwrap();
+        let input = b"hello world";
+        let out = dec.feed(input).unwrap();
         assert_eq!(&out[..], input);
     }
 
@@ -118,7 +121,7 @@ mod tests {
 
     #[test]
     fn deflate_single_feed_roundtrip() {
-        let original   = b"the quick brown fox jumps over the lazy dog".repeat(10);
+        let original = b"the quick brown fox jumps over the lazy dog".repeat(10);
         let compressed = deflate_compress(&original);
 
         let mut dec = DeflateDecoder::new();
@@ -131,9 +134,9 @@ mod tests {
 
     #[test]
     fn deflate_two_chunks_same_as_one() {
-        let original   = b"repeat this data many times ".repeat(20);
+        let original = b"repeat this data many times ".repeat(20);
         let compressed = deflate_compress(&original);
-        let mid        = compressed.len() / 2;
+        let mid = compressed.len() / 2;
 
         let mut dec = DeflateDecoder::new();
         let mut out = Vec::new();
@@ -148,7 +151,7 @@ mod tests {
     fn unsupported_method_returns_error() {
         match create_decoder(12) {
             Err(e) => assert_eq!(e.kind(), io::ErrorKind::Unsupported),
-            Ok(_)  => panic!("expected error for unsupported compression method"),
+            Ok(_) => panic!("expected error for unsupported compression method"),
         }
     }
 }

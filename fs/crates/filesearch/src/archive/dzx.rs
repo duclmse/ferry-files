@@ -58,7 +58,7 @@ pub use reader::{read_range, DzxBlockData, DzxIndex};
 
 /// `{dzx_dir}/blake3(zip_path + "#" + local_header_offset).dzx`
 pub fn dzx_path_for(dzx_dir: &Path, zip_path: &Path, local_header_offset: u64) -> PathBuf {
-    let key  = format!("{}#{}", zip_path.to_string_lossy(), local_header_offset);
+    let key = format!("{}#{}", zip_path.to_string_lossy(), local_header_offset);
     let hash = blake3::hash(key.as_bytes());
     dzx_dir.join(format!("{}.dzx", hash.to_hex()))
 }

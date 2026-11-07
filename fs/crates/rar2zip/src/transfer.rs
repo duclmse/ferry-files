@@ -1,11 +1,11 @@
 use std::path::Path;
-use std::sync::Arc;
 use std::sync::atomic::Ordering;
+use std::sync::Arc;
 use std::time::{Duration, Instant};
 
-use russh::ChannelMsg;
 use russh::client::{self, Handle};
 use russh::keys::{load_secret_key, PrivateKeyWithHashAlg};
+use russh::ChannelMsg;
 use sha2::{Digest, Sha256};
 use tokio::io::AsyncWriteExt;
 use tokio::sync::Semaphore;
@@ -46,10 +46,10 @@ impl client::Handler for SshHandler {
 /// destinations succeed.
 pub async fn transfer_all(
     zip_path: &Path,
-    job:      &Job,
-    config:   &Config,
-    metrics:  Arc<Metrics>,
-    sem:      Arc<Semaphore>,
+    job: &Job,
+    config: &Config,
+    metrics: Arc<Metrics>,
+    sem: Arc<Semaphore>,
     shutdown: CancellationToken,
 ) -> Result<()> {
     let mut errors = Vec::new();
@@ -80,10 +80,10 @@ pub async fn transfer_all(
 
 async fn upload_with_retry(
     zip_path: &Path,
-    dest:     &Destination,
-    cfg:      &crate::config::TransferConfig,
-    metrics:  Arc<Metrics>,
-    sem:      Arc<Semaphore>,
+    dest: &Destination,
+    cfg: &crate::config::TransferConfig,
+    metrics: Arc<Metrics>,
+    sem: Arc<Semaphore>,
     shutdown: CancellationToken,
 ) -> Result<()> {
     let base_delay = cfg.retry_delay_secs;
@@ -98,13 +98,20 @@ async fn upload_with_retry(
         let zip_bytes = read_file_bytes(zip_path).await?;
         let local_hash = sha256_of(&zip_bytes);
 
-        let result =
-            upload_bytes_to_dest(&zip_bytes, &local_hash, zip_path, dest, cfg.bandwidth_limit_kbps)
-                .await;
+        let result = upload_bytes_to_dest(
+            &zip_bytes,
+            &local_hash,
+            zip_path,
+            dest,
+            cfg.bandwidth_limit_kbps,
+        )
+        .await;
 
         match result {
             Ok(bytes) => {
-                metrics.bytes_transferred.fetch_add(bytes, Ordering::Relaxed);
+                metrics
+                    .bytes_transferred
+                    .fetch_add(bytes, Ordering::Relaxed);
                 return Ok(());
             }
             Err(e) => {
@@ -130,11 +137,11 @@ async fn upload_with_retry(
 
 /// Upload `zip_bytes` to a single destination. Returns bytes sent.
 async fn upload_bytes_to_dest(
-    zip_bytes:   &[u8],
-    local_hash:  &str,
-    local_path:  &Path,
-    dest:        &Destination,
-    limit_kbps:  u64,
+    zip_bytes: &[u8],
+    local_hash: &str,
+    local_path: &Path,
+    dest: &Destination,
+    limit_kbps: u64,
 ) -> Result<u64> {
     let session = connect(dest).await?;
 
@@ -173,13 +180,13 @@ async fn upload_bytes_to_dest(
 /// `zip::ZipWriter` requires `Seek`. A future upgrade to `async_zip` would
 /// enable true pipe-based streaming with bounded memory.
 pub async fn stream_convert_and_transfer(
-    src:      &Path,
-    dest:     &Destination,
-    config:   &Config,
+    src: &Path,
+    dest: &Destination,
+    config: &Config,
     shutdown: CancellationToken,
 ) -> Result<()> {
     for attempt in 0..=config.transfer.max_retries {
-        let src_c    = src.to_path_buf();
+        let src_c = src.to_path_buf();
         let conv_cfg = config.conversion.clone();
 
         // Convert on a blocking thread (CPU-bound)
@@ -194,10 +201,7 @@ pub async fn stream_convert_and_transfer(
             .file_stem()
             .and_then(|s| s.to_str())
             .unwrap_or("archive");
-        let remote = format!(
-            "{}/{zip_name}.zip",
-            dest.remote_path.trim_end_matches('/')
-        );
+        let remote = format!("{}/{zip_name}.zip", dest.remote_path.trim_end_matches('/'));
 
         let result = async {
             let session = connect(dest).await?;
@@ -214,9 +218,13 @@ pub async fn stream_convert_and_transfer(
                 .await
                 .map_err(|e| AppError::Ssh(e.to_string()))?;
 
-            let upload_result =
-                upload_sftp(&sftp, &remote, &zip_bytes, config.transfer.bandwidth_limit_kbps)
-                    .await;
+            let upload_result = upload_sftp(
+                &sftp,
+                &remote,
+                &zip_bytes,
+                config.transfer.bandwidth_limit_kbps,
+            )
+            .await;
             drop(sftp);
 
             if let Err(e) = upload_result {
@@ -256,10 +264,9 @@ pub async fn stream_convert_and_transfer(
 
 async fn connect(dest: &Destination) -> Result<Handle<SshHandler>> {
     let config = Arc::new(client::Config::default());
-    let mut session =
-        client::connect(config, (dest.host.as_str(), dest.port), SshHandler)
-            .await
-            .map_err(|e| AppError::Ssh(format!("connect to {}: {e}", dest.host)))?;
+    let mut session = client::connect(config, (dest.host.as_str(), dest.port), SshHandler)
+        .await
+        .map_err(|e| AppError::Ssh(format!("connect to {}: {e}", dest.host)))?;
 
     let key = load_secret_key(&dest.ssh_key_path, None)
         .map_err(|e| AppError::Ssh(format!("load key {:?}: {e}", dest.ssh_key_path)))?;
@@ -272,7 +279,10 @@ async fn connect(dest: &Destination) -> Result<Handle<SshHandler>> {
         .flatten();
 
     let auth_res = session
-        .authenticate_publickey(&dest.user, PrivateKeyWithHashAlg::new(Arc::new(key), hash_alg))
+        .authenticate_publickey(
+            &dest.user,
+            PrivateKeyWithHashAlg::new(Arc::new(key), hash_alg),
+        )
         .await
         .map_err(|e| AppError::Ssh(format!("auth for {}: {e}", dest.user)))?;
 
@@ -286,9 +296,9 @@ async fn connect(dest: &Destination) -> Result<Handle<SshHandler>> {
 }
 
 async fn upload_sftp(
-    sftp:       &russh_sftp::client::SftpSession,
-    remote:     &str,
-    data:       &[u8],
+    sftp: &russh_sftp::client::SftpSession,
+    remote: &str,
+    data: &[u8],
     limit_kbps: u64,
 ) -> Result<u64> {
     let mut file = sftp
@@ -296,8 +306,8 @@ async fn upload_sftp(
         .await
         .map_err(|e| AppError::Ssh(e.to_string()))?;
 
-    let mut total    = 0u64;
-    let start        = Instant::now();
+    let mut total = 0u64;
+    let start = Instant::now();
 
     for chunk in data.chunks(CHUNK) {
         file.write_all(chunk).await.map_err(AppError::Io)?;
@@ -380,7 +390,7 @@ fn throttle_delay(bytes_sent: u64, limit_kbps: u64, elapsed_secs: f64) -> Option
     if limit_kbps == 0 {
         return None;
     }
-    let rate    = limit_kbps as f64 * 1024.0;
+    let rate = limit_kbps as f64 * 1024.0;
     let allowed = (rate * elapsed_secs.max(f64::EPSILON)) as u64;
     if bytes_sent > allowed {
         let sleep_s = (bytes_sent - allowed) as f64 / rate;
@@ -445,15 +455,15 @@ mod tests {
     #[test]
     fn sha256_of_different_inputs_differ() {
         assert_ne!(sha256_of(b"abc"), sha256_of(b"abd"));
-        assert_ne!(sha256_of(b""),    sha256_of(b"a"));
+        assert_ne!(sha256_of(b""), sha256_of(b"a"));
     }
 
     #[test]
     fn remote_path_strips_trailing_slash() {
         let dest = crate::config::Destination {
-            host:        "server".into(),
-            port:        22,
-            user:        "user".into(),
+            host: "server".into(),
+            port: 22,
+            user: "user".into(),
             remote_path: "/remote/".into(),
             ssh_key_path: "/key".into(),
         };
@@ -464,9 +474,9 @@ mod tests {
     #[test]
     fn remote_path_no_trailing_slash() {
         let dest = crate::config::Destination {
-            host:        "server".into(),
-            port:        22,
-            user:        "user".into(),
+            host: "server".into(),
+            port: 22,
+            user: "user".into(),
             remote_path: "/remote".into(),
             ssh_key_path: "/key".into(),
         };
@@ -478,7 +488,10 @@ mod tests {
     async fn throttle_zero_kbps_returns_immediately() {
         let start = std::time::Instant::now();
         throttle_async(u64::MAX, 0, &start).await; // limit=0 → immediate return
-        assert!(start.elapsed().as_millis() < 50, "should return without sleeping");
+        assert!(
+            start.elapsed().as_millis() < 50,
+            "should return without sleeping"
+        );
     }
 
     // ── throttle_delay (pure computation) ────────────────────────────────────

@@ -20,15 +20,20 @@ pub const MAX_FRAME_BYTES: u32 = 16 * 1024 * 1024; // 16 MiB
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct IpcEnvelope {
-    pub magic:      [u8; 4],
-    pub version:    u16,
+    pub magic: [u8; 4],
+    pub version: u16,
     pub request_id: u128,
-    pub message:    IpcMessage,
+    pub message: IpcMessage,
 }
 
 impl IpcEnvelope {
     pub fn new(request_id: u128, message: IpcMessage) -> Self {
-        Self { magic: MAGIC, version: PROTOCOL_VERSION, request_id, message }
+        Self {
+            magic: MAGIC,
+            version: PROTOCOL_VERSION,
+            request_id,
+            message,
+        }
     }
 }
 
@@ -44,19 +49,35 @@ pub enum IpcMessage {
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub enum IpcRequest {
-    Search { query: String, limit: u32, offset: u32 },
+    Search {
+        query: String,
+        limit: u32,
+        offset: u32,
+    },
     Stats,
-    Reindex { full: bool },
-    Open { path: String },
+    Reindex {
+        full: bool,
+    },
+    Open {
+        path: String,
+    },
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub enum IpcResponse {
     Search(SearchResponse),
     Stats(StatsResponse),
-    Reindex { accepted: bool },
-    Open { opened: bool, temp_path: Option<String> },
-    Error { code: String, message: String },
+    Reindex {
+        accepted: bool,
+    },
+    Open {
+        opened: bool,
+        temp_path: Option<String>,
+    },
+    Error {
+        code: String,
+        message: String,
+    },
 }
 
 // ---------------------------------------------------------------------------
@@ -66,34 +87,34 @@ pub enum IpcResponse {
 /// Compact search hit sent over IPC; does not carry internal DB ids.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct SearchHitDto {
-    pub path:         String,
-    pub name:         String,
-    pub extension:    Option<String>,
-    pub size_bytes:   u64,
-    pub mtime:        i64,
-    pub is_dir:       bool,
+    pub path: String,
+    pub name: String,
+    pub extension: Option<String>,
+    pub size_bytes: u64,
+    pub mtime: i64,
+    pub is_dir: bool,
     pub archive_path: Option<String>,
-    pub snippet:      Option<String>,
+    pub snippet: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct SearchResponse {
-    pub hits:         Vec<SearchHitDto>,
-    pub total_hits:   u64,
-    pub limit:        u32,
-    pub offset:       u32,
-    pub capped:       bool,
+    pub hits: Vec<SearchHitDto>,
+    pub total_hits: u64,
+    pub limit: u32,
+    pub offset: u32,
+    pub capped: bool,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct StatsResponse {
-    pub total_files:             u64,
-    pub total_dirs:              u64,
-    pub content_indexed:         u64,
+    pub total_files: u64,
+    pub total_dirs: u64,
+    pub content_indexed: u64,
     pub archive_entries_indexed: u64,
-    pub archives_crawled:        u64,
-    pub events_processed:        u64,
-    pub last_crawl_secs:         u64,
+    pub archives_crawled: u64,
+    pub events_processed: u64,
+    pub last_crawl_secs: u64,
 }
 
 // ---------------------------------------------------------------------------
@@ -137,11 +158,11 @@ pub enum DecodeError {
 impl std::fmt::Display for DecodeError {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
-            DecodeError::Postcard(e)       => write!(f, "postcard decode: {e}"),
-            DecodeError::FrameTooLarge(n)  => write!(f, "frame too large: {n} bytes"),
-            DecodeError::BadMagic(m)       => write!(f, "bad magic: {m:?}"),
-            DecodeError::VersionMismatch(v)=> write!(f, "unsupported version: {v}"),
-            DecodeError::Io(e)             => write!(f, "io: {e}"),
+            DecodeError::Postcard(e) => write!(f, "postcard decode: {e}"),
+            DecodeError::FrameTooLarge(n) => write!(f, "frame too large: {n} bytes"),
+            DecodeError::BadMagic(m) => write!(f, "bad magic: {m:?}"),
+            DecodeError::VersionMismatch(v) => write!(f, "unsupported version: {v}"),
+            DecodeError::Io(e) => write!(f, "io: {e}"),
         }
     }
 }
@@ -166,48 +187,57 @@ mod tests {
     #[test]
     fn round_trip_search_request() {
         let env = round_trip(IpcMessage::Request(IpcRequest::Search {
-            query:  "foo".into(),
-            limit:  10,
+            query: "foo".into(),
+            limit: 10,
             offset: 0,
         }));
         assert_eq!(env.magic, MAGIC);
         assert_eq!(env.version, PROTOCOL_VERSION);
         assert_eq!(env.request_id, 42);
-        assert!(matches!(env.message, IpcMessage::Request(IpcRequest::Search { .. })));
+        assert!(matches!(
+            env.message,
+            IpcMessage::Request(IpcRequest::Search { .. })
+        ));
     }
 
     #[test]
     fn round_trip_stats() {
         let env = round_trip(IpcMessage::Request(IpcRequest::Stats));
-        assert!(matches!(env.message, IpcMessage::Request(IpcRequest::Stats)));
+        assert!(matches!(
+            env.message,
+            IpcMessage::Request(IpcRequest::Stats)
+        ));
     }
 
     #[test]
     fn round_trip_search_response() {
         let resp = IpcResponse::Search(SearchResponse {
             hits: vec![SearchHitDto {
-                path:         "/a/b.rs".into(),
-                name:         "b.rs".into(),
-                extension:    Some("rs".into()),
-                size_bytes:   1024,
-                mtime:        0,
-                is_dir:       false,
+                path: "/a/b.rs".into(),
+                name: "b.rs".into(),
+                extension: Some("rs".into()),
+                size_bytes: 1024,
+                mtime: 0,
+                is_dir: false,
                 archive_path: None,
-                snippet:      Some("fn main".into()),
+                snippet: Some("fn main".into()),
             }],
             total_hits: 1,
-            limit:      10,
-            offset:     0,
-            capped:     false,
+            limit: 10,
+            offset: 0,
+            capped: false,
         });
         let env = round_trip(IpcMessage::Response(resp));
-        assert!(matches!(env.message, IpcMessage::Response(IpcResponse::Search(_))));
+        assert!(matches!(
+            env.message,
+            IpcMessage::Response(IpcResponse::Search(_))
+        ));
     }
 
     #[test]
     fn round_trip_error_response() {
         let env = round_trip(IpcMessage::Response(IpcResponse::Error {
-            code:    "NOT_FOUND".into(),
+            code: "NOT_FOUND".into(),
             message: "path does not exist".into(),
         }));
         assert!(matches!(
@@ -229,10 +259,10 @@ mod tests {
     #[test]
     fn bad_magic_rejected() {
         let env = IpcEnvelope {
-            magic:      *b"XXXX",
-            version:    PROTOCOL_VERSION,
+            magic: *b"XXXX",
+            version: PROTOCOL_VERSION,
             request_id: 1,
-            message:    IpcMessage::Request(IpcRequest::Stats),
+            message: IpcMessage::Request(IpcRequest::Stats),
         };
         let payload = postcard::to_allocvec(&env).unwrap();
         let err = decode_payload(&payload).unwrap_err();
@@ -242,10 +272,10 @@ mod tests {
     #[test]
     fn version_mismatch_rejected() {
         let env = IpcEnvelope {
-            magic:      MAGIC,
-            version:    99,
+            magic: MAGIC,
+            version: 99,
             request_id: 1,
-            message:    IpcMessage::Request(IpcRequest::Stats),
+            message: IpcMessage::Request(IpcRequest::Stats),
         };
         let payload = postcard::to_allocvec(&env).unwrap();
         let err = decode_payload(&payload).unwrap_err();
@@ -256,22 +286,28 @@ mod tests {
     fn binary_response_smaller_than_json_for_100_hits() {
         let hits: Vec<SearchHitDto> = (0..100)
             .map(|i| SearchHitDto {
-                path:         format!("/some/long/path/to/file_{i}.rs"),
-                name:         format!("file_{i}.rs"),
-                extension:    Some("rs".into()),
-                size_bytes:   i * 1024,
-                mtime:        1_700_000_000 + i as i64,
-                is_dir:       false,
+                path: format!("/some/long/path/to/file_{i}.rs"),
+                name: format!("file_{i}.rs"),
+                extension: Some("rs".into()),
+                size_bytes: i * 1024,
+                mtime: 1_700_000_000 + i as i64,
+                is_dir: false,
                 archive_path: None,
-                snippet:      None,
+                snippet: None,
             })
             .collect();
 
-        let resp = SearchResponse { hits, total_hits: 100, limit: 100, offset: 0, capped: false };
-        let env  = IpcEnvelope::new(1, IpcMessage::Response(IpcResponse::Search(resp.clone())));
+        let resp = SearchResponse {
+            hits,
+            total_hits: 100,
+            limit: 100,
+            offset: 0,
+            capped: false,
+        };
+        let env = IpcEnvelope::new(1, IpcMessage::Response(IpcResponse::Search(resp.clone())));
 
         let binary_frame = encode_frame(&env).unwrap();
-        let json_bytes   = serde_json::to_vec(&resp).unwrap();
+        let json_bytes = serde_json::to_vec(&resp).unwrap();
 
         assert!(
             binary_frame.len() < json_bytes.len(),

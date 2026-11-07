@@ -6,10 +6,8 @@ use crate::config::SqliteIndex;
 use crate::error::{AppError, Result};
 use crate::store::FileRecord;
 
+use super::schema::{apply_migrations, parent_of, row_to_record, OPTIONAL_INDEXES, SCHEMA};
 use super::SqliteStore;
-use super::schema::{
-    OPTIONAL_INDEXES, SCHEMA, apply_migrations, parent_of, row_to_record,
-};
 
 impl SqliteStore {
     /// Opens the store with every optional index.
@@ -59,11 +57,7 @@ impl SqliteStore {
         self.upsert_file_conn(&conn, file)
     }
 
-    pub fn upsert_file_conn(
-        &self,
-        conn: &rusqlite::Connection,
-        file: &FileRecord,
-    ) -> Result<i64> {
+    pub fn upsert_file_conn(&self, conn: &rusqlite::Connection, file: &FileRecord) -> Result<i64> {
         let parent = parent_of(&file.path);
         conn.execute(
             "INSERT INTO files (
@@ -113,7 +107,7 @@ impl SqliteStore {
     /// individual transactions into ⌈N/batch_size⌉ transactions.
     pub fn batch_upsert_crawl(
         &self,
-        batch:      &[(FileRecord, String)],
+        batch: &[(FileRecord, String)],
         generation: i64,
     ) -> Result<()> {
         if batch.is_empty() {
@@ -127,8 +121,9 @@ impl SqliteStore {
         conn.execute_batch("BEGIN").map_err(AppError::Database)?;
 
         let result: Result<()> = (|| {
-            let mut stmt = conn.prepare(
-                "INSERT INTO files (
+            let mut stmt = conn
+                .prepare(
+                    "INSERT INTO files (
                     path, name, extension, size_bytes, mtime, ctime,
                     is_dir, is_hidden, is_symlink, attrib_bitmask,
                     content_indexed, tantivy_id, indexed_at, archive_path, parent,
@@ -151,7 +146,8 @@ impl SqliteStore {
                     parent           = excluded.parent,
                     watch_root       = excluded.watch_root,
                     crawl_generation = excluded.crawl_generation",
-            ).map_err(AppError::Database)?;
+                )
+                .map_err(AppError::Database)?;
 
             for (record, watch_root) in batch {
                 let parent = parent_of(&record.path);
@@ -173,7 +169,8 @@ impl SqliteStore {
                     parent,
                     watch_root,
                     generation,
-                ]).map_err(AppError::Database)?;
+                ])
+                .map_err(AppError::Database)?;
             }
             Ok(())
         })();
@@ -260,10 +257,7 @@ impl SqliteStore {
 
     pub fn remove_directory(&self, path: &str) -> Result<usize> {
         let conn = self.get_conn()?;
-        let n = conn.execute(
-            "DELETE FROM files WHERE path LIKE ? || '/%'",
-            [path],
-        )?;
+        let n = conn.execute("DELETE FROM files WHERE path LIKE ? || '/%'", [path])?;
         Ok(n)
     }
 
@@ -332,11 +326,9 @@ impl SqliteStore {
 
     pub fn get_meta(&self, key: &str) -> Result<Option<String>> {
         let conn = self.get_conn()?;
-        let result = conn.query_row(
-            "SELECT value FROM index_meta WHERE key = ?",
-            [key],
-            |row| row.get(0),
-        );
+        let result = conn.query_row("SELECT value FROM index_meta WHERE key = ?", [key], |row| {
+            row.get(0)
+        });
         match result {
             Ok(v) => Ok(Some(v)),
             Err(rusqlite::Error::QueryReturnedNoRows) => Ok(None),
@@ -366,7 +358,10 @@ fn sync_optional_indexes(conn: &rusqlite::Connection, indexes: &[SqliteIndex]) -
         if wanted && !exists {
             let start = std::time::Instant::now();
             conn.execute_batch(&format!("CREATE INDEX {name} ON files({column})"))?;
-            tracing::info!("built index {name} in {:.1}s", start.elapsed().as_secs_f64());
+            tracing::info!(
+                "built index {name} in {:.1}s",
+                start.elapsed().as_secs_f64()
+            );
         } else if !wanted && exists {
             conn.execute_batch(&format!("DROP INDEX {name}"))?;
             // The freed pages stay in the file until a VACUUM.
@@ -375,6 +370,9 @@ fn sync_optional_indexes(conn: &rusqlite::Connection, indexes: &[SqliteIndex]) -
     }
     // Everything a bulk load dropped is now either rebuilt or unwanted, so a
     // replay left over from a crawl that never finished must not run.
-    conn.execute("DELETE FROM index_meta WHERE key = ?1", [super::bulk::META_KEY])?;
+    conn.execute(
+        "DELETE FROM index_meta WHERE key = ?1",
+        [super::bulk::META_KEY],
+    )?;
     Ok(())
 }

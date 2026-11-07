@@ -1,24 +1,24 @@
-use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
+use std::sync::Arc;
 
 use crate::queue::JobQueue;
 
 // ---------------------------------------------------------------------------
 
 pub struct Metrics {
-    pub files_processed:     AtomicU64,
-    pub bytes_transferred:   AtomicU64,
+    pub files_processed: AtomicU64,
+    pub bytes_transferred: AtomicU64,
     pub conversion_failures: AtomicU64,
-    pub transfer_failures:   AtomicU64,
+    pub transfer_failures: AtomicU64,
 }
 
 impl Default for Metrics {
     fn default() -> Self {
         Self {
-            files_processed:     AtomicU64::new(0),
-            bytes_transferred:   AtomicU64::new(0),
+            files_processed: AtomicU64::new(0),
+            bytes_transferred: AtomicU64::new(0),
             conversion_failures: AtomicU64::new(0),
-            transfer_failures:   AtomicU64::new(0),
+            transfer_failures: AtomicU64::new(0),
         }
     }
 }
@@ -57,12 +57,7 @@ impl Metrics {
 // HTTP server (tiny_http, runs in a dedicated thread)
 // ---------------------------------------------------------------------------
 
-pub fn serve(
-    port:     u16,
-    metrics:  Arc<Metrics>,
-    queue:    Arc<JobQueue>,
-    shutdown: Arc<AtomicBool>,
-) {
+pub fn serve(port: u16, metrics: Arc<Metrics>, queue: Arc<JobQueue>, shutdown: Arc<AtomicBool>) {
     let addr = format!("0.0.0.0:{port}");
     let server = match tiny_http::Server::http(&addr) {
         Ok(s) => s,
@@ -79,7 +74,7 @@ pub fn serve(
         }
         match server.recv_timeout(std::time::Duration::from_secs(1)) {
             Ok(Some(req)) => handle_request(req, &metrics, &queue),
-            Ok(None)      => {}
+            Ok(None) => {}
             Err(e) => {
                 tracing::warn!("metrics recv error: {e}");
                 break;
@@ -92,23 +87,29 @@ fn handle_request(req: tiny_http::Request, metrics: &Metrics, queue: &JobQueue) 
     let url = req.url().to_string();
     let (status, content_type, body): (u16, &str, String) = match url.trim_end_matches('/') {
         "/metrics" => {
-            let depth: i64 = queue
-                .queue_depth()
-                .map(|m| m.values().sum())
-                .unwrap_or(0);
-            (200, "text/plain; version=0.0.4; charset=utf-8", metrics.prometheus_text(depth))
+            let depth: i64 = queue.queue_depth().map(|m| m.values().sum()).unwrap_or(0);
+            (
+                200,
+                "text/plain; version=0.0.4; charset=utf-8",
+                metrics.prometheus_text(depth),
+            )
         }
         "/health" => {
-            let depth: i64 = queue
-                .queue_depth()
-                .map(|m| m.values().sum())
-                .unwrap_or(0);
-            (200, "application/json", format!(r#"{{"status":"ok","queue_depth":{depth}}}"#))
+            let depth: i64 = queue.queue_depth().map(|m| m.values().sum()).unwrap_or(0);
+            (
+                200,
+                "application/json",
+                format!(r#"{{"status":"ok","queue_depth":{depth}}}"#),
+            )
         }
         "/ui" => {
             let depth_map = queue.queue_depth().unwrap_or_default();
-            let recent    = queue.recent_jobs(20).unwrap_or_default();
-            (200, "text/html; charset=utf-8", crate::dashboard::render(&depth_map, &recent, metrics))
+            let recent = queue.recent_jobs(20).unwrap_or_default();
+            (
+                200,
+                "text/html; charset=utf-8",
+                crate::dashboard::render(&depth_map, &recent, metrics),
+            )
         }
         _ => (404, "text/plain", "not found\n".into()),
     };

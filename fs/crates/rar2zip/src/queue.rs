@@ -55,21 +55,21 @@ pub enum Status {
 impl Status {
     pub fn as_str(&self) -> &'static str {
         match self {
-            Status::Pending      => "pending",
-            Status::Converting   => "converting",
+            Status::Pending => "pending",
+            Status::Converting => "converting",
             Status::Transferring => "transferring",
-            Status::Done         => "done",
-            Status::Failed       => "failed",
+            Status::Done => "done",
+            Status::Failed => "failed",
         }
     }
 
     fn from_str(s: &str) -> Result<Self> {
         match s {
-            "pending"      => Ok(Status::Pending),
-            "converting"   => Ok(Status::Converting),
+            "pending" => Ok(Status::Pending),
+            "converting" => Ok(Status::Converting),
             "transferring" => Ok(Status::Transferring),
-            "done"         => Ok(Status::Done),
-            "failed"       => Ok(Status::Failed),
+            "done" => Ok(Status::Done),
+            "failed" => Ok(Status::Failed),
             other => Err(AppError::Config(format!("unknown status: {other}"))),
         }
     }
@@ -84,14 +84,14 @@ pub enum Strategy {
 impl Strategy {
     pub fn as_str(&self) -> &'static str {
         match self {
-            Strategy::Disk   => "disk",
+            Strategy::Disk => "disk",
             Strategy::Stream => "stream",
         }
     }
 
     fn from_str(s: &str) -> Result<Self> {
         match s {
-            "disk"   => Ok(Strategy::Disk),
+            "disk" => Ok(Strategy::Disk),
             "stream" => Ok(Strategy::Stream),
             other => Err(AppError::Config(format!("unknown strategy: {other}"))),
         }
@@ -104,16 +104,16 @@ impl Strategy {
 
 #[derive(Debug, Clone)]
 pub struct Job {
-    pub id:           String,
-    pub file_path:    PathBuf,
-    pub file_hash:    String,
-    pub status:       Status,
-    pub strategy:     Strategy,
+    pub id: String,
+    pub file_path: PathBuf,
+    pub file_hash: String,
+    pub status: Status,
+    pub strategy: Strategy,
     pub destinations: Vec<String>,
-    pub retry_count:  u32,
-    pub created_at:   i64,
-    pub updated_at:   i64,
-    pub error:        Option<String>,
+    pub retry_count: u32,
+    pub created_at: i64,
+    pub updated_at: i64,
+    pub error: Option<String>,
 }
 
 // ---------------------------------------------------------------------------
@@ -161,8 +161,8 @@ impl JobQueue {
     ) -> Result<String> {
         let id = Uuid::new_v4().to_string();
         let now = now_secs();
-        let dests_json = serde_json::to_string(destinations)
-            .map_err(|e| AppError::Config(e.to_string()))?;
+        let dests_json =
+            serde_json::to_string(destinations).map_err(|e| AppError::Config(e.to_string()))?;
         let path_str = file_path.to_string_lossy();
 
         let conn = self.get_conn()?;
@@ -248,8 +248,7 @@ impl JobQueue {
 
     pub fn queue_depth(&self) -> Result<HashMap<String, i64>> {
         let conn = self.get_conn()?;
-        let mut stmt =
-            conn.prepare("SELECT status, COUNT(*) FROM jobs GROUP BY status")?;
+        let mut stmt = conn.prepare("SELECT status, COUNT(*) FROM jobs GROUP BY status")?;
         let rows = stmt.query_map([], |row| {
             Ok((row.get::<_, String>(0)?, row.get::<_, i64>(1)?))
         })?;
@@ -300,8 +299,7 @@ impl JobQueue {
 
     pub fn get_parts(&self, group_id: &str) -> Result<Vec<PathBuf>> {
         let conn = self.get_conn()?;
-        let mut stmt =
-            conn.prepare("SELECT part_path FROM multipart_groups WHERE group_id = ?")?;
+        let mut stmt = conn.prepare("SELECT part_path FROM multipart_groups WHERE group_id = ?")?;
         let rows = stmt.query_map([group_id], |row| row.get::<_, String>(0))?;
         let mut paths = Vec::new();
         for r in rows {
@@ -332,9 +330,7 @@ impl JobQueue {
              GROUP BY group_id
              HAVING MIN(arrived_at) < ?",
         )?;
-        let rows = stmt.query_map(rusqlite::params![cutoff], |row| {
-            row.get::<_, String>(0)
-        })?;
+        let rows = stmt.query_map(rusqlite::params![cutoff], |row| row.get::<_, String>(0))?;
         let mut groups = Vec::new();
         for r in rows {
             groups.push(r?);
@@ -359,24 +355,33 @@ fn row_to_job(row: &rusqlite::Row<'_>) -> rusqlite::Result<Job> {
     let strategy_str: String = row.get(4)?;
     let dests_json: String = row.get(5)?;
 
-    let status = Status::from_str(&status_str)
-        .map_err(|_| rusqlite::Error::InvalidColumnType(3, format!("unknown status '{status_str}'"), rusqlite::types::Type::Text))?;
-    let strategy = Strategy::from_str(&strategy_str)
-        .map_err(|_| rusqlite::Error::InvalidColumnType(4, format!("unknown strategy '{strategy_str}'"), rusqlite::types::Type::Text))?;
-    let destinations: Vec<String> =
-        serde_json::from_str(&dests_json).unwrap_or_default();
+    let status = Status::from_str(&status_str).map_err(|_| {
+        rusqlite::Error::InvalidColumnType(
+            3,
+            format!("unknown status '{status_str}'"),
+            rusqlite::types::Type::Text,
+        )
+    })?;
+    let strategy = Strategy::from_str(&strategy_str).map_err(|_| {
+        rusqlite::Error::InvalidColumnType(
+            4,
+            format!("unknown strategy '{strategy_str}'"),
+            rusqlite::types::Type::Text,
+        )
+    })?;
+    let destinations: Vec<String> = serde_json::from_str(&dests_json).unwrap_or_default();
 
     Ok(Job {
-        id:           row.get(0)?,
-        file_path:    PathBuf::from(row.get::<_, String>(1)?),
-        file_hash:    row.get(2)?,
+        id: row.get(0)?,
+        file_path: PathBuf::from(row.get::<_, String>(1)?),
+        file_hash: row.get(2)?,
         status,
         strategy,
         destinations,
-        retry_count:  row.get::<_, i64>(6)? as u32,
-        created_at:   row.get(7)?,
-        updated_at:   row.get(8)?,
-        error:        row.get(9)?,
+        retry_count: row.get::<_, i64>(6)? as u32,
+        created_at: row.get(7)?,
+        updated_at: row.get(8)?,
+        error: row.get(9)?,
     })
 }
 
@@ -446,9 +451,12 @@ mod tests {
     #[test]
     fn multipart_add_get_clear() {
         let q = make_queue();
-        q.add_part("grp1", Path::new("/watch/arc.part1.rar")).unwrap();
-        q.add_part("grp1", Path::new("/watch/arc.part2.rar")).unwrap();
-        q.add_part("grp1", Path::new("/watch/arc.part3.rar")).unwrap();
+        q.add_part("grp1", Path::new("/watch/arc.part1.rar"))
+            .unwrap();
+        q.add_part("grp1", Path::new("/watch/arc.part2.rar"))
+            .unwrap();
+        q.add_part("grp1", Path::new("/watch/arc.part3.rar"))
+            .unwrap();
         assert_eq!(q.get_parts("grp1").unwrap().len(), 3);
         q.clear_parts("grp1").unwrap();
         assert_eq!(q.get_parts("grp1").unwrap().len(), 0);
@@ -489,9 +497,9 @@ mod tests {
         q.set_status(&id1, Status::Done, None).unwrap();
         q.set_status(&id2, Status::Failed, Some("err")).unwrap();
         let depth = q.queue_depth().unwrap();
-        assert_eq!(*depth.get("pending").unwrap_or(&0),  1);
-        assert_eq!(*depth.get("done").unwrap_or(&0),     1);
-        assert_eq!(*depth.get("failed").unwrap_or(&0),   1);
+        assert_eq!(*depth.get("pending").unwrap_or(&0), 1);
+        assert_eq!(*depth.get("done").unwrap_or(&0), 1);
+        assert_eq!(*depth.get("failed").unwrap_or(&0), 1);
     }
 
     #[test]

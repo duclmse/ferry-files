@@ -22,11 +22,8 @@ pub async fn convert(job: &Job, config: &ConversionConfig) -> Result<PathBuf> {
     // Replace only the final extension: foo.tar.gz → foo.tar.zip is wrong,
     // so we replace the entire file_name rather than using with_extension().
     let zip_name = zip_filename(&src);
-    let dst = src
-        .parent()
-        .unwrap_or(Path::new("."))
-        .join(zip_name);
-    let cfg     = config.clone();
+    let dst = src.parent().unwrap_or(Path::new(".")).join(zip_name);
+    let cfg = config.clone();
     let dst_ret = dst.clone();
 
     tokio::task::spawn_blocking(move || convert_to_file(&src, &dst, &cfg))
@@ -40,9 +37,9 @@ pub async fn convert(job: &Job, config: &ConversionConfig) -> Result<PathBuf> {
 /// strategy (no zip file written to disk). Runs synchronously in
 /// `spawn_blocking` context.
 pub fn convert_to_bytes(src: &Path, cfg: &ConversionConfig) -> Result<Vec<u8>> {
-    let cursor  = Cursor::new(Vec::new());
+    let cursor = Cursor::new(Vec::new());
     let mut zip = zip::ZipWriter::new(cursor);
-    let result  = fill_zip(src, &mut zip, cfg);
+    let result = fill_zip(src, &mut zip, cfg);
     if result.is_err() {
         return result.map(|_| Vec::new());
     }
@@ -67,26 +64,23 @@ fn zip_filename(src: &Path) -> String {
         .iter()
         .find(|&&sfx| lower.ends_with(sfx))
         .map(|sfx| &name[..name.len() - sfx.len()])
-        .or_else(|| {
-            Path::new(name)
-                .file_stem()
-                .and_then(|s| s.to_str())
-        })
+        .or_else(|| Path::new(name).file_stem().and_then(|s| s.to_str()))
         .unwrap_or(name);
     format!("{stem}.zip")
 }
 
 fn convert_to_file(src: &Path, dst: &Path, cfg: &ConversionConfig) -> Result<()> {
-    let file    = File::create(dst).map_err(AppError::Io)?;
-    let buf     = BufWriter::with_capacity(256 * 1024, file);
+    let file = File::create(dst).map_err(AppError::Io)?;
+    let buf = BufWriter::with_capacity(256 * 1024, file);
     let mut zip = zip::ZipWriter::new(buf);
-    let result  = fill_zip(src, &mut zip, cfg);
+    let result = fill_zip(src, &mut zip, cfg);
     if result.is_err() {
         drop(zip);
         let _ = std::fs::remove_file(dst);
         return result;
     }
-    zip.finish().map_err(|e| AppError::Conversion(e.to_string()))?;
+    zip.finish()
+        .map_err(|e| AppError::Conversion(e.to_string()))?;
     Ok(())
 }
 
@@ -95,7 +89,7 @@ fn fill_zip<W: Write + std::io::Seek>(
     zip: &mut zip::ZipWriter<W>,
     cfg: &ConversionConfig,
 ) -> Result<()> {
-    let name  = src.file_name().and_then(|n| n.to_str()).unwrap_or("");
+    let name = src.file_name().and_then(|n| n.to_str()).unwrap_or("");
     let lower = name.to_ascii_lowercase();
 
     if lower.ends_with(".rar") || lower.ends_with(".part1.rar") {
@@ -112,7 +106,9 @@ fn fill_zip<W: Write + std::io::Seek>(
         let f = File::open(src).map_err(AppError::Io)?;
         fill_from_tar(f, zip, cfg)
     } else {
-        Err(AppError::Conversion(format!("unsupported archive format: {name}")))
+        Err(AppError::Conversion(format!(
+            "unsupported archive format: {name}"
+        )))
     }
 }
 
@@ -128,7 +124,7 @@ fn fill_from_rar<W: Write + std::io::Seek>(
     // Integrity check: iterate all headers without extracting
     verify_rar(src)?;
 
-    let stored   = zip_opts(CompressionMethod::Stored, 0);
+    let stored = zip_opts(CompressionMethod::Stored, 0);
     let deflated = zip_opts(CompressionMethod::Deflated, cfg.compression_level as i64);
 
     // Inline open to avoid naming the complex OpenArchive<Process, CursorBeforeHeader> type
@@ -147,8 +143,8 @@ fn fill_from_rar<W: Write + std::io::Seek>(
             Ok(None) => break,
             Ok(Some(header)) => {
                 // Extract metadata before consuming `header` with skip()/read()
-                let entry  = header.entry();
-                let name   = entry.filename.to_string_lossy().replace('\\', "/");
+                let entry = header.entry();
+                let name = entry.filename.to_string_lossy().replace('\\', "/");
                 let is_dir = entry.is_directory();
                 // method 0x30 == "stored" in the RAR header encoding
                 let method = entry.method;
@@ -156,17 +152,17 @@ fn fill_from_rar<W: Write + std::io::Seek>(
                 if is_dir {
                     zip.add_directory(&name, stored)
                         .map_err(|e| AppError::Conversion(e.to_string()))?;
-                    arch = header
-                        .skip()
-                        .map_err(|e: unrar::error::UnrarError| AppError::Conversion(e.to_string()))?;
+                    arch = header.skip().map_err(|e: unrar::error::UnrarError| {
+                        AppError::Conversion(e.to_string())
+                    })?;
                 } else {
                     let entry_opts = if method == 0x30 { stored } else { deflated };
                     zip.start_file(&name, entry_opts)
                         .map_err(|e| AppError::Conversion(e.to_string()))?;
                     // read() returns (Vec<u8>, next_archive), not Cursor
-                    let (bytes, next) = header
-                        .read()
-                        .map_err(|e: unrar::error::UnrarError| AppError::Conversion(e.to_string()))?;
+                    let (bytes, next) = header.read().map_err(|e: unrar::error::UnrarError| {
+                        AppError::Conversion(e.to_string())
+                    })?;
                     let mut cursor = Cursor::new(bytes);
                     copy_chunked(&mut cursor, zip)?;
                     arch = next;
@@ -179,11 +175,12 @@ fn fill_from_rar<W: Write + std::io::Seek>(
 }
 
 fn verify_rar(src: &Path) -> Result<()> {
-    let mut a = unrar::Archive::new(src)
-        .open_for_processing()
-        .map_err(|e: unrar::error::UnrarError| {
-            AppError::Conversion(format!("integrity check failed: {e}"))
-        })?;
+    let mut a =
+        unrar::Archive::new(src)
+            .open_for_processing()
+            .map_err(|e: unrar::error::UnrarError| {
+                AppError::Conversion(format!("integrity check failed: {e}"))
+            })?;
     loop {
         match a.read_header() {
             Ok(None) => break,
@@ -207,17 +204,18 @@ fn fill_from_7z<W: Write + std::io::Seek>(
     zip: &mut zip::ZipWriter<W>,
     cfg: &ConversionConfig,
 ) -> Result<()> {
-    let stored   = zip_opts(CompressionMethod::Stored, 0);
+    let stored = zip_opts(CompressionMethod::Stored, 0);
     let deflated = zip_opts(CompressionMethod::Deflated, cfg.compression_level as i64);
     let mut zip_err: Option<AppError> = None;
 
-    let f   = File::open(src).map_err(AppError::Io)?;
+    let f = File::open(src).map_err(AppError::Io)?;
     let len = f.metadata().map_err(AppError::Io)?.len();
     let mut reader = sevenz_rust::SevenZReader::new(f, len, sevenz_rust::Password::empty())
         .map_err(|e| AppError::Conversion(format!("integrity check failed: {e}")))?;
 
     reader
-        .for_each_entries(&mut |entry: &sevenz_rust::SevenZArchiveEntry, reader: &mut dyn std::io::Read| {
+        .for_each_entries(&mut |entry: &sevenz_rust::SevenZArchiveEntry,
+                                reader: &mut dyn std::io::Read| {
             if zip_err.is_some() {
                 return Ok(false);
             }
@@ -265,10 +263,10 @@ fn fill_from_7z<W: Write + std::io::Seek>(
 
 fn fill_from_tar<R: Read, W: Write + std::io::Seek>(
     reader: R,
-    zip:    &mut zip::ZipWriter<W>,
-    cfg:    &ConversionConfig,
+    zip: &mut zip::ZipWriter<W>,
+    cfg: &ConversionConfig,
 ) -> Result<()> {
-    let stored   = zip_opts(CompressionMethod::Stored, 0);
+    let stored = zip_opts(CompressionMethod::Stored, 0);
     let deflated = zip_opts(CompressionMethod::Deflated, cfg.compression_level as i64);
 
     let mut archive = tar::Archive::new(reader);
@@ -277,10 +275,10 @@ fn fill_from_tar<R: Read, W: Write + std::io::Seek>(
         .map_err(|e| AppError::Conversion(format!("integrity check failed: {e}")))?;
 
     for entry_result in entries {
-        let mut entry     = entry_result.map_err(AppError::Io)?;
-        let path          = entry.path().map_err(AppError::Io)?.into_owned();
-        let name          = path.to_string_lossy().replace('\\', "/");
-        let file_type     = entry.header().entry_type();
+        let mut entry = entry_result.map_err(AppError::Io)?;
+        let path = entry.path().map_err(AppError::Io)?.into_owned();
+        let name = path.to_string_lossy().replace('\\', "/");
+        let file_type = entry.header().entry_type();
 
         if file_type.is_dir() {
             zip.add_directory(&name, stored)
@@ -459,9 +457,8 @@ mod tests {
         let entries: &[(&str, &[u8])] = &[("a.txt", b"aaa"), ("b.txt", b"bbb")];
         std::fs::write(&tar_path, make_tar_bytes(entries)).unwrap();
 
-        let names = zip_entry_names(
-            convert_to_bytes(&tar_path, &ConversionConfig::default()).unwrap(),
-        );
+        let names =
+            zip_entry_names(convert_to_bytes(&tar_path, &ConversionConfig::default()).unwrap());
         assert_eq!(names.len(), 2);
         assert!(names.contains(&"a.txt".to_string()));
         assert!(names.contains(&"b.txt".to_string()));
@@ -473,9 +470,7 @@ mod tests {
         let path = dir.path().join("fixture.tar.gz");
         std::fs::write(&path, make_tar_gz_bytes(&[("readme.md", b"# readme")])).unwrap();
 
-        let names = zip_entry_names(
-            convert_to_bytes(&path, &ConversionConfig::default()).unwrap(),
-        );
+        let names = zip_entry_names(convert_to_bytes(&path, &ConversionConfig::default()).unwrap());
         assert_eq!(names, ["readme.md"]);
     }
 
@@ -485,9 +480,7 @@ mod tests {
         let path = dir.path().join("fixture.tar.bz2");
         std::fs::write(&path, make_tar_bz2_bytes(&[("data.bin", b"binary data")])).unwrap();
 
-        let names = zip_entry_names(
-            convert_to_bytes(&path, &ConversionConfig::default()).unwrap(),
-        );
+        let names = zip_entry_names(convert_to_bytes(&path, &ConversionConfig::default()).unwrap());
         assert_eq!(names, ["data.bin"]);
     }
 
@@ -501,7 +494,9 @@ mod tests {
         assert!(result.is_err(), "corrupt RAR must return an error");
         let msg = result.unwrap_err().to_string();
         assert!(
-            msg.to_lowercase().contains("corrupt") || msg.to_lowercase().contains("integrity") || msg.to_lowercase().contains("bad"),
+            msg.to_lowercase().contains("corrupt")
+                || msg.to_lowercase().contains("integrity")
+                || msg.to_lowercase().contains("bad"),
             "error message should indicate archive problem: {msg}"
         );
     }

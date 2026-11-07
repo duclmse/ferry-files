@@ -38,7 +38,10 @@ impl LocalFileSource {
     pub fn new(path: PathBuf) -> io::Result<Self> {
         let file = std::fs::File::open(&path)?;
         let size = file.metadata()?.len();
-        Ok(Self { file: Arc::new(file), size })
+        Ok(Self {
+            file: Arc::new(file),
+            size,
+        })
     }
 }
 
@@ -73,7 +76,10 @@ fn pread(file: &std::fs::File, buf: &mut [u8], offset: u64) -> io::Result<()> {
     use std::os::windows::fs::FileExt;
     let n = file.seek_read(buf, offset)?;
     if n < buf.len() {
-        return Err(io::Error::new(io::ErrorKind::UnexpectedEof, "seek_read returned fewer bytes than requested"));
+        return Err(io::Error::new(
+            io::ErrorKind::UnexpectedEof,
+            "seek_read returned fewer bytes than requested",
+        ));
     }
     Ok(())
 }
@@ -101,7 +107,9 @@ impl ByteSource for MmapSource {
         let end = start
             .checked_add(len)
             .filter(|&e| e <= self.mmap.len())
-            .ok_or_else(|| io::Error::new(io::ErrorKind::UnexpectedEof, "read_range out of bounds"))?;
+            .ok_or_else(|| {
+                io::Error::new(io::ErrorKind::UnexpectedEof, "read_range out of bounds")
+            })?;
         Ok(Bytes::copy_from_slice(&self.mmap[start..end]))
     }
 
@@ -115,8 +123,8 @@ impl ByteSource for MmapSource {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use tempfile::NamedTempFile;
     use std::io::Write as _;
+    use tempfile::NamedTempFile;
 
     fn write_temp(data: &[u8]) -> NamedTempFile {
         let mut f = NamedTempFile::new().unwrap();
@@ -128,55 +136,55 @@ mod tests {
     #[tokio::test]
     async fn local_read_range_correct_bytes() {
         let data = b"hello world this is a test";
-        let f    = write_temp(data);
-        let src  = LocalFileSource::new(f.path().to_path_buf()).unwrap();
-        let got  = src.read_range(6, 5).await.unwrap();
+        let f = write_temp(data);
+        let src = LocalFileSource::new(f.path().to_path_buf()).unwrap();
+        let got = src.read_range(6, 5).await.unwrap();
         assert_eq!(&got[..], b"world");
     }
 
     #[tokio::test]
     async fn local_read_range_start() {
         let data = b"abcdefgh";
-        let f    = write_temp(data);
-        let src  = LocalFileSource::new(f.path().to_path_buf()).unwrap();
-        let got  = src.read_range(0, 4).await.unwrap();
+        let f = write_temp(data);
+        let src = LocalFileSource::new(f.path().to_path_buf()).unwrap();
+        let got = src.read_range(0, 4).await.unwrap();
         assert_eq!(&got[..], b"abcd");
     }
 
     #[tokio::test]
     async fn local_read_range_out_of_bounds_is_error() {
         let data = b"short";
-        let f    = write_temp(data);
-        let src  = LocalFileSource::new(f.path().to_path_buf()).unwrap();
+        let f = write_temp(data);
+        let src = LocalFileSource::new(f.path().to_path_buf()).unwrap();
         assert!(src.read_range(100, 4).await.is_err());
     }
 
     #[tokio::test]
     async fn local_size_hint_matches_file_length() {
         let data = b"0123456789";
-        let f    = write_temp(data);
-        let src  = LocalFileSource::new(f.path().to_path_buf()).unwrap();
+        let f = write_temp(data);
+        let src = LocalFileSource::new(f.path().to_path_buf()).unwrap();
         assert_eq!(src.size_hint(), Some(10));
     }
 
     #[tokio::test]
     async fn mmap_read_range_correct_bytes() {
         let data = b"hello world this is a test";
-        let f    = write_temp(data);
+        let f = write_temp(data);
         let file = std::fs::File::open(f.path()).unwrap();
         let mmap = unsafe { memmap2::MmapOptions::new().map(&file).unwrap() };
-        let src  = MmapSource::new(Arc::new(mmap));
-        let got  = src.read_range(6, 5).await.unwrap();
+        let src = MmapSource::new(Arc::new(mmap));
+        let got = src.read_range(6, 5).await.unwrap();
         assert_eq!(&got[..], b"world");
     }
 
     #[tokio::test]
     async fn mmap_read_range_out_of_bounds_is_error() {
         let data = b"short";
-        let f    = write_temp(data);
+        let f = write_temp(data);
         let file = std::fs::File::open(f.path()).unwrap();
         let mmap = unsafe { memmap2::MmapOptions::new().map(&file).unwrap() };
-        let src  = MmapSource::new(Arc::new(mmap));
+        let src = MmapSource::new(Arc::new(mmap));
         assert!(src.read_range(100, 4).await.is_err());
     }
 }

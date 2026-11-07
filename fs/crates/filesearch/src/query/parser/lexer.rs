@@ -20,18 +20,36 @@ pub(super) fn tokenize(input: &str) -> Vec<Token> {
 
     while i < chars.len() {
         match chars[i] {
-            c if c.is_whitespace() => { i += 1; }
-            '|' => { tokens.push(Token::Pipe);   i += 1; }
-            '!' => { tokens.push(Token::Bang);   i += 1; }
-            '<' => { tokens.push(Token::LAngle); i += 1; }
-            '>' => { tokens.push(Token::RAngle); i += 1; }
+            c if c.is_whitespace() => {
+                i += 1;
+            }
+            '|' => {
+                tokens.push(Token::Pipe);
+                i += 1;
+            }
+            '!' => {
+                tokens.push(Token::Bang);
+                i += 1;
+            }
+            '<' => {
+                tokens.push(Token::LAngle);
+                i += 1;
+            }
+            '>' => {
+                tokens.push(Token::RAngle);
+                i += 1;
+            }
             '"' => {
                 i += 1;
                 let start = i;
-                while i < chars.len() && chars[i] != '"' { i += 1; }
+                while i < chars.len() && chars[i] != '"' {
+                    i += 1;
+                }
                 let s: String = chars[start..i].iter().collect();
                 tokens.push(Token::QuotedPhrase(s));
-                if i < chars.len() { i += 1; }
+                if i < chars.len() {
+                    i += 1;
+                }
             }
             _ => {
                 let start = i;

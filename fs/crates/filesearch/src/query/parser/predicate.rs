@@ -14,7 +14,7 @@ pub(super) fn build_predicate(kw: &str, val: &str, mods: Modifiers) -> Result<Ex
     // Type macros
     if let Some(tm) = keyword_to_type_macro(kw) {
         return Ok(Expr::Predicate(Predicate {
-            kind:      PredicateKind::TypeMacro(tm),
+            kind: PredicateKind::TypeMacro(tm),
             modifiers: mods,
         }));
     }
@@ -23,24 +23,19 @@ pub(super) fn build_predicate(kw: &str, val: &str, mods: Modifiers) -> Result<Ex
     if kw.len() == 1 && kw.chars().next().is_some_and(|c| c.is_ascii_alphabetic()) {
         let path_val = format!("{kw}:{val}");
         return Ok(Expr::Predicate(Predicate {
-            kind:      PredicateKind::Function(Function::Path(path_val)),
-            modifiers: Modifiers { match_path: Some(true), ..mods },
+            kind: PredicateKind::Function(Function::Path(path_val)),
+            modifiers: Modifiers {
+                match_path: Some(true),
+                ..mods
+            },
         }));
     }
 
     let func = match kw {
-        "dm" | "datemodified" | "date" => {
-            Function::DateModified(parse_date_value(val)?)
-        }
-        "dc" | "datecreated" => {
-            Function::DateCreated(parse_date_value(val)?)
-        }
-        "da" | "dateaccessed" => {
-            Function::DateAccessed(parse_date_value(val)?)
-        }
-        "size" => {
-            Function::Size(parse_size_value(val)?)
-        }
+        "dm" | "datemodified" | "date" => Function::DateModified(parse_date_value(val)?),
+        "dc" | "datecreated" => Function::DateCreated(parse_date_value(val)?),
+        "da" | "dateaccessed" => Function::DateAccessed(parse_date_value(val)?),
+        "size" => Function::Size(parse_size_value(val)?),
         "ext" | "type" => {
             let exts: Vec<String> = val
                 .split(';')
@@ -54,22 +49,23 @@ pub(super) fn build_predicate(kw: &str, val: &str, mods: Modifiers) -> Result<Ex
         "content" => Function::Content(val.to_owned()),
         "fuzzy" => {
             return Ok(Expr::Predicate(Predicate {
-                kind:      PredicateKind::Fuzzy(val.to_owned()),
+                kind: PredicateKind::Fuzzy(val.to_owned()),
                 modifiers: mods,
             }));
         }
         "regex" => {
             return Ok(Expr::Predicate(Predicate {
-                kind:      PredicateKind::Regex(val.to_owned()),
+                kind: PredicateKind::Regex(val.to_owned()),
                 modifiers: mods,
             }));
         }
         "dupe" | "namedup" => Function::Dupe(DupeKind::Name),
         "sizedupe" => Function::Dupe(DupeKind::Size),
-        "dmdup"    => Function::Dupe(DupeKind::DateModified),
-        "dcdup"    => Function::Dupe(DupeKind::DateCreated),
+        "dmdup" => Function::Dupe(DupeKind::DateModified),
+        "dcdup" => Function::Dupe(DupeKind::DateCreated),
         "count" => {
-            let n = val.parse::<usize>()
+            let n = val
+                .parse::<usize>()
                 .map_err(|_| AppError::Query(format!("invalid count value: '{val}'")))?;
             Function::Count(n)
         }
@@ -87,19 +83,19 @@ pub(super) fn build_predicate(kw: &str, val: &str, mods: Modifiers) -> Result<Ex
         }
         "child" => Function::Child(val.to_owned()),
         "startwith" | "startswith" => Function::StartWith(val.to_owned()),
-        "endwith"   | "endswith"   => Function::EndWith(val.to_owned()),
+        "endwith" | "endswith" => Function::EndWith(val.to_owned()),
         "archiveof" => Function::ArchiveOf(val.to_owned()),
         _ => {
             // Unknown keyword - treat "keyword:value" as a literal term
             return Ok(Expr::Predicate(Predicate {
-                kind:      PredicateKind::Term(format!("{kw}:{val}")),
+                kind: PredicateKind::Term(format!("{kw}:{val}")),
                 modifiers: mods,
             }));
         }
     };
 
     Ok(Expr::Predicate(Predicate {
-        kind:      PredicateKind::Function(func),
+        kind: PredicateKind::Function(func),
         modifiers: mods,
     }))
 }
@@ -122,16 +118,18 @@ fn parse_cmp_usize(s: &str) -> Result<(CmpOp, usize)> {
     } else {
         (CmpOp::Eq, s)
     };
-    let n = rest.trim().parse::<usize>()
+    let n = rest
+        .trim()
+        .parse::<usize>()
         .map_err(|_| AppError::Query(format!("invalid number: '{s}'")))?;
     Ok((op, n))
 }
 
 fn attrib_mask(s: &str) -> u32 {
     use crate::store::{
-        ATTRIB_ARCHIVE, ATTRIB_COMPRESSED, ATTRIB_DIRECTORY, ATTRIB_ENCRYPTED,
-        ATTRIB_HIDDEN, ATTRIB_NORMAL, ATTRIB_OFFLINE, ATTRIB_READONLY,
-        ATTRIB_REPARSE_POINT, ATTRIB_SPARSE, ATTRIB_SYSTEM, ATTRIB_TEMPORARY,
+        ATTRIB_ARCHIVE, ATTRIB_COMPRESSED, ATTRIB_DIRECTORY, ATTRIB_ENCRYPTED, ATTRIB_HIDDEN,
+        ATTRIB_NORMAL, ATTRIB_OFFLINE, ATTRIB_READONLY, ATTRIB_REPARSE_POINT, ATTRIB_SPARSE,
+        ATTRIB_SYSTEM, ATTRIB_TEMPORARY,
     };
     let mut mask = 0u32;
     for c in s.chars() {

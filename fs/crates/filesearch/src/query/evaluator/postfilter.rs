@@ -14,32 +14,43 @@ use super::types::{Branch, PostFilter};
 pub fn apply_post_filters(
     records: Vec<FileRecord>,
     filters: &[PostFilter],
-    store:   &FileStore,
+    store: &FileStore,
 ) -> Vec<FileRecord> {
-    records.into_iter().filter(|r| {
-        for f in filters {
-            if !post_filter_match(f, r, store) {
-                return false;
+    records
+        .into_iter()
+        .filter(|r| {
+            for f in filters {
+                if !post_filter_match(f, r, store) {
+                    return false;
+                }
             }
-        }
-        true
-    }).collect()
+            true
+        })
+        .collect()
 }
 
 fn post_filter_match(f: &PostFilter, r: &FileRecord, store: &FileStore) -> bool {
     match f {
         PostFilter::Regex(re, _cs) => re.is_match(&r.path),
-        PostFilter::Child(name)    => store.has_child(&r.path, name).unwrap_or(false),
+        PostFilter::Child(name) => store.has_child(&r.path, name).unwrap_or(false),
         PostFilter::WholeWord(w, cs) => {
-            let text = if *cs { r.name.clone() } else { r.name.to_ascii_lowercase() };
-            let word = if *cs { w.clone()      } else { w.to_ascii_lowercase()      };
+            let text = if *cs {
+                r.name.clone()
+            } else {
+                r.name.to_ascii_lowercase()
+            };
+            let word = if *cs {
+                w.clone()
+            } else {
+                w.to_ascii_lowercase()
+            };
             is_whole_word(&text, &word)
         }
         PostFilter::StartWith(s) => r.name.starts_with(s.as_str()),
-        PostFilter::EndWith(s)   => r.name.ends_with(s.as_str()),
+        PostFilter::EndWith(s) => r.name.ends_with(s.as_str()),
         PostFilter::ArchiveExclude => r.archive_path.is_none(),
-        PostFilter::Any(branches)  => branches.iter().any(|b| branch_match(b, r, store)),
-        PostFilter::Not(b)         => !branch_match(b, r, store),
+        PostFilter::Any(branches) => branches.iter().any(|b| branch_match(b, r, store)),
+        PostFilter::Not(b) => !branch_match(b, r, store),
     }
 }
 
@@ -50,13 +61,15 @@ fn branch_match(b: &Branch, r: &FileRecord, store: &FileStore) -> bool {
 fn is_whole_word(text: &str, word: &str) -> bool {
     let chars: Vec<char> = text.chars().collect();
     let word_chars: Vec<char> = word.chars().collect();
-    if word_chars.is_empty() { return false; }
+    if word_chars.is_empty() {
+        return false;
+    }
     let wlen = word_chars.len();
     for i in 0..=chars.len().saturating_sub(wlen) {
         let slice: Vec<char> = chars[i..i + wlen].to_vec();
         if slice == word_chars {
             let before_ok = i == 0 || !chars[i - 1].is_alphanumeric();
-            let after_ok  = i + wlen == chars.len() || !chars[i + wlen].is_alphanumeric();
+            let after_ok = i + wlen == chars.len() || !chars[i + wlen].is_alphanumeric();
             if before_ok && after_ok {
                 return true;
             }
@@ -83,12 +96,7 @@ fn is_whole_word(text: &str, word: &str) -> bool {
 ///
 /// Returns indices into `names`, so callers can score borrowed names and
 /// materialize only the winning rows.
-pub(super) fn fuzzy_rank(
-    names:     &[&str],
-    term:      &str,
-    threshold: f32,
-    limit:     usize,
-) -> Vec<usize> {
+pub(super) fn fuzzy_rank(names: &[&str], term: &str, threshold: f32, limit: usize) -> Vec<usize> {
     let term_lower: Vec<char> = term.to_lowercase().chars().collect();
     if term_lower.is_empty() {
         return Vec::new();
@@ -146,8 +154,12 @@ fn typo_similarity(term: &[char], name: &[char]) -> f32 {
 fn osa_distance(a: &[char], b: &[char]) -> usize {
     let cols = b.len() + 1;
     let mut d = vec![0usize; (a.len() + 1) * cols];
-    for i in 0..=a.len() { d[i * cols] = i; }
-    for (j, cell) in d.iter_mut().enumerate().take(cols) { *cell = j; }
+    for i in 0..=a.len() {
+        d[i * cols] = i;
+    }
+    for (j, cell) in d.iter_mut().enumerate().take(cols) {
+        *cell = j;
+    }
     for i in 1..=a.len() {
         for j in 1..=b.len() {
             let cost = usize::from(a[i - 1] != b[j - 1]);
@@ -182,17 +194,26 @@ mod fuzzy_tests {
 
     fn names(term: &str, threshold: f32) -> Vec<String> {
         let c = ["main.rs", "lib.rs", "Cargo.toml", "domain_model.rs"];
-        fuzzy_rank(&c, term, threshold, 10).into_iter().map(|i| c[i].to_owned()).collect()
+        fuzzy_rank(&c, term, threshold, 10)
+            .into_iter()
+            .map(|i| c[i].to_owned())
+            .collect()
     }
 
     #[test]
     fn transposed_term_finds_main_at_default_threshold() {
-        assert_eq!(names("mian", 0.7).first().map(String::as_str), Some("main.rs"));
+        assert_eq!(
+            names("mian", 0.7).first().map(String::as_str),
+            Some("main.rs")
+        );
     }
 
     #[test]
     fn exact_short_term_passes_default_threshold() {
-        assert_eq!(names("main", 0.7).first().map(String::as_str), Some("main.rs"));
+        assert_eq!(
+            names("main", 0.7).first().map(String::as_str),
+            Some("main.rs")
+        );
         assert_eq!(names("lib", 0.7), vec!["lib.rs"]);
     }
 

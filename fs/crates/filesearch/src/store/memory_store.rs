@@ -36,10 +36,14 @@ impl MemoryStore {
     // IndexState leaves it structurally valid between statements, so keep
     // serving rather than turning one panic into a panic on every request.
     fn read_state(&self) -> std::sync::RwLockReadGuard<'_, IndexState> {
-        self.state.read().unwrap_or_else(std::sync::PoisonError::into_inner)
+        self.state
+            .read()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
     }
 
     fn write_state(&self) -> std::sync::RwLockWriteGuard<'_, IndexState> {
-        self.state.write().unwrap_or_else(std::sync::PoisonError::into_inner)
+        self.state
+            .write()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
     }
 }

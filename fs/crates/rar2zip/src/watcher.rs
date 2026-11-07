@@ -29,7 +29,11 @@ fn passes_filters(path: &std::path::Path, cfg: &Config) -> bool {
         .and_then(|e| e.to_str())
         .map(|e| e.to_lowercase())
         .unwrap_or_default();
-    if !cfg.include_extensions.iter().any(|inc| inc.eq_ignore_ascii_case(&ext)) {
+    if !cfg
+        .include_extensions
+        .iter()
+        .any(|inc| inc.eq_ignore_ascii_case(&ext))
+    {
         return false;
     }
 
@@ -49,7 +53,10 @@ fn passes_filters(path: &std::path::Path, cfg: &Config) -> bool {
 
     // 3. Subdir filter
     if let Some(subdirs) = &cfg.watch_subdirs {
-        let parent = path.parent().and_then(|p| p.file_name()).and_then(|n| n.to_str());
+        let parent = path
+            .parent()
+            .and_then(|p| p.file_name())
+            .and_then(|n| n.to_str());
         if let Some(parent_name) = parent {
             if !subdirs.iter().any(|s| s == parent_name) {
                 return false;
@@ -65,8 +72,8 @@ fn passes_filters(path: &std::path::Path, cfg: &Config) -> bool {
 // ---------------------------------------------------------------------------
 
 pub async fn run_watcher(
-    config:   Arc<RwLock<Config>>,
-    tx:       mpsc::Sender<PathBuf>,
+    config: Arc<RwLock<Config>>,
+    tx: mpsc::Sender<PathBuf>,
     shutdown: CancellationToken,
 ) -> Result<()> {
     let (debounce_tx, mut debounce_rx) =

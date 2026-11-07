@@ -29,31 +29,36 @@ pub(super) async fn head_handler(
         _ => return bad_request("missing 'path' parameter").into_response(),
     };
     let path = match validate_path(&raw) {
-        Ok(p)  => p,
+        Ok(p) => p,
         Err(e) => return bad_request(e).into_response(),
     };
 
     let std_meta = match std::fs::metadata(&path) {
-        Ok(m)  => m,
-        Err(e) if e.kind() == std::io::ErrorKind::NotFound
-               => return not_found(format!("path not found: {raw}")).into_response(),
+        Ok(m) => m,
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => {
+            return not_found(format!("path not found: {raw}")).into_response()
+        }
         Err(e) => return internal(e.to_string()).into_response(),
     };
 
-    let fm   = extract_meta(&std_meta);
+    let fm = extract_meta(&std_meta);
     let etag = file_etag(fm.mtime_secs, fm.size);
-    let mime = if fm.is_dir { "inode/directory" } else { mime_for_path(&path) };
+    let mime = if fm.is_dir {
+        "inode/directory"
+    } else {
+        mime_for_path(&path)
+    };
 
     axum::http::Response::builder()
         .status(StatusCode::OK)
-        .header(header::CONTENT_TYPE,   mime)
+        .header(header::CONTENT_TYPE, mime)
         .header(header::CONTENT_LENGTH, fm.size)
-        .header(header::ACCEPT_RANGES,  "bytes")
-        .header(header::ETAG,           etag)
-        .header("X-File-Size",          fm.size)
-        .header("X-File-Mtime",         fm.mtime_secs)
-        .header("X-File-Is-Dir",        if fm.is_dir { "true" } else { "false" })
-        .header("X-File-Mode",          fm.mode_str)
+        .header(header::ACCEPT_RANGES, "bytes")
+        .header(header::ETAG, etag)
+        .header("X-File-Size", fm.size)
+        .header("X-File-Mtime", fm.mtime_secs)
+        .header("X-File-Is-Dir", if fm.is_dir { "true" } else { "false" })
+        .header("X-File-Mode", fm.mode_str)
         .body(Body::empty())
         .unwrap_or_else(|e| internal(e.to_string()).into_response())
 }
@@ -65,41 +70,43 @@ pub(super) async fn head_handler(
 pub(super) async fn read_handler(
     State(_state): State<AppState>,
     Query(params): Query<PathParam>,
-    req_headers:   axum::http::HeaderMap,
+    req_headers: axum::http::HeaderMap,
 ) -> Response {
     let raw = match params.path {
         Some(p) if !p.is_empty() => p,
         _ => return bad_request("missing 'path' parameter").into_response(),
     };
     let path = match validate_path(&raw) {
-        Ok(p)  => p,
+        Ok(p) => p,
         Err(e) => return bad_request(e).into_response(),
     };
 
     let std_meta = match tokio::fs::metadata(&path).await {
         Ok(m) if m.is_dir() => return list_dir(&path).await,
         Ok(m) => m,
-        Err(e) if e.kind() == std::io::ErrorKind::NotFound
-               => return not_found(format!("path not found: {raw}")).into_response(),
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => {
+            return not_found(format!("path not found: {raw}")).into_response()
+        }
         Err(e) => return internal(e.to_string()).into_response(),
     };
 
     let mut file = match tokio::fs::File::open(&path).await {
-        Ok(f)  => f,
-        Err(e) if e.kind() == std::io::ErrorKind::NotFound
-               => return not_found(format!("file not found: {raw}")).into_response(),
+        Ok(f) => f,
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => {
+            return not_found(format!("file not found: {raw}")).into_response()
+        }
         Err(e) => return internal(e.to_string()).into_response(),
     };
 
-    let file_size   = std_meta.len();
-    let mime        = mime_for_path(&path);
-    let fm          = extract_meta(&std_meta);
-    let etag        = file_etag(fm.mtime_secs, fm.size);
+    let file_size = std_meta.len();
+    let mime = mime_for_path(&path);
+    let fm = extract_meta(&std_meta);
+    let etag = file_etag(fm.mtime_secs, fm.size);
 
     // ── Range request ───────────────────────────────────────────────────────
     if let Some(range_val) = req_headers.get(header::RANGE) {
         let range_str = match range_val.to_str() {
-            Ok(s)  => s,
+            Ok(s) => s,
             Err(_) => return bad_request("invalid Range header encoding").into_response(),
         };
 
@@ -121,11 +128,14 @@ pub(super) async fn read_handler(
                 let limited = file.take(len);
                 return axum::http::Response::builder()
                     .status(StatusCode::PARTIAL_CONTENT)
-                    .header(header::CONTENT_TYPE,   mime)
+                    .header(header::CONTENT_TYPE, mime)
                     .header(header::CONTENT_LENGTH, len)
-                    .header(header::CONTENT_RANGE,  format!("bytes {start}-{end}/{file_size}"))
-                    .header(header::ACCEPT_RANGES,  "bytes")
-                    .header(header::ETAG,           etag)
+                    .header(
+                        header::CONTENT_RANGE,
+                        format!("bytes {start}-{end}/{file_size}"),
+                    )
+                    .header(header::ACCEPT_RANGES, "bytes")
+                    .header(header::ETAG, etag)
                     .body(Body::from_stream(ReaderStream::new(limited)))
                     .unwrap_or_else(|e| internal(e.to_string()).into_response());
             }
@@ -135,10 +145,10 @@ pub(super) async fn read_handler(
     // ── Full file ────────────────────────────────────────────────────────────
     axum::http::Response::builder()
         .status(StatusCode::OK)
-        .header(header::CONTENT_TYPE,   mime)
+        .header(header::CONTENT_TYPE, mime)
         .header(header::CONTENT_LENGTH, file_size)
-        .header(header::ACCEPT_RANGES,  "bytes")
-        .header(header::ETAG,           etag)
+        .header(header::ACCEPT_RANGES, "bytes")
+        .header(header::ETAG, etag)
         .body(Body::from_stream(ReaderStream::new(file)))
         .unwrap_or_else(|e| internal(e.to_string()).into_response())
 }
@@ -157,20 +167,20 @@ async fn list_dir(path: &Path) -> Response {
         match rd.next_entry().await {
             Ok(Some(entry)) => {
                 let meta = match entry.metadata().await {
-                    Ok(m)  => m,
+                    Ok(m) => m,
                     Err(_) => continue,
                 };
-                let fm   = extract_meta(&meta);
+                let fm = extract_meta(&meta);
                 entries.push(DirEntry {
-                    name:       entry.file_name().to_string_lossy().into_owned(),
-                    path:       entry.path().to_string_lossy().into_owned(),
-                    is_dir:     fm.is_dir,
-                    size:       (!fm.is_dir).then_some(fm.size),
+                    name: entry.file_name().to_string_lossy().into_owned(),
+                    path: entry.path().to_string_lossy().into_owned(),
+                    is_dir: fm.is_dir,
+                    size: (!fm.is_dir).then_some(fm.size),
                     mtime_secs: fm.mtime_secs,
                 });
             }
             Ok(None) => break,
-            Err(e)   => return internal(e.to_string()).into_response(),
+            Err(e) => return internal(e.to_string()).into_response(),
         }
     }
     Json(entries).into_response()

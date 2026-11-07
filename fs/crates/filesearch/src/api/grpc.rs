@@ -9,7 +9,7 @@ use tonic::{Request, Response, Status};
 use crate::config::Config;
 use crate::indexer::crawler::IndexMetrics;
 use crate::query::{evaluator, parser};
-use crate::store::{FileStore, tantivy_store::TantivyStore, FileRecord};
+use crate::store::{tantivy_store::TantivyStore, FileRecord, FileStore};
 
 use super::dto::archive_entry;
 
@@ -23,9 +23,8 @@ pub mod proto {
 
 use proto::{
     file_search_server::{FileSearch, FileSearchServer},
-    ReindexRequest, ReindexResponse,
-    SearchRequest, SearchResponse, SearchResult,
-    StatsRequest, StatsResponse,
+    ReindexRequest, ReindexResponse, SearchRequest, SearchResponse, SearchResult, StatsRequest,
+    StatsResponse,
 };
 
 // ---------------------------------------------------------------------------
@@ -33,10 +32,10 @@ use proto::{
 // ---------------------------------------------------------------------------
 
 pub struct FileSearchService {
-    pub sqlite:     Arc<FileStore>,
-    pub tantivy:    Arc<TantivyStore>,
-    pub config:     Arc<RwLock<Config>>,
-    pub metrics:    Arc<IndexMetrics>,
+    pub sqlite: Arc<FileStore>,
+    pub tantivy: Arc<TantivyStore>,
+    pub config: Arc<RwLock<Config>>,
+    pub metrics: Arc<IndexMetrics>,
     pub reindex_tx: watch::Sender<bool>,
 }
 
@@ -51,13 +50,11 @@ impl FileSearch for FileSearchService {
         request: Request<SearchRequest>,
     ) -> Result<Response<SearchResponse>, Status> {
         let req = request.into_inner();
-        let (results, total, took_ms) = self
-            .run_query(&req.query, req.limit, req.offset)
-            .await?;
+        let (results, total, took_ms) = self.run_query(&req.query, req.limit, req.offset).await?;
         Ok(Response::new(SearchResponse {
             results,
-            total:    total as i32,
-            took_ms:  took_ms as i64,
+            total: total as i32,
+            took_ms: took_ms as i64,
         }))
     }
 
@@ -68,9 +65,7 @@ impl FileSearch for FileSearchService {
         request: Request<SearchRequest>,
     ) -> Result<Response<Self::SearchStreamStream>, Status> {
         let req = request.into_inner();
-        let (results, _, _) = self
-            .run_query(&req.query, req.limit, req.offset)
-            .await?;
+        let (results, _, _) = self.run_query(&req.query, req.limit, req.offset).await?;
 
         // Fan results out through a bounded channel so the caller can start
         // consuming before all records are serialised.
@@ -89,18 +84,20 @@ impl FileSearch for FileSearchService {
         &self,
         _request: Request<StatsRequest>,
     ) -> Result<Response<StatsResponse>, Status> {
-        let total_files = self.sqlite.total_files()
+        let total_files = self
+            .sqlite
+            .total_files()
             .map_err(|e| Status::internal(e.to_string()))?;
         let m = &self.metrics;
         Ok(Response::new(StatsResponse {
             total_files,
-            total_dirs:              m.total_dirs.load(Ordering::Relaxed) as i64,
-            content_indexed:         m.content_indexed.load(Ordering::Relaxed) as i64,
-            last_crawl_secs:         m.last_crawl_secs.load(Ordering::Relaxed) as i64,
-            events_processed:        m.events_processed.load(Ordering::Relaxed) as i64,
-            index_size_human:        String::new(),
+            total_dirs: m.total_dirs.load(Ordering::Relaxed) as i64,
+            content_indexed: m.content_indexed.load(Ordering::Relaxed) as i64,
+            last_crawl_secs: m.last_crawl_secs.load(Ordering::Relaxed) as i64,
+            events_processed: m.events_processed.load(Ordering::Relaxed) as i64,
+            index_size_human: String::new(),
             archive_entries_indexed: m.archive_entries_indexed.load(Ordering::Relaxed) as i64,
-            archives_crawled:        m.archives_crawled.load(Ordering::Relaxed) as i64,
+            archives_crawled: m.archives_crawled.load(Ordering::Relaxed) as i64,
         }))
     }
 
@@ -130,8 +127,8 @@ impl FileSearchService {
     async fn run_query(
         &self,
         query_str: &str,
-        limit:     i32,
-        offset:    i32,
+        limit: i32,
+        offset: i32,
     ) -> Result<(Vec<SearchResult>, usize, u64), Status> {
         // Single config lock - reads macros and the default limit then releases.
         let (macros, default_limit) = {
@@ -144,7 +141,7 @@ impl FileSearchService {
         let mut plan = evaluator::plan(&expr, &Default::default())
             .map_err(|e| Status::invalid_argument(e.to_string()))?;
         let (limit, offset) = resolve_page(limit, offset, default_limit);
-        plan.limit  = Some(limit);
+        plan.limit = Some(limit);
         plan.offset = offset;
 
         let result = evaluator::execute_plan(
@@ -157,7 +154,11 @@ impl FileSearchService {
         .map_err(|e| Status::internal(e.to_string()))?;
 
         // Consume hits by value - moves Strings rather than cloning them.
-        let results = result.hits.into_iter().map(file_record_into_result).collect();
+        let results = result
+            .hits
+            .into_iter()
+            .map(file_record_into_result)
+            .collect();
         Ok((results, result.total, result.took_ms))
     }
 }
@@ -169,14 +170,14 @@ fn file_record_into_result(r: FileRecord) -> SearchResult {
     let entry = archive_entry(&r);
     let archive_path = r.archive_path.unwrap_or_default();
     SearchResult {
-        path:          r.path,
-        name:          r.name,
-        extension:     r.extension.unwrap_or_default(),
-        size_bytes:    r.size_bytes as i64,
-        mtime:         r.mtime,
-        score:         0.0,
-        snippet:       String::new(),
-        is_dir:        r.is_dir,
+        path: r.path,
+        name: r.name,
+        extension: r.extension.unwrap_or_default(),
+        size_bytes: r.size_bytes as i64,
+        mtime: r.mtime,
+        score: 0.0,
+        snippet: String::new(),
+        is_dir: r.is_dir,
         archive_path,
         archive_entry: entry,
     }
@@ -186,7 +187,10 @@ fn file_record_into_result(r: FileRecord) -> SearchResult {
 /// treating that literally returned no results. Negative values would wrap
 /// when cast to `usize`.
 fn resolve_page(limit: i32, offset: i32, default_limit: usize) -> (usize, usize) {
-    let limit = usize::try_from(limit).ok().filter(|&l| l > 0).unwrap_or(default_limit);
+    let limit = usize::try_from(limit)
+        .ok()
+        .filter(|&l| l > 0)
+        .unwrap_or(default_limit);
     (limit, usize::try_from(offset).unwrap_or(0))
 }
 

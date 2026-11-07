@@ -16,7 +16,11 @@ impl SqliteStore {
     /// why this matters. Event-driven archive (re)indexing outside a crawl
     /// (rename, ArchiveModified) passes `None`, matching how per-event file
     /// upserts also leave these columns NULL.
-    pub fn upsert_archive_batch(&self, records: &[FileRecord], tag: Option<(&str, i64)>) -> Result<()> {
+    pub fn upsert_archive_batch(
+        &self,
+        records: &[FileRecord],
+        tag: Option<(&str, i64)>,
+    ) -> Result<()> {
         if records.is_empty() {
             return Ok(());
         }
@@ -46,17 +50,13 @@ impl SqliteStore {
 
     pub fn remove_archive_entries(&self, archive_path: &str) -> Result<usize> {
         let conn = self.get_conn()?;
-        let n = conn.execute(
-            "DELETE FROM files WHERE archive_path = ?",
-            [archive_path],
-        )?;
+        let n = conn.execute("DELETE FROM files WHERE archive_path = ?", [archive_path])?;
         Ok(n)
     }
 
     pub fn paths_in_archive(&self, archive_path: &str) -> Result<Vec<String>> {
         let conn = self.get_conn()?;
-        let mut stmt =
-            conn.prepare("SELECT path FROM files WHERE archive_path = ?")?;
+        let mut stmt = conn.prepare("SELECT path FROM files WHERE archive_path = ?")?;
         let rows = stmt.query_map([archive_path], |row| row.get(0))?;
         rows.map(|r| r.map_err(AppError::Database)).collect()
     }

@@ -23,9 +23,9 @@ impl MemoryStore {
 
     pub fn has_child(&self, parent_path: &str, name_pattern: &str) -> Result<bool> {
         let state = self.read_state();
-        let found = state.iter().any(|e| {
-            like_match(e.name_str(), name_pattern) && e.under(parent_path) == Some(true)
-        });
+        let found = state
+            .iter()
+            .any(|e| like_match(e.name_str(), name_pattern) && e.under(parent_path) == Some(true));
         Ok(found)
     }
 

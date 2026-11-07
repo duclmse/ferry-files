@@ -1,5 +1,5 @@
 use std::net::IpAddr;
-use std::sync::{Mutex, Arc};
+use std::sync::{Arc, Mutex};
 use std::time::Instant;
 
 use axum::http::StatusCode;
@@ -10,9 +10,9 @@ use dashmap::DashMap;
 // ---------------------------------------------------------------------------
 
 pub struct TokenBucket {
-    tokens:         i64,
-    rate:           i64, // tokens per second
-    burst:          i64, // max capacity
+    tokens: i64,
+    rate: i64,  // tokens per second
+    burst: i64, // max capacity
     last_refill_ns: u64,
 }
 
@@ -22,7 +22,12 @@ impl TokenBucket {
     }
 
     pub fn with_now(rate: i64, burst: i64, now: u64) -> Self {
-        Self { tokens: burst, rate, burst, last_refill_ns: now }
+        Self {
+            tokens: burst,
+            rate,
+            burst,
+            last_refill_ns: now,
+        }
     }
 
     /// Returns `true` if tokens were consumed, `false` if the bucket is depleted.
@@ -37,11 +42,11 @@ impl TokenBucket {
     }
 
     fn refill(&mut self, now: u64) {
-        let dt  = now.saturating_sub(self.last_refill_ns);
+        let dt = now.saturating_sub(self.last_refill_ns);
         let add = (dt as i64 * self.rate) / 1_000_000_000;
         if add > 0 {
-            self.tokens          = (self.tokens + add).min(self.burst);
-            self.last_refill_ns  = now;
+            self.tokens = (self.tokens + add).min(self.burst);
+            self.last_refill_ns = now;
         }
     }
 }
@@ -52,15 +57,15 @@ impl TokenBucket {
 
 pub struct ClientRateLimiter {
     buckets: Arc<DashMap<IpAddr, (Mutex<TokenBucket>, Instant)>>,
-    rate:    i64,
-    burst:   i64,
+    rate: i64,
+    burst: i64,
 }
 
 impl ClientRateLimiter {
     pub fn new(rate_per_sec: i64, burst: i64) -> Self {
         Self {
             buckets: Arc::new(DashMap::new()),
-            rate:    rate_per_sec,
+            rate: rate_per_sec,
             burst,
         }
     }
@@ -73,14 +78,21 @@ impl ClientRateLimiter {
         self.evict_stale();
 
         let entry = self.buckets.entry(ip).or_insert_with(|| {
-            (Mutex::new(TokenBucket::new(self.rate, self.burst)), Instant::now())
+            (
+                Mutex::new(TokenBucket::new(self.rate, self.burst)),
+                Instant::now(),
+            )
         });
 
         let mut bucket = entry.0.lock().unwrap_or_else(|e| {
             tracing::warn!("rate-limiter bucket mutex poisoned for {ip} - recovering");
             e.into_inner()
         });
-        if bucket.try_consume(cost, now) { Ok(()) } else { Err(StatusCode::TOO_MANY_REQUESTS) }
+        if bucket.try_consume(cost, now) {
+            Ok(())
+        } else {
+            Err(StatusCode::TOO_MANY_REQUESTS)
+        }
     }
 
     fn evict_stale(&self) {
@@ -105,7 +117,9 @@ fn now_ns() -> u64 {
 mod tests {
     use super::*;
 
-    fn ns(secs: u64) -> u64 { secs * 1_000_000_000 }
+    fn ns(secs: u64) -> u64 {
+        secs * 1_000_000_000
+    }
 
     #[test]
     fn new_bucket_try_consume_below_burst_ok() {

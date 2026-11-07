@@ -1,31 +1,35 @@
-use super::*;
 use super::reader::decompress_block;
+use super::*;
 
 // ---------------------------------------------------------------------------
 // Ring-buffer sliding window (32 KB)
 // ---------------------------------------------------------------------------
 
 pub(super) struct Window {
-    buf:    Box<[u8; WINDOW_SIZE]>,
-    head:   usize,
+    buf: Box<[u8; WINDOW_SIZE]>,
+    head: usize,
     filled: bool,
 }
 
 impl Window {
     pub(super) fn new() -> Self {
-        Self { buf: Box::new([0u8; WINDOW_SIZE]), head: 0, filled: false }
+        Self {
+            buf: Box::new([0u8; WINDOW_SIZE]),
+            head: 0,
+            filled: false,
+        }
     }
 
     pub(super) fn push_slice(&mut self, data: &[u8]) {
         let mut remaining = data;
         while !remaining.is_empty() {
-            let space   = WINDOW_SIZE - self.head;
-            let n       = remaining.len().min(space);
+            let space = WINDOW_SIZE - self.head;
+            let n = remaining.len().min(space);
             self.buf[self.head..self.head + n].copy_from_slice(&remaining[..n]);
-            self.head  += n;
-            remaining   = &remaining[n..];
+            self.head += n;
+            remaining = &remaining[n..];
             if self.head == WINDOW_SIZE {
-                self.head   = 0;
+                self.head = 0;
                 self.filled = true;
             }
         }
@@ -35,7 +39,7 @@ impl Window {
         let mut out = [0u8; WINDOW_SIZE];
         if !self.filled {
             // Back-references measure distance from the *end* of the fed
-            // preamble, so the real (short) history must sit at the tail - 
+            // preamble, so the real (short) history must sit at the tail -
             // matching the filled case's "newest byte last" layout - with
             // zero padding at the front. A match can never reach past `head`
             // bytes back anyway, so the padding is never addressed.
@@ -66,8 +70,8 @@ impl DzxBuilder {
     /// Returns the number of blocks recorded.
     pub async fn build(
         &self,
-        source:   &dyn ByteSource,
-        meta:     &EntryMeta,
+        source: &dyn ByteSource,
+        meta: &EntryMeta,
         out_path: &Path,
     ) -> Result<u64, DzxError> {
         if meta.compression != 8 {
@@ -75,11 +79,13 @@ impl DzxBuilder {
         }
 
         let data_start = parse_local_header_offset(source, meta.local_header_offset).await?;
-        let compressed = source.read_range(data_start, meta.compressed_size as usize).await?;
+        let compressed = source
+            .read_range(data_start, meta.compressed_size as usize)
+            .await?;
 
-        let block_size        = self.block_size;
+        let block_size = self.block_size;
         let uncompressed_size = meta.uncompressed_size;
-        let out_path          = out_path.to_path_buf();
+        let out_path = out_path.to_path_buf();
 
         tokio::task::spawn_blocking(move || {
             build_blocking(&compressed, uncompressed_size, block_size, &out_path)
@@ -94,29 +100,33 @@ impl DzxBuilder {
 // ---------------------------------------------------------------------------
 
 struct RawBlock {
-    comp_offset:   u64,
+    comp_offset: u64,
     uncomp_offset: u64,
-    snapshot_idx:  u32,
+    snapshot_idx: u32,
 }
 
 fn build_blocking(
-    compressed:        &[u8],
+    compressed: &[u8],
     uncompressed_size: u64,
-    block_size:        u32,
-    out_path:          &Path,
+    block_size: u32,
+    out_path: &Path,
 ) -> Result<u64, DzxError> {
     use flate2::{Decompress, FlushDecompress, Status};
 
-    let mut d      = Decompress::new(false); // raw deflate
+    let mut d = Decompress::new(false); // raw deflate
     let mut window = Window::new();
-    let mut raw_blocks: Vec<RawBlock>          = Vec::new();
-    let mut snap_data:  Vec<[u8; WINDOW_SIZE]> = Vec::new();
+    let mut raw_blocks: Vec<RawBlock> = Vec::new();
+    let mut snap_data: Vec<[u8; WINDOW_SIZE]> = Vec::new();
 
     // Block 0 always exists; its snapshot is the empty window.
     snap_data.push(window.snapshot());
-    raw_blocks.push(RawBlock { comp_offset: 0, uncomp_offset: 0, snapshot_idx: 0 });
+    raw_blocks.push(RawBlock {
+        comp_offset: 0,
+        uncomp_offset: 0,
+        snapshot_idx: 0,
+    });
 
-    let mut out_buf       = [0u8; 8_192];
+    let mut out_buf = [0u8; 8_192];
     let mut next_boundary = block_size as u64;
     // Bytes produced for the block currently being accumulated; reset at
     // every boundary. Bounded by `block_size`, used to verify each boundary
@@ -134,10 +144,12 @@ fn build_blocking(
     loop {
         let start = d.total_in() as usize;
         if start > compressed.len() {
-            return Err(DzxError::Corrupt("decoder consumed past end of input".into()));
+            return Err(DzxError::Corrupt(
+                "decoder consumed past end of input".into(),
+            ));
         }
-        let end        = (start + 1).min(compressed.len());
-        let in_slice   = &compressed[start..end];
+        let end = (start + 1).min(compressed.len());
+        let in_slice = &compressed[start..end];
         let before_out = d.total_out();
 
         let status = d
@@ -177,9 +189,9 @@ fn build_blocking(
         }
     }
 
-    let total_in  = d.total_in();
+    let total_in = d.total_in();
     let total_out = d.total_out();
-    let count     = raw_blocks.len() as u64;
+    let count = raw_blocks.len() as u64;
 
     let params = WriteDzxParams {
         out_path,
@@ -187,7 +199,7 @@ fn build_blocking(
         uncompressed_size,
         block_count: count,
         raw_blocks: &raw_blocks,
-        snap_data:  &snap_data,
+        snap_data: &snap_data,
         total_in,
         total_out,
     };
@@ -203,9 +215,9 @@ fn build_blocking(
 /// no `SYNC_FLUSH` markers); building `.dzx` for it would silently corrupt
 /// Range reads later, so the whole build is aborted instead.
 fn verify_block_boundary(
-    compressed:   &[u8],
-    raw_blocks:   &[RawBlock],
-    snap_data:    &[[u8; WINDOW_SIZE]],
+    compressed: &[u8],
+    raw_blocks: &[RawBlock],
+    snap_data: &[[u8; WINDOW_SIZE]],
     expected_out: &[u8],
 ) -> Result<(), DzxError> {
     let prev = raw_blocks
@@ -216,7 +228,7 @@ fn verify_block_boundary(
     // extra compressed bytes trail it, so only `prev.comp_offset` (the
     // candidate resync point actually under test) matters here.
     let comp_data = &compressed[prev.comp_offset as usize..];
-    let window    = &snap_data[prev.snapshot_idx as usize];
+    let window = &snap_data[prev.snapshot_idx as usize];
 
     let decoded = decompress_block(comp_data, window, prev.uncomp_offset, 0, expected_out.len())?;
     if decoded != expected_out {
@@ -229,7 +241,7 @@ fn verify_block_boundary(
 
 /// The block most recently pushed onto `raw_blocks` gets its `comp_offset`
 /// from the *previous* boundary crossing, at which point verifying it just
-/// means "does the stream decode continuously from the start up to here" - 
+/// means "does the stream decode continuously from the start up to here" -
 /// trivially true for almost any candidate (it's not a restart, just a
 /// continuation), so that check provides no real signal that the position is
 /// a genuine resync point. The real test happens one block later, when
@@ -240,9 +252,9 @@ fn verify_block_boundary(
 /// shift it forward a byte and retry, capped so genuinely non-flushed entries
 /// (no resync points at all) still fail fast rather than scanning forever.
 fn verify_boundary_with_retry(
-    compressed:    &[u8],
-    raw_blocks:    &mut [RawBlock],
-    snap_data:     &[[u8; WINDOW_SIZE]],
+    compressed: &[u8],
+    raw_blocks: &mut [RawBlock],
+    snap_data: &[[u8; WINDOW_SIZE]],
     cur_block_out: &[u8],
 ) -> Result<(), DzxError> {
     const MAX_PROBE_BYTES: u32 = 32;
@@ -265,18 +277,27 @@ fn verify_boundary_with_retry(
 }
 
 struct WriteDzxParams<'a> {
-    out_path:          &'a Path,
-    block_size:        u32,
+    out_path: &'a Path,
+    block_size: u32,
     uncompressed_size: u64,
-    block_count:       u64,
-    raw_blocks:        &'a [RawBlock],
-    snap_data:         &'a [[u8; WINDOW_SIZE]],
-    total_in:          u64,
-    total_out:         u64,
+    block_count: u64,
+    raw_blocks: &'a [RawBlock],
+    snap_data: &'a [[u8; WINDOW_SIZE]],
+    total_in: u64,
+    total_out: u64,
 }
 
 fn write_dzx(p: WriteDzxParams<'_>) -> Result<(), DzxError> {
-    let WriteDzxParams { out_path, block_size, uncompressed_size, block_count, raw_blocks, snap_data, total_in, total_out } = p;
+    let WriteDzxParams {
+        out_path,
+        block_size,
+        uncompressed_size,
+        block_count,
+        raw_blocks,
+        snap_data,
+        total_in,
+        total_out,
+    } = p;
     use io::Write as _;
     let mut f = std::fs::File::create(out_path)?;
 
@@ -292,8 +313,8 @@ fn write_dzx(p: WriteDzxParams<'_>) -> Result<(), DzxError> {
 
     // Block table - block_count × 56 bytes
     for (i, rb) in raw_blocks.iter().enumerate() {
-        let next        = raw_blocks.get(i + 1);
-        let comp_size   = (next.map_or(total_in,  |nb| nb.comp_offset)  - rb.comp_offset)  as u32;
+        let next = raw_blocks.get(i + 1);
+        let comp_size = (next.map_or(total_in, |nb| nb.comp_offset) - rb.comp_offset) as u32;
         let uncomp_size = (next.map_or(total_out, |nb| nb.uncomp_offset) - rb.uncomp_offset) as u32;
 
         let mut entry = [0u8; BLOCK_ENTRY_SIZE];

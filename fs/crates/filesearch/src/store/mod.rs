@@ -11,18 +11,18 @@ pub mod tantivy_store;
 // Attrib bitmask constants (Windows FILE_ATTRIBUTE_* mapped to bits)
 // ---------------------------------------------------------------------------
 
-pub const ATTRIB_ARCHIVE:       u32 = 1;
-pub const ATTRIB_COMPRESSED:    u32 = 2;
-pub const ATTRIB_DIRECTORY:     u32 = 4;
-pub const ATTRIB_ENCRYPTED:     u32 = 8;
-pub const ATTRIB_HIDDEN:        u32 = 16;
+pub const ATTRIB_ARCHIVE: u32 = 1;
+pub const ATTRIB_COMPRESSED: u32 = 2;
+pub const ATTRIB_DIRECTORY: u32 = 4;
+pub const ATTRIB_ENCRYPTED: u32 = 8;
+pub const ATTRIB_HIDDEN: u32 = 16;
 pub const ATTRIB_REPARSE_POINT: u32 = 32;
-pub const ATTRIB_NORMAL:        u32 = 64;
-pub const ATTRIB_OFFLINE:       u32 = 128;
-pub const ATTRIB_SPARSE:        u32 = 256;
-pub const ATTRIB_READONLY:      u32 = 512;
-pub const ATTRIB_SYSTEM:        u32 = 1024;
-pub const ATTRIB_TEMPORARY:     u32 = 2048;
+pub const ATTRIB_NORMAL: u32 = 64;
+pub const ATTRIB_OFFLINE: u32 = 128;
+pub const ATTRIB_SPARSE: u32 = 256;
+pub const ATTRIB_READONLY: u32 = 512;
+pub const ATTRIB_SYSTEM: u32 = 1024;
+pub const ATTRIB_TEMPORARY: u32 = 2048;
 
 // ---------------------------------------------------------------------------
 // Core types
@@ -33,21 +33,21 @@ pub const ATTRIB_TEMPORARY:     u32 = 2048;
 /// `archive_path = Some(outer_zip)` → virtual inner-archive entry.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct FileRecord {
-    pub id:              Option<i64>,
-    pub path:            String,
-    pub name:            String,
-    pub extension:       Option<String>,
-    pub size_bytes:      u64,
-    pub mtime:           i64,
-    pub ctime:           i64,
-    pub is_dir:          bool,
-    pub is_hidden:       bool,
-    pub is_symlink:      bool,
-    pub attrib_bitmask:  u32,
+    pub id: Option<i64>,
+    pub path: String,
+    pub name: String,
+    pub extension: Option<String>,
+    pub size_bytes: u64,
+    pub mtime: i64,
+    pub ctime: i64,
+    pub is_dir: bool,
+    pub is_hidden: bool,
+    pub is_symlink: bool,
+    pub attrib_bitmask: u32,
     pub content_indexed: bool,
-    pub tantivy_id:      Option<String>,
-    pub indexed_at:      i64,
-    pub archive_path:    Option<String>,
+    pub tantivy_id: Option<String>,
+    pub indexed_at: i64,
+    pub archive_path: Option<String>,
 }
 
 /// Fuzzy ranker handed to the stores: takes candidate names, returns the
@@ -79,15 +79,33 @@ pub trait RecordView {
 }
 
 impl RecordView for FileRecord {
-    fn with_path<T>(&self, f: impl FnOnce(&str) -> T) -> T { f(&self.path) }
-    fn name(&self) -> &str { &self.name }
-    fn extension(&self) -> Option<&str> { self.extension.as_deref() }
-    fn size_bytes(&self) -> u64 { self.size_bytes }
-    fn mtime(&self) -> i64 { self.mtime }
-    fn ctime(&self) -> i64 { self.ctime }
-    fn is_dir(&self) -> bool { self.is_dir }
-    fn attrib_bitmask(&self) -> u32 { self.attrib_bitmask }
-    fn is_archive_entry(&self) -> bool { self.archive_path.is_some() }
+    fn with_path<T>(&self, f: impl FnOnce(&str) -> T) -> T {
+        f(&self.path)
+    }
+    fn name(&self) -> &str {
+        &self.name
+    }
+    fn extension(&self) -> Option<&str> {
+        self.extension.as_deref()
+    }
+    fn size_bytes(&self) -> u64 {
+        self.size_bytes
+    }
+    fn mtime(&self) -> i64 {
+        self.mtime
+    }
+    fn ctime(&self) -> i64 {
+        self.ctime
+    }
+    fn is_dir(&self) -> bool {
+        self.is_dir
+    }
+    fn attrib_bitmask(&self) -> u32 {
+        self.attrib_bitmask
+    }
+    fn is_archive_entry(&self) -> bool {
+        self.archive_path.is_some()
+    }
     fn with_archive_path<T>(&self, f: impl FnOnce(Option<&str>) -> T) -> T {
         f(self.archive_path.as_deref())
     }
@@ -101,8 +119,8 @@ pub(crate) fn is_under(path: &str, dir: &str) -> bool {
 /// A search hit returned by the Tantivy full-text store.
 #[derive(Debug, Clone)]
 pub struct SearchHit {
-    pub path:    String,
-    pub score:   f32,
+    pub path: String,
+    pub score: f32,
     pub snippet: Option<String>,
 }
 
@@ -115,12 +133,12 @@ pub struct SearchHit {
 /// separately to prevent SQL injection.
 #[derive(Debug, Clone, Default)]
 pub struct MetaFilters {
-    pub min_size:    Option<u64>,
-    pub max_size:    Option<u64>,
-    pub after:       Option<i64>,
-    pub before:      Option<i64>,
-    pub is_dir:      Option<bool>,
-    pub extensions:  Option<Vec<String>>,
+    pub min_size: Option<u64>,
+    pub max_size: Option<u64>,
+    pub after: Option<i64>,
+    pub before: Option<i64>,
+    pub is_dir: Option<bool>,
+    pub extensions: Option<Vec<String>>,
     pub path_prefix: Option<String>,
 }
 
@@ -130,7 +148,7 @@ impl MetaFilters {
     /// Caller appends it to a base `WHERE 1=1` or similar.
     pub fn build_where(&self) -> (String, Vec<rusqlite::types::Value>) {
         let mut clauses: Vec<String> = Vec::new();
-        let mut params:  Vec<rusqlite::types::Value> = Vec::new();
+        let mut params: Vec<rusqlite::types::Value> = Vec::new();
 
         if let Some(v) = self.min_size {
             clauses.push("size_bytes >= ?".into());
@@ -206,11 +224,11 @@ pub enum CmpOp {
 impl CmpOp {
     pub fn as_sql(&self) -> &'static str {
         match self {
-            CmpOp::Lt  => "<",
+            CmpOp::Lt => "<",
             CmpOp::Lte => "<=",
-            CmpOp::Gt  => ">",
+            CmpOp::Gt => ">",
             CmpOp::Gte => ">=",
-            CmpOp::Eq  => "=",
+            CmpOp::Eq => "=",
         }
     }
 }
@@ -265,7 +283,7 @@ fn conjunction_sql(conds: &[SqlCondition]) -> (String, Vec<rusqlite::types::Valu
     if conds.is_empty() {
         return ("1".into(), Vec::new());
     }
-    let mut parts  = Vec::with_capacity(conds.len());
+    let mut parts = Vec::with_capacity(conds.len());
     let mut params = Vec::new();
     for c in conds {
         let (sql, p) = c.to_sql();
@@ -280,52 +298,58 @@ impl SqlCondition {
     pub fn to_sql(&self) -> (String, Vec<rusqlite::types::Value>) {
         use rusqlite::types::Value;
         match self {
-            SqlCondition::NameLike(p) =>
-                ("name LIKE ?".into(), vec![Value::Text(p.clone())]),
-            SqlCondition::NameGlob(p) =>
-                ("name GLOB ?".into(), vec![Value::Text(p.clone())]),
-            SqlCondition::PathLike(p) =>
-                ("path LIKE ?".into(), vec![Value::Text(p.clone())]),
-            SqlCondition::IsDir(v) =>
-                ("is_dir = ?".into(), vec![Value::Integer(i64::from(*v))]),
-            SqlCondition::MtimeRange(a, b) =>
-                ("mtime BETWEEN ? AND ?".into(), vec![Value::Integer(*a), Value::Integer(*b)]),
-            SqlCondition::CtimeRange(a, b) =>
-                ("ctime BETWEEN ? AND ?".into(), vec![Value::Integer(*a), Value::Integer(*b)]),
-            SqlCondition::SizeRange(a, b) =>
-                ("size_bytes BETWEEN ? AND ?".into(),
-                 vec![Value::Integer(*a as i64), Value::Integer(*b as i64)]),
-            SqlCondition::SizeOp(op, v) =>
-                (format!("size_bytes {} ?", op.as_sql()),
-                 vec![Value::Integer(*v as i64)]),
+            SqlCondition::NameLike(p) => ("name LIKE ?".into(), vec![Value::Text(p.clone())]),
+            SqlCondition::NameGlob(p) => ("name GLOB ?".into(), vec![Value::Text(p.clone())]),
+            SqlCondition::PathLike(p) => ("path LIKE ?".into(), vec![Value::Text(p.clone())]),
+            SqlCondition::IsDir(v) => ("is_dir = ?".into(), vec![Value::Integer(i64::from(*v))]),
+            SqlCondition::MtimeRange(a, b) => (
+                "mtime BETWEEN ? AND ?".into(),
+                vec![Value::Integer(*a), Value::Integer(*b)],
+            ),
+            SqlCondition::CtimeRange(a, b) => (
+                "ctime BETWEEN ? AND ?".into(),
+                vec![Value::Integer(*a), Value::Integer(*b)],
+            ),
+            SqlCondition::SizeRange(a, b) => (
+                "size_bytes BETWEEN ? AND ?".into(),
+                vec![Value::Integer(*a as i64), Value::Integer(*b as i64)],
+            ),
+            SqlCondition::SizeOp(op, v) => (
+                format!("size_bytes {} ?", op.as_sql()),
+                vec![Value::Integer(*v as i64)],
+            ),
             SqlCondition::ExtIn(exts) => {
                 let ph = exts.iter().map(|_| "?").collect::<Vec<_>>().join(", ");
                 let vals = exts.iter().map(|e| Value::Text(e.clone())).collect();
                 (format!("extension IN ({ph})"), vals)
             }
-            SqlCondition::ParentPath(p) =>
-                ("path LIKE ? || '/%'".into(), vec![Value::Text(p.clone())]),
-            SqlCondition::NameLenOp(op, n) =>
-                (format!("LENGTH(name) {} ?", op.as_sql()),
-                 vec![Value::Integer(*n as i64)]),
-            SqlCondition::DepthOp(op, d) =>
-                (format!(
+            SqlCondition::ParentPath(p) => {
+                ("path LIKE ? || '/%'".into(), vec![Value::Text(p.clone())])
+            }
+            SqlCondition::NameLenOp(op, n) => (
+                format!("LENGTH(name) {} ?", op.as_sql()),
+                vec![Value::Integer(*n as i64)],
+            ),
+            SqlCondition::DepthOp(op, d) => (
+                format!(
                     "(LENGTH(path) - LENGTH(REPLACE(path, '/', ''))) {} ?",
                     op.as_sql()
-                ), vec![Value::Integer(*d as i64)]),
-            SqlCondition::IsArchiveEntry =>
-                ("archive_path IS NOT NULL".into(), vec![]),
-            SqlCondition::ArchiveOf(ap) =>
-                ("archive_path = ?".into(), vec![Value::Text(ap.clone())]),
-            SqlCondition::AttribAll(mask) =>
-                (format!("(attrib_bitmask & {mask}) = {mask}"), vec![]),
-            SqlCondition::AttribAny(mask) =>
-                (format!("(attrib_bitmask & {mask}) != 0"), vec![]),
+                ),
+                vec![Value::Integer(*d as i64)],
+            ),
+            SqlCondition::IsArchiveEntry => ("archive_path IS NOT NULL".into(), vec![]),
+            SqlCondition::ArchiveOf(ap) => {
+                ("archive_path = ?".into(), vec![Value::Text(ap.clone())])
+            }
+            SqlCondition::AttribAll(mask) => {
+                (format!("(attrib_bitmask & {mask}) = {mask}"), vec![])
+            }
+            SqlCondition::AttribAny(mask) => (format!("(attrib_bitmask & {mask}) != 0"), vec![]),
             SqlCondition::Or(branches) => {
                 if branches.is_empty() {
                     return ("0".into(), Vec::new());
                 }
-                let mut parts  = Vec::with_capacity(branches.len());
+                let mut parts = Vec::with_capacity(branches.len());
                 let mut params = Vec::new();
                 for b in branches {
                     let (sql, p) = conjunction_sql(b);
@@ -347,13 +371,11 @@ impl SqlCondition {
 
 /// Build a complete AND clause from a slice of `SqlCondition`s.
 /// Returns `("")` if the slice is empty, else `" AND cond1 AND cond2 ..."`.
-pub fn build_conditions(
-    conditions: &[SqlCondition],
-) -> (String, Vec<rusqlite::types::Value>) {
+pub fn build_conditions(conditions: &[SqlCondition]) -> (String, Vec<rusqlite::types::Value>) {
     if conditions.is_empty() {
         return (String::new(), Vec::new());
     }
-    let mut parts   = Vec::new();
+    let mut parts = Vec::new();
     let mut all_params = Vec::new();
     for cond in conditions {
         let (sql, params) = cond.to_sql();
@@ -382,13 +404,12 @@ impl FileStore {
     /// Create a `FileStore` from config.
     pub fn from_config(cfg: &crate::config::Config) -> Result<Self> {
         match cfg.store.mode {
-            crate::config::StoreMode::Sqlite =>
-                Ok(FileStore::Sqlite(Arc::new(SqliteStore::with_indexes(
-                    &cfg.data_dir.join("index.db"),
-                    &cfg.store.indexes,
-                )?))),
-            crate::config::StoreMode::Memory =>
-                Ok(FileStore::Memory(Arc::new(MemoryStore::new(&cfg.data_dir)?))),
+            crate::config::StoreMode::Sqlite => Ok(FileStore::Sqlite(Arc::new(
+                SqliteStore::with_indexes(&cfg.data_dir.join("index.db"), &cfg.store.indexes)?,
+            ))),
+            crate::config::StoreMode::Memory => Ok(FileStore::Memory(Arc::new(MemoryStore::new(
+                &cfg.data_dir,
+            )?))),
         }
     }
 
@@ -397,14 +418,20 @@ impl FileStore {
     pub fn upsert_file(&self, record: &FileRecord) -> Result<i64> {
         match self {
             FileStore::Sqlite(s) => s.upsert_file(record),
-            FileStore::Memory(m) => { m.upsert_file(record); Ok(0) }
+            FileStore::Memory(m) => {
+                m.upsert_file(record);
+                Ok(0)
+            }
         }
     }
 
     pub fn remove_file(&self, path: &str) -> Result<()> {
         match self {
             FileStore::Sqlite(s) => s.remove_file(path),
-            FileStore::Memory(m) => { m.remove_file(path); Ok(()) }
+            FileStore::Memory(m) => {
+                m.remove_file(path);
+                Ok(())
+            }
         }
     }
 
@@ -415,10 +442,17 @@ impl FileStore {
         }
     }
 
-    pub fn upsert_archive_batch(&self, records: &[FileRecord], tag: Option<(&str, i64)>) -> Result<()> {
+    pub fn upsert_archive_batch(
+        &self,
+        records: &[FileRecord],
+        tag: Option<(&str, i64)>,
+    ) -> Result<()> {
         match self {
             FileStore::Sqlite(s) => s.upsert_archive_batch(records, tag),
-            FileStore::Memory(m) => { m.upsert_archive_batch(records, tag); Ok(()) }
+            FileStore::Memory(m) => {
+                m.upsert_archive_batch(records, tag);
+                Ok(())
+            }
         }
     }
 
@@ -438,10 +472,17 @@ impl FileStore {
         }
     }
 
-    pub fn batch_upsert_crawl(&self, batch: &[(FileRecord, String)], generation: i64) -> Result<()> {
+    pub fn batch_upsert_crawl(
+        &self,
+        batch: &[(FileRecord, String)],
+        generation: i64,
+    ) -> Result<()> {
         match self {
             FileStore::Sqlite(s) => s.batch_upsert_crawl(batch, generation),
-            FileStore::Memory(m) => { m.batch_upsert_crawl(batch, generation); Ok(()) }
+            FileStore::Memory(m) => {
+                m.batch_upsert_crawl(batch, generation);
+                Ok(())
+            }
         }
     }
 
@@ -498,9 +539,9 @@ impl FileStore {
 
     pub fn search_name(
         &self,
-        name:    &str,
+        name: &str,
         filters: &MetaFilters,
-        limit:   usize,
+        limit: usize,
     ) -> Result<Vec<FileRecord>> {
         match self {
             FileStore::Sqlite(s) => s.search_name(name, filters, limit),
@@ -510,9 +551,9 @@ impl FileStore {
 
     pub fn search_extension(
         &self,
-        ext:     &str,
+        ext: &str,
         filters: &MetaFilters,
-        limit:   usize,
+        limit: usize,
     ) -> Result<Vec<FileRecord>> {
         match self {
             FileStore::Sqlite(s) => s.search_extension(ext, filters, limit),
@@ -527,7 +568,11 @@ impl FileStore {
         }
     }
 
-    pub fn search_conditions(&self, conds: &[SqlCondition], limit: usize) -> Result<Vec<FileRecord>> {
+    pub fn search_conditions(
+        &self,
+        conds: &[SqlCondition],
+        limit: usize,
+    ) -> Result<Vec<FileRecord>> {
         match self {
             FileStore::Sqlite(s) => s.search_conditions(conds, limit),
             FileStore::Memory(m) => m.search_conditions(conds, limit),
@@ -539,8 +584,8 @@ impl FileStore {
     pub fn fuzzy_search(
         &self,
         conds: &[SqlCondition],
-        cap:   usize,
-        rank:  &FuzzyRank<'_>,
+        cap: usize,
+        rank: &FuzzyRank<'_>,
     ) -> Result<Vec<FileRecord>> {
         match self {
             FileStore::Sqlite(s) => s.fuzzy_search(conds, cap, rank),
@@ -562,7 +607,7 @@ impl FileStore {
 
     pub fn find_dupes(
         &self,
-        kind:  DupeKind,
+        kind: DupeKind,
         conds: &[SqlCondition],
         limit: usize,
     ) -> Result<Vec<FileRecord>> {
@@ -591,7 +636,10 @@ impl FileStore {
     pub fn set_meta(&self, key: &str, value: &str) -> Result<()> {
         match self {
             FileStore::Sqlite(s) => s.set_meta(key, value),
-            FileStore::Memory(m) => { m.set_meta(key, value); Ok(()) }
+            FileStore::Memory(m) => {
+                m.set_meta(key, value);
+                Ok(())
+            }
         }
     }
 
@@ -656,7 +704,10 @@ mod tests {
 
     #[test]
     fn meta_filters_min_size() {
-        let f = MetaFilters { min_size: Some(100), ..Default::default() };
+        let f = MetaFilters {
+            min_size: Some(100),
+            ..Default::default()
+        };
         let (sql, params) = f.build_where();
         assert!(sql.contains("size_bytes >="));
         assert_eq!(params.len(), 1);

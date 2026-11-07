@@ -49,7 +49,7 @@ use std::path::PathBuf;
 
 use criterion::{criterion_group, criterion_main, BenchmarkId, Criterion, Throughput};
 
-use filesearch::archive::{LocalFileSource, ByteSource};
+use filesearch::archive::{ByteSource, LocalFileSource};
 use filesearch::zidx::{ZidxBuilder, ZidxIndex};
 
 // ---------------------------------------------------------------------------
@@ -59,11 +59,12 @@ use filesearch::zidx::{ZidxBuilder, ZidxIndex};
 /// Build an in-memory ZIP with `n` stored entries ("file_0.txt" … "file_n.txt").
 fn make_zip_bytes(n: usize) -> Vec<u8> {
     let mut buf = std::io::Cursor::new(Vec::new());
-    let mut zw  = zip::ZipWriter::new(&mut buf);
-    let opts    = zip::write::FileOptions::<()>::default()
-        .compression_method(zip::CompressionMethod::Stored);
+    let mut zw = zip::ZipWriter::new(&mut buf);
+    let opts =
+        zip::write::FileOptions::<()>::default().compression_method(zip::CompressionMethod::Stored);
     for i in 0..n {
-        zw.start_file(format!("dir_{}/file_{i}.txt", i / 100), opts).unwrap();
+        zw.start_file(format!("dir_{}/file_{i}.txt", i / 100), opts)
+            .unwrap();
         zw.write_all(b"x").unwrap();
     }
     zw.finish().unwrap();
@@ -72,7 +73,7 @@ fn make_zip_bytes(n: usize) -> Vec<u8> {
 
 /// Write `n`-entry ZIP to a temp file; return (TempDir, zip_path, zidx_path).
 fn fixture(n: usize) -> (tempfile::TempDir, PathBuf, PathBuf) {
-    let dir      = tempfile::TempDir::new().unwrap();
+    let dir = tempfile::TempDir::new().unwrap();
     let zip_path = dir.path().join("bench.zip");
     let idx_path = dir.path().join("bench.zidx");
     std::fs::write(&zip_path, make_zip_bytes(n)).unwrap();
@@ -113,7 +114,7 @@ fn bench_zidx_lookup(c: &mut Criterion) {
         let idx = ZidxIndex::open(&idx_path).unwrap();
 
         // Look up a path that exists near the middle of the tree.
-        let mid  = n / 2;
+        let mid = n / 2;
         let path = format!("dir_{}/file_{mid}.txt", mid / 100);
 
         g.throughput(Throughput::Elements(1));
@@ -140,7 +141,7 @@ fn bench_local_file_read(c: &mut Criterion) {
     let mut g = c.benchmark_group("local_file_read");
 
     // Write a 4 MB temp file.
-    let tmp  = tempfile::NamedTempFile::new().unwrap();
+    let tmp = tempfile::NamedTempFile::new().unwrap();
     let data = vec![0xABu8; 4 * 1024 * 1024];
     std::fs::write(tmp.path(), &data).unwrap();
 

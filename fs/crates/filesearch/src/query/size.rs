@@ -1,15 +1,15 @@
-use crate::error::{AppError, Result};
 use super::ast::RangeExpr;
+use crate::error::{AppError, Result};
 
 pub fn parse_size_value(s: &str) -> Result<RangeExpr<u64>> {
     let s = s.trim();
     match s.to_ascii_lowercase().as_str() {
-        "empty"    => return Ok(RangeExpr::Eq(0)),
-        "tiny"     => return Ok(RangeExpr::Between(1, 10 * 1024)),
-        "small"    => return Ok(RangeExpr::Between(10 * 1024 + 1, 100 * 1024)),
-        "medium"   => return Ok(RangeExpr::Between(100 * 1024 + 1, 1024 * 1024)),
-        "large"    => return Ok(RangeExpr::Between(1024 * 1024 + 1, 16 * 1024 * 1024)),
-        "huge"     => return Ok(RangeExpr::Between(16 * 1024 * 1024 + 1, 128 * 1024 * 1024)),
+        "empty" => return Ok(RangeExpr::Eq(0)),
+        "tiny" => return Ok(RangeExpr::Between(1, 10 * 1024)),
+        "small" => return Ok(RangeExpr::Between(10 * 1024 + 1, 100 * 1024)),
+        "medium" => return Ok(RangeExpr::Between(100 * 1024 + 1, 1024 * 1024)),
+        "large" => return Ok(RangeExpr::Between(1024 * 1024 + 1, 16 * 1024 * 1024)),
+        "huge" => return Ok(RangeExpr::Between(16 * 1024 * 1024 + 1, 128 * 1024 * 1024)),
         "gigantic" => return Ok(RangeExpr::Gte(128 * 1024 * 1024 + 1)),
         _ => {}
     }
