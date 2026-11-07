@@ -311,37 +311,55 @@ pub async fn process_event(
             let now = unix_now();
             let record = build_file_record(&path, &meta, is_hidden, now);
 
-            if let Err(e) = sqlite.upsert_file(&record) {
-                tracing::warn!("process_event upsert: {e}");
-                return;
-            }
+            // upsert_file/children_of/remove hold the SQLite write lock and can
+            // block for up to busy_timeout under crawl-writer contention; run
+            // them on a blocking-pool thread rather than the tokio worker.
+            let sqlite_b = Arc::clone(&sqlite);
+            let tantivy_b = Arc::clone(&tantivy);
+            let record_b = record.clone();
+            let path_b = path.clone();
+            let upserted = tokio::task::spawn_blocking(move || {
+                if let Err(e) = sqlite_b.upsert_file(&record_b) {
+                    tracing::warn!("process_event upsert: {e}");
+                    return false;
+                }
 
-            // Stale-sibling reconciliation. notify-debouncer-full's FSEvents
-            // rename pairing can silently swallow the "old path" side of a
-            // rename entirely (its was_created() heuristic misfires when
-            // FSEvents replays the file's original creation flags alongside
-            // the rename-from flag), so a renamed-away file's row can be left
-            // in the store forever with no Deleted/Renamed event ever firing
-            // for it. Piggyback on every Created/Modified event to sweep
-            // recorded siblings under the same parent that no longer exist
-            // on disk, using the existing indexed `parent` column.
-            if let Some(parent) = path.parent() {
-                let parent_str = parent.to_string_lossy().into_owned();
-                if let Ok(siblings) = sqlite.children_of(&parent_str) {
-                    for sibling in siblings {
-                        if sibling == record.path {
-                            continue;
-                        }
-                        if std::fs::symlink_metadata(&sibling).is_err() {
-                            if let Err(e) = sqlite.remove_file(&sibling) {
-                                tracing::warn!("process_event stale-sibling remove: {e}");
+                // Stale-sibling reconciliation. notify-debouncer-full's FSEvents
+                // rename pairing can silently swallow the "old path" side of a
+                // rename entirely (its was_created() heuristic misfires when
+                // FSEvents replays the file's original creation flags alongside
+                // the rename-from flag), so a renamed-away file's row can be left
+                // in the store forever with no Deleted/Renamed event ever firing
+                // for it. Piggyback on every Created/Modified event to sweep
+                // recorded siblings under the same parent that no longer exist
+                // on disk, using the existing indexed `parent` column.
+                if let Some(parent) = path_b.parent() {
+                    let parent_str = parent.to_string_lossy().into_owned();
+                    if let Ok(siblings) = sqlite_b.children_of(&parent_str) {
+                        for sibling in siblings {
+                            if sibling == record_b.path {
+                                continue;
                             }
-                            if let Err(e) = tantivy.remove(&sibling) {
-                                tracing::warn!("process_event stale-sibling tantivy remove: {e}");
+                            if std::fs::symlink_metadata(&sibling).is_err() {
+                                if let Err(e) = sqlite_b.remove_file(&sibling) {
+                                    tracing::warn!("process_event stale-sibling remove: {e}");
+                                }
+                                if let Err(e) = tantivy_b.remove(&sibling) {
+                                    tracing::warn!(
+                                        "process_event stale-sibling tantivy remove: {e}"
+                                    );
+                                }
                             }
                         }
                     }
                 }
+                true
+            })
+            .await
+            .unwrap_or(false);
+
+            if !upserted {
+                return;
             }
 
             // Content
@@ -365,30 +383,47 @@ pub async fn process_event(
 
         IndexEvent::Deleted(path) => {
             let path_str = path.to_string_lossy().into_owned();
-            if let Err(e) = sqlite.remove_file(&path_str) {
-                tracing::warn!("process_event remove: {e}");
-            }
-            if let Err(e) = tantivy.remove(&path_str) {
-                tracing::warn!("tantivy remove: {e}");
-            }
+            let sqlite_b = Arc::clone(&sqlite);
+            let tantivy_b = Arc::clone(&tantivy);
+            tokio::task::spawn_blocking(move || {
+                if let Err(e) = sqlite_b.remove_file(&path_str) {
+                    tracing::warn!("process_event remove: {e}");
+                }
+                if let Err(e) = tantivy_b.remove(&path_str) {
+                    tracing::warn!("tantivy remove: {e}");
+                }
+            })
+            .await
+            .ok();
             metrics.events_processed.fetch_add(1, Ordering::Relaxed);
         }
 
         IndexEvent::Renamed { from, to } => {
             let from_str = from.to_string_lossy().into_owned();
-            // Remove old record(s)
-            let _ = sqlite.remove_file(&from_str);
-            let _ = tantivy.remove(&from_str);
-            // If directory rename, remove all children under old prefix
-            let _ = sqlite.remove_directory(&from_str);
+            let sqlite_b = Arc::clone(&sqlite);
+            let tantivy_b = Arc::clone(&tantivy);
+            let to_b = to.clone();
+            let to_exists = tokio::task::spawn_blocking(move || {
+                // Remove old record(s)
+                let _ = sqlite_b.remove_file(&from_str);
+                let _ = tantivy_b.remove(&from_str);
+                // If directory rename, remove all children under old prefix
+                let _ = sqlite_b.remove_directory(&from_str);
 
-            // Upsert new path
-            if let Ok(meta) = std::fs::metadata(&to) {
-                let is_hidden = is_hidden_name(&to);
+                // Upsert new path
+                let Ok(meta) = std::fs::metadata(&to_b) else {
+                    return false;
+                };
+                let is_hidden = is_hidden_name(&to_b);
                 let now = unix_now();
-                let record = build_file_record(&to, &meta, is_hidden, now);
-                let _ = sqlite.upsert_file(&record);
+                let record = build_file_record(&to_b, &meta, is_hidden, now);
+                let _ = sqlite_b.upsert_file(&record);
+                true
+            })
+            .await
+            .unwrap_or(false);
 
+            if to_exists {
                 // Archive handling
                 let is_archive = to
                     .extension()
