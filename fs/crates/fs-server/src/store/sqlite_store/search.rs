@@ -99,8 +99,11 @@ impl EarlyStop {
         }
     }
 
-    fn stopped(&self) -> bool {
-        self.found.load(Ordering::Relaxed) >= self.limit
+    /// Whether `e` is this search's own interrupt rather than a real failure.
+    fn interrupted_by(&self, e: &rusqlite::Error) -> bool {
+        matches!(e, rusqlite::Error::SqliteFailure(f, _)
+            if f.code == rusqlite::ErrorCode::OperationInterrupted)
+            && self.found.load(Ordering::Relaxed) >= self.limit
     }
 }
 
@@ -111,8 +114,18 @@ fn collect_until_stopped(
     params: &[Value],
     stop: &EarlyStop,
 ) -> Result<Vec<FileRecord>> {
-    let mut stmt = conn.prepare_cached(sql)?;
-    let mut rows = stmt.query(rusqlite::params_from_iter(params.iter()))?;
+    // The interrupt can land in any of these calls, not only while stepping:
+    // SQLite also checks for it while compiling a statement.
+    let mut stmt = match conn.prepare_cached(sql) {
+        Ok(stmt) => stmt,
+        Err(e) if stop.interrupted_by(&e) => return Ok(Vec::new()),
+        Err(e) => return Err(e.into()),
+    };
+    let mut rows = match stmt.query(rusqlite::params_from_iter(params.iter())) {
+        Ok(rows) => rows,
+        Err(e) if stop.interrupted_by(&e) => return Ok(Vec::new()),
+        Err(e) => return Err(e.into()),
+    };
     let mut out = Vec::new();
     loop {
         match rows.next() {
@@ -121,11 +134,7 @@ fn collect_until_stopped(
                 stop.add_row();
             }
             Ok(None) => break,
-            Err(rusqlite::Error::SqliteFailure(e, _))
-                if e.code == rusqlite::ErrorCode::OperationInterrupted && stop.stopped() =>
-            {
-                break
-            }
+            Err(e) if stop.interrupted_by(&e) => break,
             Err(e) => return Err(e.into()),
         }
     }

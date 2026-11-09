@@ -3,6 +3,7 @@ use std::sync::OnceLock;
 use rayon::prelude::*;
 
 use super::matching::{compile, dupe_key, meta_filter_matches, Compiled, DupeKey, Like, PathMemo};
+use super::sort::sort_numbers;
 use super::state::{EntryRef, IndexState};
 use super::{
     DupeKind, FileRecord, FuzzyRank, MemoryStore, MetaFilters, RecordView, Sort, SqlCondition,
@@ -80,13 +81,30 @@ fn matching_entries(
     })
 }
 
+/// At most this many matches are sorted directly instead of using an order.
+const DIRECT_SORT_MAX: usize = 4096;
+
 /// The first `limit` matching entry numbers in `sort` order.
+///
+/// A scan comes first because walking an order visits entries in effectively
+/// random memory order, which for a rare term is several times slower than
+/// the scan, and the first use would also build the order. Common terms
+/// reach the bound within the first blocks, so the scan costs them little.
 fn sorted_entries(
     state: &IndexState,
     sort: Sort,
     limit: usize,
     pred: impl Fn(&EntryRef<'_>, &mut PathMemo) -> bool + Sync,
 ) -> Vec<u32> {
+    let mut few = matching_entries(state, DIRECT_SORT_MAX + 1, &pred);
+    if few.len() <= DIRECT_SORT_MAX {
+        sort_numbers(state, sort.key, &mut few);
+        if sort.descending {
+            few.reverse();
+        }
+        few.truncate(limit);
+        return few;
+    }
     let order = state.sorted_order(sort.key);
     let at = |p: usize| {
         if sort.descending {

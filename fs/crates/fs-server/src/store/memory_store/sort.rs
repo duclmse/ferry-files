@@ -42,7 +42,7 @@ fn compare(key: SortKey, a: &EntryRef<'_>, b: &EntryRef<'_>) -> Ordering {
     by_key.then(a.index().cmp(&b.index()))
 }
 
-fn sort_numbers(state: &IndexState, key: SortKey, numbers: &mut [u32]) {
+pub(super) fn sort_numbers(state: &IndexState, key: SortKey, numbers: &mut [u32]) {
     let cmp = |a: &u32, b: &u32| compare(key, &state.view(*a), &state.view(*b));
     match scan_pool() {
         Some(pool) => pool.install(|| numbers.par_sort_unstable_by(cmp)),

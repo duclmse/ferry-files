@@ -772,7 +772,15 @@ fn sort_index_follows_changes_after_it_is_built() {
     for (p, s) in [("/a", 1), ("/b", 2), ("/c", 3)] {
         store.upsert_file(&sized(p, s));
     }
-    let all = |sort| names(store.search_sorted(&[], sort, 10).unwrap());
+    // Enough matches that the query uses the order rather than sorting them.
+    for i in 0..5000 {
+        store.upsert_file(&sized(&format!("/z{i:04}"), 0));
+    }
+    let all = |sort| {
+        let mut got = names(store.search_sorted(&[], sort, 4).unwrap());
+        got.retain(|n| !n.starts_with('z'));
+        got
+    };
     assert_eq!(all(BY_SIZE_DESC), ["c", "b", "a"]);
 
     store.upsert_file(&sized("/a", 50)); // changed
@@ -849,4 +857,28 @@ fn flush_if_changed_saves_only_after_an_entry_changes() {
     let reloaded = MemoryStore::new(dir.path()).unwrap();
     assert!(reloaded.get_by_path("/a/b.rs").unwrap().is_none());
     assert_eq!(reloaded.get_meta("journal_position").as_deref(), Some("{}"));
+}
+
+#[test]
+fn few_and_many_matches_sort_identically() {
+    let store = make_store();
+    for i in 0..6000u64 {
+        store.upsert_file(&sized(&format!("/f{i:04}"), i % 7));
+    }
+    let top = |conds: &[SqlCondition], sort| names(store.search_sorted(conds, sort, 6000).unwrap());
+    // Everything matches, so this comes from the order.
+    let via_order = top(&[], BY_SIZE_DESC);
+    // Under the bound, so these are sorted directly; ties must agree.
+    let few = [SqlCondition::NameLike("f00%".into())];
+    let direct = top(&few, BY_SIZE_DESC);
+    assert_eq!(direct.len(), 100);
+    let filtered: Vec<String> = via_order
+        .into_iter()
+        .filter(|n| n.starts_with("f00"))
+        .collect();
+    assert_eq!(direct, filtered);
+    assert_eq!(
+        names(store.search_sorted(&few, BY_NAME, 2).unwrap()),
+        ["f0000", "f0001"]
+    );
 }
