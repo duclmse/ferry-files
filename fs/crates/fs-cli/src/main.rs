@@ -1,0 +1,367 @@
+mod config;
+mod tui;
+
+use fs_protocol::ipc_client::IpcClient;
+use fs_protocol::ipc_protocol::{IpcRequest, IpcResponse};
+
+use clap::{Parser, Subcommand};
+
+#[derive(Parser)]
+#[command(name = "fs", version, about = "Client for the fs search daemon")]
+struct Cli {
+    #[arg(short, long, default_value = "config.toml")]
+    config: std::path::PathBuf,
+
+    #[command(subcommand)]
+    command: Command,
+}
+
+// Parsed once per process, so boxing the large `Search` variant buys nothing.
+#[allow(clippy::large_enum_variant)]
+#[derive(Subcommand)]
+enum Command {
+    /// Search the index (requires daemon to be running)
+    Search {
+        /// Name pattern or query expression; omit to match all (combine with filter flags)
+        #[arg(default_value = "")]
+        query: String,
+        #[arg(short, long, default_value = "100")]
+        limit: u32,
+        #[arg(long, default_value = "0")]
+        offset: u32,
+        #[arg(long)]
+        json: bool,
+        /// Filter by extension(s). Repeat or comma-separate: --ext rs,toml
+        #[arg(short = 'e', long = "ext", value_delimiter = ',')]
+        ext: Vec<String>,
+        /// Filter by path prefix (e.g. --path C:/projects)
+        #[arg(long)]
+        path: Option<String>,
+        /// Filter by parent directory name or path
+        #[arg(long)]
+        parent: Option<String>,
+        /// Filter by file size (e.g. >1mb, <=500kb, large)
+        #[arg(long)]
+        size: Option<String>,
+        /// Filter by date modified (e.g. today, last7days, 2024-01-01)
+        #[arg(long)]
+        modified: Option<String>,
+        /// Filter by date created (e.g. thismonth, 2024-01-01)
+        #[arg(long)]
+        created: Option<String>,
+        /// Full-text content search
+        #[arg(long)]
+        content: Option<String>,
+        /// Fuzzy filename match (nucleo scorer)
+        #[arg(long)]
+        fuzzy: Option<String>,
+        /// Filter by regex pattern applied to the full path
+        #[arg(long)]
+        regex: Option<String>,
+        /// Return only files (exclude directories)
+        #[arg(long)]
+        files_only: bool,
+        /// Return only directories
+        #[arg(long)]
+        dirs_only: bool,
+        /// Return only inner archive entries
+        #[arg(long)]
+        archive_only: bool,
+    },
+
+    /// Show index statistics
+    Stats,
+
+    /// Trigger a re-index
+    Reindex {
+        #[arg(long)]
+        full: bool,
+    },
+
+    /// Open a file via the daemon
+    Open { path: String },
+
+    /// Launch the interactive TUI
+    Tui,
+
+    /// Manage the rar2zip extension (requires a daemon built with it)
+    Rar2zip {
+        #[command(subcommand)]
+        action: Rar2zipAction,
+    },
+}
+
+#[derive(Subcommand)]
+enum Rar2zipAction {
+    /// Print queue depth per status
+    Status,
+    /// Reset all failed jobs back to pending
+    RetryFailed,
+}
+
+#[tokio::main]
+async fn main() {
+    let cli = Cli::parse();
+
+    match cli.command {
+        Command::Search {
+            query,
+            limit,
+            offset,
+            json,
+            ext,
+            path,
+            parent,
+            size,
+            modified,
+            created,
+            content,
+            fuzzy,
+            regex,
+            files_only,
+            dirs_only,
+            archive_only,
+        } => {
+            let opts = SearchOpts {
+                ext,
+                path,
+                parent,
+                size,
+                modified,
+                created,
+                content,
+                fuzzy,
+                regex,
+                files_only,
+                dirs_only,
+                archive_only,
+            };
+            if let Err(e) = run_search(cli.config, query, limit, offset, json, opts).await {
+                eprintln!("search error: {e}");
+                std::process::exit(1);
+            }
+        }
+        Command::Stats => {
+            if let Err(e) = run_stats(cli.config).await {
+                eprintln!("stats error: {e}");
+                std::process::exit(1);
+            }
+        }
+        Command::Reindex { full } => {
+            if let Err(e) = run_reindex(cli.config, full).await {
+                eprintln!("reindex error: {e}");
+                std::process::exit(1);
+            }
+        }
+        Command::Open { path } => {
+            if let Err(e) = run_open(cli.config, path).await {
+                eprintln!("open error: {e}");
+                std::process::exit(1);
+            }
+        }
+        Command::Tui => {
+            if let Err(e) = run_tui(cli.config).await {
+                eprintln!("tui error: {e}");
+                std::process::exit(1);
+            }
+        }
+        Command::Rar2zip { action } => {
+            let command = match action {
+                Rar2zipAction::Status => "status",
+                Rar2zipAction::RetryFailed => "retry-failed",
+            };
+            if let Err(e) = run_extension(cli.config, "rar2zip", command).await {
+                eprintln!("rar2zip error: {e}");
+                std::process::exit(1);
+            }
+        }
+    }
+}
+
+// ---------------------------------------------------------------------------
+// IPC client helpers
+// ---------------------------------------------------------------------------
+
+async fn ipc_client_for(config_path: std::path::PathBuf) -> anyhow::Result<IpcClient> {
+    let ipc_path = config::load_ipc_path(&config_path)?;
+    IpcClient::connect(&ipc_path)
+        .await
+        .map_err(|e| anyhow::anyhow!("ipc connect: {e}"))
+}
+
+struct SearchOpts {
+    ext: Vec<String>,
+    path: Option<String>,
+    parent: Option<String>,
+    size: Option<String>,
+    modified: Option<String>,
+    created: Option<String>,
+    content: Option<String>,
+    fuzzy: Option<String>,
+    regex: Option<String>,
+    files_only: bool,
+    dirs_only: bool,
+    archive_only: bool,
+}
+
+async fn run_search(
+    config_path: std::path::PathBuf,
+    query: String,
+    limit: u32,
+    offset: u32,
+    json: bool,
+    opts: SearchOpts,
+) -> anyhow::Result<()> {
+    let mut clauses: Vec<String> = Vec::new();
+
+    if !opts.ext.is_empty() {
+        clauses.push(format!("ext:{}", opts.ext.join(";")));
+    }
+    if let Some(p) = opts.path {
+        clauses.push(format!("path:{p}"));
+    }
+    if let Some(p) = opts.parent {
+        clauses.push(format!("parent:{p}"));
+    }
+    if let Some(s) = opts.size {
+        clauses.push(format!("size:{s}"));
+    }
+    if let Some(d) = opts.modified {
+        clauses.push(format!("dm:{d}"));
+    }
+    if let Some(d) = opts.created {
+        clauses.push(format!("dc:{d}"));
+    }
+    if let Some(c) = opts.content {
+        clauses.push(format!("content:{c}"));
+    }
+    if let Some(f) = opts.fuzzy {
+        clauses.push(format!("fuzzy:{f}"));
+    }
+    if let Some(r) = opts.regex {
+        clauses.push(format!("regex:{r}"));
+    }
+    // Modifier flags: inject a dummy `*` term so the modifier emits its SQL condition
+    if opts.files_only {
+        clauses.push("file: *".into());
+    }
+    if opts.dirs_only {
+        clauses.push("folder: *".into());
+    }
+    if opts.archive_only {
+        clauses.push("archive: *".into());
+    }
+
+    let query = match (query.is_empty(), clauses.is_empty()) {
+        (true, true) => anyhow::bail!("specify a query or at least one filter flag"),
+        (true, false) => clauses.join(" "),
+        (false, true) => query,
+        (false, false) => format!("{query} {}", clauses.join(" ")),
+    };
+
+    let mut client = ipc_client_for(config_path).await?;
+    let resp = client
+        .request(IpcRequest::Search {
+            query,
+            limit,
+            offset,
+        })
+        .await
+        .map_err(|e| anyhow::anyhow!("{e}"))?;
+
+    if let IpcResponse::Search(sr) = resp {
+        if json {
+            println!("{}", serde_json::to_string_pretty(&sr)?);
+        } else {
+            for hit in &sr.hits {
+                println!("{}", hit.path);
+            }
+            eprintln!("{} hit(s) (total: {})", sr.hits.len(), sr.total_hits);
+        }
+    }
+    Ok(())
+}
+
+async fn run_stats(config_path: std::path::PathBuf) -> anyhow::Result<()> {
+    let mut client = ipc_client_for(config_path).await?;
+    let resp = client
+        .request(IpcRequest::Stats)
+        .await
+        .map_err(|e| anyhow::anyhow!("{e}"))?;
+
+    if let IpcResponse::Stats(s) = resp {
+        println!("files:           {}", s.total_files);
+        println!("dirs:            {}", s.total_dirs);
+        println!("content indexed: {}", s.content_indexed);
+        println!("archive entries: {}", s.archive_entries_indexed);
+        println!("archives:        {}", s.archives_crawled);
+        println!("events:          {}", s.events_processed);
+        println!("last crawl:      {}s ago", s.last_crawl_secs);
+    }
+    Ok(())
+}
+
+async fn run_reindex(config_path: std::path::PathBuf, full: bool) -> anyhow::Result<()> {
+    let mut client = ipc_client_for(config_path).await?;
+    let resp = client
+        .request(IpcRequest::Reindex { full })
+        .await
+        .map_err(|e| anyhow::anyhow!("{e}"))?;
+
+    if let IpcResponse::Reindex { accepted } = resp {
+        if accepted {
+            println!("reindex accepted");
+        } else {
+            eprintln!("reindex rejected by daemon");
+            std::process::exit(1);
+        }
+    }
+    Ok(())
+}
+
+async fn run_open(config_path: std::path::PathBuf, path: String) -> anyhow::Result<()> {
+    let mut client = ipc_client_for(config_path).await?;
+    let resp = client
+        .request(IpcRequest::Open { path })
+        .await
+        .map_err(|e| anyhow::anyhow!("{e}"))?;
+
+    if let IpcResponse::Open { opened, temp_path } = resp {
+        if opened {
+            if let Some(p) = temp_path {
+                println!("opened: {p}");
+            } else {
+                println!("opened");
+            }
+        } else {
+            eprintln!("daemon could not open the file");
+            std::process::exit(1);
+        }
+    }
+    Ok(())
+}
+
+async fn run_tui(config_path: std::path::PathBuf) -> anyhow::Result<()> {
+    let ipc_path = config::load_ipc_path(&config_path)?;
+    tui::run(&ipc_path).await
+}
+
+async fn run_extension(
+    config_path: std::path::PathBuf,
+    name: &str,
+    command: &str,
+) -> anyhow::Result<()> {
+    let mut client = ipc_client_for(config_path).await?;
+    let resp = client
+        .request(IpcRequest::Extension {
+            name: name.to_owned(),
+            command: command.to_owned(),
+        })
+        .await
+        .map_err(|e| anyhow::anyhow!("{e}"))?;
+
+    if let IpcResponse::Extension { output } = resp {
+        println!("{output}");
+    }
+    Ok(())
+}

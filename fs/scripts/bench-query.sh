@@ -26,11 +26,11 @@ if [ ! -f "$CONFIG" ]; then
     exit 1
 fi
 
-if [ ! -x "target/release/filesearch" ]; then
+if [ ! -x "target/release/fsd" ]; then
     echo "==> Building release binary first"
     ./scripts/build.sh
 fi
-BIN="$REPO_ROOT/target/release/filesearch"
+BIN="$REPO_ROOT/target/release/fsd"
 
 REST_PORT="$(sed -n 's/^rest_port *= *\([0-9]*\).*/\1/p' "$CONFIG" | head -1)"
 REST_PORT="${REST_PORT:-17700}"

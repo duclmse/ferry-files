@@ -8,8 +8,12 @@ cargo build
 cargo build --release
 
 # Single crate
-cargo build -p filesearch
-cargo build -p rar2zip
+cargo build -p fs-server          # binary: fsd
+cargo build -p fs-cli             # binary: fs
+cargo build -p fs-ext-rar2zip
+
+# Daemon with the rar2zip extension
+cargo build -p fs-server --features rar2zip
 
 # Check only (fast)
 cargo check --workspace
@@ -21,11 +25,12 @@ cargo clippy --workspace -- -D warnings
 cargo doc --no-deps --workspace
 ```
 
-Both crates build on Windows, Linux and macOS. Only the Windows Service
-integration in `rar2zip` (`service.rs`, `windows-service`) is Windows-only;
-elsewhere `rar2zip` runs as a foreground process. RAR extraction uses the
-`unrar` crate, which compiles the bundled RARLAB UnRAR C++ source, so a C++
-compiler is required.
+All crates build on Windows, Linux and macOS. Only the Windows Service
+integration in `fs-server` (`service.rs`, `windows-service`) is Windows-only.
+rar2zip runs inside `fsd` when built with the `rar2zip` feature and configured
+under `[extensions.rar2zip]`. RAR extraction uses the `unrar` crate, which
+compiles the bundled RARLAB UnRAR C++ source, so that feature requires a C++
+compiler.
 
 ## Test commands
 
@@ -34,19 +39,22 @@ compiler is required.
 cargo test --workspace
 
 # Single crate
-cargo test -p filesearch
-cargo test -p rar2zip
+cargo test -p fs-server
+cargo test -p fs-cli
+cargo test -p fs-protocol
+cargo test -p fs-ext-rar2zip
+cargo test -p fs-server --features rar2zip
 cargo test -p common
 
 # Single module
-cargo test -p filesearch query::parser
-cargo test -p filesearch store::sqlite_store
+cargo test -p fs-server query::parser
+cargo test -p fs-server store::sqlite_store
 
 # With output (for debugging failing tests)
-cargo test -p filesearch -- --nocapture
+cargo test -p fs-server -- --nocapture
 
 # Benchmarks (criterion)
-cargo bench -p filesearch
+cargo bench -p fs-server
 ```
 
 ## Project structure
@@ -56,18 +64,30 @@ crates/
   common/src/
     error.rs      CommonError, ProjectError trait
     logger.rs     tracing init (JSON, daily rolling)
-  filesearch/src/
+    extension.rs  Extension trait implemented by daemon extensions
+  fs-protocol/src/
+    ipc_protocol.rs  wire format; changes must bump PROTOCOL_VERSION
+    ipc_client.rs    client side of the IPC channel
+  fs-cli/src/
+    main.rs       client commands (binary `fs`)
+    config.rs     reads only api.ipc_path from the shared config
+    tui.rs, tui/  ratatui TUI
+  fs-server/src/
+    main.rs       daemon and offline commands (binary `fsd`)
     daemon.rs     startup orchestration, graceful shutdown
     config.rs     TOML config, hot-reload
     watcher/      notify-debouncer-full wrappers
     indexer/      crawler, archive (ZIP), content, exclusions
     store/        sqlite_store, tantivy_store
     query/        parser, evaluator, ast, date, size, glob, dupes, macros
-    api/          rest (Axum), grpc (Tonic), ipc (Named Pipe)
-    frontend/     cli.rs (CLI + ratatui TUI)
-  rar2zip/src/
+    api/          rest (Axum), grpc (Tonic), ipc_server (socket / Named Pipe)
+    archive/      streaming ZIP extraction, .dzx random access
+    zidx/         .zidx sidecar index
+    scheduler/    archive request scheduling and rate limits
+    extensions.rs builds extensions listed under [extensions]
+  fs-ext-rar2zip/src/
+    extension.rs  Extension impl (lifecycle, client commands)
     app.rs        orchestration, process_job
-    service.rs    Windows Service FFI
     config.rs     TOML config, Destination struct
     watcher.rs    folder watcher, min-age gate
     intake.rs     dedup, multi-part RAR, strategy selection
@@ -101,7 +121,7 @@ disk. The commit loop in `daemon.rs` runs every `commit_interval_secs`.
 ## Dependency notes
 
 - `notify` / `notify-debouncer-full` - filesystem watcher. Debounce is 500ms in
-  filesearch, 5s min-age gate in rar2zip.
+  fs, 5s min-age gate in rar2zip.
 - `tantivy` - full-text index. Schema is defined once in `tantivy_store.rs`; do
   not add fields without migrating existing indices.
 - `nucleo` - SIMD fuzzy matcher (used for `fuzzy:` queries). Called from rayon
@@ -111,7 +131,7 @@ disk. The commit loop in `daemon.rs` runs every `commit_interval_secs`.
   verified yet (`SshHandler::check_server_key` accepts any key).
 - `windows-service` - Windows SCM integration. Only compiled on Windows
   (`#[cfg(target_os = "windows")]`).
-- `tonic` / `prost` - gRPC. Proto changes require `protoc` on PATH; stubs
+- `tonic` / `prost` - gRPC. Uses a bundled `protoc`; stubs
   regenerate during `cargo build` via `build.rs`.
 
 ## Gotchas
@@ -127,5 +147,7 @@ disk. The commit loop in `daemon.rs` runs every `commit_interval_secs`.
   update `queue::recover_stale`.
 - Config hot-reload is additive for watch paths. Removed paths are not
   un-watched until restart.
+- The client must stay thin: `fs-cli` depends only on `fs-protocol`, never on
+  `fs-server` or an extension crate. New client features go through IPC.
 - Tantivy's `IndexWriter` holds a lock file. Only one writer per index
   directory. The daemon enforces a PID file check before acquiring the writer.

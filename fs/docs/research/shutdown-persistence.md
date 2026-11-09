@@ -3,7 +3,7 @@
 > **Status:** research note. Compares on-disk formats for snapshotting an
 > in-memory index and lists per-OS shutdown hooks (Windows `PRESHUTDOWN`,
 > systemd, launchd, Tokio signals). Not a spec; see
-> `docs/reference/filesearch-modules.md` for current daemon behaviour.
+> `docs/reference/fs-server-modules.md` for current daemon behaviour.
 
 ## The Core Tension
 

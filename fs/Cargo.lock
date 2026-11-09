@@ -831,6 +831,7 @@ dependencies = [
  "serde",
  "thiserror 1.0.69",
  "tokio",
+ "tokio-util",
  "tracing",
  "tracing-appender",
  "tracing-subscriber",
@@ -1448,73 +1449,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "filesearch"
-version = "0.1.0"
-dependencies = [
- "anyhow",
- "assert_fs",
- "async-stream",
- "async-trait",
- "axum 0.7.9",
- "blake3",
- "bytes",
- "chrono",
- "clap",
- "common",
- "criterion",
- "crossterm",
- "dashmap 5.5.3",
- "encoding_rs",
- "flate2",
- "fsevent-sys",
- "futures",
- "glob",
- "hashbrown 0.15.5",
- "humansize",
- "hyper 1.9.0",
- "ignore",
- "memmap2",
- "nix 0.28.0",
- "notify",
- "notify-debouncer-full",
- "nucleo",
- "once_cell",
- "postcard",
- "prost",
- "protoc-bin-vendored",
- "r2d2",
- "r2d2_sqlite",
- "ratatui",
- "rayon",
- "regex",
- "reqwest",
- "rusqlite",
- "sd-notify",
- "serde",
- "serde_json",
- "tantivy",
- "tempfile",
- "thiserror 1.0.69",
- "tokio",
- "tokio-stream",
- "tokio-test",
- "tokio-util",
- "toml",
- "tonic",
- "tonic-build",
- "tonic-reflection",
- "tower 0.4.13",
- "tower-http 0.5.2",
- "tracing",
- "tracing-appender",
- "tracing-subscriber",
- "uuid",
- "windows 0.54.0",
- "windows-service",
- "zip",
-]
-
-[[package]]
 name = "filetime"
 version = "0.2.27"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -1592,6 +1526,138 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "cb4cb245038516f5f85277875cdaa4f7d2c9a0fa0468de06ed190163b1581fcf"
 dependencies = [
  "percent-encoding",
+]
+
+[[package]]
+name = "fs-cli"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "clap",
+ "crossterm",
+ "fs-protocol",
+ "ratatui",
+ "serde",
+ "serde_json",
+ "tokio",
+ "toml",
+ "tracing",
+]
+
+[[package]]
+name = "fs-ext-rar2zip"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "bytes",
+ "bzip2",
+ "chrono",
+ "common",
+ "flate2",
+ "glob",
+ "hex",
+ "lettre",
+ "notify",
+ "notify-debouncer-full",
+ "r2d2",
+ "r2d2_sqlite",
+ "rusqlite",
+ "russh",
+ "russh-sftp",
+ "serde",
+ "serde_json",
+ "sevenz-rust",
+ "sha2 0.10.9",
+ "tar",
+ "tempfile",
+ "thiserror 1.0.69",
+ "tiny_http",
+ "tokio",
+ "tokio-test",
+ "tokio-util",
+ "toml",
+ "tracing",
+ "unrar",
+ "ureq",
+ "uuid",
+ "zip",
+]
+
+[[package]]
+name = "fs-protocol"
+version = "0.1.0"
+dependencies = [
+ "postcard",
+ "serde",
+ "serde_json",
+ "tokio",
+]
+
+[[package]]
+name = "fs-server"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "assert_fs",
+ "async-stream",
+ "async-trait",
+ "axum 0.7.9",
+ "blake3",
+ "bytes",
+ "chrono",
+ "clap",
+ "common",
+ "criterion",
+ "dashmap 5.5.3",
+ "encoding_rs",
+ "flate2",
+ "fs-ext-rar2zip",
+ "fs-protocol",
+ "fsevent-sys",
+ "futures",
+ "glob",
+ "hashbrown 0.15.5",
+ "humansize",
+ "hyper 1.9.0",
+ "ignore",
+ "memmap2",
+ "nix 0.28.0",
+ "notify",
+ "notify-debouncer-full",
+ "nucleo",
+ "once_cell",
+ "postcard",
+ "prost",
+ "protoc-bin-vendored",
+ "r2d2",
+ "r2d2_sqlite",
+ "rayon",
+ "regex",
+ "reqwest",
+ "rusqlite",
+ "sd-notify",
+ "serde",
+ "serde_json",
+ "tantivy",
+ "tempfile",
+ "thiserror 1.0.69",
+ "tokio",
+ "tokio-stream",
+ "tokio-test",
+ "tokio-util",
+ "toml",
+ "tonic",
+ "tonic-build",
+ "tonic-reflection",
+ "tower 0.4.13",
+ "tower-http 0.5.2",
+ "tracing",
+ "tracing-appender",
+ "tracing-subscriber",
+ "uuid",
+ "windows 0.54.0",
+ "windows-service",
+ "zip",
 ]
 
 [[package]]
@@ -3825,49 +3891,6 @@ checksum = "32cb0b9bc82b0a0876c2dd994a7e7a2683d3e7390ca40e6886785ef0c7e3ee31"
 dependencies = [
  "num-traits",
  "rand 0.8.6",
-]
-
-[[package]]
-name = "rar2zip"
-version = "0.1.0"
-dependencies = [
- "anyhow",
- "bytes",
- "bzip2",
- "chrono",
- "clap",
- "common",
- "flate2",
- "glob",
- "hex",
- "lettre",
- "notify",
- "notify-debouncer-full",
- "r2d2",
- "r2d2_sqlite",
- "rusqlite",
- "russh",
- "russh-sftp",
- "serde",
- "serde_json",
- "sevenz-rust",
- "sha2 0.10.9",
- "tar",
- "tempfile",
- "thiserror 1.0.69",
- "tiny_http",
- "tokio",
- "tokio-test",
- "tokio-util",
- "toml",
- "tracing",
- "tracing-appender",
- "tracing-subscriber",
- "unrar",
- "ureq",
- "uuid",
- "windows-service",
- "zip",
 ]
 
 [[package]]

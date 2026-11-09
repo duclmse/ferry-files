@@ -3,15 +3,17 @@
 ## What This Is
 
 Three crates in a single Cargo workspace, plus a future archive service layer
-built inside `filesearch` (Phases 8–13):
+built inside `fs` (Phases 8–13):
 
 | Crate        | Purpose                                                   |
 | ------------ | --------------------------------------------------------- |
 | `common`     | Shared logger init and base error types                   |
-| `filesearch` | Cross-platform file-search daemon (Everything-compatible) |
-| `rar2zip`    | Windows service: watch → convert archives → SFTP transfer |
+| `fs-server` | Cross-platform file-search daemon `fsd` (Everything-compatible) |
+| `fs-cli` | CLI and TUI client `fs`, talks to `fsd` over IPC |
+| `fs-protocol` | IPC wire format and client |
+| `fs-ext-rar2zip` | Daemon extension: watch → convert archives → SFTP transfer |
 
-The **archive service** (Phases 8–13) extends `filesearch` with a network-backed
+The **archive service** (Phases 8–13) extends `fs` with a network-backed
 virtual filesystem over ZIP. It adds:
 
 - **`.zidx` binary index** - mmap-friendly inode tree built once per ZIP;
@@ -42,13 +44,15 @@ zipfs/
     │       ├── lib.rs
     │       ├── error.rs
     │       └── logger.rs
-    ├── filesearch/         ← search daemon crate
+    ├── fs-protocol/    ← IPC wire format and client
+    ├── fs-cli/         ← CLI and TUI client
+    ├── fs-server/      ← search daemon crate
     │   ├── Cargo.toml
     │   ├── build.rs        ← proto compilation
     │   ├── VERSIONS.md     ← resolved crate versions + API deviations
     │   ├── proto/
     │   └── src/
-    └── rar2zip/            ← archive transfer service crate
+    └── fs-ext-rar2zip/     ← archive transfer extension crate
         ├── Cargo.toml
         ├── VERSIONS.md
         └── src/
@@ -61,19 +65,19 @@ zipfs/
 ### Workspace
 
 - **`crates/common`** holds the logger initialiser and `CommonError` so neither
-  `filesearch` nor `rar2zip` duplicate tracing setup.
+  `fs` nor `rar2zip` duplicate tracing setup.
 - **Latest stable crate versions** are used at implementation time. Resolved
   versions and any API deviations from the spec are recorded in each crate's
   `VERSIONS.md`.
 
-### filesearch
+### fs
 
 - **Dual store:** SQLite for metadata (name, size, mtime, extension, path,
   attrib_bitmask), Tantivy for full-text content search.
 - **Query language:** voidtools Everything-compatible syntax - same queries
   users already know. Hand-written recursive-descent parser; no
   parser-generator.
-- **`fuzzy:<term>`** is a first-class query function (filesearch extension, not
+- **`fuzzy:<term>`** is a first-class query function (fs extension, not
   in Everything). Uses nucleo SIMD scorer against SQLite candidates.
 - **`exact.rs`, `fuzzy.rs`, `regex_search.rs` do not exist.** All query logic
   lives in `query/evaluator.rs` and its sub-modules.

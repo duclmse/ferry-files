@@ -1,0 +1,12 @@
+[package]
+name    = "fs-protocol"
+version = "0.1.0"
+edition = "2021"
+
+[dependencies]
+serde    = { workspace = true }
+tokio    = { workspace = true }
+postcard = { version = "1", features = ["alloc"] }
+
+[dev-dependencies]
+serde_json = { workspace = true }

@@ -2,8 +2,10 @@
 resolver = "2"
 members = [
     "crates/common",
-    "crates/filesearch",
-    "crates/rar2zip",
+    "crates/fs-protocol",
+    "crates/fs-server",
+    "crates/fs-cli",
+    "crates/fs-ext-rar2zip",
 ]
 
 [workspace.dependencies]

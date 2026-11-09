@@ -1,25 +1,25 @@
 #!/usr/bin/env bash
-# Run filesearch in the foreground (direct mode, not via systemd/launchd).
-# Override discovery with FILESEARCH_BIN / FILESEARCH_CONFIG.
+# Run fs in the foreground (direct mode, not via systemd/launchd).
+# Override discovery with FS_BIN / FS_CONFIG.
 set -euo pipefail
 
 cd "$(dirname "${BASH_SOURCE[0]}")/.."
 
-BIN="${FILESEARCH_BIN:-}"
+BIN="${FS_BIN:-}"
 if [ -z "$BIN" ]; then
-    if [ -x "target/release/filesearch" ]; then
-        BIN="target/release/filesearch"
-    elif command -v filesearch >/dev/null 2>&1; then
-        BIN="$(command -v filesearch)"
+    if [ -x "target/release/fsd" ]; then
+        BIN="target/release/fsd"
+    elif command -v fsd >/dev/null 2>&1; then
+        BIN="$(command -v fsd)"
     else
-        echo "filesearch binary not found. Run scripts/build.sh or scripts/install.sh first." >&2
+        echo "fs binary not found. Run scripts/build.sh or scripts/install.sh first." >&2
         exit 1
     fi
 fi
 
-CONFIG="${FILESEARCH_CONFIG:-}"
+CONFIG="${FS_CONFIG:-}"
 if [ -z "$CONFIG" ]; then
-    for candidate in "./config.toml" "$HOME/.config/filesearch/config.toml" "/etc/filesearch/config.toml"; do
+    for candidate in "./config.toml" "$HOME/.config/fs/config.toml" "/etc/fs/config.toml"; do
         if [ -f "$candidate" ]; then
             CONFIG="$candidate"
             break
@@ -27,7 +27,7 @@ if [ -z "$CONFIG" ]; then
     done
 fi
 if [ -z "$CONFIG" ]; then
-    echo "No config.toml found. Run scripts/install.sh, or set FILESEARCH_CONFIG=<path>." >&2
+    echo "No config.toml found. Run scripts/install.sh, or set FS_CONFIG=<path>." >&2
     exit 1
 fi
 

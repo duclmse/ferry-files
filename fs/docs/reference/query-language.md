@@ -1,8 +1,8 @@
-# Reference: filesearch - Everything-Compatible Query Language
+# Reference: fs - Everything-Compatible Query Language
 
 > Implements the full voidtools Everything search syntax plus `fuzzy:` and
 > archive-scope extensions. This document specifies the `query/` module in
-> `crates/filesearch/src/query/`.
+> `crates/fs-server/src/query/`.
 
 ---
 
@@ -140,13 +140,13 @@ Wildcards match the **whole filename** by default (controlled by `wfn:` modifier
 |----------|-------------|
 | `count:<n>` | Limit results to N |
 
-#### Archive Functions (filesearch extension)
+#### Archive Functions (fs extension)
 
 | Function | Description |
 |----------|-------------|
 | `archiveof:<path>` | All indexed inner files of a specific outer archive (glob supported) |
 
-#### filesearch Extensions (not in voidtools Everything)
+#### fs Extensions (not in voidtools Everything)
 
 | Function | Description |
 |----------|-------------|
@@ -249,7 +249,7 @@ pub enum PredicateKind {
     Regex(String),          // regex: modifier
     Function(Function),     // dm:, size:, ext:, etc.
     TypeMacro(TypeMacro),   // audio:, zip:, doc:, etc.
-    Fuzzy(String),          // fuzzy:<term> - filesearch extension
+    Fuzzy(String),          // fuzzy:<term> - fs extension
 }
 
 pub struct Modifiers {
@@ -288,7 +288,7 @@ pub enum Function {
     DateCreatedDupe, DateAccessedDupe, AttribDupe,
     // Result control
     Count(u64),
-    // Archive (filesearch extension)
+    // Archive (fs extension)
     ArchiveOf(String),  // find all inner files of a specific outer archive
 }
 
@@ -758,12 +758,12 @@ sizedupe: size:>100mb
 content:TODO
 content:fixme ext:rs dm:thisweek
 
-# Fuzzy (filesearch extension)
+# Fuzzy (fs extension)
 fuzzy:mian
 fuzzy:config ext:toml
 fuzzy:readm size:<100kb
 
-# Archive scope (filesearch extension)
+# Archive scope (fs extension)
 archive: *.rs
 noarchive: *.log
 archive: content:TODO
@@ -784,7 +784,7 @@ video: size:>1gb !<backup|temp>
 
 ### Intentional deviations from Everything
 
-| Feature | Everything | filesearch | Reason |
+| Feature | Everything | fs | Reason |
 |---------|-----------|------------|--------|
 | `content:` | Unindexed, slow | Indexed via Tantivy | Core feature |
 | `~` prefix | Fuzzy match | Not supported - use `fuzzy:` | Replaced by first-class function |

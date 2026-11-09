@@ -37,17 +37,17 @@ $TargetDir = (Resolve-Path $TargetDir).Path
 
 if ($DataDir) { $KeepDb = $true }
 
-if (-not (Test-Path "target\release\filesearch.exe")) {
+if (-not (Test-Path "target\release\fsd.exe")) {
     Write-Host "==> Building release binary first"
     & .\scripts\build.ps1
 }
-$bin = Join-Path $repoRoot "target\release\filesearch.exe"
+$bin = Join-Path $repoRoot "target\release\fsd.exe"
 
 if ($DataDir) {
     New-Item -ItemType Directory -Force -Path $DataDir | Out-Null
     $workDir = (Resolve-Path $DataDir).Path
 } else {
-    $workDir = Join-Path $env:TEMP ("filesearch-bench-" + [guid]::NewGuid().ToString("N"))
+    $workDir = Join-Path $env:TEMP ("fs-bench-" + [guid]::NewGuid().ToString("N"))
 }
 New-Item -ItemType Directory -Force -Path "$workDir\data" | Out-Null
 New-Item -ItemType Directory -Force -Path "$workDir\logs" | Out-Null

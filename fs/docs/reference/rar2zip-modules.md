@@ -4,14 +4,14 @@
 > archive files, converts them to `.zip` via a streaming pipeline, and
 > transfers them to one or more remote machines via SFTP with full
 > observability, recovery, and hot-reload config. Lives at
-> `crates/rar2zip/` in the workspace.
+> `crates/fs-ext-rar2zip/` in the workspace.
 
 ---
 
 ## 1. Project Layout
 
 ```
-crates/rar2zip/
+crates/fs-ext-rar2zip/
 ├── Cargo.toml
 ├── config.toml                  ← example config, all fields documented inline
 ├── install-service.ps1          ← PowerShell: register/unregister Windows Service

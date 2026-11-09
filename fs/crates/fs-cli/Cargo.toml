@@ -1,0 +1,22 @@
+[package]
+name    = "fs-cli"
+version = "0.1.0"
+edition = "2021"
+
+[[bin]]
+name = "fs"
+path = "src/main.rs"
+
+[dependencies]
+fs-protocol = { path = "../fs-protocol" }
+tokio       = { workspace = true }
+serde       = { workspace = true }
+serde_json  = { workspace = true }
+toml        = { workspace = true }
+anyhow      = { workspace = true }
+tracing     = { workspace = true }
+clap        = { workspace = true }
+
+# TUI
+ratatui   = "0.26"
+crossterm = "0.27"

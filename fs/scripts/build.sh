@@ -1,21 +1,11 @@
 #!/usr/bin/env bash
-# Build filesearch (and rar2zip on Windows) in release mode.
+# Build fsd and fs in release mode. Extra arguments go to cargo, e.g.
+#   scripts/build.sh --features fs-server/rar2zip
 set -euo pipefail
 
 cd "$(dirname "${BASH_SOURCE[0]}")/.."
 
-os="$(uname -s)"
+echo "==> Building fsd and fs (release)"
+cargo build --release -p fs-server -p fs-cli "$@"
 
-echo "==> Building filesearch (release)"
-cargo build --release -p filesearch
-
-case "$os" in
-    Linux|Darwin)
-        echo "==> Skipping rar2zip: it uses the Windows Service API and only builds on Windows"
-        ;;
-    *)
-        echo "==> Unrecognized platform '$os'; skipping rar2zip"
-        ;;
-esac
-
-echo "==> Done: target/release/filesearch"
+echo "==> Done: target/release/fsd, target/release/fs"

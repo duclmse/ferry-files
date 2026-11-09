@@ -62,11 +62,11 @@ $repoRoot = (Get-Location).Path
 if (-not $TargetDir) { $TargetDir = $repoRoot }
 $TargetDir = (Resolve-Path $TargetDir).Path
 
-if (-not (Test-Path "target\release\filesearch.exe")) {
+if (-not (Test-Path "target\release\fsd.exe")) {
     Write-Host "==> Building release binary first"
     & .\scripts\build.ps1
 }
-$bin = Join-Path $repoRoot "target\release\filesearch.exe"
+$bin = Join-Path $repoRoot "target\release\fsd.exe"
 
 $stamp = Get-Date -Format "yyyyMMdd-HHmmss"
 if (-not $OutDir) { $OutDir = Join-Path $repoRoot "target\bench-windows\$stamp" }
@@ -78,7 +78,7 @@ if ($DataDir) {
     New-Item -ItemType Directory -Force -Path $DataDir | Out-Null
     $workDir = (Resolve-Path $DataDir).Path
 } else {
-    $workDir = Join-Path $env:TEMP ("filesearch-winbench-" + [guid]::NewGuid().ToString("N"))
+    $workDir = Join-Path $env:TEMP ("fs-winbench-" + [guid]::NewGuid().ToString("N"))
 }
 $fixture = Join-Path $workDir "fixture"
 $outside = Join-Path $workDir "outside"
@@ -496,7 +496,7 @@ try {
     $gitRev = (& git rev-parse --short HEAD 2>$null)
     $dirty = if (& git status --porcelain --untracked-files=no 2>$null) { " (dirty)" } else { "" }
 
-    Say "==================== filesearch Windows benchmark ===================="
+    Say "==================== fs Windows benchmark ===================="
     Say "Date:         $(Get-Date -Format 'yyyy-MM-dd HH:mm:ss')"
     Say "Commit:       $gitRev$dirty"
     Say "OS:           $($os.Caption) $($os.Version)"

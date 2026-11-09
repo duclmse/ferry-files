@@ -28,11 +28,11 @@ if (-not (Test-Path $config)) {
     exit 1
 }
 
-if (-not (Test-Path "target\release\filesearch.exe")) {
+if (-not (Test-Path "target\release\fsd.exe")) {
     Write-Host "==> Building release binary first"
     & .\scripts\build.ps1
 }
-$bin = Join-Path $repoRoot "target\release\filesearch.exe"
+$bin = Join-Path $repoRoot "target\release\fsd.exe"
 
 $restPortLine = Select-String -Path $config -Pattern '^rest_port\s*=\s*(\d+)' | Select-Object -First 1
 $restPort = if ($restPortLine) { $restPortLine.Matches[0].Groups[1].Value } else { 17700 }

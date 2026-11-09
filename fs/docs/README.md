@@ -12,13 +12,13 @@ research doc disagree, the **reference** doc wins.
 
 ## Overview
 
-- [Overview](overview.md) - three-crate workspace (`common`, `filesearch`
-  daemon, `rar2zip` Windows service), archive service summary, resolved
+- [Overview](overview.md) - three-crate workspace (`common`, `fs`
+  daemon, `rar2zip` extension), archive service summary, resolved
   decisions Q1–Q6 and AS1–AS6
 
 ## Reference
 
-- [filesearch Modules](reference/filesearch-modules.md) - config, SQLite
+- [fs Modules](reference/fs-server-modules.md) - config, SQLite
   schema, Tantivy, indexer, crawler, archive, APIs, TUI, daemon
 - [Query Language](reference/query-language.md) - Everything-compatible
   syntax, AST, parser, evaluator, `fuzzy:`, archive modifiers, acceptance tests

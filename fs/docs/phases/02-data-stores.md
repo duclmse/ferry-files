@@ -282,7 +282,7 @@ let pool = r2d2::Pool::builder()
 ### A. SQL typo in phase 2 spec - use ref doc schema
 
 The phase 2 spec (§2.1) has `idx_files_size ON files(size_bytes))` - one extra
-closing parenthesis. The ref doc (`01-ref-filesearch-modules.md §6.1`) is
+closing parenthesis. The ref doc (`01-ref-fs-server-modules.md §6.1`) is
 correct. The implementation uses the ref doc version.
 
 ### B. `SqlCondition` defined with all Phase 5 variants

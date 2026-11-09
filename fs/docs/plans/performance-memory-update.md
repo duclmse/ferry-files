@@ -6,7 +6,7 @@
 
 Use this document to update both the project documentation and the Rust
 implementation. The goal is to keep the documented architecture aligned with
-the performance targets in `docs/reference/filesearch-modules.md` while
+the performance targets in `docs/reference/fs-server-modules.md` while
 reducing avoidable memory growth, repeated CPU work, and large intermediate
 result sets.
 
@@ -35,7 +35,7 @@ Preserve the existing invariants in `AGENTS.md`, especially:
 
 Update these docs before or alongside implementation changes:
 
-- `docs/reference/filesearch-modules.md`
+- `docs/reference/fs-server-modules.md`
 - `docs/reference/query-language.md`
 - `docs/phases/02-data-stores.md`
 - `docs/phases/03-indexer-and-watcher.md`

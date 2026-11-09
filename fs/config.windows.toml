@@ -1,6 +1,6 @@
-# filesearch - example configuration
+# fs - example configuration
 # Copy to your preferred location and edit before starting the daemon.
-# Run `filesearch --config /path/to/config.toml validate-config` to verify.
+# Run `fsd --config /path/to/config.toml validate-config` to verify.
 
 # ── Paths ─────────────────────────────────────────────────────────────────────
 
@@ -12,10 +12,10 @@ watch_paths = [
 
 # Directory for SQLite metadata store and Tantivy full-text index.
 # Created automatically on first run. Must be writable.
-data_dir = "/var/lib/filesearch"
+data_dir = "/var/lib/fs"
 
 # Directory for rolling daily log files.
-log_dir = "/var/log/filesearch"
+log_dir = "/var/log/fs"
 
 # ── Store ─────────────────────────────────────────────────────────────────────
 
@@ -97,9 +97,9 @@ rest_port = 7700
 grpc_port = 7701
 
 # IPC socket / named pipe path.
-# Linux/macOS default: /tmp/filesearch.sock
-# Windows default:     \\.\pipe\filesearch
-# ipc_path = "/tmp/filesearch.sock"
+# Linux/macOS default: /tmp/fs.sock
+# Windows default:     \\.\pipe\fs
+# ipc_path = "/tmp/fs.sock"
 
 # CORS origins allowed for the REST API. Use ["*"] to allow all.
 rest_cors_origins = ["*"]

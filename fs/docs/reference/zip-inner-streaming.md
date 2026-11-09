@@ -1,6 +1,6 @@
 # Reference: ZIP Inner File Streaming
 
-> Addendum to the filesearch specs. Adds support for indexing and searching
+> Addendum to the fs specs. Adds support for indexing and searching
 > files *inside* ZIP archives, streaming entries without extracting to disk.
 > Changes affect: `config.rs`, `store/sqlite_store.rs`, `indexer/archive.rs`
 > (new), `indexer/crawler.rs`, `indexer/content.rs`, `query/ast.rs`,
@@ -498,7 +498,7 @@ sending to daemon.
 
 ## 10. New Cargo Dependencies
 
-Add to `crates/filesearch/Cargo.toml`:
+Add to `crates/fs-server/Cargo.toml`:
 
 ```toml
 zip      = { version = "2", default-features = false, features = ["deflate"] }
@@ -506,7 +506,7 @@ tempfile = "3"
 ```
 
 If `zip` is already in `[workspace.dependencies]`, reference with
-`{ workspace = true }`. Both `filesearch` and `rar2zip` must use the same
+`{ workspace = true }`. Both `fs` and `rar2zip` must use the same
 major version.
 
 ---

@@ -1,8 +1,8 @@
 #!/usr/bin/env bash
-# db.sh - inspect a filesearch/rar2zip SQLite database: list tables, show
+# db.sh - inspect a fs/rar2zip SQLite database: list tables, show
 # DDL, run queries, watch a query live, or get a quick health summary. Thin
 # wrapper around the sqlite3 CLI (must be on PATH). The databases this
-# project writes (filesearch's index.db, rar2zip's job queue) are ordinary
+# project writes (fs's index.db, rar2zip's job queue) are ordinary
 # WAL-mode SQLite files, so reading them read-only is safe alongside a
 # running daemon.
 #

@@ -11,18 +11,20 @@ understand before making changes.
 ```
 crates/
   common/          # Shared foundation - always build this first
-  filesearch/      # File-search daemon (cross-platform)
-  rar2zip/         # Archive-transfer service (Windows only)
+  fs-protocol/     # IPC wire format and client
+  fs-server/       # File-search daemon, binary `fsd`
+  fs-cli/          # CLI and TUI client, binary `fs`
+  fs-ext-rar2zip/  # Archive-transfer daemon extension (feature `rar2zip`)
 ```
 
-`crates/common` is a library crate depended on by both binaries. It owns:
+`crates/common` is a library crate shared by the daemon and its extensions. It owns:
 
 - `error.rs` - `CommonError`, `ProjectError` trait
 - `logger.rs` - `tracing` init (JSON format, daily rolling file)
 
 ---
 
-## filesearch architecture
+## fs architecture
 
 ### Data flow
 
@@ -43,7 +45,7 @@ Filesystem events (notify-debouncer-full, 500ms debounce)
   → api/rest.rs      (Axum, :7700)
   → api/grpc.rs      (Tonic, :7701)
   → api/ipc.rs       (Named Pipe / Unix socket)
-  → frontend/cli.rs  (CLI + ratatui TUI)
+  → fs-cli           (CLI + ratatui TUI, over IPC only)
 ```
 
 ### Key invariants
@@ -62,7 +64,7 @@ Filesystem events (notify-debouncer-full, 500ms debounce)
 - **`fuzzy:` is a first-class query function**, not a query mode switch. It maps
   to a `FuzzyFilter` plan: SQLite candidates → rayon parallel nucleo scoring.
 
-### SQLite schema (filesearch)
+### SQLite schema (fs)
 
 Key columns in the `files` table:
 
@@ -93,7 +95,7 @@ Indices exist on: `name`, `extension`, `size`, `mtime`, `parent`,
 ### Adding a new API endpoint
 
 REST lives in `api/rest.rs` (Axum router). gRPC service methods are in
-`api/grpc.rs` and must be declared in `proto/filesearch.proto` first
+`api/grpc.rs` and must be declared in `proto/fs.proto` first
 (`cargo build` regenerates the stubs via `build.rs`).
 
 ---
@@ -157,7 +159,7 @@ pending
 
 1. Add the field to `config.rs::Destination`.
 2. Update `transfer.rs::build_session` to use it.
-3. Update `rar2zip/config.toml` example.
+3. Update the `crates/fs-ext-rar2zip/config.toml` example.
 
 ---
 
@@ -205,7 +207,7 @@ are not un-watched until restart). Do not assume config is static after startup.
 
 | File                                    | Contents                                                            |
 | --------------------------------------- | ------------------------------------------------------------------- |
-| `docs/reference/filesearch-modules.md`  | Module-by-module function signatures and contracts                  |
+| `docs/reference/fs-server-modules.md`  | Module-by-module function signatures and contracts                  |
 | `docs/reference/query-language.md`      | Complete query language grammar and examples                        |
 | `docs/reference/rar2zip-modules.md`     | rar2zip module contracts                                            |
 | `docs/reference/zip-inner-streaming.md` | ZIP virtual path spec and archive indexing rules                    |

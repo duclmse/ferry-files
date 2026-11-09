@@ -1,21 +1,22 @@
-# zipfs
+# fs
 
-A Rust workspace containing two production-grade tools for file management and
-archive processing.
+A Rust workspace for file search, with an optional archive-transfer extension.
 
-| Crate        | Binary       | Purpose                                                                                                            |
-| ------------ | ------------ | ------------------------------------------------------------------------------------------------------------------ |
-| `filesearch` | `filesearch` | Cross-platform file-search daemon - indexes 1–10M files, exposes REST/gRPC/IPC APIs with < 50ms search latency     |
-| `rar2zip`    | `rar2zip`    | Windows service - watches a folder, converts RAR/7Z/TAR archives to ZIP, and transfers them to remote SFTP servers |
-| `common`     | -            | Shared logger, error types, and constants                                                                          |
+| Crate            | Binary | Purpose                                                                                                     |
+| ---------------- | ------ | ----------------------------------------------------------------------------------------------------------- |
+| `fs-server`      | `fsd`  | Cross-platform file-search daemon - indexes 1–10M files, exposes REST/gRPC/IPC APIs with < 50ms search latency |
+| `fs-cli`         | `fs`   | Command-line and TUI client; talks to `fsd` over IPC                                                        |
+| `fs-protocol`    | -      | IPC wire format and client                                                                                  |
+| `fs-ext-rar2zip` | -      | Daemon extension - converts RAR/7Z/TAR archives to ZIP and transfers them to SFTP servers                   |
+| `common`         | -      | Shared logger, error types, and the extension trait                                                         |
 
 ---
 
-## filesearch
+## fs
 
 ### What it does
 
-`filesearch` runs as a background daemon that:
+`fs` runs as a background daemon that:
 
 1. Walks configured watch paths and indexes all files into SQLite (metadata) and
    Tantivy (full-text content).
@@ -61,19 +62,19 @@ archiveof:/path/a.zip # all entries inside a specific archive
 ### Quick start
 
 ```toml
-# filesearch/config.toml
+# fs/config.toml
 [daemon]
 watch_paths = ["C:/Projects", "D:/Data"]
-pid_file    = "filesearch.pid"
+pid_file    = "fs.pid"
 
 [store]
-sqlite_path  = "filesearch.db"
+sqlite_path  = "fs.db"
 tantivy_path = "tantivy_index"
 
 [api]
 rest_port = 7700
 grpc_port = 7701
-ipc_path  = "\\\\.\\pipe\\filesearch"    # Windows named pipe
+ipc_path  = "\\\\.\\pipe\\fs"    # Windows named pipe
 
 [indexer]
 exclude_paths    = ["**/node_modules", "**/.git"]
@@ -85,17 +86,17 @@ archive_passwords = []
 
 ```sh
 # Start the daemon
-filesearch run --config config.toml
+fs run --config config.toml
 
 # Search (CLI)
-filesearch search "*.rs size:>1kb"
-filesearch search "fuzzy:reprot dm:lastweek"
+fs search "*.rs size:>1kb"
+fs search "fuzzy:reprot dm:lastweek"
 
 # Force re-index
-filesearch reindex
+fs reindex
 
 # Interactive TUI
-filesearch tui
+fs tui
 ```
 
 ### REST API
@@ -110,7 +111,7 @@ GET  /health
 
 ### gRPC
 
-Proto at `crates/filesearch/proto/filesearch.proto`. Reflection enabled -
+Proto at `crates/fs-server/proto/fs.proto`. Reflection enabled -
 compatible with `grpcurl`.
 
 ---
@@ -119,7 +120,7 @@ compatible with `grpcurl`.
 
 ### What it does
 
-`rar2zip` runs as a Windows Service that:
+`rar2zip` is an optional `fsd` extension (Cargo feature `rar2zip`) that:
 
 1. Watches an input folder for RAR, 7Z, TAR, TAR.GZ, and TAR.BZ2 archives.
 2. Verifies archive integrity before processing.
@@ -140,8 +141,8 @@ Transfer **strategy** is selected automatically by file size:
 ### Quick start
 
 ```toml
-# rar2zip/config.toml
-[watcher]
+# config.toml
+[extensions.rar2zip.watcher]
 watch_path  = "C:/Incoming"
 min_file_age_secs = 5
 
@@ -165,21 +166,18 @@ enabled = true
 port    = 9090
 ```
 
-```powershell
-# Install as Windows Service
-.\install-service.ps1
+```sh
+# Validate config without starting
+fsd --config config.toml validate-config
 
-# Or run directly (development)
-rar2zip run --config config.toml
+# Run the daemon with the extension enabled
+fsd --config config.toml daemon
 
 # Check queue status
-rar2zip status
+fs --config config.toml rar2zip status
 
 # Retry failed jobs
-rar2zip retry-failed
-
-# Validate config without starting
-rar2zip validate-config --config config.toml
+fs --config config.toml rar2zip retry-failed
 ```
 
 ### Dashboard
@@ -193,23 +191,17 @@ transfer stats with 5-second auto-refresh.
 ## Building
 
 ```sh
-# All crates
-cargo build --release
+# Daemon and client
+cargo build --release -p fs-server -p fs-cli
 
-# Single crate
-cargo build --release -p filesearch
-cargo build --release -p rar2zip
-
-# rar2zip is Windows-only (Windows Service APIs)
-# filesearch is cross-platform (Linux / macOS / Windows)
+# With the rar2zip extension (needs a C++ compiler)
+cargo build --release -p fs-server -p fs-cli --features fs-server/rar2zip
 ```
 
 **Requirements:**
 
 - Rust stable (edition 2021)
-- Windows SDK (rar2zip)
-- libssh2 / OpenSSL (rar2zip SFTP)
-- Protocol Buffers compiler `protoc` (filesearch gRPC)
+- A C++ compiler, for the rar2zip extension's bundled UnRAR source
 
 ---
 
@@ -217,8 +209,8 @@ cargo build --release -p rar2zip
 
 ```sh
 cargo test --workspace
-cargo test -p filesearch
-cargo test -p rar2zip
+cargo test -p fs-server
+cargo test -p fs-ext-rar2zip
 ```
 
 ---
