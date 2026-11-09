@@ -131,6 +131,16 @@ pub struct ContentConfig {
     pub extension_limits: HashMap<String, u64>,
 }
 
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum AuthMode {
+    /// Only REST routes that change files need the token.
+    #[default]
+    Writes,
+    /// Every REST route except `/health`, and every gRPC call, need the token.
+    All,
+}
+
 #[derive(Debug, Clone, Deserialize)]
 pub struct ApiConfig {
     #[serde(default = "default_rest_port")]
@@ -140,11 +150,15 @@ pub struct ApiConfig {
     #[serde(default = "default_rest_bind")]
     pub rest_bind: std::net::IpAddr,
 
-    /// BLAKE3 hex digest of the token that authorizes `/fs/*` changes. Unset
-    /// disables those routes. Only a digest is kept because `/fs/read` can
-    /// serve this file back to anyone who reaches the API.
+    /// Which REST and gRPC calls need the bearer token.
     #[serde(default)]
-    pub rest_file_token_hash: Option<String>,
+    pub auth_mode: AuthMode,
+
+    /// BLAKE3 hex digest of the bearer token. Unset disables the routes that
+    /// change files. Only a digest is kept because `/fs/read` can serve this
+    /// file back to anyone who reaches the API.
+    #[serde(default, alias = "rest_file_token_hash")]
+    pub auth_token_hash: Option<String>,
 
     #[serde(default = "default_grpc_port")]
     pub grpc_port: u16,
@@ -214,7 +228,8 @@ impl Default for ApiConfig {
         Self {
             rest_port: default_rest_port(),
             rest_bind: default_rest_bind(),
-            rest_file_token_hash: None,
+            auth_mode: AuthMode::default(),
+            auth_token_hash: None,
             grpc_port: default_grpc_port(),
             grpc_bind: default_grpc_bind(),
             ipc_path: default_ipc_path(),
@@ -445,10 +460,13 @@ const MAX_NESTING_DEPTH: u8 = 2;
 pub fn validate(cfg: &Config) -> Vec<String> {
     let mut errors = Vec::new();
 
-    if let Some(hash) = &cfg.api.rest_file_token_hash {
+    if let Some(hash) = &cfg.api.auth_token_hash {
         if blake3::Hash::from_hex(hash).is_err() {
-            errors.push("api.rest_file_token_hash must be a 64-character hex digest".into());
+            errors.push("api.auth_token_hash must be a 64-character hex digest".into());
         }
+    }
+    if cfg.api.auth_mode == AuthMode::All && cfg.api.auth_token_hash.is_none() {
+        errors.push("api.auth_mode = \"all\" requires api.auth_token_hash".into());
     }
 
     if cfg.watch_paths.is_empty() {
@@ -659,6 +677,25 @@ log_dir     = "{dir}/logs"
     fn load_missing_watch_paths_field() {
         let f = write_config("data_dir = \"/tmp\"\nlog_dir = \"/tmp\"");
         assert!(matches!(load(f.path()), Err(AppError::Config(_))));
+    }
+
+    #[test]
+    fn auth_mode_all_requires_a_token_hash() {
+        let dir = tempfile::tempdir().unwrap();
+        let base = minimal_config_toml(dir.path());
+        let f = write_config(&format!("{base}\n[api]\nauth_mode = \"all\""));
+        let errs = validate(&load(f.path()).unwrap());
+        assert!(errs.iter().any(|e| e.contains("auth_token_hash")));
+    }
+
+    #[test]
+    fn auth_defaults_to_writes_and_accepts_the_old_hash_key() {
+        let dir = tempfile::tempdir().unwrap();
+        let base = minimal_config_toml(dir.path());
+        let f = write_config(&format!("{base}\n[api]\nrest_file_token_hash = \"ab\""));
+        let cfg = load(f.path()).unwrap();
+        assert_eq!(cfg.api.auth_mode, AuthMode::Writes);
+        assert_eq!(cfg.api.auth_token_hash.as_deref(), Some("ab"));
     }
 
     #[test]

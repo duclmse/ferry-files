@@ -85,7 +85,7 @@ async fn main() {
             println!("Token (shown once, send as `Authorization: Bearer <token>`):");
             println!("  {token}");
             println!("Add under [api] in the config:");
-            println!("  rest_file_token_hash = \"{hash}\"");
+            println!("  auth_token_hash = \"{hash}\"");
         }
         Command::ValidateConfig => match config::load(&cli.config) {
             Ok(cfg) => {

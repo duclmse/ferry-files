@@ -14,7 +14,7 @@
 //!   `{ "processed": N, "total": N, "current": "path", "done": bool, "error"?: "..." }`
 //!
 //! Routes that change the filesystem require `Authorization: Bearer <token>`
-//! and are refused entirely until `api.rest_file_token_hash` is configured.
+//! and are refused entirely until `api.auth_token_hash` is configured.
 //!
 //! Paths must be absolute.  Relative paths and `..` components are rejected
 //! with 400 to prevent directory traversal.
@@ -25,6 +25,7 @@ use axum::{
     Router,
 };
 
+use crate::api::auth::require_token;
 use crate::api::rest::AppState;
 
 mod common;
@@ -34,7 +35,6 @@ mod read;
 mod tests;
 mod write;
 
-use common::require_file_token;
 use drives::drives_handler;
 use read::{head_handler, read_handler};
 use write::{copy_handler, delete_handler, mkdir_handler, move_handler, write_handler};
@@ -54,7 +54,7 @@ pub fn router(state: AppState) -> Router<AppState> {
         .route("/fs/move", post(move_handler))
         .route("/fs/delete", delete(delete_handler))
         .route("/fs/mkdir", post(mkdir_handler))
-        .route_layer(from_fn_with_state(state.clone(), require_file_token));
+        .route_layer(from_fn_with_state(state.clone(), require_token));
 
     Router::new()
         .route("/fs/read", get(read_handler).head(head_handler))

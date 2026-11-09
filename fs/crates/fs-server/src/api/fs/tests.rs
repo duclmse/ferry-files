@@ -105,7 +105,7 @@ async fn writes_are_disabled_until_a_token_is_configured() {
     let tmp = tempfile::TempDir::new().unwrap();
     let target = tmp.path().join("f");
     let state = make_test_state();
-    state.config.write().await.api.rest_file_token_hash = None;
+    state.config.write().await.api.auth_token_hash = None;
     let app = make_unauthorized_app(state);
     let status = write_status(app, &target, Some(TEST_TOKEN)).await;
     assert_eq!(status, StatusCode::FORBIDDEN);
@@ -757,7 +757,7 @@ fn make_test_state() -> AppState {
         exclusions: ExclusionConfig::default(),
         content: ContentConfig::default(),
         api: ApiConfig {
-            rest_file_token_hash: Some(blake3::hash(TEST_TOKEN.as_bytes()).to_hex().to_string()),
+            auth_token_hash: Some(blake3::hash(TEST_TOKEN.as_bytes()).to_hex().to_string()),
             ..ApiConfig::default()
         },
         search: SearchConfig::default(),
@@ -781,4 +781,52 @@ fn make_test_state() -> AppState {
         scheduler_metrics: crate::scheduler::SchedulerMetrics::new(),
         rate_limiter: Arc::new(crate::scheduler::ClientRateLimiter::new(100, 200)),
     }
+}
+
+async fn full_router_status(
+    state: AppState,
+    method: &str,
+    uri: &str,
+    token: Option<&str>,
+) -> StatusCode {
+    use tower::ServiceExt;
+    let mut request = axum::http::Request::builder().method(method).uri(uri);
+    if let Some(token) = token {
+        request = request.header(header::AUTHORIZATION, format!("Bearer {token}"));
+    }
+    crate::api::rest::router(state)
+        .oneshot(request.body(Body::empty()).unwrap())
+        .await
+        .unwrap()
+        .status()
+}
+
+#[tokio::test]
+async fn writes_mode_leaves_other_routes_open() {
+    let status = full_router_status(make_test_state(), "GET", "/stats", None).await;
+    assert_eq!(status, StatusCode::OK);
+}
+
+#[tokio::test]
+async fn all_mode_requires_the_token_everywhere_but_health() {
+    let state = make_test_state();
+    state.config.write().await.api.auth_mode = crate::config::AuthMode::All;
+    for (method, uri) in [
+        ("GET", "/stats"),
+        ("GET", "/metrics"),
+        ("GET", "/search?q=a"),
+        ("GET", "/file?path=/x"),
+        ("GET", "/fs/read?path=/x"),
+        ("GET", "/fs/drives"),
+        ("POST", "/open"),
+        ("POST", "/reindex"),
+        ("POST", "/fs/mkdir?path=/x"),
+    ] {
+        let status = full_router_status(state.clone(), method, uri, None).await;
+        assert_eq!(status, StatusCode::UNAUTHORIZED, "{method} {uri}");
+    }
+    let open = full_router_status(state.clone(), "GET", "/stats", Some(TEST_TOKEN)).await;
+    assert_eq!(open, StatusCode::OK);
+    let health = full_router_status(state, "GET", "/health", None).await;
+    assert_eq!(health, StatusCode::OK);
 }

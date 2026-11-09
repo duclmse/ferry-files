@@ -114,8 +114,14 @@ impl FileSearch for FileSearchService {
 // Builder
 // ---------------------------------------------------------------------------
 
-pub fn service(svc: FileSearchService) -> FileSearchServer<FileSearchService> {
-    FileSearchServer::new(svc)
+pub fn service<F>(
+    svc: FileSearchService,
+    interceptor: F,
+) -> tonic::codegen::InterceptedService<FileSearchServer<FileSearchService>, F>
+where
+    F: tonic::service::Interceptor,
+{
+    FileSearchServer::with_interceptor(svc, interceptor)
 }
 
 // ---------------------------------------------------------------------------

@@ -195,12 +195,18 @@ that change files (`/fs/write`, `copy`, `move`, `delete`, `mkdir`) are refused
 until a token is configured:
 
 ```sh
-fsd generate-token   # prints the token, and the digest for api.rest_file_token_hash
+fsd generate-token   # prints the token, and the digest for api.auth_token_hash
 curl -X PUT -H "Authorization: Bearer $TOKEN" --data-binary @f \
   "localhost:7700/fs/write?path=/tmp/f"
 ```
 
-Reading (`/fs/read`, `/file`) needs no token. Browsers may only read responses
+By default reading (`/fs/read`, `/file`) needs no token. To require it on every
+REST route except `/health` and on all gRPC calls (`authorization: Bearer <token>`
+metadata), set `api.auth_mode = "all"`; the daemon then refuses to start without
+`api.auth_token_hash`. Use this whenever you bind to a non-loopback address.
+The local `fs` client talks over the IPC socket and is not affected.
+
+Browsers may only read responses
 from origins listed in `api.rest_cors_origins`, which is empty by default. gRPC
 also listens on loopback by default (`api.grpc_bind`).
 

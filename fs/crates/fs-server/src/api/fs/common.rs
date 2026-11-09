@@ -1,13 +1,7 @@
 use std::path::{Component, Path, PathBuf};
 use std::time::UNIX_EPOCH;
 
-use axum::{
-    extract::{Request, State},
-    http::{header::AUTHORIZATION, StatusCode},
-    middleware::Next,
-    response::{IntoResponse, Response},
-    Json,
-};
+use axum::{http::StatusCode, Json};
 use serde::{Deserialize, Serialize};
 
 use crate::api::rest::AppState;
@@ -98,46 +92,6 @@ pub(super) fn validate_path(raw: &str) -> Result<PathBuf, String> {
         }
     }
     Ok(p)
-}
-
-// ---------------------------------------------------------------------------
-// Authorization
-// ---------------------------------------------------------------------------
-
-pub(super) async fn require_file_token(
-    State(state): State<AppState>,
-    request: Request,
-    next: Next,
-) -> Response {
-    let configured = state.config.read().await.api.rest_file_token_hash.clone();
-    let Some(expected) = configured.and_then(|h| blake3::Hash::from_hex(h).ok()) else {
-        return (
-            StatusCode::FORBIDDEN,
-            Json(ErrorBody {
-                error: "file changes are disabled: set api.rest_file_token_hash".into(),
-            }),
-        )
-            .into_response();
-    };
-
-    let presented = request
-        .headers()
-        .get(AUTHORIZATION)
-        .and_then(|v| v.to_str().ok())
-        .and_then(|v| v.strip_prefix("Bearer "));
-
-    // blake3::Hash compares in constant time.
-    if presented.is_some_and(|t| blake3::hash(t.as_bytes()) == expected) {
-        next.run(request).await
-    } else {
-        (
-            StatusCode::UNAUTHORIZED,
-            Json(ErrorBody {
-                error: "missing or invalid bearer token".into(),
-            }),
-        )
-            .into_response()
-    }
 }
 
 // ---------------------------------------------------------------------------

@@ -14,6 +14,7 @@ use axum::http::HeaderValue;
 use axum::{
     extract::{Query, State},
     http::StatusCode,
+    middleware::from_fn_with_state,
     response::IntoResponse,
     routing::{get, post},
     Json, Router,
@@ -113,7 +114,6 @@ pub fn router(state: AppState) -> Router {
         .route("/search", get(search_handler))
         .route("/stats", get(stats_handler))
         .route("/reindex", post(reindex_handler))
-        .route("/health", get(health_handler))
         .route("/metrics", get(metrics_handler))
         .route("/file", get(file_handler))
         .route("/open", post(open_handler))
@@ -123,7 +123,13 @@ pub fn router(state: AppState) -> Router {
         r = r.merge(crate::api::archive::router(state.clone()));
     }
 
-    r.with_state(state)
+    // After the layer, so health probes need no token.
+    r.route_layer(from_fn_with_state(
+        state.clone(),
+        crate::api::auth::require_token_in_all_mode,
+    ))
+    .route("/health", get(health_handler))
+    .with_state(state)
 }
 
 /// Builds the CORS policy from `api.rest_cors_origins`. An empty list adds no

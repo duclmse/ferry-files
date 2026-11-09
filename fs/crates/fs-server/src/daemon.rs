@@ -17,6 +17,7 @@ use crate::api::grpc::{self, FileSearchService};
 use crate::api::ipc_server::run_ipc_server;
 use crate::api::rest::AppState;
 use crate::config;
+use crate::config::AuthMode;
 use crate::error::AppError;
 use crate::indexer::crawler::{full_crawl, process_event, IndexEvent, IndexMetrics};
 use crate::indexer::exclusions::ExclusionEngine;
@@ -24,6 +25,7 @@ use crate::scheduler::{ArchiveSemaphores, ClientRateLimiter, SchedulerMetrics};
 use crate::store::{tantivy_store::TantivyStore, FileStore};
 use crate::watcher;
 use crate::zidx::zidx_path_for;
+use tonic::codegen::InterceptedService;
 
 // ---------------------------------------------------------------------------
 // Windows single-instance guard via named mutex
@@ -301,14 +303,16 @@ pub async fn run_with_shutdown(
             let rest_port = api_cfg.rest_port;
             let rest_bind = api_cfg.rest_bind;
             let cors_origins = api_cfg.rest_cors_origins.clone();
+            let auth_mode = api_cfg.auth_mode;
             tokio::spawn(async move {
                 let router = crate::api::rest::router(app_state)
                     .layer(crate::api::rest::cors_layer(&cors_origins));
                 let addr = std::net::SocketAddr::new(rest_bind, rest_port);
                 tracing::info!("REST listening on {addr}");
-                if !rest_bind.is_loopback() {
+                if !rest_bind.is_loopback() && auth_mode != AuthMode::All {
                     tracing::warn!(
-                        "REST is reachable from the network; /fs/read and /file need no token"
+                        "REST is reachable from the network and only file changes need a token; \
+                         set api.auth_mode = \"all\""
                     );
                 }
                 let listener = match tokio::net::TcpListener::bind(addr).await {
@@ -348,15 +352,20 @@ pub async fn run_with_shutdown(
             let shutdown_c = shutdown.clone();
             let grpc_port = api_cfg.grpc_port;
             let grpc_bind = api_cfg.grpc_bind;
+            let auth_mode = api_cfg.auth_mode;
+            let interceptor = crate::api::auth::grpc_interceptor(Arc::clone(&shared_cfg));
             tokio::spawn(async move {
                 let addr = std::net::SocketAddr::new(grpc_bind, grpc_port);
                 tracing::info!("gRPC listening on {addr}");
-                if !grpc_bind.is_loopback() {
-                    tracing::warn!("gRPC is reachable from the network and has no authentication");
+                if !grpc_bind.is_loopback() && auth_mode != AuthMode::All {
+                    tracing::warn!(
+                        "gRPC is reachable from the network without a token; \
+                         set api.auth_mode = \"all\""
+                    );
                 }
                 if let Err(e) = tonic::transport::Server::builder()
-                    .add_service(grpc::service(svc))
-                    .add_service(reflection)
+                    .add_service(grpc::service(svc, interceptor.clone()))
+                    .add_service(InterceptedService::new(reflection, interceptor))
                     .serve_with_shutdown(addr, shutdown_c.cancelled())
                     .await
                 {
