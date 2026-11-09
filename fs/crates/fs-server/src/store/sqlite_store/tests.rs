@@ -394,3 +394,61 @@ fn sorted_search_orders_the_same_way_as_the_memory_store() {
     assert_eq!(names(SortKey::Name, true, 1), ["D.rs"]);
     assert_eq!(names(SortKey::Size, true, 2), ["A.rs", "b.rs"]);
 }
+
+#[test]
+fn memory_and_sqlite_agree_on_escaped_like_patterns() {
+    use crate::query::glob::like_escape;
+    use crate::store::{memory_store::MemoryStore, SqlCondition};
+
+    let names = [
+        "my_file.txt",
+        "myXfile.txt",
+        "100%.txt",
+        "100 percent.txt",
+        r"back\slash.txt",
+        "MY_FILE.TXT",
+        "_lead",
+        "%lead",
+        "plain",
+    ];
+    let store = make_store();
+    let memory = MemoryStore::new(std::path::Path::new(":memory-test:")).unwrap();
+    let gen = store.begin_crawl_generation().unwrap();
+    let batch: Vec<(FileRecord, String)> = names
+        .iter()
+        .map(|n| (sample_record(&format!("/r/{n}")), "/r".to_owned()))
+        .collect();
+    for (r, _) in &batch {
+        memory.upsert_file(r);
+    }
+    store.batch_upsert_crawl(&batch, gen).unwrap();
+
+    let sorted = |mut v: Vec<String>| {
+        v.sort();
+        v
+    };
+    let check = |pattern: String, want: &[&str]| {
+        let cond = [SqlCondition::NameLike(pattern.clone())];
+        let by = |rows: Vec<FileRecord>| sorted(rows.into_iter().map(|r| r.name).collect());
+        let sql = by(store.search_conditions(&cond, 100).unwrap());
+        let mem = by(memory.search_conditions(&cond, 100).unwrap());
+        assert_eq!(sql, mem, "stores disagree on {pattern:?}");
+        assert_eq!(
+            sql,
+            sorted(want.iter().map(|s| s.to_string()).collect()),
+            "{pattern:?}"
+        );
+    };
+    let contains = |s: &str| format!("%{}%", like_escape(s));
+    check(contains("my_file"), &["my_file.txt", "MY_FILE.TXT"]);
+    check(contains("100%"), &["100%.txt"]);
+    check(contains(r"k\s"), &[r"back\slash.txt"]);
+    check(like_escape("_lead"), &["_lead"]);
+    check(format!("{}%", like_escape("%l")), &["%lead"]);
+    // Unescaped wildcards still work, including beside an escaped one.
+    check(
+        "my_file%".into(),
+        &["my_file.txt", "myXfile.txt", "MY_FILE.TXT"],
+    );
+    check(r"my\_f%.txt".into(), &["my_file.txt", "MY_FILE.TXT"]);
+}

@@ -342,3 +342,16 @@ fn sort_is_parsed_with_per_key_default_directions() {
     let macros = MacroConfig::default();
     assert!(parse("sort:bogus foo", &macros).is_err());
 }
+
+#[test]
+fn like_syntax_in_terms_is_escaped() {
+    let has = |q: &str, want: &str| {
+        parse_plan(q).sql_conditions.iter().any(|c| match c {
+            SqlCondition::NameLike(p) | SqlCondition::PathLike(p) => p == want,
+            _ => false,
+        })
+    };
+    assert!(has("my_file", r"%my\_file%"));
+    assert!(has("100%", r"%100\%%"));
+    assert!(has("path:/a_b", r"/a\_b%"));
+}

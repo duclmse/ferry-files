@@ -298,13 +298,13 @@ impl CmpOp {
 /// All variants are defined now to avoid breaking the store API in Phase 5.
 #[derive(Debug, Clone)]
 pub enum SqlCondition {
-    /// `name LIKE ?`  (% wildcards must be pre-added by caller)
+    /// `name LIKE ? ESCAPE '\'`  (% wildcards must be pre-added by caller)
     NameLike(String),
     /// `name GLOB ?`  (SQLite GLOB, case-sensitive)
     NameGlob(String),
     /// `LOWER(name) GLOB LOWER(?)`  (GLOB ignoring ASCII case)
     NameGlobNoCase(String),
-    /// `path LIKE ?`
+    /// `path LIKE ? ESCAPE '\'`
     PathLike(String),
     /// `is_dir = 1` or `is_dir = 0`
     IsDir(bool),
@@ -357,13 +357,19 @@ impl SqlCondition {
     pub fn to_sql(&self) -> (String, Vec<rusqlite::types::Value>) {
         use rusqlite::types::Value;
         match self {
-            SqlCondition::NameLike(p) => ("name LIKE ?".into(), vec![Value::Text(p.clone())]),
+            SqlCondition::NameLike(p) => (
+                "name LIKE ? ESCAPE '\\'".into(),
+                vec![Value::Text(p.clone())],
+            ),
             SqlCondition::NameGlob(p) => ("name GLOB ?".into(), vec![Value::Text(p.clone())]),
             SqlCondition::NameGlobNoCase(p) => (
                 "LOWER(name) GLOB LOWER(?)".into(),
                 vec![Value::Text(p.clone())],
             ),
-            SqlCondition::PathLike(p) => ("path LIKE ?".into(), vec![Value::Text(p.clone())]),
+            SqlCondition::PathLike(p) => (
+                "path LIKE ? ESCAPE '\\'".into(),
+                vec![Value::Text(p.clone())],
+            ),
             SqlCondition::IsDir(v) => ("is_dir = ?".into(), vec![Value::Integer(i64::from(*v))]),
             SqlCondition::MtimeRange(a, b) => (
                 "mtime BETWEEN ? AND ?".into(),

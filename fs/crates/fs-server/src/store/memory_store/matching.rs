@@ -1,3 +1,5 @@
+use std::borrow::Cow;
+
 use super::state::{EntryRef, NO_PARENT};
 use super::{CmpOp, DupeKind, MetaFilters, RecordView, SqlCondition};
 
@@ -68,26 +70,6 @@ pub(super) fn meta_filter_matches<R: RecordView + ?Sized>(r: &R, f: &MetaFilters
     true
 }
 
-/// Returns the inner literal if `pattern` is exactly `%<literal>%` with no other `%` or `_`.
-fn extract_contains_pattern(pattern: &str) -> Option<&str> {
-    let b = pattern.as_bytes();
-    if b.len() < 3 || b[0] != b'%' || b.last() != Some(&b'%') {
-        return None;
-    }
-    let inner = &pattern[1..pattern.len() - 1];
-    if inner.contains('%') || inner.contains('_') {
-        None
-    } else {
-        Some(inner)
-    }
-}
-
-/// Returns the literal if `pattern` is exactly `<literal>%` with no other `%` or `_`.
-fn extract_prefix_pattern(pattern: &str) -> Option<&str> {
-    let inner = pattern.strip_suffix('%')?;
-    (!inner.is_empty() && !inner.contains(['%', '_'])).then_some(inner)
-}
-
 /// Wildcard match without recursion or allocation; backtracks only to the
 /// latest `many`, so a pattern with several of them stays O(text * pattern).
 fn wild_match(text: &[u8], pattern: &[u8], many: u8, one: u8, fold_case: bool) -> bool {
@@ -134,30 +116,74 @@ fn starts_with_ignore_case(text: &[u8], literal: &[u8]) -> bool {
         .is_some_and(|head| head.eq_ignore_ascii_case(literal))
 }
 
-/// A SQLite `LIKE` pattern, classified once per query rather than per entry.
-/// Case-insensitive for ASCII; `%` = any sequence, `_` = any byte.
+/// Stand-ins for unescaped `%` and `_`, which can then sit beside literal
+/// ones. Neither byte occurs in UTF-8.
+const TOKEN_ANY_RUN: u8 = 0xFF;
+const TOKEN_ANY_BYTE: u8 = 0xFE;
+
+/// Resolves `\` escapes, returning the bytes and their wildcard bytes.
+fn like_tokens(pattern: &str) -> (Cow<'_, [u8]>, u8, u8) {
+    if !pattern.contains('\\') {
+        return (Cow::Borrowed(pattern.as_bytes()), b'%', b'_');
+    }
+    let mut tokens = Vec::with_capacity(pattern.len());
+    let mut bytes = pattern.bytes();
+    while let Some(b) = bytes.next() {
+        match b {
+            b'\\' => tokens.push(bytes.next().unwrap_or(b'\\')),
+            b'%' => tokens.push(TOKEN_ANY_RUN),
+            b'_' => tokens.push(TOKEN_ANY_BYTE),
+            other => tokens.push(other),
+        }
+    }
+    (Cow::Owned(tokens), TOKEN_ANY_RUN, TOKEN_ANY_BYTE)
+}
+
+fn sub_cow<'a>(c: &Cow<'a, [u8]>, range: std::ops::Range<usize>) -> Cow<'a, [u8]> {
+    match c {
+        Cow::Borrowed(b) => Cow::Borrowed(&b[range]),
+        Cow::Owned(v) => Cow::Owned(v[range].to_vec()),
+    }
+}
+
+/// A SQLite `LIKE ... ESCAPE '\'` pattern, classified once per query rather
+/// than per entry. Case-insensitive for ASCII; `%` = any sequence, `_` = any
+/// byte, and `\` makes the next character literal.
 pub(super) enum Like<'a> {
-    Prefix(&'a [u8]),
-    Contains(&'a [u8]),
-    General(&'a [u8]),
+    Prefix(Cow<'a, [u8]>),
+    Contains(Cow<'a, [u8]>),
+    General {
+        pattern: Cow<'a, [u8]>,
+        many: u8,
+        one: u8,
+    },
 }
 
 impl<'a> Like<'a> {
     pub(super) fn new(pattern: &'a str) -> Self {
-        if let Some(needle) = extract_contains_pattern(pattern) {
-            return Self::Contains(needle.as_bytes());
+        let (tokens, many, one) = like_tokens(pattern);
+        let literal = |b: &[u8]| !b.is_empty() && !b.iter().any(|&c| c == many || c == one);
+        let len = tokens.len();
+        if len >= 3 && tokens[0] == many && tokens[len - 1] == many && literal(&tokens[1..len - 1])
+        {
+            return Self::Contains(sub_cow(&tokens, 1..len - 1));
         }
-        match extract_prefix_pattern(pattern) {
-            Some(literal) => Self::Prefix(literal.as_bytes()),
-            None => Self::General(pattern.as_bytes()),
+        if len >= 2 && tokens[len - 1] == many && literal(&tokens[..len - 1]) {
+            return Self::Prefix(sub_cow(&tokens, 0..len - 1));
+        }
+        Self::General {
+            pattern: tokens,
+            many,
+            one,
         }
     }
 
     pub(super) fn matches(&self, text: &str) -> bool {
+        let text = text.as_bytes();
         match self {
-            Self::Prefix(literal) => starts_with_ignore_case(text.as_bytes(), literal),
-            Self::Contains(needle) => contains_ignore_case(text.as_bytes(), needle),
-            Self::General(pattern) => wild_match(text.as_bytes(), pattern, b'%', b'_', true),
+            Self::Prefix(literal) => starts_with_ignore_case(text, literal),
+            Self::Contains(needle) => contains_ignore_case(text, needle),
+            Self::General { pattern, many, one } => wild_match(text, pattern, *many, *one, true),
         }
     }
 }

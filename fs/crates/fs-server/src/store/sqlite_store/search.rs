@@ -153,7 +153,7 @@ impl SqliteStore {
             "SELECT id, path, name, extension, size_bytes, mtime, ctime,
                     is_dir, is_hidden, is_symlink, attrib_bitmask,
                     content_indexed, tantivy_id, indexed_at, archive_path
-             FROM files WHERE name LIKE ? {filter_sql} LIMIT ?"
+             FROM files WHERE name LIKE ? ESCAPE '\\' {filter_sql} LIMIT ?"
         );
         let conn = self.get_conn()?;
         let mut stmt = conn.prepare(&sql)?;
@@ -226,7 +226,7 @@ impl SqliteStore {
     pub fn has_child(&self, parent_path: &str, name_pattern: &str) -> Result<bool> {
         let conn = self.get_conn()?;
         let count: i64 = conn.query_row(
-            "SELECT COUNT(*) FROM files WHERE parent = ? AND name LIKE ?",
+            "SELECT COUNT(*) FROM files WHERE parent = ? AND name LIKE ? ESCAPE '\\'",
             rusqlite::params![parent_path, name_pattern],
             |row| row.get(0),
         )?;

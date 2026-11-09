@@ -17,6 +17,18 @@ pub fn glob_to_sqlite(pattern: &str, whole_filename: bool) -> String {
     }
 }
 
+/// Escapes `s` for a `LIKE ... ESCAPE '\\'` pattern, so it matches only itself.
+pub fn like_escape(s: &str) -> String {
+    let mut out = String::with_capacity(s.len());
+    for c in s.chars() {
+        if matches!(c, '%' | '_' | '\\') {
+            out.push('\\');
+        }
+        out.push(c);
+    }
+    out
+}
+
 /// Returns true if the pattern contains `*` or `?` wildcards.
 pub fn has_wildcards(s: &str) -> bool {
     s.contains('*') || s.contains('?')
@@ -27,6 +39,12 @@ pub fn has_wildcards(s: &str) -> bool {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn like_escape_protects_only_like_syntax() {
+        assert_eq!(like_escape("plain.txt"), "plain.txt");
+        assert_eq!(like_escape(r"a_b%c\d"), r"a\_b\%c\\d");
+    }
 
     #[test]
     fn whole_filename_unchanged() {

@@ -3,7 +3,7 @@ use chrono::Local;
 use crate::error::{AppError, Result};
 use crate::query::ast::{DateExpr, Expr, Function, Modifiers, Predicate, PredicateKind, RangeExpr};
 use crate::query::date::resolve_date_constant;
-use crate::query::glob::{glob_to_sqlite, has_wildcards};
+use crate::query::glob::{glob_to_sqlite, has_wildcards, like_escape};
 use crate::query::macros::expand_type_macro;
 use crate::store::{CmpOp, SqlCondition};
 
@@ -151,19 +151,18 @@ fn emit_predicate(pred: &Predicate, mods: &Modifiers, p: &mut QueryPlan) -> Resu
                 let glob = glob_to_sqlite(s, whole_fn || has_wildcards(s));
                 if match_path {
                     p.sql_conditions
-                        .push(SqlCondition::PathLike(format!("%{s}%")));
+                        .push(SqlCondition::PathLike(format!("%{}%", like_escape(s))));
                 } else if case_sensitive {
                     p.sql_conditions.push(SqlCondition::NameGlob(glob));
                 } else {
                     p.sql_conditions.push(SqlCondition::NameGlobNoCase(glob));
                 }
             } else {
-                let pattern = if match_path {
-                    format!("%{s}%")
-                } else if whole_fn {
-                    s.clone()
+                let literal = like_escape(s);
+                let pattern = if whole_fn && !match_path {
+                    literal
                 } else {
-                    format!("%{s}%")
+                    format!("%{literal}%")
                 };
                 if match_path {
                     p.sql_conditions.push(SqlCondition::PathLike(pattern));
@@ -235,7 +234,7 @@ fn emit_function(
         }
         Function::Path(path) => {
             p.sql_conditions
-                .push(SqlCondition::PathLike(format!("{path}%")));
+                .push(SqlCondition::PathLike(format!("{}%", like_escape(path))));
         }
         Function::Parent(path) => {
             p.sql_conditions
