@@ -4,7 +4,7 @@ use tokio::sync::RwLock;
 
 use crate::config::Config;
 use crate::error::{AppError, Result};
-use crate::store::{tantivy_store::TantivyStore, FileRecord, FileStore, SqlCondition};
+use crate::store::{tantivy_store::TantivyStore, FileRecord, FileStore, Sort, SqlCondition};
 
 use super::postfilter::{apply_post_filters, fuzzy_rank};
 use super::types::{EvalStrategy, PostFilter, QueryPlan, QueryResult};
@@ -27,6 +27,7 @@ pub async fn execute_plan(
         .unwrap_or(cfg.search.default_limit)
         .min(cfg.search.max_limit);
     let offset = plan.offset;
+    let sort = plan.sort;
 
     let mut post_filters = plan.post_filters;
     let records = match &plan.strategy {
@@ -37,7 +38,7 @@ pub async fn execute_plan(
             let filters = std::mem::take(&mut post_filters);
             let store2 = Arc::clone(&store);
             tokio::task::spawn_blocking(move || {
-                fetch_filtered(&store2, &conds, &filters, want, cap)
+                fetch_filtered(&store2, &conds, sort, &filters, want, cap)
             })
             .await
             .map_err(|e| AppError::Query(e.to_string()))??
@@ -99,6 +100,13 @@ pub async fn execute_plan(
             .await
             .map_err(|e| AppError::Query(e.to_string()))?;
 
+    // The other strategies pick their rows by relevance or grouping, so only
+    // the rows they chose can be ordered.
+    let mut filtered = filtered;
+    if let (Some(sort), false) = (sort, matches!(plan.strategy, EvalStrategy::SqliteOnly)) {
+        filtered.sort_by(|a, b| sort.compare(a, b));
+    }
+
     let total = filtered.len();
     let hits = filtered.into_iter().skip(offset).take(limit).collect();
     let took_ms = start.elapsed().as_millis() as u64;
@@ -119,17 +127,22 @@ pub async fn execute_plan(
 pub(super) fn fetch_filtered(
     store: &FileStore,
     conds: &[SqlCondition],
+    sort: Option<Sort>,
     filters: &[PostFilter],
     want: usize,
     cap: usize,
 ) -> Result<Vec<FileRecord>> {
+    let fetch_rows = |n: usize| match sort {
+        Some(sort) => store.search_sorted(conds, sort, n),
+        None => store.search_conditions(conds, n),
+    };
     if filters.is_empty() {
-        return store.search_conditions(conds, want);
+        return fetch_rows(want);
     }
     let cap = if cap == 0 { usize::MAX } else { cap.max(want) };
     let mut fetch = want.max(FIRST_FILTERED_FETCH).min(cap);
     loop {
-        let rows = store.search_conditions(conds, fetch)?;
+        let rows = fetch_rows(fetch)?;
         let exhausted = rows.len() < fetch;
         let kept = apply_post_filters(rows, filters, store);
         if kept.len() >= want || exhausted || fetch >= cap {

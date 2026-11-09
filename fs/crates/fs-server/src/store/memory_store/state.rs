@@ -6,7 +6,8 @@ use hashbrown::{DefaultHashBuilder, HashTable};
 use serde::{Deserialize, Serialize};
 
 use super::snapshot::{Snapshot, SnapshotRef};
-use super::{FileRecord, RecordView};
+use super::sort::SortIndexes;
+use super::{FileRecord, RecordView, SortKey};
 
 // ---------------------------------------------------------------------------
 // Packed entries
@@ -135,6 +136,9 @@ pub(super) struct IndexState {
     /// USN/inotify journal position recorded at last clean shutdown.
     /// Used for dirty-shutdown recovery: replay events from this position.
     pub(super) usn_checkpoint: u64,
+    sorted: SortIndexes,
+    /// Bumped whenever an entry changes.
+    revision: u64,
 }
 
 // ---------------------------------------------------------------------------
@@ -276,6 +280,8 @@ impl IndexState {
             meta: HashMap::new(),
             crawl_gen: 0,
             usn_checkpoint: 0,
+            sorted: SortIndexes::default(),
+            revision: 0,
         }
     }
 
@@ -337,6 +343,23 @@ impl IndexState {
                 e,
                 i: (start + i) as u32,
             })
+    }
+
+    fn touched(&mut self, i: u32) {
+        self.revision += 1;
+        self.sorted.touch(i);
+    }
+
+    pub(super) fn revision(&self) -> u64 {
+        self.revision
+    }
+
+    pub(super) fn is_live(&self, i: u32) -> bool {
+        !self.entries[i as usize].dead()
+    }
+
+    pub(super) fn sorted_order(&self, key: SortKey) -> std::sync::Arc<Vec<u32>> {
+        self.sorted.order(self, key)
     }
 
     pub(super) fn slots(&self) -> usize {
@@ -468,6 +491,7 @@ impl IndexState {
             }
             self.entries[i as usize] = entry;
             self.set_extra(i, extra);
+            self.touched(i);
             return i;
         }
         let (parent, cut) = self.parent_of(&r.path);
@@ -477,6 +501,7 @@ impl IndexState {
         let i = self.entries.len() as u32;
         self.entries.push(entry);
         self.set_extra(i, extra);
+        self.touched(i);
         let h = self.hash(&r.path);
         let (entries, tails, hasher) = (&self.entries, &self.tails, &self.hasher);
         self.index
@@ -507,6 +532,7 @@ impl IndexState {
         e.generation = 0;
         self.extra.remove(&i);
         self.dead += 1;
+        self.touched(i);
     }
 
     pub(super) fn maybe_compact(&mut self) {
@@ -590,6 +616,7 @@ impl IndexState {
         self.entries = entries;
         self.dead = self.entries.iter().filter(|e| e.dead()).count();
         self.pinned = self.dead;
+        self.sorted.clear();
     }
 
     pub(super) fn to_snapshot(&self) -> SnapshotRef<'_> {
@@ -758,8 +785,17 @@ impl<'a> EntryRef<'a> {
         self.i
     }
 
-    fn tail(&self) -> &'a str {
+    pub(super) fn tail(&self) -> &'a str {
         tail_in(&self.st.tails, self.e)
+    }
+
+    pub(super) fn parent_index(&self) -> u32 {
+        self.e.parent
+    }
+
+    /// Writes the path of the entry this one extends; there must be one.
+    pub(super) fn write_parent_path(&self, buf: &mut String) {
+        write_path(&self.st.entries, &self.st.tails, self.e.parent, buf);
     }
 
     pub(super) fn write_path(&self, buf: &mut String) {

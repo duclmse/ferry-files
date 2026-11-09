@@ -361,3 +361,36 @@ fn glob_nocase_matches_any_case_and_glob_does_not() {
     );
     assert_eq!(names(SqlCondition::NameGlob("*.pdf".into())), ["bar.pdf"]);
 }
+
+#[test]
+fn sorted_search_orders_the_same_way_as_the_memory_store() {
+    use crate::store::{Sort, SortKey, SqlCondition};
+
+    let store = make_store();
+    let gen = store.begin_crawl_generation().unwrap();
+    let batch: Vec<(FileRecord, String)> = [("/r/b.rs", 5), ("/r/A.rs", 9), ("/r/D.rs", 1)]
+        .iter()
+        .map(|(p, s)| {
+            let mut r = sample_record(p);
+            r.size_bytes = *s;
+            (r, "/r".to_owned())
+        })
+        .collect();
+    store.batch_upsert_crawl(&batch, gen).unwrap();
+
+    let names = |key, descending, limit| -> Vec<String> {
+        store
+            .search_sorted(
+                &[SqlCondition::NameLike("%.rs".into())],
+                Sort { key, descending },
+                limit,
+            )
+            .unwrap()
+            .into_iter()
+            .map(|r| r.name)
+            .collect()
+    };
+    assert_eq!(names(SortKey::Name, false, 10), ["A.rs", "b.rs", "D.rs"]);
+    assert_eq!(names(SortKey::Name, true, 1), ["D.rs"]);
+    assert_eq!(names(SortKey::Size, true, 2), ["A.rs", "b.rs"]);
+}

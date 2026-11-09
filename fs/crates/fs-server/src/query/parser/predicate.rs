@@ -1,5 +1,5 @@
 use crate::error::{AppError, Result};
-use crate::store::{CmpOp, DupeKind};
+use crate::store::{CmpOp, DupeKind, Sort, SortKey};
 
 use crate::query::ast::{Expr, Function, Modifiers, Predicate, PredicateKind};
 use crate::query::date::parse_date_value;
@@ -69,6 +69,7 @@ pub(super) fn build_predicate(kw: &str, val: &str, mods: Modifiers) -> Result<Ex
                 .map_err(|_| AppError::Query(format!("invalid count value: '{val}'")))?;
             Function::Count(n)
         }
+        "sort" => Function::Sort(parse_sort(val)?),
         "len" | "length" => {
             let (op, n) = parse_cmp_usize(val)?;
             Function::Len(op, n)
@@ -103,6 +104,28 @@ pub(super) fn build_predicate(kw: &str, val: &str, mods: Modifiers) -> Result<Ex
 // ---------------------------------------------------------------------------
 // Small helpers
 // ---------------------------------------------------------------------------
+
+/// `sort:name`, `sort:size-asc`, `sort:dm-descending`. With no direction,
+/// names run A to Z and sizes and dates largest and newest first.
+fn parse_sort(val: &str) -> Result<Sort> {
+    let val = val.to_ascii_lowercase();
+    let (field, direction) = match val.rsplit_once('-') {
+        Some((f, d @ ("asc" | "ascending" | "desc" | "descending"))) => (f, Some(d)),
+        _ => (val.as_str(), None),
+    };
+    let key = match field {
+        "name" => SortKey::Name,
+        "size" => SortKey::Size,
+        "dm" | "date" | "datemodified" | "date-modified" => SortKey::DateModified,
+        "dc" | "datecreated" | "date-created" => SortKey::DateCreated,
+        _ => return Err(AppError::Query(format!("invalid sort value: '{val}'"))),
+    };
+    let descending = match direction {
+        Some(d) => d.starts_with("desc"),
+        None => key != SortKey::Name,
+    };
+    Ok(Sort { key, descending })
+}
 
 fn parse_cmp_usize(s: &str) -> Result<(CmpOp, usize)> {
     let (op, rest) = if let Some(r) = s.strip_prefix("<=") {

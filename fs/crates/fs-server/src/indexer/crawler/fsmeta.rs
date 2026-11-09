@@ -21,56 +21,39 @@ pub fn is_hidden_name(path: &Path) -> bool {
         .unwrap_or(false)
 }
 
+/// Maps Windows `FILE_ATTRIBUTE_*` bits onto the store's own bitmask.
+pub(super) fn attrib_from_windows_flags(a: u32) -> u32 {
+    use crate::store::{
+        ATTRIB_ARCHIVE, ATTRIB_COMPRESSED, ATTRIB_DIRECTORY, ATTRIB_ENCRYPTED, ATTRIB_HIDDEN,
+        ATTRIB_NORMAL, ATTRIB_OFFLINE, ATTRIB_READONLY, ATTRIB_REPARSE_POINT, ATTRIB_SPARSE,
+        ATTRIB_SYSTEM, ATTRIB_TEMPORARY,
+    };
+    const MAP: [(u32, u32); 12] = [
+        (0x0020, ATTRIB_ARCHIVE),
+        (0x0800, ATTRIB_COMPRESSED),
+        (0x0010, ATTRIB_DIRECTORY),
+        (0x4000, ATTRIB_ENCRYPTED),
+        (0x0002, ATTRIB_HIDDEN),
+        (0x0400, ATTRIB_REPARSE_POINT),
+        (0x0080, ATTRIB_NORMAL),
+        (0x1000, ATTRIB_OFFLINE),
+        (0x0200, ATTRIB_SPARSE),
+        (0x0001, ATTRIB_READONLY),
+        (0x0004, ATTRIB_SYSTEM),
+        (0x0100, ATTRIB_TEMPORARY),
+    ];
+    MAP.iter()
+        .filter(|(windows, _)| a & windows != 0)
+        .fold(0, |mask, (_, ours)| mask | ours)
+}
+
 /// Build platform-specific attribute bitmask from filesystem metadata.
 #[cfg_attr(windows, allow(unused_variables))]
 pub fn attrib_from_metadata(meta: &std::fs::Metadata, path: &Path) -> u32 {
     #[cfg(windows)]
     {
-        use crate::store::{
-            ATTRIB_ARCHIVE, ATTRIB_COMPRESSED, ATTRIB_DIRECTORY, ATTRIB_ENCRYPTED, ATTRIB_HIDDEN,
-            ATTRIB_NORMAL, ATTRIB_OFFLINE, ATTRIB_READONLY, ATTRIB_REPARSE_POINT, ATTRIB_SPARSE,
-            ATTRIB_SYSTEM, ATTRIB_TEMPORARY,
-        };
         use std::os::windows::fs::MetadataExt;
-        let a = meta.file_attributes();
-        let mut m: u32 = 0;
-        if a & 0x0020 != 0 {
-            m |= ATTRIB_ARCHIVE;
-        }
-        if a & 0x0800 != 0 {
-            m |= ATTRIB_COMPRESSED;
-        }
-        if a & 0x0010 != 0 {
-            m |= ATTRIB_DIRECTORY;
-        }
-        if a & 0x4000 != 0 {
-            m |= ATTRIB_ENCRYPTED;
-        }
-        if a & 0x0002 != 0 {
-            m |= ATTRIB_HIDDEN;
-        }
-        if a & 0x0400 != 0 {
-            m |= ATTRIB_REPARSE_POINT;
-        }
-        if a & 0x0080 != 0 {
-            m |= ATTRIB_NORMAL;
-        }
-        if a & 0x1000 != 0 {
-            m |= ATTRIB_OFFLINE;
-        }
-        if a & 0x0200 != 0 {
-            m |= ATTRIB_SPARSE;
-        }
-        if a & 0x0001 != 0 {
-            m |= ATTRIB_READONLY;
-        }
-        if a & 0x0004 != 0 {
-            m |= ATTRIB_SYSTEM;
-        }
-        if a & 0x0100 != 0 {
-            m |= ATTRIB_TEMPORARY;
-        }
-        return m;
+        return attrib_from_windows_flags(meta.file_attributes());
     }
 
     #[cfg(unix)]
@@ -97,6 +80,40 @@ pub fn attrib_from_metadata(meta: &std::fs::Metadata, path: &Path) -> u32 {
         use crate::store::{ATTRIB_HIDDEN, ATTRIB_READONLY};
         let _ = (meta, path, ATTRIB_HIDDEN, ATTRIB_READONLY);
         0
+    }
+}
+
+pub(super) fn record_from_mft(
+    path: &Path,
+    file: &crate::indexer::mft::MftFile,
+    is_hidden: bool,
+    now: i64,
+) -> FileRecord {
+    let name = path.file_name().map(|n| n.to_string_lossy().into_owned());
+    let extension = if file.is_dir {
+        None
+    } else {
+        path.extension().map(|e| e.to_string_lossy().to_lowercase())
+    };
+    // On an NTFS directory, FILE_ATTRIBUTE_DIRECTORY is implied by the record
+    // flag rather than stored in $STANDARD_INFORMATION.
+    let directory_bit = if file.is_dir { 0x0010 } else { 0 };
+    FileRecord {
+        id: None,
+        path: path.to_string_lossy().into_owned(),
+        name: name.unwrap_or_default(),
+        extension,
+        size_bytes: file.size,
+        mtime: file.mtime,
+        ctime: file.ctime,
+        is_dir: file.is_dir,
+        is_hidden,
+        is_symlink: file.is_symlink,
+        attrib_bitmask: attrib_from_windows_flags(file.attributes | directory_bit),
+        content_indexed: false,
+        tantivy_id: None,
+        indexed_at: now,
+        archive_path: None,
     }
 }
 

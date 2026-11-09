@@ -11,14 +11,18 @@
 //! This store is single-writer: all mutating methods take an exclusive lock.
 //! Use the SQLite store when you need concurrent writers.
 
-use std::sync::RwLock;
+use std::sync::atomic::AtomicU64;
+use std::sync::{Mutex, RwLock};
 
-use super::{CmpOp, DupeKind, FileRecord, FuzzyRank, MetaFilters, RecordView, SqlCondition};
+use super::{
+    CmpOp, DupeKind, FileRecord, FuzzyRank, MetaFilters, RecordView, Sort, SortKey, SqlCondition,
+};
 
 mod crud;
 mod matching;
 mod search;
 mod snapshot;
+mod sort;
 mod state;
 #[cfg(test)]
 mod tests;
@@ -29,6 +33,10 @@ use state::IndexState;
 
 pub struct MemoryStore {
     state: RwLock<IndexState>,
+    /// `IndexState::revision` of the last save.
+    saved_revision: AtomicU64,
+    /// Saves share one temporary file, so they must not overlap.
+    saving: Mutex<()>,
 }
 
 impl MemoryStore {

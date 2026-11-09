@@ -1,22 +1,31 @@
+use super::state::{EntryRef, NO_PARENT};
 use super::{CmpOp, DupeKind, MetaFilters, RecordView, SqlCondition};
 
 // ---------------------------------------------------------------------------
 // Helpers
 // ---------------------------------------------------------------------------
 
-pub(super) fn dupe_key<R: RecordView + ?Sized>(r: &R, kind: DupeKind) -> String {
-    let name = r.name();
+/// Borrowed so grouping millions of entries allocates nothing per entry.
+/// Numbers order numerically, matching SQLite's `ORDER BY` on those columns.
+#[derive(PartialEq, Eq, PartialOrd, Ord)]
+pub(super) enum DupeKey<'a> {
+    Text(&'a str),
+    Number(i128),
+}
+
+pub(super) fn dupe_key<'a>(e: &EntryRef<'a>, kind: DupeKind) -> DupeKey<'a> {
+    let name = e.name_str();
     match kind {
-        DupeKind::Name => name.to_owned(),
-        DupeKind::NamePart => r
-            .extension()
-            .and_then(|e| name.strip_suffix(e)?.strip_suffix('.'))
-            .unwrap_or(name)
-            .to_owned(),
-        DupeKind::Size => r.size_bytes().to_string(),
-        DupeKind::DateModified | DupeKind::DateAccessed => r.mtime().to_string(),
-        DupeKind::DateCreated => r.ctime().to_string(),
-        DupeKind::Attrib => r.attrib_bitmask().to_string(),
+        DupeKind::Name => DupeKey::Text(name),
+        DupeKind::NamePart => DupeKey::Text(
+            e.ext_str()
+                .and_then(|x| name.strip_suffix(x)?.strip_suffix('.'))
+                .unwrap_or(name),
+        ),
+        DupeKind::Size => DupeKey::Number(i128::from(e.size_bytes())),
+        DupeKind::DateModified | DupeKind::DateAccessed => DupeKey::Number(i128::from(e.mtime())),
+        DupeKind::DateCreated => DupeKey::Number(i128::from(e.ctime())),
+        DupeKind::Attrib => DupeKey::Number(i128::from(e.attrib_bitmask())),
     }
 }
 
@@ -73,6 +82,12 @@ fn extract_contains_pattern(pattern: &str) -> Option<&str> {
     }
 }
 
+/// Returns the literal if `pattern` is exactly `<literal>%` with no other `%` or `_`.
+fn extract_prefix_pattern(pattern: &str) -> Option<&str> {
+    let inner = pattern.strip_suffix('%')?;
+    (!inner.is_empty() && !inner.contains(['%', '_'])).then_some(inner)
+}
+
 /// Wildcard match without recursion or allocation; backtracks only to the
 /// latest `many`, so a pattern with several of them stays O(text * pattern).
 fn wild_match(text: &[u8], pattern: &[u8], many: u8, one: u8, fold_case: bool) -> bool {
@@ -114,23 +129,33 @@ fn contains_ignore_case(text: &[u8], needle: &[u8]) -> bool {
         .any(|i| text[i..i + needle.len()].eq_ignore_ascii_case(needle))
 }
 
+fn starts_with_ignore_case(text: &[u8], literal: &[u8]) -> bool {
+    text.get(..literal.len())
+        .is_some_and(|head| head.eq_ignore_ascii_case(literal))
+}
+
 /// A SQLite `LIKE` pattern, classified once per query rather than per entry.
 /// Case-insensitive for ASCII; `%` = any sequence, `_` = any byte.
 pub(super) enum Like<'a> {
+    Prefix(&'a [u8]),
     Contains(&'a [u8]),
     General(&'a [u8]),
 }
 
 impl<'a> Like<'a> {
     pub(super) fn new(pattern: &'a str) -> Self {
-        match extract_contains_pattern(pattern) {
-            Some(needle) => Self::Contains(needle.as_bytes()),
+        if let Some(needle) = extract_contains_pattern(pattern) {
+            return Self::Contains(needle.as_bytes());
+        }
+        match extract_prefix_pattern(pattern) {
+            Some(literal) => Self::Prefix(literal.as_bytes()),
             None => Self::General(pattern.as_bytes()),
         }
     }
 
     pub(super) fn matches(&self, text: &str) -> bool {
         match self {
+            Self::Prefix(literal) => starts_with_ignore_case(text.as_bytes(), literal),
             Self::Contains(needle) => contains_ignore_case(text.as_bytes(), needle),
             Self::General(pattern) => wild_match(text.as_bytes(), pattern, b'%', b'_', true),
         }
@@ -200,9 +225,7 @@ impl<'a> GlobNoCase<'a> {
     pub(super) fn matches(&self, text: &str) -> bool {
         let text = text.as_bytes();
         match self.0 {
-            GlobShape::Prefix(literal) => text
-                .get(..literal.len())
-                .is_some_and(|head| head.eq_ignore_ascii_case(literal.as_bytes())),
+            GlobShape::Prefix(literal) => starts_with_ignore_case(text, literal.as_bytes()),
             GlobShape::Suffix(literal) => text
                 .len()
                 .checked_sub(literal.len())
@@ -234,39 +257,106 @@ pub(super) enum Compiled<'a> {
     NameLike(Like<'a>),
     NameGlob(Glob<'a>),
     NameGlobNoCase(GlobNoCase<'a>),
-    PathLike(Like<'a>),
+    /// The `usize` is this condition's slot in [`PathMemo::verdicts`].
+    PathLike(Like<'a>, usize),
     Or(Vec<Vec<Compiled<'a>>>),
     Not(Vec<Compiled<'a>>),
     Other(&'a SqlCondition),
 }
 
 pub(super) fn compile(conds: &[SqlCondition]) -> Vec<Compiled<'_>> {
+    compile_with(conds, &mut 0)
+}
+
+fn compile_with<'a>(conds: &'a [SqlCondition], slots: &mut usize) -> Vec<Compiled<'a>> {
     conds
         .iter()
         .map(|c| match c {
             SqlCondition::NameLike(p) => Compiled::NameLike(Like::new(p)),
             SqlCondition::NameGlob(p) => Compiled::NameGlob(Glob::new(p)),
             SqlCondition::NameGlobNoCase(p) => Compiled::NameGlobNoCase(GlobNoCase::new(p)),
-            SqlCondition::PathLike(p) => Compiled::PathLike(Like::new(p)),
-            SqlCondition::Or(branches) => {
-                Compiled::Or(branches.iter().map(|b| compile(b)).collect())
+            SqlCondition::PathLike(p) => {
+                *slots += 1;
+                Compiled::PathLike(Like::new(p), *slots - 1)
             }
-            SqlCondition::Not(inner) => Compiled::Not(compile(inner)),
+            SqlCondition::Or(branches) => {
+                Compiled::Or(branches.iter().map(|b| compile_with(b, slots)).collect())
+            }
+            SqlCondition::Not(inner) => Compiled::Not(compile_with(inner, slots)),
             other => Compiled::Other(other),
         })
         .collect()
 }
 
 impl Compiled<'_> {
-    pub(super) fn matches<R: RecordView + ?Sized>(&self, r: &R) -> bool {
+    pub(super) fn matches(&self, e: &EntryRef<'_>, memo: &mut PathMemo) -> bool {
         match self {
-            Self::NameLike(like) => like.matches(r.name()),
-            Self::NameGlob(glob) => glob.matches(r.name()),
-            Self::NameGlobNoCase(glob) => glob.matches(r.name()),
-            Self::PathLike(like) => r.with_path(|path| like.matches(path)),
-            Self::Or(branches) => branches.iter().any(|b| b.iter().all(|c| c.matches(r))),
-            Self::Not(conds) => !conds.iter().all(|c| c.matches(r)),
-            Self::Other(condition) => condition.matches(r),
+            Self::NameLike(like) => like.matches(e.name_str()),
+            Self::NameGlob(glob) => glob.matches(e.name_str()),
+            Self::NameGlobNoCase(glob) => glob.matches(e.name_str()),
+            Self::PathLike(like, slot) => memo.path_matches(e, like, *slot),
+            Self::Or(branches) => branches
+                .iter()
+                .any(|b| b.iter().all(|c| c.matches(e, memo))),
+            Self::Not(conds) => !conds.iter().all(|c| c.matches(e, memo)),
+            Self::Other(condition) => condition.matches(e),
+        }
+    }
+}
+
+/// The directory most recently seen by one scan worker, with what is already
+/// known about its path. Siblings are nearly always adjacent, so each
+/// directory's path is built and tested once and its files inherit the
+/// answer. The first full-path walk per entry was the bulk of a `path:` scan.
+pub(super) struct PathMemo {
+    parent: u32,
+    path: String,
+    parent_len: usize,
+    verdicts: Vec<Option<bool>>,
+}
+
+impl PathMemo {
+    pub(super) fn new() -> Self {
+        Self {
+            parent: NO_PARENT,
+            path: String::new(),
+            parent_len: 0,
+            verdicts: Vec::new(),
+        }
+    }
+
+    fn path_matches(&mut self, e: &EntryRef<'_>, like: &Like<'_>, slot: usize) -> bool {
+        let parent = e.parent_index();
+        if parent == NO_PARENT {
+            // The tail is the whole path, and there is no directory to share.
+            return like.matches(e.tail());
+        }
+        if parent != self.parent {
+            self.parent = parent;
+            self.path.clear();
+            e.write_parent_path(&mut self.path);
+            self.parent_len = self.path.len();
+            self.verdicts.fill(None);
+        }
+        if slot >= self.verdicts.len() {
+            self.verdicts.resize(slot + 1, None);
+        }
+        self.path.truncate(self.parent_len);
+        self.path.push_str(e.tail());
+        let path = self.path.as_bytes();
+        let (dir, verdict) = (&path[..self.parent_len], &mut self.verdicts[slot]);
+        match like {
+            Like::Contains(needle) => {
+                *verdict.get_or_insert_with(|| contains_ignore_case(dir, needle)) || {
+                    // Only a match that reaches past the directory is left.
+                    let start = self.parent_len.saturating_sub(needle.len() - 1);
+                    contains_ignore_case(&path[start..], needle)
+                }
+            }
+            Like::Prefix(literal) if dir.len() >= literal.len() => {
+                *verdict.get_or_insert_with(|| starts_with_ignore_case(dir, literal))
+            }
+            _ => like.matches(&self.path),
         }
     }
 }

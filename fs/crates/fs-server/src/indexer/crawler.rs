@@ -1,7 +1,8 @@
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::sync::{atomic::Ordering, mpsc, Arc};
 
 use ignore::WalkBuilder;
+use rayon::prelude::*;
 use tokio::sync::RwLock;
 use tokio_util::sync::CancellationToken;
 
@@ -13,6 +14,7 @@ use crate::store::{tantivy_store::TantivyStore, FileRecord, FileStore};
 use super::archive::ArchiveCrawler;
 use super::content::{content_limit, extract_content};
 use super::exclusions::ExclusionEngine;
+use super::mft::MftCache;
 
 mod crawl;
 mod dzx_sidecars;
@@ -24,7 +26,138 @@ mod tests;
 pub use metrics::{IndexEvent, IndexMetrics};
 
 use crawl::{crawl_archive_sync, SidecarConfig};
-use fsmeta::{build_file_record, is_hidden_name, unix_now};
+use fsmeta::{build_file_record, is_hidden_name, record_from_mft, unix_now};
+
+// ---------------------------------------------------------------------------
+// Per-entry work beyond the metadata row
+// ---------------------------------------------------------------------------
+
+struct SideWork {
+    sqlite: Arc<FileStore>,
+    tantivy: Arc<TantivyStore>,
+    metrics: Arc<IndexMetrics>,
+    arc_cfg: Arc<crate::config::ArchiveIndexConfig>,
+    cnt_cfg: Arc<crate::config::ContentConfig>,
+    zidx_dir: Arc<Option<PathBuf>>,
+    dzx_dir: Arc<Option<PathBuf>>,
+    registry: Arc<ArchiveRegistry>,
+    dzx_min_entry_bytes: u64,
+    dzx_max_concurrent_builds: usize,
+    generation: i64,
+    root: String,
+}
+
+impl SideWork {
+    fn is_archive(&self, path: &Path) -> bool {
+        self.arc_cfg.enabled
+            && path.extension().and_then(|e| e.to_str()).is_some_and(|e| {
+                self.arc_cfg
+                    .formats
+                    .iter()
+                    .any(|f| f.eq_ignore_ascii_case(e))
+            })
+    }
+
+    fn wanted(&self, path: &Path, is_dir: bool) -> bool {
+        !is_dir && (self.is_archive(path) || content_limit(path, &self.cnt_cfg).is_some())
+    }
+
+    fn run(&self, path: &Path, is_dir: bool, len: u64, record: &FileRecord) {
+        if is_dir {
+            return;
+        }
+        // Content indexing - sync read for small files (≤1MB) in the walk closure
+        if let Some(max_bytes) = content_limit(path, &self.cnt_cfg) {
+            if len <= 1024 * 1024 {
+                if let Ok(raw) = std::fs::read(path) {
+                    let end = (max_bytes as usize).min(raw.len());
+                    if let Some(text) = super::content::extract_content_from_bytes(&raw[..end]) {
+                        let mut r = record.clone();
+                        r.content_indexed = true;
+                        if self.tantivy.upsert(&r, Some(&text)).is_ok() {
+                            self.metrics.content_indexed.fetch_add(1, Ordering::Relaxed);
+                        }
+                    }
+                }
+            }
+        }
+
+        // Archive indexing - has its own BEGIN/COMMIT, stays inline.
+        if self.is_archive(path) {
+            let crawler = ArchiveCrawler::new(&self.arc_cfg, &self.cnt_cfg);
+            if let Err(e) = crawl_archive_sync(
+                path,
+                &crawler,
+                self.sqlite.as_ref(),
+                &self.tantivy,
+                &self.metrics,
+                SidecarConfig {
+                    zidx_dir: self.zidx_dir.as_deref(),
+                    registry: Some(&self.registry),
+                    dzx: self
+                        .dzx_dir
+                        .as_deref()
+                        .map(|d| (d, self.dzx_min_entry_bytes, self.dzx_max_concurrent_builds)),
+                },
+                Some((self.root.as_str(), self.generation)),
+            ) {
+                tracing::warn!("archive crawl error for {}: {e}", path.display());
+            }
+        }
+    }
+}
+
+/// Returns false, having sent nothing, if the file table cannot be used.
+///
+/// Rows go out in walk order because the memory store shares a parent's path
+/// only with entries added after it. The slower per-file work runs in
+/// parallel afterwards, as it does on the walker's threads.
+fn crawl_from_mft(
+    root: &Path,
+    cache: &mut MftCache,
+    excl: &ExclusionEngine,
+    tx: &mpsc::SyncSender<(FileRecord, String)>,
+    root_str: &str,
+    side_work: &SideWork,
+) -> bool {
+    let index = match cache.for_root(root) {
+        Ok(index) => index,
+        Err(e) => {
+            tracing::warn!("file table unavailable, walking {}: {e}", root.display());
+            return false;
+        }
+    };
+    let now = unix_now();
+    let mut extra = Vec::new();
+    let mut rows = Vec::new();
+    let walked = index.walk(root, |path, file| {
+        let is_hidden = is_hidden_name(path);
+        if excl.should_exclude(path, is_hidden) {
+            return false;
+        }
+        rows.push(record_from_mft(path, file, is_hidden, now));
+        true
+    });
+    if let Err(e) = walked {
+        tracing::warn!("file table unusable, walking {}: {e}", root.display());
+        return false;
+    }
+    tracing::info!(
+        "file table: {} entries under {}",
+        rows.len(),
+        root.display()
+    );
+    for row in rows {
+        if side_work.wanted(Path::new(&row.path), row.is_dir) {
+            extra.push(row.clone());
+        }
+        let _ = tx.send((row, root_str.to_owned()));
+    }
+    extra.par_iter().for_each(|row| {
+        side_work.run(Path::new(&row.path), row.is_dir, row.size_bytes, row);
+    });
+    true
+}
 
 // ---------------------------------------------------------------------------
 // full_crawl
@@ -83,7 +216,10 @@ pub async fn full_crawl(
     let registry_w = Arc::clone(&registry);
     let shutdown_w = shutdown.clone();
 
+    let use_mft = cfg.indexer.use_mft;
+
     tokio::task::spawn_blocking(move || -> Result<()> {
+        let mut mft_cache = MftCache::default();
         for watch_path in &watch_paths {
             if shutdown_w.is_cancelled() {
                 break;
@@ -96,15 +232,21 @@ pub async fn full_crawl(
                 .git_ignore(false)
                 .build_parallel();
 
-            let sqlite = Arc::clone(&sqlite_w);
-            let tantivy = Arc::clone(&tantivy_w);
-            let metrics = Arc::clone(&metrics_w);
+            let side_work = Arc::new(SideWork {
+                sqlite: Arc::clone(&sqlite_w),
+                tantivy: Arc::clone(&tantivy_w),
+                metrics: Arc::clone(&metrics_w),
+                arc_cfg: Arc::clone(&arc_cfg_w),
+                cnt_cfg: Arc::clone(&cnt_cfg_w),
+                zidx_dir: Arc::clone(&zidx_dir_w),
+                dzx_dir: Arc::clone(&dzx_dir_w),
+                registry: Arc::clone(&registry_w),
+                dzx_min_entry_bytes,
+                dzx_max_concurrent_builds,
+                generation,
+                root: watch_root.clone(),
+            });
             let excl = Arc::clone(&excl_w);
-            let arc_cfg = Arc::clone(&arc_cfg_w);
-            let cnt_cfg = Arc::clone(&cnt_cfg_w);
-            let zidx_dir = Arc::clone(&zidx_dir_w);
-            let dzx_dir = Arc::clone(&dzx_dir_w);
-            let registry = Arc::clone(&registry_w);
             let root_str = watch_root.clone();
 
             // Dedicated writer thread batches upserts in groups of 500
@@ -160,100 +302,52 @@ pub async fn full_crawl(
                 })
             };
 
-            walker.run(|| {
-                let tx_w = tx.clone();
-                let sqlite = Arc::clone(&sqlite);
-                let tantivy = Arc::clone(&tantivy);
-                let metrics = Arc::clone(&metrics);
-                let excl = Arc::clone(&excl);
-                let arc_cfg = Arc::clone(&arc_cfg);
-                let cnt_cfg = Arc::clone(&cnt_cfg);
-                let zidx_dir = Arc::clone(&zidx_dir);
-                let dzx_dir = Arc::clone(&dzx_dir);
-                let registry = Arc::clone(&registry);
-                let root_str = root_str.clone();
+            let from_mft = use_mft
+                && crawl_from_mft(
+                    watch_path,
+                    &mut mft_cache,
+                    &excl,
+                    &tx,
+                    &root_str,
+                    &side_work,
+                );
+            if !from_mft {
+                walker.run(|| {
+                    let tx_w = tx.clone();
+                    let excl = Arc::clone(&excl);
+                    let side_work = Arc::clone(&side_work);
+                    let root_str = root_str.clone();
 
-                Box::new(move |result| {
-                    let entry = match result {
-                        Ok(e) => e,
-                        Err(e) => {
-                            tracing::warn!("walk error: {e}");
-                            return ignore::WalkState::Continue;
-                        }
-                    };
-
-                    let path = entry.path();
-                    let Ok(meta) = entry.metadata() else {
-                        return ignore::WalkState::Continue;
-                    };
-
-                    let is_hidden = is_hidden_name(path);
-                    if excl.should_exclude(path, is_hidden) {
-                        return if meta.is_dir() {
-                            ignore::WalkState::Skip
-                        } else {
-                            ignore::WalkState::Continue
+                    Box::new(move |result| {
+                        let entry = match result {
+                            Ok(e) => e,
+                            Err(e) => {
+                                tracing::warn!("walk error: {e}");
+                                return ignore::WalkState::Continue;
+                            }
                         };
-                    }
 
-                    let now = unix_now();
-                    let record = build_file_record(path, &meta, is_hidden, now);
+                        let path = entry.path();
+                        let Ok(meta) = entry.metadata() else {
+                            return ignore::WalkState::Continue;
+                        };
 
-                    let _ = tx_w.send((record.clone(), root_str.clone()));
-
-                    // Content indexing - sync read for small files (≤1MB) in the walk closure
-                    if !meta.is_dir() {
-                        if let Some(max_bytes) = content_limit(path, &cnt_cfg) {
-                            if meta.len() <= 1024 * 1024 {
-                                if let Ok(raw) = std::fs::read(path) {
-                                    let end = (max_bytes as usize).min(raw.len());
-                                    if let Some(text) =
-                                        super::content::extract_content_from_bytes(&raw[..end])
-                                    {
-                                        let mut r = record.clone();
-                                        r.content_indexed = true;
-                                        if tantivy.upsert(&r, Some(&text)).is_ok() {
-                                            metrics.content_indexed.fetch_add(1, Ordering::Relaxed);
-                                        }
-                                    }
-                                }
-                            }
+                        let is_hidden = is_hidden_name(path);
+                        if excl.should_exclude(path, is_hidden) {
+                            return if meta.is_dir() {
+                                ignore::WalkState::Skip
+                            } else {
+                                ignore::WalkState::Continue
+                            };
                         }
-                    }
 
-                    // Archive indexing - has its own BEGIN/COMMIT, stays inline.
-                    if !meta.is_dir() && arc_cfg.enabled {
-                        let is_archive = path
-                            .extension()
-                            .and_then(|e| e.to_str())
-                            .map(|e| arc_cfg.formats.iter().any(|f| f.eq_ignore_ascii_case(e)))
-                            .unwrap_or(false);
-
-                        if is_archive {
-                            let crawler = ArchiveCrawler::new(&arc_cfg, &cnt_cfg);
-                            if let Err(e) = crawl_archive_sync(
-                                path,
-                                &crawler,
-                                sqlite.as_ref(),
-                                &tantivy,
-                                &metrics,
-                                SidecarConfig {
-                                    zidx_dir: zidx_dir.as_deref(),
-                                    registry: Some(&registry),
-                                    dzx: dzx_dir.as_deref().map(|d| {
-                                        (d, dzx_min_entry_bytes, dzx_max_concurrent_builds)
-                                    }),
-                                },
-                                Some((root_str.as_str(), generation)),
-                            ) {
-                                tracing::warn!("archive crawl error for {}: {e}", path.display());
-                            }
-                        }
-                    }
-
-                    ignore::WalkState::Continue
-                })
-            });
+                        let record = build_file_record(path, &meta, is_hidden, unix_now());
+                        let _ = tx_w.send((record.clone(), root_str.clone()));
+                        side_work.run(path, meta.is_dir(), meta.len(), &record);
+                        ignore::WalkState::Continue
+                    })
+                });
+            }
 
             // Closing tx signals the writer thread that no more records are coming.
             // Join before removing stale rows so all crawl_generation marks are committed.

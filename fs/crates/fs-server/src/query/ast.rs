@@ -1,4 +1,4 @@
-use crate::store::{CmpOp, DupeKind};
+use crate::store::{CmpOp, DupeKind, Sort};
 
 #[derive(Debug, Clone)]
 pub enum Expr {
@@ -90,6 +90,7 @@ pub enum Function {
     Content(String),
     Dupe(DupeKind),
     Count(usize),
+    Sort(Sort),
     Len(CmpOp, usize),
     Depth(CmpOp, usize),
     Attrib(u32),

@@ -278,6 +278,7 @@ mod boolean {
             super::super::execute::fetch_filtered(
                 store,
                 &p.sql_conditions,
+                None,
                 &p.post_filters,
                 want,
                 cap,
@@ -323,4 +324,21 @@ mod boolean {
             );
         }
     }
+}
+
+#[test]
+fn sort_is_parsed_with_per_key_default_directions() {
+    use crate::store::{Sort, SortKey};
+    let cases = [
+        ("sort:name foo", SortKey::Name, false),
+        ("sort:size foo", SortKey::Size, true),
+        ("sort:dm foo", SortKey::DateModified, true),
+        ("sort:date-created-asc foo", SortKey::DateCreated, false),
+        ("sort:name-descending foo", SortKey::Name, true),
+    ];
+    for (q, key, descending) in cases {
+        assert_eq!(parse_plan(q).sort, Some(Sort { key, descending }), "{q}");
+    }
+    let macros = MacroConfig::default();
+    assert!(parse("sort:bogus foo", &macros).is_err());
 }

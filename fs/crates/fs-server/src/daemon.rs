@@ -227,6 +227,15 @@ pub async fn run_with_shutdown(
         });
     }
 
+    // ── 11b. Periodic memory-store snapshot ────────────────────────────────
+    if matches!(*sqlite, FileStore::Memory(_)) {
+        let store_c = Arc::clone(&sqlite);
+        let cfg_c = Arc::clone(&shared_cfg);
+        let crawl_c = Arc::clone(&crawl_active);
+        let shutdown_c = shutdown.clone();
+        tokio::spawn(keep_snapshot_fresh(store_c, cfg_c, crawl_c, shutdown_c));
+    }
+
     // ── 12. Config hot-reload watcher ──────────────────────────────────────
     {
         let shutdown_c = shutdown.clone();
@@ -636,6 +645,41 @@ async fn keep_journal_position(
             .await
             .ok()
             .flatten();
+    }
+}
+
+/// Saves the memory store periodically so a crash does not cost a full crawl.
+///
+/// Skipped during a crawl: a half-crawled index is not worth the seconds the
+/// save holds off the crawl's writer, and the stored change-log position only
+/// advances once the crawl is done (see [`keep_journal_position`]), so a
+/// snapshot taken afterwards is the first one recovery can build on.
+async fn keep_snapshot_fresh(
+    store: Arc<FileStore>,
+    cfg: Arc<RwLock<crate::config::Config>>,
+    crawl_active: Arc<AtomicBool>,
+    shutdown: CancellationToken,
+) {
+    loop {
+        let (interval, data_dir) = {
+            let c = cfg.read().await;
+            (c.store.snapshot_interval_secs, c.data_dir.clone())
+        };
+        // At 0, keep polling so a hot-reloaded interval takes effect.
+        let wait = Duration::from_secs(if interval == 0 { 60 } else { interval });
+        tokio::select! {
+            _ = shutdown.cancelled() => return,
+            _ = tokio::time::sleep(wait) => {}
+        }
+        if interval == 0 || crawl_active.load(Ordering::Acquire) {
+            continue;
+        }
+        let store = Arc::clone(&store);
+        match tokio::task::spawn_blocking(move || store.flush_if_changed(&data_dir)).await {
+            Ok(Err(e)) => tracing::warn!("periodic store save: {e}"),
+            Err(e) => tracing::warn!("periodic store save: {e}"),
+            Ok(Ok(_)) => {}
+        }
     }
 }
 

@@ -6,7 +6,9 @@ use rayon::prelude::*;
 use rusqlite::types::Value;
 
 use crate::error::{AppError, Result};
-use crate::store::{build_conditions, DupeKind, FileRecord, FuzzyRank, MetaFilters, SqlCondition};
+use crate::store::{
+    build_conditions, DupeKind, FileRecord, FuzzyRank, MetaFilters, Sort, SqlCondition,
+};
 
 use super::schema::{query_records, row_to_record};
 use super::SqliteStore;
@@ -306,6 +308,28 @@ impl SqliteStore {
             return query_records(&mut stmt, all_params);
         }
         self.search_by_name_index(&name_conds, &other_conds, limit)
+    }
+
+    /// Every match has to be ordered, so unlike name searches this cannot
+    /// stop early or split the scan by name range.
+    pub fn search_sorted(
+        &self,
+        conds: &[SqlCondition],
+        sort: Sort,
+        limit: usize,
+    ) -> Result<Vec<FileRecord>> {
+        let (where_extra, mut params) = build_conditions(conds);
+        let sql = format!(
+            "SELECT id, path, name, extension, size_bytes, mtime, ctime,
+                    is_dir, is_hidden, is_symlink, attrib_bitmask,
+                    content_indexed, tantivy_id, indexed_at, archive_path
+             FROM files WHERE 1=1 {where_extra} ORDER BY {} LIMIT ?",
+            sort.order_sql()
+        );
+        params.push(Value::Integer(limit as i64));
+        let conn = self.get_conn()?;
+        let mut stmt = conn.prepare(&sql)?;
+        query_records(&mut stmt, params)
     }
 
     /// Fuzzy candidate pass: reads only `(id, name)` for up to `cap` rows

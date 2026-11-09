@@ -74,6 +74,15 @@ pub struct StoreConfig {
     /// dropped.
     #[serde(default = "default_sqlite_indexes")]
     pub indexes: Vec<SqliteIndex>,
+    /// Memory mode: seconds between saves of `index.bin` while files are
+    /// changing, so a crash costs at most this much catch-up rather than a
+    /// full crawl. 0 saves only on clean shutdown.
+    #[serde(default = "default_snapshot_interval")]
+    pub snapshot_interval_secs: u64,
+}
+
+fn default_snapshot_interval() -> u64 {
+    300
 }
 
 impl Default for StoreConfig {
@@ -81,6 +90,7 @@ impl Default for StoreConfig {
         Self {
             mode: StoreMode::default(),
             indexes: default_sqlite_indexes(),
+            snapshot_interval_secs: default_snapshot_interval(),
         }
     }
 }
@@ -308,6 +318,12 @@ pub struct IndexerConfig {
 
     #[serde(default = "default_event_batch_size")]
     pub event_batch_size: usize,
+
+    /// Windows: build the first index from the NTFS file table rather than
+    /// by walking directories. Needs administrator rights; any failure falls
+    /// back to the walk. Off by default until proven on real volumes.
+    #[serde(default)]
+    pub use_mft: bool,
 }
 
 fn default_threads() -> usize {
@@ -331,6 +347,7 @@ impl Default for IndexerConfig {
             content_threads: default_threads(),
             commit_interval_secs: default_commit_interval(),
             event_batch_size: default_event_batch_size(),
+            use_mft: false,
         }
     }
 }

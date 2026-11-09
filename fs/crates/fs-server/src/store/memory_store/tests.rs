@@ -649,3 +649,204 @@ fn parallel_scan_returns_the_first_matches_in_entry_order() {
         );
     }
 }
+
+// ---------------------------------------------------------------------------
+// Per-directory path matching, sort indexes, dupe keys
+// ---------------------------------------------------------------------------
+
+fn names(records: Vec<FileRecord>) -> Vec<String> {
+    records.into_iter().map(|r| r.name).collect()
+}
+
+#[test]
+fn path_search_per_directory_agrees_with_matching_the_whole_path() {
+    let store = make_store();
+    let mut paths = vec!["/Ab".to_owned(), "/Ab/cD".to_owned(), "/x".to_owned()];
+    for dir in ["/Ab", "/Ab/cD", "/x"] {
+        for file in ["e.txt", "Cd.rs", "ab"] {
+            paths.push(format!("{dir}/{file}"));
+        }
+    }
+    // Parents first, so these entries extend their directories.
+    for p in &paths {
+        store.upsert_file(&sample(p));
+    }
+    // No parent entry, so its tail is the whole path.
+    store.upsert_file(&sample("/orphan/dir/Ab.txt"));
+    paths.push("/orphan/dir/Ab.txt".to_owned());
+
+    for pattern in [
+        "%b/c%",
+        "%d/e%",
+        "%ab%",
+        "%CD%",
+        "%/%",
+        "%.txt%",
+        "%x/a%",
+        "/a%",
+        "/ab/cd/%",
+        "/Ab/cD/e%",
+        "/x%",
+        "/%",
+        "/ab/cd/e.txt",
+        "%.rs",
+        "/_b%",
+        "%orphan%",
+    ] {
+        let mut want: Vec<String> = paths
+            .iter()
+            .filter(|p| like_match(p, pattern))
+            .cloned()
+            .collect();
+        let mut got: Vec<String> = store
+            .search_conditions(&[SqlCondition::PathLike(pattern.into())], 1000)
+            .unwrap()
+            .into_iter()
+            .map(|r| r.path)
+            .collect();
+        want.sort();
+        got.sort();
+        assert_eq!(got, want, "pattern {pattern:?}");
+    }
+}
+
+#[test]
+fn two_path_conditions_keep_separate_verdicts() {
+    let store = make_store();
+    store.upsert_file(&sample("/keep"));
+    store.upsert_file(&sample("/keep/a.txt"));
+    let conds = [
+        SqlCondition::PathLike("%keep%".into()),
+        SqlCondition::Not(vec![SqlCondition::PathLike("%zzz%".into())]),
+    ];
+    let got = store.search_conditions(&conds, 10).unwrap();
+    assert_eq!(got.len(), 2);
+}
+
+fn sized(path: &str, size: u64) -> FileRecord {
+    FileRecord {
+        size_bytes: size,
+        mtime: 1000 - size as i64,
+        ..sample(path)
+    }
+}
+
+const BY_NAME: Sort = Sort {
+    key: SortKey::Name,
+    descending: false,
+};
+const BY_SIZE_DESC: Sort = Sort {
+    key: SortKey::Size,
+    descending: true,
+};
+
+#[test]
+fn sorted_search_orders_and_filters() {
+    let store = make_store();
+    for (p, s) in [("/b.rs", 5), ("/A.rs", 9), ("/c.txt", 100), ("/D.rs", 1)] {
+        store.upsert_file(&sized(p, s));
+    }
+    let rs = [SqlCondition::NameLike("%.rs".into())];
+    assert_eq!(
+        names(store.search_sorted(&rs, BY_NAME, 10).unwrap()),
+        ["A.rs", "b.rs", "D.rs"],
+        "names sort ignoring case"
+    );
+    assert_eq!(
+        names(store.search_sorted(&rs, BY_SIZE_DESC, 2).unwrap()),
+        ["A.rs", "b.rs"]
+    );
+    let oldest_first = Sort {
+        key: SortKey::DateModified,
+        descending: false,
+    };
+    assert_eq!(
+        names(store.search_sorted(&[], oldest_first, 1).unwrap()),
+        ["c.txt"]
+    );
+}
+
+#[test]
+fn sort_index_follows_changes_after_it_is_built() {
+    let store = make_store();
+    for (p, s) in [("/a", 1), ("/b", 2), ("/c", 3)] {
+        store.upsert_file(&sized(p, s));
+    }
+    let all = |sort| names(store.search_sorted(&[], sort, 10).unwrap());
+    assert_eq!(all(BY_SIZE_DESC), ["c", "b", "a"]);
+
+    store.upsert_file(&sized("/a", 50)); // changed
+    store.upsert_file(&sized("/d", 2)); // added, ties with /b
+    store.remove_file("/c");
+    assert_eq!(all(BY_SIZE_DESC), ["a", "d", "b"]);
+    store.upsert_file(&sized("/c", 25)); // revived from a ghost
+    assert_eq!(all(BY_SIZE_DESC), ["a", "c", "d", "b"]);
+    assert_eq!(all(BY_NAME), ["a", "b", "c", "d"]);
+}
+
+#[test]
+fn sort_index_survives_compaction_and_large_change_sets() {
+    let store = make_store();
+    let count = 20_000u64;
+    for i in 0..count {
+        store.upsert_file(&sized(&format!("/f{i:05}"), i));
+    }
+    let top = |n| names(store.search_sorted(&[], BY_SIZE_DESC, n).unwrap());
+    assert_eq!(top(1), ["f19999"]);
+    // Enough removals to compact, which renumbers every entry.
+    for i in (0..count).rev().take(10_000) {
+        store.remove_file(&format!("/f{i:05}"));
+    }
+    assert_eq!(top(2), ["f09999", "f09998"]);
+}
+
+#[test]
+fn dupes_group_numerically_and_keep_entry_order() {
+    let store = make_store();
+    for (p, s) in [("/a", 10), ("/b", 9), ("/c", 10), ("/d", 9), ("/e", 3)] {
+        store.upsert_file(&sized(p, s));
+    }
+    assert_eq!(
+        names(store.find_dupes(DupeKind::Size, &[], 10).unwrap()),
+        ["b", "d", "a", "c"]
+    );
+    assert_eq!(
+        names(store.find_dupes(DupeKind::Size, &[], 3).unwrap()).len(),
+        3
+    );
+}
+
+#[test]
+fn dupes_by_name_ignore_unique_names() {
+    let store = make_store();
+    for p in ["/x/same.rs", "/y/same.rs", "/y/other.rs"] {
+        store.upsert_file(&sample(p));
+    }
+    assert_eq!(
+        names(store.find_dupes(DupeKind::Name, &[], 10).unwrap()),
+        ["same.rs", "same.rs"]
+    );
+}
+
+#[test]
+fn flush_if_changed_saves_only_after_an_entry_changes() {
+    let dir = TempDir::new().unwrap();
+    let store = MemoryStore::new(dir.path()).unwrap();
+    assert!(!store.flush_if_changed(dir.path()).unwrap(), "nothing yet");
+
+    store.upsert_file(&sample("/a/b.rs"));
+    assert!(store.flush_if_changed(dir.path()).unwrap());
+    assert!(!store.flush_if_changed(dir.path()).unwrap(), "unchanged");
+
+    store.set_meta("journal_position", "{}");
+    assert!(
+        !store.flush_if_changed(dir.path()).unwrap(),
+        "metadata alone does not justify a save"
+    );
+
+    store.remove_file("/a/b.rs");
+    assert!(store.flush_if_changed(dir.path()).unwrap());
+    let reloaded = MemoryStore::new(dir.path()).unwrap();
+    assert!(reloaded.get_by_path("/a/b.rs").unwrap().is_none());
+    assert_eq!(reloaded.get_meta("journal_position").as_deref(), Some("{}"));
+}

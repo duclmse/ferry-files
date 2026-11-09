@@ -1,7 +1,8 @@
 use std::fs::File;
 use std::io::{BufWriter, Read, Seek, SeekFrom, Write};
 use std::path::Path;
-use std::sync::RwLock;
+use std::sync::atomic::{AtomicU64, Ordering};
+use std::sync::{Mutex, PoisonError, RwLock};
 
 use super::snapshot;
 use super::state::IndexState;
@@ -81,6 +82,8 @@ impl MemoryStore {
         };
         Ok(Self {
             state: RwLock::new(state),
+            saved_revision: AtomicU64::new(0),
+            saving: Mutex::new(()),
         })
     }
 
@@ -138,6 +141,7 @@ impl MemoryStore {
 
     /// Serialize the index to `data_dir/index.bin` in v4 format.
     pub fn flush_to_disk(&self, data_dir: &Path) -> Result<()> {
+        let _saving = self.saving.lock().unwrap_or_else(PoisonError::into_inner);
         let state = self.read_state();
         // Write-then-rename so a crash mid-write keeps the previous snapshot.
         let path = data_dir.join("index.bin");
@@ -157,6 +161,8 @@ impl MemoryStore {
         };
         write().map_err(AppError::Io)?;
         std::fs::rename(&tmp, &path).map_err(AppError::Io)?;
+        self.saved_revision
+            .store(state.revision(), Ordering::Release);
         tracing::info!(
             "memory store: flushed {} records (checkpoint={}) to {}",
             state.len(),
@@ -164,6 +170,18 @@ impl MemoryStore {
             path.display(),
         );
         Ok(())
+    }
+
+    /// Saves only if an entry changed since the last save. Metadata alone
+    /// does not count: the change-log position moves every minute even on an
+    /// idle tree, and an older position only means replaying an empty range.
+    pub fn flush_if_changed(&self, data_dir: &Path) -> Result<bool> {
+        let current = self.read_state().revision();
+        if current == self.saved_revision.load(Ordering::Acquire) {
+            return Ok(false);
+        }
+        self.flush_to_disk(data_dir)?;
+        Ok(true)
     }
 
     pub fn get_usn_checkpoint(&self) -> u64 {

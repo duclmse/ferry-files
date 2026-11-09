@@ -214,8 +214,9 @@ bounds-check it.
 2. Seek back, patch in `data_len`, and `fsync`.
 3. Rename over `index.bin`.
 
-A crash at any point leaves the previous snapshot intact. `fsd` currently saves
-only on clean shutdown.
+A crash at any point leaves the previous snapshot intact. `fsd` saves on clean
+shutdown and, when entries have changed and no crawl is running, every
+`store.snapshot_interval_secs` (default 300; 0 disables it).
 
 ## Versions
 

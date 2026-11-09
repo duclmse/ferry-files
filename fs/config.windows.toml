@@ -26,6 +26,9 @@ mode = "sqlite"
 # fast and slows every write; see docs/plans/everything-borrowing.md, phase 7.
 # Changes apply on restart: missing indexes are built, unlisted ones dropped.
 indexes = ["name", "extension", "mtime", "size", "attrib"]
+# Memory mode: seconds between index.bin saves while files change, so a crash
+# does not cost a full crawl. 0 saves only on clean shutdown.
+snapshot_interval_secs = 300
 
 # ── Exclusions ────────────────────────────────────────────────────────────────
 
@@ -142,6 +145,11 @@ max_fuzzy_candidates = 50000
 # Number of threads for the initial full crawl.
 # Default: half the available CPU cores.
 crawl_threads = 4
+
+# Build the first index from the NTFS file table instead of walking directories.
+# Needs administrator rights; falls back to the walk if the table is unusable.
+# Unlike the walk, it does not honour .ignore files.
+use_mft = false
 
 # Number of threads for parallel content extraction during crawl.
 content_threads = 4

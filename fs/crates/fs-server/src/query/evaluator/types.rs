@@ -1,6 +1,6 @@
 use regex::Regex;
 
-use crate::store::{DupeKind, FileRecord, SqlCondition};
+use crate::store::{DupeKind, FileRecord, Sort, SqlCondition};
 
 // ---------------------------------------------------------------------------
 // Public result type
@@ -24,6 +24,7 @@ pub struct QueryPlan {
     pub tantivy_query: Option<String>,
     pub post_filters: Vec<PostFilter>,
     pub limit: Option<usize>,
+    pub sort: Option<Sort>,
     pub offset: usize,
     pub strategy: EvalStrategy,
 }

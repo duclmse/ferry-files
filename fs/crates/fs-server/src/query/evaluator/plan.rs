@@ -20,6 +20,7 @@ pub fn plan(expr: &Expr, default_mods: &Modifiers) -> Result<QueryPlan> {
         tantivy_query: None,
         post_filters: Vec::new(),
         limit: None,
+        sort: None,
         offset: 0,
         strategy: EvalStrategy::SqliteOnly,
     };
@@ -39,6 +40,7 @@ fn walk(expr: &Expr, inherited: &Modifiers, p: &mut QueryPlan) -> Result<()> {
                 let sp = sub_plan(side, inherited)?;
                 require_plain(&sp, "OR")?;
                 p.limit = p.limit.or(sp.limit);
+                p.sort = p.sort.or(sp.sort);
                 // Flatten `a | b | c` into one OR instead of nesting.
                 match <[SqlCondition; 1]>::try_from(sp.sql_conditions) {
                     Ok([SqlCondition::Or(inner)]) if sp.post_filters.is_empty() => {
@@ -70,6 +72,7 @@ fn walk(expr: &Expr, inherited: &Modifiers, p: &mut QueryPlan) -> Result<()> {
             let np = sub_plan(inner, inherited)?;
             require_plain(&np, "NOT")?;
             p.limit = p.limit.or(np.limit);
+            p.sort = p.sort.or(np.sort);
             if np.post_filters.is_empty() {
                 p.sql_conditions.push(SqlCondition::Not(np.sql_conditions));
             } else {
@@ -94,6 +97,7 @@ fn sub_plan(expr: &Expr, inherited: &Modifiers) -> Result<QueryPlan> {
         tantivy_query: None,
         post_filters: Vec::new(),
         limit: None,
+        sort: None,
         offset: 0,
         strategy: EvalStrategy::SqliteOnly,
     };
@@ -246,6 +250,9 @@ fn emit_function(
         }
         Function::Count(n) => {
             p.limit = Some(*n);
+        }
+        Function::Sort(sort) => {
+            p.sort = Some(*sort);
         }
         Function::Len(op, n) => {
             p.sql_conditions.push(SqlCondition::NameLenOp(*op, *n));

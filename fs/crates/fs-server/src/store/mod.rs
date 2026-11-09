@@ -221,6 +221,63 @@ pub enum CmpOp {
     Eq,
 }
 
+/// What a `sort:` query orders by.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum SortKey {
+    Name,
+    Size,
+    DateModified,
+    DateCreated,
+}
+
+impl SortKey {
+    pub const COUNT: usize = 4;
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct Sort {
+    pub key: SortKey,
+    pub descending: bool,
+}
+
+impl Sort {
+    /// `ORDER BY` terms. Ties fall to the id so paging is stable, and flip
+    /// with the direction as the memory store's do.
+    pub fn order_sql(self) -> &'static str {
+        match (self.key, self.descending) {
+            (SortKey::Name, false) => "name COLLATE NOCASE ASC, id ASC",
+            (SortKey::Name, true) => "name COLLATE NOCASE DESC, id DESC",
+            (SortKey::Size, false) => "size_bytes ASC, id ASC",
+            (SortKey::Size, true) => "size_bytes DESC, id DESC",
+            (SortKey::DateModified, false) => "mtime ASC, id ASC",
+            (SortKey::DateModified, true) => "mtime DESC, id DESC",
+            (SortKey::DateCreated, false) => "ctime ASC, id ASC",
+            (SortKey::DateCreated, true) => "ctime DESC, id DESC",
+        }
+    }
+
+    pub fn compare(self, a: &FileRecord, b: &FileRecord) -> std::cmp::Ordering {
+        let ascending = match self.key {
+            SortKey::Name => cmp_name_nocase(&a.name, &b.name),
+            SortKey::Size => a.size_bytes.cmp(&b.size_bytes),
+            SortKey::DateModified => a.mtime.cmp(&b.mtime),
+            SortKey::DateCreated => a.ctime.cmp(&b.ctime),
+        };
+        if self.descending {
+            ascending.reverse()
+        } else {
+            ascending
+        }
+    }
+}
+
+/// Name order for sorting: ASCII case folded, like SQLite's `NOCASE`.
+pub(crate) fn cmp_name_nocase(a: &str, b: &str) -> std::cmp::Ordering {
+    a.bytes()
+        .map(|c| c.to_ascii_lowercase())
+        .cmp(b.bytes().map(|c| c.to_ascii_lowercase()))
+}
+
 impl CmpOp {
     pub fn as_sql(&self) -> &'static str {
         match self {
@@ -585,6 +642,19 @@ impl FileStore {
         }
     }
 
+    /// Like [`Self::search_conditions`], returning the first `limit` in `sort` order.
+    pub fn search_sorted(
+        &self,
+        conds: &[SqlCondition],
+        sort: Sort,
+        limit: usize,
+    ) -> Result<Vec<FileRecord>> {
+        match self {
+            FileStore::Sqlite(s) => s.search_sorted(conds, sort, limit),
+            FileStore::Memory(m) => m.search_sorted(conds, sort, limit),
+        }
+    }
+
     /// Fuzzy search: `rank` scores the names of up to `cap` rows matching
     /// `conds`; only the winners are materialized as `FileRecord`s.
     pub fn fuzzy_search(
@@ -672,6 +742,15 @@ impl FileStore {
         match self {
             FileStore::Sqlite(_) => Ok(()),
             FileStore::Memory(m) => m.flush_to_disk(data_dir),
+        }
+    }
+
+    /// Saves the memory store if an entry changed since its last save.
+    /// Returns whether it saved; SQLite is always consistent on disk.
+    pub fn flush_if_changed(&self, data_dir: &Path) -> Result<bool> {
+        match self {
+            FileStore::Sqlite(_) => Ok(false),
+            FileStore::Memory(m) => m.flush_if_changed(data_dir),
         }
     }
 

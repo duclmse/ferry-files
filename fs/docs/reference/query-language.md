@@ -139,6 +139,7 @@ Wildcards match the **whole filename** by default (controlled by `wfn:` modifier
 | Function | Description |
 |----------|-------------|
 | `count:<n>` | Limit results to N |
+| `sort:<field>[-asc\|-desc]` | Order results by `name`, `size`, `dm` or `dc`. Without a direction, names run A-Z, sizes and dates largest and newest first |
 
 #### Archive Functions (fs extension)
 
@@ -559,6 +560,7 @@ pub fn plan(expr: &Expr, default_modifiers: &Modifiers) -> Result<QueryPlan, Que
 | `fuzzy:term` | strategy = `FuzzyFilter(term)` |
 | `dupe:` | strategy = `DupeSearch(DupeKind::Name)` |
 | `count:n` | `plan.limit = n` |
+| `sort:field` | `plan.sort = Sort { key, descending }` |
 | `len:` | `NameLen(op, val)` |
 | `depth:` | `Depth(op, val)` |
 | `attrib:` | `PostFilter::Attrib(flags)` |
