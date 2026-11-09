@@ -12,6 +12,10 @@ watch_paths = [
 
 # Directory for SQLite metadata store and Tantivy full-text index.
 # Created automatically on first run. Must be writable.
+# Folder of extension executables; unset disables extensions. Must be writable
+# only by root or the daemon user (on Windows, inside Program Files).
+# extensions_dir = "/usr/local/lib/fs/extensions"
+
 data_dir = "/var/lib/fs"
 
 # Directory for rolling daily log files.
@@ -83,6 +87,16 @@ py = 262144
 # HTTP REST API port.
 rest_port = 7700
 
+# Address REST listens on. Default is loopback; 0.0.0.0 exposes it to the network.
+# rest_bind = "127.0.0.1"
+
+# BLAKE3 digest of the token for /fs/write, copy, move, delete and mkdir. Those
+# routes are refused while this is unset. Create one with `fsd generate-token`.
+# rest_file_token_hash = "<64 hex characters>"
+
+# Address gRPC listens on. Default is loopback.
+# grpc_bind = "127.0.0.1"
+
 # gRPC port (Tonic + reflection).
 grpc_port = 7701
 
@@ -91,8 +105,9 @@ grpc_port = 7701
 # Windows default:     \\.\pipe\fs
 # ipc_path = "/tmp/fs.sock"
 
-# CORS origins allowed for the REST API. Use ["*"] to allow all.
-rest_cors_origins = ["*"]
+# Browser origins allowed to read REST responses. Empty by default. Avoid ["*"]:
+# /fs/read needs no token, so it would let any website read local files.
+rest_cors_origins = []
 
 # ── Search ────────────────────────────────────────────────────────────────────
 

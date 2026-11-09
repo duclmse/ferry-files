@@ -32,7 +32,8 @@ pub fn load_ipc_path(path: &Path) -> anyhow::Result<PathBuf> {
 }
 
 fn parse_ipc_path(text: &str) -> anyhow::Result<PathBuf> {
-    let cfg: ClientConfig = toml::from_str(text).context("config parse error")?;
+    let cfg: ClientConfig =
+        toml::from_str(text).map_err(|e| anyhow::anyhow!("config parse error: {e}"))?;
     Ok(cfg.api.ipc_path)
 }
 

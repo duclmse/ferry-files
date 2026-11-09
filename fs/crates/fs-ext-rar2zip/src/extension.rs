@@ -1,4 +1,4 @@
-//! Hooks rar2zip into the `fs` daemon.
+//! rar2zip's implementation of the extension contract.
 
 use std::net::{TcpStream, ToSocketAddrs};
 use std::path::{Path, PathBuf};
@@ -42,7 +42,7 @@ impl Rar2zipExtension {
 }
 
 impl Extension for Rar2zipExtension {
-    fn name(&self) -> &'static str {
+    fn name(&self) -> &str {
         "rar2zip"
     }
 

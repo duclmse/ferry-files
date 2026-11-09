@@ -15,6 +15,14 @@ pub struct Config {
     pub data_dir: PathBuf,
     pub log_dir: PathBuf,
 
+    /// Folder of extension executables. Unset disables extensions.
+    #[serde(default)]
+    pub extensions_dir: Option<PathBuf>,
+
+    /// File this config was read from.
+    #[serde(skip)]
+    pub source_path: Option<PathBuf>,
+
     #[serde(default)]
     pub exclusions: ExclusionConfig,
 
@@ -128,8 +136,22 @@ pub struct ApiConfig {
     #[serde(default = "default_rest_port")]
     pub rest_port: u16,
 
+    /// Address REST listens on. Loopback unless the operator opts in.
+    #[serde(default = "default_rest_bind")]
+    pub rest_bind: std::net::IpAddr,
+
+    /// BLAKE3 hex digest of the token that authorizes `/fs/*` changes. Unset
+    /// disables those routes. Only a digest is kept because `/fs/read` can
+    /// serve this file back to anyone who reaches the API.
+    #[serde(default)]
+    pub rest_file_token_hash: Option<String>,
+
     #[serde(default = "default_grpc_port")]
     pub grpc_port: u16,
+
+    /// Address gRPC listens on. Loopback unless the operator opts in.
+    #[serde(default = "default_grpc_bind")]
+    pub grpc_bind: std::net::IpAddr,
 
     #[serde(default = "default_ipc_path")]
     pub ipc_path: PathBuf,
@@ -154,6 +176,25 @@ fn default_rest_port() -> u16 {
     7700
 }
 
+fn default_rest_bind() -> std::net::IpAddr {
+    std::net::IpAddr::V4(std::net::Ipv4Addr::LOCALHOST)
+}
+
+fn default_grpc_bind() -> std::net::IpAddr {
+    std::net::IpAddr::V4(std::net::Ipv4Addr::LOCALHOST)
+}
+
+/// Creates a random token and the digest to store in the config.
+pub fn generate_file_token() -> (String, String) {
+    let token = format!(
+        "{}{}",
+        uuid::Uuid::new_v4().simple(),
+        uuid::Uuid::new_v4().simple()
+    );
+    let hash = blake3::hash(token.as_bytes()).to_hex().to_string();
+    (token, hash)
+}
+
 fn default_grpc_port() -> u16 {
     7701
 }
@@ -162,15 +203,20 @@ fn default_ipc_path() -> PathBuf {
     fs_protocol::default_ipc_path()
 }
 
+// Empty on purpose: `/fs/read` needs no token, so allowing any origin would let
+// any website read local files through the browser.
 fn default_cors_origins() -> Vec<String> {
-    vec!["*".into()]
+    Vec::new()
 }
 
 impl Default for ApiConfig {
     fn default() -> Self {
         Self {
             rest_port: default_rest_port(),
+            rest_bind: default_rest_bind(),
+            rest_file_token_hash: None,
             grpc_port: default_grpc_port(),
+            grpc_bind: default_grpc_bind(),
             ipc_path: default_ipc_path(),
             rest_cors_origins: default_cors_origins(),
             rest_enabled: true,
@@ -381,6 +427,7 @@ pub fn load(path: &Path) -> Result<Config> {
         }
     }
 
+    cfg.source_path = Some(path.to_path_buf());
     Ok(cfg)
 }
 
@@ -397,6 +444,12 @@ const MAX_NESTING_DEPTH: u8 = 2;
 
 pub fn validate(cfg: &Config) -> Vec<String> {
     let mut errors = Vec::new();
+
+    if let Some(hash) = &cfg.api.rest_file_token_hash {
+        if blake3::Hash::from_hex(hash).is_err() {
+            errors.push("api.rest_file_token_hash must be a 64-character hex digest".into());
+        }
+    }
 
     if cfg.watch_paths.is_empty() {
         errors.push("watch_paths must not be empty".into());
@@ -529,6 +582,27 @@ pub async fn watch_config(path: PathBuf, config: Arc<RwLock<Config>>, shutdown: 
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn apis_bind_to_loopback_by_default() {
+        let api = ApiConfig::default();
+        assert!(api.rest_bind.is_loopback());
+        assert!(api.grpc_bind.is_loopback());
+    }
+
+    #[test]
+    fn no_cors_origin_is_allowed_by_default() {
+        assert!(ApiConfig::default().rest_cors_origins.is_empty());
+    }
+
+    #[test]
+    fn generated_token_matches_its_digest() {
+        let (token, hash) = generate_file_token();
+        assert_eq!(token.len(), 64);
+        let expected = blake3::Hash::from_hex(&hash).unwrap();
+        assert_eq!(blake3::hash(token.as_bytes()), expected);
+        assert_ne!(token, generate_file_token().0);
+    }
     use std::io::Write;
     use tempfile::NamedTempFile;
 

@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # Build fsd and fs in release mode. Extra arguments go to cargo, e.g.
-#   scripts/build.sh --features fs-server/rar2zip
+#   scripts/build.sh -p fs-ext-rar2zip   # also build the rar2zip extension
 set -euo pipefail
 
 cd "$(dirname "${BASH_SOURCE[0]}")/.."

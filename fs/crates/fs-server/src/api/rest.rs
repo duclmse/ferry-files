@@ -10,6 +10,7 @@
 
 use std::sync::{atomic::Ordering, Arc};
 
+use axum::http::HeaderValue;
 use axum::{
     extract::{Query, State},
     http::StatusCode,
@@ -19,7 +20,7 @@ use axum::{
 };
 use serde::{Deserialize, Serialize};
 use tokio::sync::{watch, RwLock};
-use tower_http::cors::CorsLayer;
+use tower_http::cors::{AllowHeaders, AllowMethods, AllowOrigin, CorsLayer};
 
 use crate::api::archive::ArchiveRegistry;
 use crate::config::Config;
@@ -122,7 +123,32 @@ pub fn router(state: AppState) -> Router {
         r = r.merge(crate::api::archive::router(state.clone()));
     }
 
-    r.layer(CorsLayer::permissive()).with_state(state)
+    r.with_state(state)
+}
+
+/// Builds the CORS policy from `api.rest_cors_origins`. An empty list adds no
+/// CORS headers, so browsers keep cross-origin pages from reading responses.
+pub fn cors_layer(origins: &[String]) -> CorsLayer {
+    if origins.iter().any(|o| o == "*") {
+        return CorsLayer::permissive();
+    }
+    if origins.is_empty() {
+        return CorsLayer::new();
+    }
+    let allowed: Vec<HeaderValue> = origins
+        .iter()
+        .filter_map(|origin| match HeaderValue::from_str(origin) {
+            Ok(value) => Some(value),
+            Err(e) => {
+                tracing::warn!("ignoring invalid CORS origin {origin:?}: {e}");
+                None
+            }
+        })
+        .collect();
+    CorsLayer::new()
+        .allow_origin(AllowOrigin::list(allowed))
+        .allow_methods(AllowMethods::mirror_request())
+        .allow_headers(AllowHeaders::mirror_request())
 }
 
 // ---------------------------------------------------------------------------
@@ -400,6 +426,36 @@ fn eval_strategy_mode(strategy: &evaluator::EvalStrategy) -> &'static str {
 
 #[cfg(test)]
 mod tests {
+    #[tokio::test]
+    async fn cors_follows_the_configured_origins() {
+        use axum::{body::Body, http::Request, routing::get, Router};
+        use tower::ServiceExt;
+
+        async fn allowed(origins: &[&str], origin: &str) -> Option<String> {
+            let origins: Vec<String> = origins.iter().map(|o| o.to_string()).collect();
+            let app = Router::new()
+                .route("/x", get(|| async { "ok" }))
+                .layer(super::cors_layer(&origins));
+            let request = Request::builder()
+                .uri("/x")
+                .header("origin", origin)
+                .body(Body::empty())
+                .unwrap();
+            let response = app.oneshot(request).await.unwrap();
+            response
+                .headers()
+                .get("access-control-allow-origin")
+                .map(|v| v.to_str().unwrap().to_owned())
+        }
+
+        let site = "https://evil.example";
+        let ui = "https://ui.example";
+        assert_eq!(allowed(&[], site).await, None);
+        assert_eq!(allowed(&[ui], site).await, None);
+        assert_eq!(allowed(&[ui], ui).await.as_deref(), Some(ui));
+        assert_eq!(allowed(&["*"], site).await.as_deref(), Some("*"));
+    }
+
     use super::*;
     use crate::query::evaluator::EvalStrategy;
     use crate::store::{DupeKind, FileRecord};

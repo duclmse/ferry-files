@@ -418,7 +418,7 @@ mod tests {
     struct FakeExtension;
 
     impl common::extension::Extension for FakeExtension {
-        fn name(&self) -> &'static str {
+        fn name(&self) -> &str {
             "fake"
         }
         fn validate(&self) -> Vec<String> {

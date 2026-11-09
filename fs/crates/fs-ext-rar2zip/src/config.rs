@@ -31,6 +31,22 @@ pub struct Config {
     pub smtp: Option<SmtpConfig>,
 }
 
+impl Config {
+    /// Compares the whole name's suffix, because `Path::extension` reports
+    /// only `gz` for `a.tar.gz` and could never match a `tar.gz` entry.
+    pub fn includes_extension(&self, path: &Path) -> bool {
+        let name = path
+            .file_name()
+            .and_then(|n| n.to_str())
+            .unwrap_or_default()
+            .to_lowercase();
+        self.include_extensions.iter().any(|inc| {
+            let suffix = format!(".{}", inc.trim_start_matches('.').to_lowercase());
+            name.len() > suffix.len() && name.ends_with(&suffix)
+        })
+    }
+}
+
 fn default_include_extensions() -> Vec<String> {
     vec!["rar".into(), "7z".into(), "tar.gz".into()]
 }
@@ -124,6 +140,9 @@ impl Default for TransferConfig {
 
 #[derive(Debug, Clone, Deserialize)]
 pub struct ObservabilityConfig {
+    /// Address the metrics and dashboard servers listen on.
+    #[serde(default = "default_observability_bind")]
+    pub bind: std::net::IpAddr,
     #[serde(default = "default_metrics_port")]
     pub metrics_port: u16,
     #[serde(default = "default_dashboard_port")]
@@ -136,6 +155,9 @@ pub struct ObservabilityConfig {
     pub alert_queue_depth_threshold: usize,
 }
 
+fn default_observability_bind() -> std::net::IpAddr {
+    std::net::IpAddr::V4(std::net::Ipv4Addr::LOCALHOST)
+}
 fn default_metrics_port() -> u16 {
     9090
 }
@@ -149,6 +171,7 @@ fn default_queue_depth_threshold() -> usize {
 impl Default for ObservabilityConfig {
     fn default() -> Self {
         Self {
+            bind: default_observability_bind(),
             metrics_port: default_metrics_port(),
             dashboard_port: default_dashboard_port(),
             webhook_url: None,

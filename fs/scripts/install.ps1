@@ -56,6 +56,15 @@ New-Item -ItemType Directory -Force -Path "$dataDir\logs" | Out-Null
 Copy-Item "target\release\fsd.exe" $exePath -Force
 Copy-Item "target\release\fs.exe" (Join-Path $Prefix "fs.exe") -Force
 
+if (Test-Path "target\release\fs-ext-rar2zip.exe") {
+    $extDir = Join-Path $Prefix "extensions\rar2zip"
+    Write-Host "==> Installing rar2zip extension to $extDir"
+    New-Item -ItemType Directory -Force -Path $extDir | Out-Null
+    Copy-Item "target\release\fs-ext-rar2zip.exe" $extDir -Force
+    Copy-Item "crates\fs-ext-rar2zip\extension.toml" $extDir -Force
+    Write-Host "==> To enable it, add to the top of $configFile: extensions_dir = '$Prefix\extensions'"
+}
+
 if (-not (Test-Path $configFile)) {
     Write-Host "==> Writing default config to $configFile (edit watch_paths before starting)"
     @"

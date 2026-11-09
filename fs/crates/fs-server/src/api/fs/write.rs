@@ -16,8 +16,8 @@ use tokio_stream::wrappers::ReceiverStream;
 use crate::api::rest::AppState;
 
 use super::common::{
-    bad_request, internal, not_found, validate_path, OkResponse, PathParam, ProgressEvent,
-    StreamParam,
+    bad_request, ensure_unprotected, internal, not_found, validate_path, OkResponse, PathParam,
+    ProgressEvent, StreamParam,
 };
 
 // ---------------------------------------------------------------------------
@@ -30,7 +30,7 @@ struct WriteResponse {
 }
 
 pub(super) async fn write_handler(
-    State(_state): State<AppState>,
+    State(state): State<AppState>,
     Query(params): Query<PathParam>,
     request: Request,
 ) -> Response {
@@ -42,6 +42,10 @@ pub(super) async fn write_handler(
         Ok(p) => p,
         Err(e) => return bad_request(e).into_response(),
     };
+
+    if let Err(e) = ensure_unprotected(&state, &[&path]).await {
+        return e.into_response();
+    }
 
     if let Some(parent) = path.parent() {
         if let Err(e) = tokio::fs::create_dir_all(parent).await {
@@ -97,7 +101,7 @@ pub(super) struct FromToBody {
 }
 
 pub(super) async fn copy_handler(
-    State(_state): State<AppState>,
+    State(state): State<AppState>,
     Query(qp): Query<StreamParam>,
     Json(body): Json<FromToBody>,
 ) -> Response {
@@ -109,6 +113,10 @@ pub(super) async fn copy_handler(
         Ok(p) => p,
         Err(e) => return bad_request(format!("'to': {e}")).into_response(),
     };
+
+    if let Err(e) = ensure_unprotected(&state, &[&dst]).await {
+        return e.into_response();
+    }
 
     if qp.stream {
         let (tx, rx) = tokio::sync::mpsc::channel::<ProgressEvent>(16);
@@ -166,7 +174,7 @@ pub(super) async fn copy_handler(
 // ---------------------------------------------------------------------------
 
 pub(super) async fn move_handler(
-    State(_state): State<AppState>,
+    State(state): State<AppState>,
     Query(qp): Query<StreamParam>,
     Json(body): Json<FromToBody>,
 ) -> Response {
@@ -178,6 +186,10 @@ pub(super) async fn move_handler(
         Ok(p) => p,
         Err(e) => return bad_request(format!("'to': {e}")).into_response(),
     };
+
+    if let Err(e) = ensure_unprotected(&state, &[&src, &dst]).await {
+        return e.into_response();
+    }
 
     if let Some(parent) = dst.parent() {
         if let Err(e) = tokio::fs::create_dir_all(parent).await {
@@ -269,7 +281,7 @@ pub(super) async fn move_handler(
 // ---------------------------------------------------------------------------
 
 pub(super) async fn delete_handler(
-    State(_state): State<AppState>,
+    State(state): State<AppState>,
     Query(params): Query<PathParam>,
 ) -> Response {
     let raw = match params.path {
@@ -280,6 +292,10 @@ pub(super) async fn delete_handler(
         Ok(p) => p,
         Err(e) => return bad_request(e).into_response(),
     };
+
+    if let Err(e) = ensure_unprotected(&state, &[&path]).await {
+        return e.into_response();
+    }
 
     let meta = match tokio::fs::metadata(&path).await {
         Ok(m) => m,
@@ -346,7 +362,7 @@ pub(super) async fn delete_handler(
 // ---------------------------------------------------------------------------
 
 pub(super) async fn mkdir_handler(
-    State(_state): State<AppState>,
+    State(state): State<AppState>,
     Query(params): Query<PathParam>,
 ) -> Response {
     let raw = match params.path {
@@ -357,6 +373,10 @@ pub(super) async fn mkdir_handler(
         Ok(p) => p,
         Err(e) => return bad_request(e).into_response(),
     };
+
+    if let Err(e) = ensure_unprotected(&state, &[&path]).await {
+        return e.into_response();
+    }
 
     match tokio::fs::create_dir_all(&path).await {
         Ok(()) => Json(OkResponse { ok: true }).into_response(),

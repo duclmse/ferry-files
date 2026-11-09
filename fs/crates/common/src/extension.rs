@@ -1,7 +1,8 @@
-//! Contract between the `fs` daemon and in-process extensions.
+//! Contract for `fs` extensions.
 //!
-//! It lives in `common` so extension crates and `fs-server` can both depend on
-//! it without depending on each other in a cycle.
+//! An extension executable implements this and hands it to
+//! `extension_stdio::serve`; the daemon drives the same trait through a child
+//! process, so neither side depends on the other.
 
 use std::future::Future;
 use std::pin::Pin;
@@ -12,7 +13,7 @@ pub type ExtensionFuture = Pin<Box<dyn Future<Output = anyhow::Result<()>> + Sen
 
 pub trait Extension: Send + Sync + 'static {
     /// Key under `[extensions]` in the config, and the name IPC requests use.
-    fn name(&self) -> &'static str;
+    fn name(&self) -> &str;
 
     /// Full configuration check for `fsd validate-config`. May block on
     /// network probes, so the daemon does not call it at startup.

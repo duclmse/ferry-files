@@ -154,16 +154,7 @@ pub fn select_strategy(
 // ---------------------------------------------------------------------------
 
 fn passes_filters(path: &Path, cfg: &Config) -> bool {
-    let ext = path
-        .extension()
-        .and_then(|e| e.to_str())
-        .map(|e| e.to_lowercase())
-        .unwrap_or_default();
-    if !cfg
-        .include_extensions
-        .iter()
-        .any(|inc| inc.eq_ignore_ascii_case(&ext))
-    {
+    if !cfg.includes_extension(path) {
         return false;
     }
     let name = path
@@ -499,6 +490,22 @@ mod tests {
         assert!(super::passes_filters(Path::new("/w/ARCHIVE.RAR"), &cfg));
         assert!(super::passes_filters(Path::new("/w/archive.rar"), &cfg));
         assert!(!super::passes_filters(Path::new("/w/archive.zip"), &cfg));
+    }
+
+    #[test]
+    fn passes_filters_matches_compound_extensions() {
+        let cfg = filters_cfg(&["tar.gz"], &[]);
+        assert!(super::passes_filters(Path::new("/w/a.tar.gz"), &cfg));
+        assert!(super::passes_filters(Path::new("/w/A.TAR.GZ"), &cfg));
+        assert!(!super::passes_filters(Path::new("/w/a.gz"), &cfg));
+        assert!(!super::passes_filters(Path::new("/w/a.tar"), &cfg));
+    }
+
+    #[test]
+    fn passes_filters_requires_a_stem_and_a_dot() {
+        let cfg = filters_cfg(&["rar"], &[]);
+        assert!(!super::passes_filters(Path::new("/w/.rar"), &cfg));
+        assert!(!super::passes_filters(Path::new("/w/notrar"), &cfg));
     }
 
     #[test]

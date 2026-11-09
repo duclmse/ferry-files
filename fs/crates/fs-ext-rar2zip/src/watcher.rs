@@ -24,16 +24,7 @@ fn file_age_secs(path: &std::path::Path) -> u64 {
 
 fn passes_filters(path: &std::path::Path, cfg: &Config) -> bool {
     // 1. Extension check (case-insensitive)
-    let ext = path
-        .extension()
-        .and_then(|e| e.to_str())
-        .map(|e| e.to_lowercase())
-        .unwrap_or_default();
-    if !cfg
-        .include_extensions
-        .iter()
-        .any(|inc| inc.eq_ignore_ascii_case(&ext))
-    {
+    if !cfg.includes_extension(path) {
         return false;
     }
 

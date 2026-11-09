@@ -11,7 +11,7 @@ built inside `fs` (Phases 8–13):
 | `fs-server` | Cross-platform file-search daemon `fsd` (Everything-compatible) |
 | `fs-cli` | CLI and TUI client `fs`, talks to `fsd` over IPC |
 | `fs-protocol` | IPC wire format and client |
-| `fs-ext-rar2zip` | Daemon extension: watch → convert archives → SFTP transfer |
+| `fs-ext-rar2zip` | Extension executable: watch → convert archives → SFTP transfer |
 
 The **archive service** (Phases 8–13) extends `fs` with a network-backed
 virtual filesystem over ZIP. It adds:

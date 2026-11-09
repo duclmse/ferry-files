@@ -69,7 +69,7 @@ mod win_guard {
 // under inotify/FSEvents bursts (e.g. large `git checkout`).
 const MAX_EVENT_TASKS: usize = 16;
 
-// Longer than the 30 s rar2zip gives its in-flight jobs.
+// Longer than the time an extension process is given to stop.
 const EXTENSION_DRAIN: Duration = Duration::from_secs(35);
 
 // ---------------------------------------------------------------------------
@@ -112,8 +112,11 @@ pub async fn run_with_shutdown(
 
     tracing::info!("fs daemon starting");
 
-    // Before the instance guard, so a bad section leaves no stale PID file.
-    let extensions = Arc::new(crate::extensions::load(&config_path)?);
+    let loaded_extensions = crate::extensions::load(&config_path)?;
+    for problem in &loaded_extensions.problems {
+        tracing::error!("extensions: {problem}");
+    }
+    let extensions = Arc::new(loaded_extensions.extensions);
 
     // ── 3. Instance guard: PID file (Unix) / named mutex (Windows) ────────
     #[cfg(unix)]
@@ -191,7 +194,7 @@ pub async fn run_with_shutdown(
     // ── 10b. Extensions ─────────────────────────────────────────────────────
     let mut extension_tasks = JoinSet::new();
     for ext in extensions.iter() {
-        let name = ext.name();
+        let name = ext.name().to_owned();
         let run = ext.run(shutdown.clone());
         tracing::info!("starting extension {name}");
         // An extension failing must not take file search down with it.
@@ -296,10 +299,18 @@ pub async fn run_with_shutdown(
             };
             let shutdown_c = shutdown.clone();
             let rest_port = api_cfg.rest_port;
+            let rest_bind = api_cfg.rest_bind;
+            let cors_origins = api_cfg.rest_cors_origins.clone();
             tokio::spawn(async move {
-                let router = crate::api::rest::router(app_state);
-                let addr = std::net::SocketAddr::from(([0, 0, 0, 0], rest_port));
+                let router = crate::api::rest::router(app_state)
+                    .layer(crate::api::rest::cors_layer(&cors_origins));
+                let addr = std::net::SocketAddr::new(rest_bind, rest_port);
                 tracing::info!("REST listening on {addr}");
+                if !rest_bind.is_loopback() {
+                    tracing::warn!(
+                        "REST is reachable from the network; /fs/read and /file need no token"
+                    );
+                }
                 let listener = match tokio::net::TcpListener::bind(addr).await {
                     Ok(l) => l,
                     Err(e) => {
@@ -336,9 +347,13 @@ pub async fn run_with_shutdown(
                 .expect("gRPC reflection service build");
             let shutdown_c = shutdown.clone();
             let grpc_port = api_cfg.grpc_port;
+            let grpc_bind = api_cfg.grpc_bind;
             tokio::spawn(async move {
-                let addr = std::net::SocketAddr::from(([0, 0, 0, 0], grpc_port));
+                let addr = std::net::SocketAddr::new(grpc_bind, grpc_port);
                 tracing::info!("gRPC listening on {addr}");
+                if !grpc_bind.is_loopback() {
+                    tracing::warn!("gRPC is reachable from the network and has no authentication");
+                }
                 if let Err(e) = tonic::transport::Server::builder()
                     .add_service(grpc::service(svc))
                     .add_service(reflection)

@@ -67,11 +67,11 @@ where.exe unrar.dll
 
 ## 2. Build
 
-rar2zip is compiled into the daemon behind a Cargo feature:
-
 ```sh
-cargo build --release -p fs-server -p fs-cli --features fs-server/rar2zip
+cargo build --release -p fs-ext-rar2zip
 ```
+
+Binary: `target/release/fs-ext-rar2zip`. Building needs a C++ compiler.
 
 ---
 
@@ -137,6 +137,7 @@ webhook_url  = "https://hooks.slack.com/services/..."
 | `transfer.max_retries` | `int` | `3` | Retry attempts per destination |
 | `transfer.retry_delay_secs` | `int` | `10` | Base delay for exponential backoff |
 | `transfer.bandwidth_limit_kbps` | `int` | `0` | Upload rate limit (0 = unlimited) |
+| `observability.bind` | `ip` | `127.0.0.1` | Address for the metrics and dashboard servers |
 | `observability.metrics_port` | `int` | `9090` | Prometheus metrics HTTP port |
 | `observability.dashboard_port` | `int` | `8080` | HTML dashboard HTTP port |
 | `observability.webhook_url` | `string` | *(none)* | Slack/Teams webhook for alerts |
@@ -151,7 +152,9 @@ webhook_url  = "https://hooks.slack.com/services/..."
 
 ## 4. Running
 
-rar2zip starts and stops with `fsd`; it has no process or service of its own.
+rar2zip is started, stopped and restarted by `fsd`. To install it, copy the
+executable and `extension.toml` to `<extensions_dir>/rar2zip/` and set
+`extensions_dir` in the daemon config.
 
 ```sh
 # Validate the daemon config, including this section (also pings each destination)
@@ -161,8 +164,8 @@ fsd --config config.toml validate-config
 fsd --config config.toml daemon
 
 # Requires a running daemon
-fs --config config.toml rar2zip status
-fs --config config.toml rar2zip retry-failed
+fs --config config.toml ext rar2zip status
+fs --config config.toml ext rar2zip retry-failed
 ```
 
 Log output goes to the daemon's log (`fs.log` in `log_dir`).

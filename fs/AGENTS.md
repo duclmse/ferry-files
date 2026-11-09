@@ -14,7 +14,7 @@ crates/
   fs-protocol/     # IPC wire format and client
   fs-server/       # File-search daemon, binary `fsd`
   fs-cli/          # CLI and TUI client, binary `fs`
-  fs-ext-rar2zip/  # Archive-transfer daemon extension (feature `rar2zip`)
+  fs-ext-rar2zip/  # Archive-transfer extension executable
 ```
 
 `crates/common` is a library crate shared by the daemon and its extensions. It owns:

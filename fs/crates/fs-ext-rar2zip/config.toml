@@ -5,6 +5,9 @@
 # ── Watch folder ──────────────────────────────────────────────────────────────
 
 # Folder monitored for incoming archives. Must exist.
+# Top-level key of the daemon config; must appear before any [table].
+# extensions_dir = "/usr/local/lib/fs/extensions"
+
 [extensions.rar2zip]
 watch_folder = 'E:\Downloads'
 

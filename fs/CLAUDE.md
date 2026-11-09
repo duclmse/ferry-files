@@ -10,10 +10,7 @@ cargo build --release
 # Single crate
 cargo build -p fs-server          # binary: fsd
 cargo build -p fs-cli             # binary: fs
-cargo build -p fs-ext-rar2zip
-
-# Daemon with the rar2zip extension
-cargo build -p fs-server --features rar2zip
+cargo build -p fs-ext-rar2zip     # binary: fs-ext-rar2zip
 
 # Check only (fast)
 cargo check --workspace
@@ -27,10 +24,10 @@ cargo doc --no-deps --workspace
 
 All crates build on Windows, Linux and macOS. Only the Windows Service
 integration in `fs-server` (`service.rs`, `windows-service`) is Windows-only.
-rar2zip runs inside `fsd` when built with the `rar2zip` feature and configured
-under `[extensions.rar2zip]`. RAR extraction uses the `unrar` crate, which
-compiles the bundled RARLAB UnRAR C++ source, so that feature requires a C++
-compiler.
+rar2zip is an executable extension that `fsd` discovers under `extensions_dir`
+and configures from `[extensions.rar2zip]`. RAR extraction uses the `unrar`
+crate, which compiles the bundled RARLAB UnRAR C++ source, so building
+`fs-ext-rar2zip` requires a C++ compiler.
 
 ## Test commands
 
@@ -43,7 +40,6 @@ cargo test -p fs-server
 cargo test -p fs-cli
 cargo test -p fs-protocol
 cargo test -p fs-ext-rar2zip
-cargo test -p fs-server --features rar2zip
 cargo test -p common
 
 # Single module
@@ -64,7 +60,8 @@ crates/
   common/src/
     error.rs      CommonError, ProjectError trait
     logger.rs     tracing init (JSON, daily rolling)
-    extension.rs  Extension trait implemented by daemon extensions
+    extension.rs  Extension trait
+    extension_stdio.rs  JSON-lines protocol between fsd and extension executables
   fs-protocol/src/
     ipc_protocol.rs  wire format; changes must bump PROTOCOL_VERSION
     ipc_client.rs    client side of the IPC channel
@@ -84,8 +81,9 @@ crates/
     archive/      streaming ZIP extraction, .dzx random access
     zidx/         .zidx sidecar index
     scheduler/    archive request scheduling and rate limits
-    extensions.rs builds extensions listed under [extensions]
+    extensions.rs, extensions/  discovery, trust checks, process supervision
   fs-ext-rar2zip/src/
+    main.rs       extension executable (`run`, `validate`)
     extension.rs  Extension impl (lifecycle, client commands)
     app.rs        orchestration, process_job
     config.rs     TOML config, Destination struct
@@ -147,6 +145,12 @@ disk. The commit loop in `daemon.rs` runs every `commit_interval_secs`.
   update `queue::recover_stale`.
 - Config hot-reload is additive for watch paths. Removed paths are not
   un-watched until restart.
+- Extension executables must keep stdout for the protocol and log to stderr.
+- `fsd` runs whatever is in `extensions_dir`. `extensions/trust.rs` and
+  `ensure_unprotected` in `api/fs/common.rs` guard it; new file-mutating routes
+  must call `ensure_unprotected`.
+- New `/fs/*` routes that change the filesystem belong in the token-protected
+  `mutating` router in `api/fs.rs`.
 - The client must stay thin: `fs-cli` depends only on `fs-protocol`, never on
   `fs-server` or an extension crate. New client features go through IPC.
 - Tantivy's `IndexWriter` holds a lock file. Only one writer per index

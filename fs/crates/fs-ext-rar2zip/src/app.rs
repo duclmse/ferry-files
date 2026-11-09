@@ -59,8 +59,9 @@ pub async fn run(
         let m = Arc::clone(&metrics);
         let q = Arc::clone(&queue);
         let flag = Arc::clone(&metrics_flag);
+        let bind = config.observability.bind;
         let port = config.observability.metrics_port;
-        std::thread::spawn(move || crate::metrics::serve(port, m, q, flag));
+        std::thread::spawn(move || crate::metrics::serve(bind, port, m, q, flag));
     }
 
     // Dashboard HTTP server in a separate background thread
@@ -68,9 +69,10 @@ pub async fn run(
         let m = Arc::clone(&metrics);
         let q = Arc::clone(&queue);
         let flag = Arc::new(AtomicBool::new(false)); // shares lifecycle with metrics_flag below
+        let bind = config.observability.bind;
         let port = config.observability.dashboard_port;
         // Reuse the same serve() function on the dashboard port; /ui handles the HTML
-        std::thread::spawn(move || crate::metrics::serve(port, m, q, flag));
+        std::thread::spawn(move || crate::metrics::serve(bind, port, m, q, flag));
     }
 
     // Watcher → intake channel

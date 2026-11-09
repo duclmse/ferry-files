@@ -28,12 +28,14 @@ if [ "$SYSTEM" -eq 1 ]; then
     CONFIG_DIR="/etc/fs"
     DATA_DIR="/var/lib/fs"
     LOG_DIR="/var/log/fs"
+    EXT_DIR="/usr/local/lib/fs/extensions"
     SUDO="sudo"
 else
     BIN_DIR="$HOME/.local/bin"
     CONFIG_DIR="$HOME/.config/fs"
     DATA_DIR="$HOME/.local/share/fs"
     LOG_DIR="$HOME/.local/state/fs/logs"
+    EXT_DIR="$HOME/.local/share/fs/extensions"
     SUDO=""
 fi
 
@@ -72,6 +74,7 @@ if [ "$UNINSTALL" -eq 1 ]; then
             ;;
     esac
     $SUDO rm -f "$BIN_PATH" "$CLIENT_PATH"
+    $SUDO rm -rf "$EXT_DIR"
     echo "==> Removed $BIN_PATH, $CLIENT_PATH and the service definition."
     echo "==> Config and data left in place: $CONFIG_DIR, $DATA_DIR"
     exit 0
@@ -91,6 +94,16 @@ $SUDO cp target/release/fsd "$BIN_PATH"
 $SUDO chmod 755 "$BIN_PATH"
 $SUDO cp target/release/fs "$CLIENT_PATH"
 $SUDO chmod 755 "$CLIENT_PATH"
+
+if [ -x target/release/fs-ext-rar2zip ]; then
+    echo "==> Installing rar2zip extension to $EXT_DIR/rar2zip"
+    $SUDO mkdir -p "$EXT_DIR/rar2zip"
+    $SUDO chmod 755 "$EXT_DIR" "$EXT_DIR/rar2zip"
+    $SUDO cp target/release/fs-ext-rar2zip crates/fs-ext-rar2zip/extension.toml "$EXT_DIR/rar2zip/"
+    $SUDO chmod 755 "$EXT_DIR/rar2zip/fs-ext-rar2zip"
+    $SUDO chmod 644 "$EXT_DIR/rar2zip/extension.toml"
+    echo "==> To enable it, add to the top of $CONFIG_FILE: extensions_dir = \"$EXT_DIR\""
+fi
 
 if [ ! -f "$CONFIG_FILE" ]; then
     echo "==> Writing default config to $CONFIG_FILE (edit watch_paths before starting)"

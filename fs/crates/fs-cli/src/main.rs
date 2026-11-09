@@ -84,19 +84,13 @@ enum Command {
     /// Launch the interactive TUI
     Tui,
 
-    /// Manage the rar2zip extension (requires a daemon built with it)
-    Rar2zip {
-        #[command(subcommand)]
-        action: Rar2zipAction,
+    /// Send a command to an extension (e.g. `fs ext rar2zip status`)
+    Ext {
+        /// Extension name
+        name: String,
+        /// Command to run
+        command: String,
     },
-}
-
-#[derive(Subcommand)]
-enum Rar2zipAction {
-    /// Print queue depth per status
-    Status,
-    /// Reset all failed jobs back to pending
-    RetryFailed,
 }
 
 #[tokio::main]
@@ -165,13 +159,9 @@ async fn main() {
                 std::process::exit(1);
             }
         }
-        Command::Rar2zip { action } => {
-            let command = match action {
-                Rar2zipAction::Status => "status",
-                Rar2zipAction::RetryFailed => "retry-failed",
-            };
-            if let Err(e) = run_extension(cli.config, "rar2zip", command).await {
-                eprintln!("rar2zip error: {e}");
+        Command::Ext { name, command } => {
+            if let Err(e) = run_extension(cli.config, &name, &command).await {
+                eprintln!("extension error: {e}");
                 std::process::exit(1);
             }
         }

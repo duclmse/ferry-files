@@ -82,7 +82,7 @@ crates/fs-server/
     │   ├── rest.rs               ← Axum HTTP REST server
     │   ├── grpc.rs               ← Tonic gRPC server
     │   └── ipc_server.rs         ← Unix socket / named pipe server
-    └── extensions.rs             ← builds [extensions] entries
+    └── extensions.rs, extensions/ ← discovers and supervises extension executables
     (ipc_client and ipc_protocol live in fs-protocol; the CLI and TUI in fs-cli)
 ```
 
@@ -275,11 +275,14 @@ pub struct ContentConfig {
 #[derive(Debug, Clone, Deserialize)]
 pub struct ApiConfig {
     pub rest_port:         u16,          // default 7700
+    pub rest_bind:         IpAddr,       // default 127.0.0.1
+    pub rest_file_token_hash: Option<String>, // unset disables /fs/* changes
     pub grpc_port:         u16,          // default 7701
     pub ipc_path:          PathBuf,
     // Linux/macOS: /tmp/fs.sock
     // Windows: \\.\pipe\fs
-    pub rest_cors_origins: Vec<String>,  // default ["*"]
+    pub rest_cors_origins: Vec<String>,  // default [] (no cross-origin access)
+    pub grpc_bind:         IpAddr,       // default 127.0.0.1
 }
 
 #[derive(Debug, Clone, Deserialize)]
@@ -1128,7 +1131,7 @@ json  = 131072
 rest_port         = 7700
 grpc_port         = 7701
 ipc_path          = "/tmp/fs.sock"
-rest_cors_origins = ["*"]
+rest_cors_origins = []
 
 [search]
 default_limit        = 100

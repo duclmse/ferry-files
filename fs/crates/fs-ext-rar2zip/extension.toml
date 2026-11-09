@@ -1,0 +1,4 @@
+name = "rar2zip"
+version = "0.1.0"
+protocol = 1
+executable = "fs-ext-rar2zip"

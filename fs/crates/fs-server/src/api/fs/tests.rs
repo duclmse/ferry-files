@@ -24,10 +24,126 @@ fn pct(s: &str) -> String {
     out
 }
 
+const TEST_TOKEN: &str = "test-token";
+
+// Handler tests are not about auth, so they all arrive authorized unless the
+// request already carries its own header.
+async fn authorize(mut request: axum::extract::Request) -> axum::extract::Request {
+    let headers = request.headers_mut();
+    if !headers.contains_key(axum::http::header::AUTHORIZATION) {
+        let value = format!("Bearer {TEST_TOKEN}").parse().unwrap();
+        headers.insert(axum::http::header::AUTHORIZATION, value);
+    }
+    request
+}
+
 fn make_test_app(state: AppState) -> axum::Router {
     axum::Router::new()
         .merge(router(state.clone()))
         .with_state(state)
+        .layer(axum::middleware::map_request(authorize))
+}
+
+fn make_unauthorized_app(state: AppState) -> axum::Router {
+    axum::Router::new()
+        .merge(router(state.clone()))
+        .with_state(state)
+}
+
+async fn write_status(
+    app: axum::Router,
+    path: &std::path::Path,
+    token: Option<&str>,
+) -> StatusCode {
+    use tower::ServiceExt;
+    let mut request = axum::http::Request::builder()
+        .method("PUT")
+        .uri(format!("/fs/write?path={}", path.display()));
+    if let Some(token) = token {
+        request = request.header("authorization", format!("Bearer {token}"));
+    }
+    app.oneshot(request.body(Body::from("x")).unwrap())
+        .await
+        .unwrap()
+        .status()
+}
+
+#[tokio::test]
+async fn write_without_token_is_unauthorized() {
+    let tmp = tempfile::TempDir::new().unwrap();
+    let target = tmp.path().join("f");
+    let app = make_unauthorized_app(make_test_state());
+    assert_eq!(
+        write_status(app, &target, None).await,
+        StatusCode::UNAUTHORIZED
+    );
+    assert!(!target.exists());
+}
+
+#[tokio::test]
+async fn write_with_wrong_token_is_unauthorized() {
+    let tmp = tempfile::TempDir::new().unwrap();
+    let target = tmp.path().join("f");
+    let app = make_unauthorized_app(make_test_state());
+    let status = write_status(app, &target, Some("wrong")).await;
+    assert_eq!(status, StatusCode::UNAUTHORIZED);
+    assert!(!target.exists());
+}
+
+#[tokio::test]
+async fn write_with_token_succeeds() {
+    let tmp = tempfile::TempDir::new().unwrap();
+    let target = tmp.path().join("f");
+    let app = make_unauthorized_app(make_test_state());
+    let status = write_status(app, &target, Some(TEST_TOKEN)).await;
+    assert_eq!(status, StatusCode::OK);
+    assert!(target.exists());
+}
+
+#[tokio::test]
+async fn writes_are_disabled_until_a_token_is_configured() {
+    let tmp = tempfile::TempDir::new().unwrap();
+    let target = tmp.path().join("f");
+    let state = make_test_state();
+    state.config.write().await.api.rest_file_token_hash = None;
+    let app = make_unauthorized_app(state);
+    let status = write_status(app, &target, Some(TEST_TOKEN)).await;
+    assert_eq!(status, StatusCode::FORBIDDEN);
+    assert!(!target.exists());
+}
+
+#[tokio::test]
+async fn every_mutating_route_requires_the_token() {
+    use tower::ServiceExt;
+    let routes = [
+        ("PUT", "/fs/write?path=/x"),
+        ("POST", "/fs/copy"),
+        ("POST", "/fs/move"),
+        ("DELETE", "/fs/delete?path=/x"),
+        ("POST", "/fs/mkdir?path=/x"),
+    ];
+    for (method, uri) in routes {
+        let app = make_unauthorized_app(make_test_state());
+        let request = axum::http::Request::builder()
+            .method(method)
+            .uri(uri)
+            .body(Body::empty())
+            .unwrap();
+        let status = app.oneshot(request).await.unwrap().status();
+        assert_eq!(status, StatusCode::UNAUTHORIZED, "{uri}");
+    }
+}
+
+#[tokio::test]
+async fn reading_needs_no_token() {
+    use tower::ServiceExt;
+    let tmp = tempfile::NamedTempFile::new().unwrap();
+    let app = make_unauthorized_app(make_test_state());
+    let request = axum::http::Request::builder()
+        .uri(format!("/fs/read?path={}", tmp.path().display()))
+        .body(Body::empty())
+        .unwrap();
+    assert_eq!(app.oneshot(request).await.unwrap().status(), StatusCode::OK);
 }
 
 // --- validate_path ---
@@ -538,6 +654,86 @@ fn list_drives_letter_and_root_are_consistent() {
     }
 }
 
+async fn status_of(
+    app: axum::Router,
+    method: &str,
+    uri: String,
+    body: axum::body::Body,
+) -> StatusCode {
+    use tower::ServiceExt;
+    let request = axum::http::Request::builder()
+        .method(method)
+        .uri(uri)
+        .header("content-type", "application/json")
+        .body(body)
+        .unwrap();
+    app.oneshot(request).await.unwrap().status()
+}
+
+async fn protected_setup() -> (tempfile::TempDir, std::path::PathBuf, axum::Router) {
+    let tmp = tempfile::TempDir::new().unwrap();
+    let root = tmp.path().canonicalize().unwrap();
+    let extensions = root.join("app/extensions");
+    std::fs::create_dir_all(&extensions).unwrap();
+    std::fs::write(root.join("app/config.toml"), "").unwrap();
+    let state = make_test_state();
+    {
+        let mut cfg = state.config.write().await;
+        cfg.extensions_dir = Some(extensions);
+        cfg.source_path = Some(root.join("app/config.toml"));
+    }
+    (tmp, root, make_test_app(state))
+}
+
+#[tokio::test]
+async fn write_into_extensions_dir_is_forbidden() {
+    let (_tmp, root, app) = protected_setup().await;
+    let target = root.join("app/extensions/evil/run");
+    let uri = format!("/fs/write?path={}", target.display());
+    let status = status_of(app, "PUT", uri, axum::body::Body::from("x")).await;
+    assert_eq!(status, StatusCode::FORBIDDEN);
+    assert!(!target.exists());
+}
+
+#[tokio::test]
+async fn write_to_config_file_is_forbidden() {
+    let (_tmp, root, app) = protected_setup().await;
+    let uri = format!("/fs/write?path={}", root.join("app/config.toml").display());
+    let status = status_of(app, "PUT", uri, axum::body::Body::from("x")).await;
+    assert_eq!(status, StatusCode::FORBIDDEN);
+}
+
+#[tokio::test]
+async fn moving_a_parent_of_extensions_dir_is_forbidden() {
+    let (_tmp, root, app) = protected_setup().await;
+    let body = format!(
+        "{{\"from\":\"{}\",\"to\":\"{}\"}}",
+        root.join("app").display(),
+        root.join("moved").display()
+    );
+    let status = status_of(app, "POST", "/fs/move".into(), axum::body::Body::from(body)).await;
+    assert_eq!(status, StatusCode::FORBIDDEN);
+    assert!(root.join("app/extensions").exists());
+}
+
+#[cfg(unix)]
+#[tokio::test]
+async fn symlink_into_extensions_dir_is_forbidden() {
+    let (_tmp, root, app) = protected_setup().await;
+    std::os::unix::fs::symlink(root.join("app/extensions"), root.join("link")).unwrap();
+    let uri = format!("/fs/write?path={}", root.join("link/evil").display());
+    let status = status_of(app, "PUT", uri, axum::body::Body::from("x")).await;
+    assert_eq!(status, StatusCode::FORBIDDEN);
+}
+
+#[tokio::test]
+async fn unrelated_writes_still_work_when_protected() {
+    let (_tmp, root, app) = protected_setup().await;
+    let uri = format!("/fs/write?path={}", root.join("other/file").display());
+    let status = status_of(app, "PUT", uri, axum::body::Body::from("x")).await;
+    assert_eq!(status, StatusCode::OK);
+}
+
 fn make_test_state() -> AppState {
     use crate::api::archive::ArchiveRegistry;
     use crate::config::{
@@ -556,9 +752,14 @@ fn make_test_state() -> AppState {
         watch_paths: vec![],
         data_dir: tmp.path().to_path_buf(),
         log_dir: tmp.path().to_path_buf(),
+        extensions_dir: None,
+        source_path: None,
         exclusions: ExclusionConfig::default(),
         content: ContentConfig::default(),
-        api: ApiConfig::default(),
+        api: ApiConfig {
+            rest_file_token_hash: Some(blake3::hash(TEST_TOKEN.as_bytes()).to_hex().to_string()),
+            ..ApiConfig::default()
+        },
         search: SearchConfig::default(),
         indexer: IndexerConfig::default(),
         archive_index: ArchiveIndexConfig::default(),

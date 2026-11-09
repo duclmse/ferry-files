@@ -110,7 +110,7 @@ index_cache_size = 256
 | `api.rest_port`                         | `int`          | `7700`           | HTTP REST port                                    |
 | `api.grpc_port`                         | `int`          | `7701`           | gRPC port                                         |
 | `api.ipc_path`                          | `string`       | platform default | Unix socket or Named Pipe path                    |
-| `api.rest_cors_origins`                 | `[string]`     | `["*"]`          | Allowed CORS origins                              |
+| `api.rest_cors_origins`                 | `[string]`     | `[]`             | Allowed CORS origins                              |
 | `search.default_limit`                  | `int`          | `100`            | Default result limit                              |
 | `search.max_limit`                      | `int`          | `10000`          | Maximum allowed limit                             |
 | `search.fuzzy_threshold`                | `float`        | `0.7`            | nucleo fuzzy match threshold (0–1)                |
@@ -216,8 +216,8 @@ When `fsd daemon` is invoked the following steps execute in order inside
  8. Spawn: config hot-reload watcher (notify, 500 ms poll)
  9. Spawn: filesystem watcher → IndexEvent channel (notify-debouncer)
 10. Spawn: IPC server  (Unix socket / Named Pipe)
-11. Spawn: REST server (Axum, 0.0.0.0:{rest_port})
-12. Spawn: gRPC server (Tonic + reflection, 0.0.0.0:{grpc_port})
+11. Spawn: REST server (Axum, {rest_bind}:{rest_port}, loopback by default)
+12. Spawn: gRPC server (Tonic + reflection, {grpc_bind}:{grpc_port}, loopback by default)
 13. Spawn: Tantivy commit loop (every commit_interval_secs)
 14. Conditional: initial full crawl (skipped if last_crawl_time present in index_meta)
 15. Main event loop - select! on:

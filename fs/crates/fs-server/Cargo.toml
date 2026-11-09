@@ -30,7 +30,6 @@ r2d2               = { workspace = true }
 r2d2_sqlite        = { workspace = true }
 common             = { path = "../common" }
 fs-protocol        = { path = "../fs-protocol" }
-fs-ext-rar2zip     = { path = "../fs-ext-rar2zip", optional = true }
 
 # Filesystem watching
 notify                = "6"
@@ -87,7 +86,7 @@ async-stream = "0.3"
 futures      = "0.3"
 
 [target.'cfg(unix)'.dependencies]
-nix = { version = "0.28", features = ["fs", "process"] }
+nix = { version = "0.28", features = ["fs", "process", "user"] }
 
 # FSEvents history replay (watcher/journal.rs); already pulled in by `notify`.
 [target.'cfg(target_os = "macos")'.dependencies]
@@ -107,10 +106,6 @@ windows = { version = "0.54", features = [
     "Win32_System_Services",
     "Win32_System_Threading",
 ] }
-
-[features]
-# In-process rar2zip extension. Compiles the bundled UnRAR C++ source.
-rar2zip = ["dep:fs-ext-rar2zip"]
 
 [build-dependencies]
 tonic-build         = "0.11"

@@ -57,8 +57,14 @@ impl Metrics {
 // HTTP server (tiny_http, runs in a dedicated thread)
 // ---------------------------------------------------------------------------
 
-pub fn serve(port: u16, metrics: Arc<Metrics>, queue: Arc<JobQueue>, shutdown: Arc<AtomicBool>) {
-    let addr = format!("0.0.0.0:{port}");
+pub fn serve(
+    bind: std::net::IpAddr,
+    port: u16,
+    metrics: Arc<Metrics>,
+    queue: Arc<JobQueue>,
+    shutdown: Arc<AtomicBool>,
+) {
+    let addr = std::net::SocketAddr::new(bind, port).to_string();
     let server = match tiny_http::Server::http(&addr) {
         Ok(s) => s,
         Err(e) => {

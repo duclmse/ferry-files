@@ -1,8 +1,16 @@
 use std::path::{Component, Path, PathBuf};
 use std::time::UNIX_EPOCH;
 
-use axum::{http::StatusCode, Json};
+use axum::{
+    extract::{Request, State},
+    http::{header::AUTHORIZATION, StatusCode},
+    middleware::Next,
+    response::{IntoResponse, Response},
+    Json,
+};
 use serde::{Deserialize, Serialize};
+
+use crate::api::rest::AppState;
 
 // ---------------------------------------------------------------------------
 // Shared types
@@ -90,6 +98,116 @@ pub(super) fn validate_path(raw: &str) -> Result<PathBuf, String> {
         }
     }
     Ok(p)
+}
+
+// ---------------------------------------------------------------------------
+// Authorization
+// ---------------------------------------------------------------------------
+
+pub(super) async fn require_file_token(
+    State(state): State<AppState>,
+    request: Request,
+    next: Next,
+) -> Response {
+    let configured = state.config.read().await.api.rest_file_token_hash.clone();
+    let Some(expected) = configured.and_then(|h| blake3::Hash::from_hex(h).ok()) else {
+        return (
+            StatusCode::FORBIDDEN,
+            Json(ErrorBody {
+                error: "file changes are disabled: set api.rest_file_token_hash".into(),
+            }),
+        )
+            .into_response();
+    };
+
+    let presented = request
+        .headers()
+        .get(AUTHORIZATION)
+        .and_then(|v| v.to_str().ok())
+        .and_then(|v| v.strip_prefix("Bearer "));
+
+    // blake3::Hash compares in constant time.
+    if presented.is_some_and(|t| blake3::hash(t.as_bytes()) == expected) {
+        next.run(request).await
+    } else {
+        (
+            StatusCode::UNAUTHORIZED,
+            Json(ErrorBody {
+                error: "missing or invalid bearer token".into(),
+            }),
+        )
+            .into_response()
+    }
+}
+
+// ---------------------------------------------------------------------------
+// Protected paths
+// ---------------------------------------------------------------------------
+
+/// Refuses changes that could plant code the daemon would later execute.
+///
+/// The extensions folder and the config that names it stay off limits; file
+/// permissions cannot do this, since the API runs as the daemon's own user.
+pub(super) async fn ensure_unprotected(
+    state: &AppState,
+    targets: &[&Path],
+) -> Result<(), (StatusCode, Json<ErrorBody>)> {
+    let protected: Vec<PathBuf> = {
+        let cfg = state.config.read().await;
+        match &cfg.extensions_dir {
+            Some(dir) => std::iter::once(dir.clone())
+                .chain(cfg.source_path.clone())
+                .collect(),
+            None => return Ok(()),
+        }
+    };
+    let targets: Vec<PathBuf> = targets.iter().map(|p| p.to_path_buf()).collect();
+    let blocked = tokio::task::spawn_blocking(move || {
+        let protected: Vec<PathBuf> = protected.iter().map(|p| resolve(p)).collect();
+        targets
+            .into_iter()
+            .find(|t| overlaps(&resolve(t), &protected))
+    })
+    .await
+    .map_err(|e| internal(e.to_string()))?;
+    match blocked {
+        Some(path) => Err((
+            StatusCode::FORBIDDEN,
+            Json(ErrorBody {
+                error: format!("path is protected: {}", path.display()),
+            }),
+        )),
+        None => Ok(()),
+    }
+}
+
+// Resolves symlinks through the deepest part that exists, because the final
+// components of a write target usually do not exist yet.
+fn resolve(path: &Path) -> PathBuf {
+    let mut existing = path.to_path_buf();
+    let mut missing = Vec::new();
+    loop {
+        if let Ok(canonical) = existing.canonicalize() {
+            return missing.iter().rev().fold(canonical, |p, c| p.join(c));
+        }
+        match (
+            existing.file_name().map(|n| n.to_os_string()),
+            existing.parent(),
+        ) {
+            (Some(name), Some(parent)) => {
+                missing.push(name);
+                existing = parent.to_path_buf();
+            }
+            _ => return path.to_path_buf(),
+        }
+    }
+}
+
+// Ancestors count too: moving or deleting a parent removes the protected path.
+fn overlaps(target: &Path, protected: &[PathBuf]) -> bool {
+    protected
+        .iter()
+        .any(|p| target.starts_with(p) || p.starts_with(target))
 }
 
 // ---------------------------------------------------------------------------

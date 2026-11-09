@@ -142,6 +142,7 @@ mod tests {
     #[tokio::test]
     async fn notify_with_no_webhook_or_email_does_not_panic() {
         let cfg = ObservabilityConfig {
+            bind: std::net::IpAddr::V4(std::net::Ipv4Addr::LOCALHOST),
             webhook_url: None,
             alert_email: None,
             ..Default::default()

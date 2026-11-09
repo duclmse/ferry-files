@@ -1,100 +1,159 @@
-//! Builds the extensions listed under `[extensions]` in the daemon config.
+//! Discovers extension executables under `extensions_dir`.
+//!
+//! Layout: `<extensions_dir>/<name>/extension.toml` beside its executable.
+//! A broken extension is reported and skipped; search must still start.
 
-use std::path::Path;
+mod process;
+mod trust;
+
+use std::path::{Component, Path, PathBuf};
 use std::sync::Arc;
 
 use common::extension::Extension;
+use common::extension_stdio::EXTENSION_PROTOCOL_VERSION;
+use serde::Deserialize;
 
 use crate::error::AppError;
+use process::{ProcessExtension, Spec};
 
 pub type Extensions = Vec<Arc<dyn Extension>>;
 
-// Reads the file itself because each extension owns its section's schema; the
-// daemon's `Config` only has to ignore the `[extensions]` table.
-pub fn load(config_path: &Path) -> Result<Extensions, AppError> {
+const MANIFEST: &str = "extension.toml";
+
+#[derive(Default)]
+pub struct Loaded {
+    pub extensions: Extensions,
+    pub problems: Vec<String>,
+}
+
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+struct Manifest {
+    name: String,
+    version: String,
+    protocol: u32,
+    executable: String,
+}
+
+pub fn load(config_path: &Path) -> Result<Loaded, AppError> {
     let text = std::fs::read_to_string(config_path).map_err(AppError::Io)?;
     let root: toml::Table =
         toml::from_str(&text).map_err(|e| AppError::Config(format!("config parse: {e}")))?;
 
-    let Some(section) = root.get("extensions") else {
-        return Ok(Vec::new());
+    let sections: Vec<String> = root
+        .get("extensions")
+        .and_then(toml::Value::as_table)
+        .map(|t| t.keys().cloned().collect())
+        .unwrap_or_default();
+    let dir = root.get("extensions_dir").and_then(toml::Value::as_str);
+
+    let mut loaded = Loaded::default();
+    match dir {
+        Some(dir) => discover(Path::new(dir), config_path, &mut loaded),
+        None if !sections.is_empty() => loaded.problems.push(format!(
+            "[extensions.{}] is configured but extensions_dir is not set",
+            sections.join(", ")
+        )),
+        None => {}
+    }
+
+    for section in sections {
+        if dir.is_some() && !loaded.extensions.iter().any(|e| e.name() == section) {
+            loaded
+                .problems
+                .push(format!("[extensions.{section}]: extension not loaded"));
+        }
+    }
+    Ok(loaded)
+}
+
+fn discover(dir: &Path, config_path: &Path, loaded: &mut Loaded) {
+    let root = match trust::check_root(dir) {
+        Ok(root) => root,
+        Err(e) => {
+            loaded.problems.push(format!("extensions_dir: {e}"));
+            return;
+        }
     };
-    let table = section
-        .as_table()
-        .ok_or_else(|| AppError::Config("[extensions] must be a table".into()))?;
-
-    table.keys().map(|name| build(name, config_path)).collect()
-}
-
-fn build(name: &str, config_path: &Path) -> Result<Arc<dyn Extension>, AppError> {
-    match name {
-        #[cfg(feature = "rar2zip")]
-        "rar2zip" => {
-            let ext = fs_ext_rar2zip::extension::Rar2zipExtension::load(config_path)
-                .map_err(|e| AppError::Config(format!("extension rar2zip: {e}")))?;
-            Ok(Arc::new(ext))
+    let entries = match std::fs::read_dir(&root) {
+        Ok(entries) => entries,
+        Err(e) => {
+            loaded.problems.push(format!("extensions_dir: {e}"));
+            return;
         }
-        #[cfg(not(feature = "rar2zip"))]
-        "rar2zip" => {
-            let _ = config_path;
-            Err(AppError::Config(
-                "[extensions.rar2zip] is configured, but this fsd was built without it \
-                 (rebuild with --features rar2zip)"
-                    .into(),
-            ))
+    };
+
+    let mut paths: Vec<PathBuf> = entries.flatten().map(|e| e.path()).collect();
+    paths.sort();
+    for path in paths {
+        if path.is_file() {
+            continue;
         }
-        other => Err(AppError::Config(format!("unknown extension: {other}"))),
+        match load_one(&path, config_path) {
+            Ok(ext) => loaded.extensions.push(Arc::new(ext)),
+            Err(e) => loaded.problems.push(format!("{}: {e}", path.display())),
+        }
     }
 }
 
-#[cfg(test)]
-mod tests {
-    use super::*;
-    use std::io::Write;
-    use tempfile::NamedTempFile;
+fn load_one(dir: &Path, config_path: &Path) -> Result<ProcessExtension, String> {
+    trust::check_entry(dir)?;
+    let manifest_path = dir.join(MANIFEST);
+    trust::check_entry(&manifest_path)?;
 
-    fn config(text: &str) -> NamedTempFile {
-        let mut f = NamedTempFile::new().unwrap();
-        f.write_all(text.as_bytes()).unwrap();
-        f
+    let text = std::fs::read_to_string(&manifest_path).map_err(|e| format!("{MANIFEST}: {e}"))?;
+    let manifest: Manifest = toml::from_str(&text).map_err(|e| format!("{MANIFEST}: {e}"))?;
+
+    let folder = dir.file_name().and_then(|n| n.to_str());
+    if folder != Some(manifest.name.as_str()) {
+        return Err(format!(
+            "manifest name '{}' must match its folder name",
+            manifest.name
+        ));
+    }
+    if !valid_name(&manifest.name) {
+        return Err(format!("invalid extension name '{}'", manifest.name));
+    }
+    if manifest.protocol != EXTENSION_PROTOCOL_VERSION {
+        return Err(format!(
+            "protocol {} is not supported (this fsd speaks {EXTENSION_PROTOCOL_VERSION})",
+            manifest.protocol
+        ));
     }
 
-    #[test]
-    fn no_extensions_section_loads_nothing() {
-        let f = config("watch_paths = []\n");
-        assert!(load(f.path()).unwrap().is_empty());
-    }
+    let executable = dir.join(executable_name(&manifest.executable)?);
+    trust::check_entry(&executable)?;
+    trust::check_executable(&executable)?;
 
-    #[test]
-    fn unknown_extension_is_rejected() {
-        let f = config("[extensions.nope]\n");
-        let err = load(f.path()).err().unwrap().to_string();
-        assert!(err.contains("unknown extension: nope"), "{err}");
-    }
-
-    #[cfg(not(feature = "rar2zip"))]
-    #[test]
-    fn rar2zip_without_feature_names_the_fix() {
-        let f = config("[extensions.rar2zip]\n");
-        let err = load(f.path()).err().unwrap().to_string();
-        assert!(err.contains("--features rar2zip"), "{err}");
-    }
-
-    #[cfg(feature = "rar2zip")]
-    #[test]
-    fn rar2zip_section_builds_the_extension() {
-        let f = config(
-            r#"
-[extensions.rar2zip]
-watch_folder = "/tmp/in"
-failed_folder = "/tmp/failed"
-destinations = []
-
-[extensions.rar2zip.conversion]
-"#,
-        );
-        let exts = load(f.path()).unwrap();
-        assert_eq!(exts.len(), 1);
-        assert_eq!(exts[0].name(), "rar2zip");
-    }
+    Ok(ProcessExtension::new(Spec {
+        name: manifest.name,
+        version: manifest.version,
+        executable,
+        config_path: config_path.to_path_buf(),
+    }))
 }
+
+fn valid_name(name: &str) -> bool {
+    !name.is_empty()
+        && name
+            .chars()
+            .all(|c| c.is_ascii_alphanumeric() || c == '-' || c == '_')
+}
+
+// A bare file name keeps the manifest from pointing outside the vetted folder.
+fn executable_name(raw: &str) -> Result<PathBuf, String> {
+    let path = Path::new(raw);
+    let mut components = path.components();
+    match (components.next(), components.next()) {
+        (Some(Component::Normal(_)), None) => {}
+        _ => return Err(format!("executable '{raw}' must be a bare file name")),
+    }
+    let mut name = path.to_path_buf();
+    if cfg!(windows) && name.extension().is_none() {
+        name.set_extension("exe");
+    }
+    Ok(name)
+}
+
+#[cfg(all(test, unix))]
+mod tests;

@@ -101,6 +101,8 @@ fn make_test_app_state(dir: &TempDir, registry: Arc<ArchiveRegistry>) -> AppStat
         watch_paths: vec![],
         data_dir: dir.path().to_path_buf(),
         log_dir: dir.path().to_path_buf(),
+        extensions_dir: None,
+        source_path: None,
         exclusions: ExclusionConfig::default(),
         content: ContentConfig::default(),
         api: ApiConfig::default(),

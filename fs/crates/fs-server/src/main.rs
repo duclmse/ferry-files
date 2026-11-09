@@ -27,6 +27,9 @@ enum Command {
     /// Validate the configuration file
     ValidateConfig,
 
+    /// Generate a token for the REST file-change routes
+    GenerateToken,
+
     /// Install fsd as a Windows Service (Windows only)
     InstallService,
 
@@ -77,16 +80,28 @@ async fn main() {
     let cli = Cli::parse();
 
     match cli.command {
+        Command::GenerateToken => {
+            let (token, hash) = config::generate_file_token();
+            println!("Token (shown once, send as `Authorization: Bearer <token>`):");
+            println!("  {token}");
+            println!("Add under [api] in the config:");
+            println!("  rest_file_token_hash = \"{hash}\"");
+        }
         Command::ValidateConfig => match config::load(&cli.config) {
             Ok(cfg) => {
                 let mut errors = config::validate(&cfg);
                 match extensions::load(&cli.config) {
-                    Ok(exts) => errors.extend(exts.iter().flat_map(|ext| {
-                        let name = ext.name();
-                        ext.validate()
-                            .into_iter()
-                            .map(move |e| format!("extension {name}: {e}"))
-                    })),
+                    Ok(loaded) => {
+                        errors.extend(loaded.problems);
+                        for ext in &loaded.extensions {
+                            let name = ext.name().to_owned();
+                            errors.extend(
+                                ext.validate()
+                                    .into_iter()
+                                    .map(|e| format!("extension {name}: {e}")),
+                            );
+                        }
+                    }
                     Err(e) => errors.push(e.to_string()),
                 }
                 if errors.is_empty() {

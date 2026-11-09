@@ -19,6 +19,8 @@ fn make_config(watch: &Path) -> Arc<RwLock<Config>> {
         watch_paths: vec![watch.to_path_buf()],
         data_dir: watch.join("data"),
         log_dir: watch.join("logs"),
+        extensions_dir: None,
+        source_path: None,
         exclusions: ExclusionConfig::default(),
         content: ContentConfig {
             extension_limits: [("txt".to_string(), 65536)].into(),
@@ -65,6 +67,8 @@ async fn excluded_pattern_not_indexed() {
         watch_paths: vec![dir.path().to_path_buf()],
         data_dir: dir.path().join("data"),
         log_dir: dir.path().join("logs"),
+        extensions_dir: None,
+        source_path: None,
         exclusions: ExclusionConfig {
             path_patterns: vec!["**/*.log".into()],
             exclude_hidden: false,

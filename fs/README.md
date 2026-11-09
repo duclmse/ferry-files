@@ -7,7 +7,7 @@ A Rust workspace for file search, with an optional archive-transfer extension.
 | `fs-server`      | `fsd`  | Cross-platform file-search daemon - indexes 1–10M files, exposes REST/gRPC/IPC APIs with < 50ms search latency |
 | `fs-cli`         | `fs`   | Command-line and TUI client; talks to `fsd` over IPC                                                        |
 | `fs-protocol`    | -      | IPC wire format and client                                                                                  |
-| `fs-ext-rar2zip` | -      | Daemon extension - converts RAR/7Z/TAR archives to ZIP and transfers them to SFTP servers                   |
+| `fs-ext-rar2zip` | `fs-ext-rar2zip` | Drop-in extension - converts RAR/7Z/TAR archives to ZIP and transfers them to SFTP servers                   |
 | `common`         | -      | Shared logger, error types, and the extension trait                                                         |
 
 ---
@@ -120,7 +120,7 @@ compatible with `grpcurl`.
 
 ### What it does
 
-`rar2zip` is an optional `fsd` extension (Cargo feature `rar2zip`) that:
+`rar2zip` is a drop-in `fsd` extension that:
 
 1. Watches an input folder for RAR, 7Z, TAR, TAR.GZ, and TAR.BZ2 archives.
 2. Verifies archive integrity before processing.
@@ -174,10 +174,10 @@ fsd --config config.toml validate-config
 fsd --config config.toml daemon
 
 # Check queue status
-fs --config config.toml rar2zip status
+fs --config config.toml ext rar2zip status
 
 # Retry failed jobs
-fs --config config.toml rar2zip retry-failed
+fs --config config.toml ext rar2zip retry-failed
 ```
 
 ### Dashboard
@@ -188,14 +188,62 @@ transfer stats with 5-second auto-refresh.
 
 ---
 
+## REST file API
+
+REST listens on `127.0.0.1` by default; set `api.rest_bind` to expose it. Routes
+that change files (`/fs/write`, `copy`, `move`, `delete`, `mkdir`) are refused
+until a token is configured:
+
+```sh
+fsd generate-token   # prints the token, and the digest for api.rest_file_token_hash
+curl -X PUT -H "Authorization: Bearer $TOKEN" --data-binary @f \
+  "localhost:7700/fs/write?path=/tmp/f"
+```
+
+Reading (`/fs/read`, `/file`) needs no token. Browsers may only read responses
+from origins listed in `api.rest_cors_origins`, which is empty by default. gRPC
+also listens on loopback by default (`api.grpc_bind`).
+
+---
+
+## Extensions
+
+`fsd` loads extensions from the folder named by `extensions_dir`, a top-level
+config key. Leaving it unset disables extensions. Each extension is a subfolder
+holding an `extension.toml` and its executable:
+
+```text
+extensions/rar2zip/extension.toml
+extensions/rar2zip/fs-ext-rar2zip
+```
+
+```toml
+name = "rar2zip"         # must match the folder name
+version = "0.1.0"
+protocol = 1
+executable = "fs-ext-rar2zip"
+```
+
+Extensions are discovered at startup, restarted if they crash, and receive the
+daemon's config path so they can read their own `[extensions.<name>]` section.
+Use `fs ext <name> <command>` to talk to one. The protocol is described in
+`crates/common/src/extension_stdio.rs`.
+
+**Extensions run with the daemon's privileges.** On Unix, `fsd` refuses a folder
+unless it and its parents are writable only by root or the daemon user, and
+refuses symlinks. On Windows it must be inside Program Files. The REST file API
+cannot change the folder or the config file.
+
+---
+
 ## Building
 
 ```sh
 # Daemon and client
 cargo build --release -p fs-server -p fs-cli
 
-# With the rar2zip extension (needs a C++ compiler)
-cargo build --release -p fs-server -p fs-cli --features fs-server/rar2zip
+# The rar2zip extension (needs a C++ compiler)
+cargo build --release -p fs-ext-rar2zip
 ```
 
 **Requirements:**
