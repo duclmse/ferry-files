@@ -319,15 +319,28 @@ impl IndexState {
     }
 
     pub(super) fn iter(&self) -> impl Iterator<Item = EntryRef<'_>> + '_ {
-        self.entries
+        self.iter_range(0..self.entries.len())
+    }
+
+    /// Live entries among entry numbers `range`, in order.
+    pub(super) fn iter_range(
+        &self,
+        range: std::ops::Range<usize>,
+    ) -> impl Iterator<Item = EntryRef<'_>> + '_ {
+        let start = range.start;
+        self.entries[range]
             .iter()
             .enumerate()
             .filter(|(_, e)| !e.dead())
-            .map(|(i, e)| EntryRef {
+            .map(move |(i, e)| EntryRef {
                 st: self,
                 e,
-                i: i as u32,
+                i: (start + i) as u32,
             })
+    }
+
+    pub(super) fn slots(&self) -> usize {
+        self.entries.len()
     }
 
     fn intern_ext(&mut self, ext: Option<&str>) -> u32 {

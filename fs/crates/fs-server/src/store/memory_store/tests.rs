@@ -1,4 +1,4 @@
-use super::matching::{glob_match, like_match};
+use super::matching::{glob_match, glob_nocase_match, like_match};
 use super::*;
 use tempfile::TempDir;
 
@@ -527,4 +527,125 @@ fn v3_snapshot_upgrades() {
     assert!(p.is_dir);
     // Generations carried over: a crawl at generation 3 finds nothing stale.
     assert_eq!(store.remove_stale_for_root("/a", 3), 0);
+}
+
+// The matchers these replaced, kept as the definition of correct behaviour.
+fn reference_like(text: &[u8], pattern: &[u8]) -> bool {
+    match pattern {
+        [] => text.is_empty(),
+        [b'%', rest @ ..] => (0..=text.len()).any(|i| reference_like(&text[i..], rest)),
+        [b'_', rest @ ..] => !text.is_empty() && reference_like(&text[1..], rest),
+        [c, rest @ ..] => {
+            !text.is_empty() && text[0].eq_ignore_ascii_case(c) && reference_like(&text[1..], rest)
+        }
+    }
+}
+
+fn reference_glob(text: &[u8], pattern: &[u8]) -> bool {
+    match pattern {
+        [] => text.is_empty(),
+        [b'*', rest @ ..] => (0..=text.len()).any(|i| reference_glob(&text[i..], rest)),
+        [b'?', rest @ ..] => !text.is_empty() && reference_glob(&text[1..], rest),
+        [c, rest @ ..] => !text.is_empty() && text[0] == *c && reference_glob(&text[1..], rest),
+    }
+}
+
+/// Every string of up to `max` bytes over `alphabet`.
+fn all_strings(alphabet: &[u8], max: usize) -> Vec<String> {
+    let mut out = vec![String::new()];
+    let mut layer = out.clone();
+    for _ in 0..max {
+        layer = layer
+            .iter()
+            .flat_map(|s| {
+                alphabet.iter().map(move |&c| {
+                    let mut next = s.clone();
+                    next.push(c as char);
+                    next
+                })
+            })
+            .collect();
+        out.extend(layer.iter().cloned());
+    }
+    out
+}
+
+#[test]
+fn like_agrees_with_the_reference_matcher() {
+    let texts = all_strings(b"aB%_", 4);
+    for pattern in all_strings(b"aAb%_", 4) {
+        for text in &texts {
+            assert_eq!(
+                like_match(text, &pattern),
+                reference_like(text.as_bytes(), pattern.as_bytes()),
+                "text {text:?} pattern {pattern:?}"
+            );
+        }
+    }
+}
+
+#[test]
+fn glob_agrees_with_the_reference_matcher() {
+    let texts = all_strings(b"aB*?", 4);
+    for pattern in all_strings(b"aB*?", 5) {
+        for text in &texts {
+            assert_eq!(
+                glob_match(text, &pattern),
+                reference_glob(text.as_bytes(), pattern.as_bytes()),
+                "text {text:?} pattern {pattern:?}"
+            );
+        }
+    }
+}
+
+#[test]
+fn glob_nocase_agrees_with_lowercasing_both_sides() {
+    let texts = all_strings(b"aB*?", 4);
+    for pattern in all_strings(b"aB*?", 5) {
+        for text in &texts {
+            assert_eq!(
+                glob_nocase_match(text, &pattern),
+                reference_glob(
+                    text.to_ascii_lowercase().as_bytes(),
+                    pattern.to_ascii_lowercase().as_bytes(),
+                ),
+                "text {text:?} pattern {pattern:?}"
+            );
+        }
+    }
+}
+
+#[test]
+fn many_wildcards_do_not_blow_up() {
+    let text = "a".repeat(4096);
+    assert!(!glob_match(&text, "*a*a*a*a*a*a*a*a*a*b"));
+    assert!(!like_match(&text, "%a%a%a%a%a%a%a%a%a%b"));
+}
+
+#[test]
+fn parallel_scan_returns_the_first_matches_in_entry_order() {
+    let store = MemoryStore::new(tempfile::tempdir().unwrap().path()).unwrap();
+    let total = 200_000;
+    let expected: Vec<String> = (0..total)
+        .step_by(7)
+        .map(|i| format!("/s/needle{i}.txt"))
+        .collect();
+    for i in 0..total {
+        let word = if i % 7 == 0 { "needle" } else { "other" };
+        store.upsert_file(&sample(&format!("/s/{word}{i}.txt")));
+    }
+    let conds = [SqlCondition::NameLike("%needle%".into())];
+    for limit in [0, 1, 100, 20_000, usize::MAX] {
+        let paths: Vec<String> = store
+            .search_conditions(&conds, limit)
+            .unwrap()
+            .into_iter()
+            .map(|r| r.path)
+            .collect();
+        assert_eq!(
+            paths,
+            expected[..limit.min(expected.len())],
+            "limit {limit}"
+        );
+    }
 }

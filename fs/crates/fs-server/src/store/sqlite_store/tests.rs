@@ -328,3 +328,36 @@ fn clustered_name_matches_stop_the_other_ranges_cleanly() {
         assert!(store.search_conditions(&none, 10).unwrap().is_empty());
     }
 }
+
+#[test]
+fn glob_nocase_matches_any_case_and_glob_does_not() {
+    use crate::store::SqlCondition;
+
+    let store = make_store();
+    let gen = store.begin_crawl_generation().unwrap();
+    let batch: Vec<(FileRecord, String)> = ["/r/FOO.PDF", "/r/bar.pdf", "/r/baz.txt"]
+        .iter()
+        .map(|p| (sample_record(p), "/r".to_owned()))
+        .collect();
+    store.batch_upsert_crawl(&batch, gen).unwrap();
+
+    let names = |cond: SqlCondition| {
+        let mut v: Vec<String> = store
+            .search_conditions(&[cond], 100)
+            .unwrap()
+            .into_iter()
+            .map(|r| r.name)
+            .collect();
+        v.sort();
+        v
+    };
+    assert_eq!(
+        names(SqlCondition::NameGlobNoCase("*.pdf".into())),
+        ["FOO.PDF", "bar.pdf"]
+    );
+    assert_eq!(
+        names(SqlCondition::NameGlobNoCase("foo*".into())),
+        ["FOO.PDF"]
+    );
+    assert_eq!(names(SqlCondition::NameGlob("*.pdf".into())), ["bar.pdf"]);
+}

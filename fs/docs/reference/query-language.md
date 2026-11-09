@@ -503,6 +503,7 @@ pub enum EvalStrategy {
 pub enum SqlCondition {
     NameLike(String),
     NameGlob(String),
+    NameGlobNoCase(String),
     PathLike(String),
     ExtIn(Vec<String>),
     SizeRange(u64, u64),
@@ -545,7 +546,7 @@ pub fn plan(expr: &Expr, default_modifiers: &Modifiers) -> Result<QueryPlan, Que
 | Predicate | Maps to |
 |-----------|--------|
 | Plain term (no wildcards) | `NameLike("%term%")` |
-| Term with `*`/`?` | `NameGlob(glob_to_sqlite(term))` |
+| Term with `*`/`?` | `NameGlobNoCase(glob_to_sqlite(term))`; `NameGlob` with `case:` |
 | `path:` modifier | `PathLike` instead of `NameLike` |
 | `regex:` modifier | compile regex → `PostFilter::Regex` |
 | `file:` modifier | `IsDir(false)` |

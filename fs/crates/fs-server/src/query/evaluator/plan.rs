@@ -151,8 +151,7 @@ fn emit_predicate(pred: &Predicate, mods: &Modifiers, p: &mut QueryPlan) -> Resu
                 } else if case_sensitive {
                     p.sql_conditions.push(SqlCondition::NameGlob(glob));
                 } else {
-                    p.sql_conditions
-                        .push(SqlCondition::NameGlob(glob.to_ascii_lowercase()));
+                    p.sql_conditions.push(SqlCondition::NameGlobNoCase(glob));
                 }
             } else {
                 let pattern = if match_path {

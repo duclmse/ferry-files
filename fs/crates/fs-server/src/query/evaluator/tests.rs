@@ -29,6 +29,15 @@ fn wildcard_produces_glob() {
     assert!(p
         .sql_conditions
         .iter()
+        .any(|c| matches!(c, SqlCondition::NameGlobNoCase(_))));
+}
+
+#[test]
+fn case_modifier_produces_case_sensitive_glob() {
+    let p = parse_plan("case: *.rs");
+    assert!(p
+        .sql_conditions
+        .iter()
         .any(|c| matches!(c, SqlCondition::NameGlob(_))));
 }
 

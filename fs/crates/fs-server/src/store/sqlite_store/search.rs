@@ -30,7 +30,10 @@ pub(super) struct NameBounds {
 fn is_name_condition(c: &SqlCondition) -> bool {
     matches!(
         c,
-        SqlCondition::NameLike(_) | SqlCondition::NameGlob(_) | SqlCondition::NameLenOp(..)
+        SqlCondition::NameLike(_)
+            | SqlCondition::NameGlob(_)
+            | SqlCondition::NameGlobNoCase(_)
+            | SqlCondition::NameLenOp(..)
     )
 }
 

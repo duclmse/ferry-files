@@ -245,6 +245,8 @@ pub enum SqlCondition {
     NameLike(String),
     /// `name GLOB ?`  (SQLite GLOB, case-sensitive)
     NameGlob(String),
+    /// `LOWER(name) GLOB LOWER(?)`  (GLOB ignoring ASCII case)
+    NameGlobNoCase(String),
     /// `path LIKE ?`
     PathLike(String),
     /// `is_dir = 1` or `is_dir = 0`
@@ -300,6 +302,10 @@ impl SqlCondition {
         match self {
             SqlCondition::NameLike(p) => ("name LIKE ?".into(), vec![Value::Text(p.clone())]),
             SqlCondition::NameGlob(p) => ("name GLOB ?".into(), vec![Value::Text(p.clone())]),
+            SqlCondition::NameGlobNoCase(p) => (
+                "LOWER(name) GLOB LOWER(?)".into(),
+                vec![Value::Text(p.clone())],
+            ),
             SqlCondition::PathLike(p) => ("path LIKE ?".into(), vec![Value::Text(p.clone())]),
             SqlCondition::IsDir(v) => ("is_dir = ?".into(), vec![Value::Integer(i64::from(*v))]),
             SqlCondition::MtimeRange(a, b) => (

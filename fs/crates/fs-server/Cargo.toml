@@ -60,6 +60,7 @@ hashbrown = "0.15"
 
 # Parallel crawl
 rayon  = "1"
+memchr = "2"
 ignore = "0.4"
 
 # Content extraction
@@ -120,6 +121,10 @@ criterion  = { version = "0.5", features = ["async_tokio"] }
 
 [[bench]]
 name    = "search"
+harness = false
+
+[[bench]]
+name    = "memory_search"
 harness = false
 
 [[bench]]
