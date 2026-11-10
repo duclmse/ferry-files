@@ -39,7 +39,10 @@ pub enum EvalStrategy {
 
 #[derive(Debug)]
 pub enum PostFilter {
-    Regex(Regex, bool),
+    Regex {
+        re: Regex,
+        on_path: bool,
+    },
     Child(String),
     WholeWord(String, bool),
     StartWith(String),

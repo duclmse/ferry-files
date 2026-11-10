@@ -31,7 +31,7 @@ pub fn apply_post_filters(
 
 fn post_filter_match(f: &PostFilter, r: &FileRecord, store: &FileStore) -> bool {
     match f {
-        PostFilter::Regex(re, _cs) => re.is_match(&r.path),
+        PostFilter::Regex { re, on_path } => re.is_match(if *on_path { &r.path } else { &r.name }),
         PostFilter::Child(name) => store
             .has_child(&r.path, &crate::query::glob::like_escape(name))
             .unwrap_or(false),

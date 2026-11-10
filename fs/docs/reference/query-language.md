@@ -40,6 +40,9 @@ query error rather than evaluated with the wrong meaning.
 | `?` | Exactly one character |
 | `*.` | Files with no extension |
 
+Double quotes only keep spaces and operators inside one term: `"my notes"`
+matches names containing `my notes`. Add `wfn:` to match the whole filename.
+
 Wildcards match the **whole filename** by default (controlled by `wfn:` modifier).
 With `path:` they match the whole path, so `path: */src/*.rs` finds `.rs` files
 anywhere under a `src` directory (`*` also matches `/`).
@@ -59,7 +62,7 @@ drive.
 | `nopath:` | | Match filename only (default) |
 | `file:` | `files:` | Files only |
 | `folder:` | `folders:` | Folders only |
-| `regex:` | | Treat term as regex (`regex: a.b` or `regex:a.b`) |
+| `regex:` | | Treat term as regex (`regex: a.b` or `regex:a.b`); matches the filename, or the full path with `path:` |
 | `noregex:` | | Disable regex |
 | `wildcards:` | | Enable wildcard matching |
 | `nowildcards:` | | Disable wildcard matching |
@@ -533,7 +536,7 @@ pub enum SqlCondition {
 }
 
 pub enum PostFilter {
-    Regex(regex::Regex, bool),
+    Regex { re: regex::Regex, on_path: bool },
     Child(String),
     ChildCount(CmpOp, u64),
     Attrib(Vec<AttributeFlag>),

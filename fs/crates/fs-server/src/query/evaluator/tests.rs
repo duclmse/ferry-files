@@ -401,7 +401,7 @@ fn spaced_regex_modifier_is_a_regex_search() {
     let p = parse_plan("regex: a.b");
     assert!(p.sql_conditions.is_empty(), "{:?}", p.sql_conditions);
     assert!(
-        matches!(&p.post_filters[..], [PostFilter::Regex(re, false)] if re.as_str().contains("a.b"))
+        matches!(&p.post_filters[..], [PostFilter::Regex { re, on_path: false }] if re.as_str().contains("a.b"))
     );
 }
 
@@ -409,7 +409,7 @@ fn spaced_regex_modifier_is_a_regex_search() {
 fn modifier_before_quoted_phrase() {
     let p = parse_plan(r#"case: "Foo Bar""#);
     assert!(
-        matches!(&p.post_filters[..], [PostFilter::CaseLiteral { text, whole: true, .. }] if text == "Foo Bar")
+        matches!(&p.post_filters[..], [PostFilter::CaseLiteral { text, whole: false, .. }] if text == "Foo Bar")
     );
 }
 
@@ -472,7 +472,26 @@ mod modifiers_end_to_end {
             ("case: *.RS", &["/Src/Foo.RS"]),
             ("a*b*.txt", &["/src/a*b.txt", "/src/aXb.txt"]),
             ("nowildcards: a*b", &["/src/a*b.txt"]),
-            (r"regex: /a\.b$", &["/src/a.b"]),
+            (r"regex: ^a\.b$", &["/src/a.b"]),
+            (r"regex:^a\.b$", &["/src/a.b"]),
+            (r"path: regex: ^/src/a\.b$", &["/src/a.b"]),
+            (r"regex: ^/src/a\.b$", &[]),
+            (r"regex:Src", &[]),
+            (
+                r"path: regex:Src",
+                &[
+                    "/Src/Foo.RS",
+                    "/src/a*b.txt",
+                    "/src/a.b",
+                    "/src/aXb.txt",
+                    "/src/foo.rs",
+                ],
+            ),
+            (r"case: path: regex:Src", &["/Src/Foo.RS"]),
+            ("\"foo\"", &["/Src/Foo.RS", "/src/foo.rs"]),
+            ("\"oo.r\"", &["/Src/Foo.RS", "/src/foo.rs"]),
+            ("wfn: \"foo\"", &[]),
+            ("case: \"Foo.RS\"", &["/Src/Foo.RS"]),
             ("nopath: src", &[]),
             ("<case: Foo> | aXb", &["/Src/Foo.RS", "/src/aXb.txt"]),
             ("!case: Foo foo", &["/src/foo.rs"]),

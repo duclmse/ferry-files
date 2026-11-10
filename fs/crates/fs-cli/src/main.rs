@@ -229,7 +229,7 @@ async fn run_search(
         clauses.push(format!("fuzzy:{f}"));
     }
     if let Some(r) = opts.regex {
-        clauses.push(format!("regex:{r}"));
+        clauses.push(format!("path: regex:{r}"));
     }
     // Modifier flags: inject a dummy `*` term so the modifier emits its SQL condition
     if opts.files_only {

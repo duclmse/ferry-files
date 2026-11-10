@@ -83,10 +83,7 @@ impl Parser {
                 if let Token::QuotedPhrase(s) = self.advance() {
                     Ok(Expr::Predicate(Predicate {
                         kind: PredicateKind::Term(s),
-                        modifiers: Modifiers {
-                            whole_filename: Some(true),
-                            ..Default::default()
-                        },
+                        modifiers: Modifiers::default(),
                     }))
                 } else {
                     unreachable!()
@@ -113,10 +110,7 @@ impl Parser {
                             self.advance();
                             return Ok(Expr::Predicate(Predicate {
                                 kind: PredicateKind::Term(s),
-                                modifiers: Modifiers {
-                                    whole_filename: mods.whole_filename.or(Some(true)),
-                                    ..mods
-                                },
+                                modifiers: mods,
                             }));
                         }
                         other => {

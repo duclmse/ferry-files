@@ -142,9 +142,7 @@ fn emit_predicate(pred: &Predicate, mods: &Modifiers, p: &mut QueryPlan) -> Resu
 
     match &pred.kind {
         PredicateKind::Term(s) if mods.regex == Some(true) => {
-            let case_sensitive = mods.case_sensitive.unwrap_or(false);
-            let re = build_regex(s, case_sensitive)?;
-            p.post_filters.push(PostFilter::Regex(re, case_sensitive));
+            push_regex(s, mods, p)?;
         }
 
         PredicateKind::Term(s) => {
@@ -202,10 +200,7 @@ fn emit_predicate(pred: &Predicate, mods: &Modifiers, p: &mut QueryPlan) -> Resu
         }
 
         PredicateKind::Regex(pattern) => {
-            let case_sensitive = mods.case_sensitive.unwrap_or(false);
-            let re = build_regex(pattern, case_sensitive)?;
-            // No SQL narrowing - regex must be applied post-fetch
-            p.post_filters.push(PostFilter::Regex(re, case_sensitive));
+            push_regex(pattern, mods, p)?;
         }
 
         PredicateKind::Fuzzy(term) => {
@@ -318,6 +313,17 @@ fn date_expr_to_range(de: &DateExpr, now: chrono::DateTime<chrono::FixedOffset>)
             CmpOp::Eq => (*ts, *ts),
         },
     }
+}
+
+/// Like Everything, a regex matches the filename unless `path:` is given.
+/// There is no SQL narrowing, so it always runs post-fetch.
+fn push_regex(pattern: &str, mods: &Modifiers, p: &mut QueryPlan) -> Result<()> {
+    let re = build_regex(pattern, mods.case_sensitive.unwrap_or(false))?;
+    p.post_filters.push(PostFilter::Regex {
+        re,
+        on_path: mods.match_path.unwrap_or(false),
+    });
+    Ok(())
 }
 
 // ---------------------------------------------------------------------------
