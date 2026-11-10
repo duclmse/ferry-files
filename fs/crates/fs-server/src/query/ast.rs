@@ -23,7 +23,7 @@ pub enum PredicateKind {
     Fuzzy(String),
 }
 
-#[derive(Debug, Clone, Default)]
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub struct Modifiers {
     pub case_sensitive: Option<bool>,
     pub match_path: Option<bool>,

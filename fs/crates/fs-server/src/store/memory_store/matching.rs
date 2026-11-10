@@ -405,7 +405,7 @@ impl SqlCondition {
             SqlCondition::SizeOp(op, v) => cmp_op_u64(*op, r.size_bytes(), *v),
             SqlCondition::ExtIn(exts) => r.extension().is_some_and(|e| exts.iter().any(|x| x == e)),
             SqlCondition::ParentPath(p) => r.path_is_under(p),
-            SqlCondition::NameLenOp(op, n) => cmp_op_usize(*op, r.name().len(), *n),
+            SqlCondition::NameLenOp(op, n) => cmp_op_usize(*op, r.name().chars().count(), *n),
             SqlCondition::DepthOp(op, d) => cmp_op_usize(*op, r.path_depth(), *d),
             SqlCondition::IsArchiveEntry => r.is_archive_entry(),
             SqlCondition::ArchiveOf(ap) => r.with_archive_path(|a| a == Some(ap.as_str())),

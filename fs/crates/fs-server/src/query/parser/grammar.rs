@@ -113,6 +113,14 @@ impl Parser {
                                 modifiers: mods,
                             }));
                         }
+                        // A bare modifier (`folder:`, `file: <a|b>`) filters
+                        // on its own, so give it a term that matches everything.
+                        _ if mods != Modifiers::default() => {
+                            return Ok(Expr::Predicate(Predicate {
+                                kind: PredicateKind::Term(String::new()),
+                                modifiers: mods,
+                            }));
+                        }
                         other => {
                             return Err(AppError::Query(format!("expected term, got {other:?}")));
                         }

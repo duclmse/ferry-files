@@ -382,10 +382,12 @@ archive_path GLOB '*.zip'
 `parent:/data/docs.zip!/src` finds inner files in the `src/` subdirectory:
 
 ```sql
-path LIKE '/data/docs.zip!/src/%' AND path NOT LIKE '/data/docs.zip!/src/%/%'
+path LIKE '/data/docs.zip!/src/%' ESCAPE '\'
+  AND (LENGTH(path) - LENGTH(REPLACE(path, '/', ''))) = 4
 ```
 
-No special handling needed - `ParentPath` SQL already generates this.
+No special handling needed: `!/` contains a `/`, so the depth check that keeps
+direct children works the same inside archives.
 
 ### 7.4 `depth:` with Virtual Paths
 

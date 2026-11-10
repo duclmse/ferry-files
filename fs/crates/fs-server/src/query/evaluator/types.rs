@@ -52,6 +52,11 @@ pub enum PostFilter {
         whole: bool,
         on_path: bool,
     },
+    /// `archiveof:` with wildcards, matched against the outer archive's path.
+    ArchiveGlob {
+        pattern: String,
+        case_sensitive: bool,
+    },
     /// Case-sensitive `*`/`?` match over the whole name or path.
     CaseGlob {
         pattern: String,

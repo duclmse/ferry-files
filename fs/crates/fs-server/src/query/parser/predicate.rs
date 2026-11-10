@@ -44,9 +44,15 @@ pub(super) fn build_predicate(kw: &str, val: &str, mods: Modifiers) -> Result<Ex
                 .collect();
             Function::Ext(exts)
         }
-        "path" => Function::Path(val.to_owned()),
-        "parent" | "dir" => Function::Parent(val.to_owned()),
-        "content" => Function::Content(val.to_owned()),
+        "parent" | "dir" | "infolder" | "nosubfolders" => Function::Parent(val.to_owned()),
+        "content" | "utf8content" | "ansicontent" => Function::Content(val.to_owned()),
+        "root" if val.is_empty() => Function::Depth(CmpOp::Eq, 1),
+        // Documented for Everything compatibility but not backed by the index;
+        // an error beats treating `rc:today` as text and silently finding nothing.
+        "rc" | "recentchange" | "dr" | "daterun" | "childcount" | "childfilecount"
+        | "childfoldercount" | "empty" | "namepartdupe" | "dadupe" | "attribdupe" => {
+            return Err(AppError::Query(format!("`{kw}:` is not supported")));
+        }
         "fuzzy" => {
             return Ok(Expr::Predicate(Predicate {
                 kind: PredicateKind::Fuzzy(val.to_owned()),
@@ -59,10 +65,10 @@ pub(super) fn build_predicate(kw: &str, val: &str, mods: Modifiers) -> Result<Ex
                 modifiers: mods,
             }));
         }
-        "dupe" | "namedup" => Function::Dupe(DupeKind::Name),
-        "sizedupe" => Function::Dupe(DupeKind::Size),
-        "dmdup" => Function::Dupe(DupeKind::DateModified),
-        "dcdup" => Function::Dupe(DupeKind::DateCreated),
+        "dupe" | "namedup" | "namedupe" => Function::Dupe(DupeKind::Name),
+        "sizedupe" | "sizedup" => Function::Dupe(DupeKind::Size),
+        "dmdupe" | "dmdup" => Function::Dupe(DupeKind::DateModified),
+        "dcdupe" | "dcdup" => Function::Dupe(DupeKind::DateCreated),
         "count" => {
             let n = val
                 .parse::<usize>()
@@ -74,7 +80,7 @@ pub(super) fn build_predicate(kw: &str, val: &str, mods: Modifiers) -> Result<Ex
             let (op, n) = parse_cmp_usize(val)?;
             Function::Len(op, n)
         }
-        "depth" => {
+        "depth" | "parents" => {
             let (op, n) = parse_cmp_usize(val)?;
             Function::Depth(op, n)
         }

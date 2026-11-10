@@ -20,11 +20,10 @@ pub(super) enum ModifierKind {
 }
 
 pub(super) fn modifier_from_kw(kw: &str, val: &str) -> Option<ModifierKind> {
-    // With a value attached these are functions (`path:/src`, `dir:name`,
-    // `regex:a.b`) or drive letters (`i:\data`); any other modifier applies to
-    // the attached value, so `case:Foo` means `case: Foo`.
-    if !val.is_empty()
-        && (kw.len() == 1 || matches!(kw, "path" | "dir" | "regex" | "archive" | "noarchive"))
+    // With a value attached these are functions (`dir:name`, `regex:a.b`) or
+    // drive letters (`i:\data`); any other modifier applies to the attached
+    // value, so `case:Foo` means `case: Foo` and `path:src` means `path: src`.
+    if !val.is_empty() && (kw.len() == 1 || matches!(kw, "dir" | "regex" | "archive" | "noarchive"))
     {
         return None;
     }

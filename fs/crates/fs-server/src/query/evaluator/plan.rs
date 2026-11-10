@@ -222,7 +222,7 @@ fn emit_predicate(pred: &Predicate, mods: &Modifiers, p: &mut QueryPlan) -> Resu
 
 fn emit_function(
     func: &Function,
-    _mods: &Modifiers,
+    mods: &Modifiers,
     p: &mut QueryPlan,
     now: chrono::DateTime<chrono::FixedOffset>,
 ) -> Result<()> {
@@ -256,8 +256,14 @@ fn emit_function(
                 .push(SqlCondition::PathLike(format!("{}%", like_escape(path))));
         }
         Function::Parent(path) => {
+            // ParentPath covers the whole subtree (and the memory store's
+            // per-directory fast path); the depth check keeps direct children.
+            let dir = path.trim_end_matches('/');
+            let depth = dir.bytes().filter(|&b| b == b'/').count();
             p.sql_conditions
-                .push(SqlCondition::ParentPath(path.clone()));
+                .push(SqlCondition::ParentPath(dir.to_owned()));
+            p.sql_conditions
+                .push(SqlCondition::DepthOp(CmpOp::Eq, depth + 1));
         }
         Function::Content(text) => {
             p.tantivy_query = Some(text.clone());
@@ -284,11 +290,27 @@ fn emit_function(
         Function::Child(name) => {
             p.post_filters.push(PostFilter::Child(name.clone()));
         }
+        // LIKE ignores case, so the post-filters only run for case:.
         Function::StartWith(s) => {
-            p.post_filters.push(PostFilter::StartWith(s.clone()));
+            p.sql_conditions
+                .push(SqlCondition::NameLike(format!("{}%", like_escape(s))));
+            if mods.case_sensitive == Some(true) {
+                p.post_filters.push(PostFilter::StartWith(s.clone()));
+            }
         }
         Function::EndWith(s) => {
-            p.post_filters.push(PostFilter::EndWith(s.clone()));
+            p.sql_conditions
+                .push(SqlCondition::NameLike(format!("%{}", like_escape(s))));
+            if mods.case_sensitive == Some(true) {
+                p.post_filters.push(PostFilter::EndWith(s.clone()));
+            }
+        }
+        Function::ArchiveOf(path) if has_wildcards(path) => {
+            p.sql_conditions.push(SqlCondition::IsArchiveEntry);
+            p.post_filters.push(PostFilter::ArchiveGlob {
+                pattern: path.clone(),
+                case_sensitive: mods.case_sensitive == Some(true),
+            });
         }
         Function::ArchiveOf(path) => {
             p.sql_conditions.push(SqlCondition::ArchiveOf(path.clone()));

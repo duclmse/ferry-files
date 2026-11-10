@@ -60,6 +60,16 @@ fn post_filter_match(f: &PostFilter, r: &FileRecord, store: &FileStore) -> bool 
                 hay.contains(text.as_str())
             }
         }
+        PostFilter::ArchiveGlob {
+            pattern,
+            case_sensitive,
+        } => r.archive_path.as_deref().is_some_and(|a| {
+            if *case_sensitive {
+                crate::query::glob::wildcard_match(a, pattern)
+            } else {
+                crate::query::glob::wildcard_match(&a.to_lowercase(), &pattern.to_lowercase())
+            }
+        }),
         PostFilter::CaseGlob { pattern, on_path } => {
             crate::query::glob::wildcard_match(if *on_path { &r.path } else { &r.name }, pattern)
         }

@@ -318,9 +318,9 @@ pub enum SqlCondition {
     SizeOp(CmpOp, u64),
     /// `extension IN (...)`
     ExtIn(Vec<String>),
-    /// `path LIKE ? || '/%'` (all files under a directory)
+    /// `path LIKE ? ESCAPE '\'` with `<dir>/%` (all files under a directory)
     ParentPath(String),
-    /// `LENGTH(name) <op> value`
+    /// `LENGTH(name) <op> value`, in characters
     NameLenOp(CmpOp, usize),
     /// Depth relative to a root: `(LENGTH(path) - LENGTH(REPLACE(path, '/', ''))) <op> depth`
     DepthOp(CmpOp, usize),
@@ -392,9 +392,13 @@ impl SqlCondition {
                 let vals = exts.iter().map(|e| Value::Text(e.clone())).collect();
                 (format!("extension IN ({ph})"), vals)
             }
-            SqlCondition::ParentPath(p) => {
-                ("path LIKE ? || '/%'".into(), vec![Value::Text(p.clone())])
-            }
+            SqlCondition::ParentPath(p) => (
+                "path LIKE ? ESCAPE '\\'".into(),
+                vec![Value::Text(format!(
+                    "{}/%",
+                    crate::query::glob::like_escape(p)
+                ))],
+            ),
             SqlCondition::NameLenOp(op, n) => (
                 format!("LENGTH(name) {} ?", op.as_sql()),
                 vec![Value::Integer(*n as i64)],

@@ -58,7 +58,7 @@ drive.
 |----------|---------|--------|
 | `case:` | `cs:` | Case-sensitive matching |
 | `nocase:` | `i:` | Case-insensitive (default) |
-| `path:` | | Match against full path + filename |
+| `path:` | | Match against full path + filename. `path:src` is `path: src`: the path contains `src` |
 | `nopath:` | | Match filename only (default) |
 | `file:` | `files:` | Files only |
 | `folder:` | `folders:` | Folders only |
@@ -83,9 +83,9 @@ drive.
 |----------|---------|-------------|
 | `dm:<date>` | `datemodified:` | Date modified |
 | `dc:<date>` | `datecreated:` | Date created |
-| `da:<date>` | `dateaccessed:` | Date accessed |
-| `rc:<date>` | `recentchange:` | Recently changed |
-| `dr:<date>` | `daterun:` | Date run |
+| `da:<date>` | `dateaccessed:` | Date accessed; approximated with date modified (no access time is indexed) |
+| `rc:<date>` | `recentchange:` | Not supported (query error) |
+| `dr:<date>` | `daterun:` | Not supported (query error) |
 
 #### Size Functions
 
@@ -98,49 +98,49 @@ drive.
 | Function | Aliases | Description |
 |----------|---------|-------------|
 | `ext:<list>` | | Extension, semicolon-delimited: `ext:jpg;png;gif` |
-| `parent:<path>` | `infolder:`, `nosubfolders:` | Files in exactly this folder |
+| `parent:<path>` | `infolder:`, `nosubfolders:`, `dir:` | Files in exactly this folder, not its subfolders |
 | `child:<name>` | | Folders containing a child with this name |
-| `startwith:<text>` | | Filename starts with text |
-| `endwith:<text>` | | Filename ends with text |
-| `len:<n>` | | Filename length |
+| `startwith:<text>` | `startswith:` | Filename starts with text (ignores case unless `case:`) |
+| `endwith:<text>` | `endswith:` | Filename ends with text (ignores case unless `case:`) |
+| `len:<n>` | `length:` | Filename length in characters |
 | `depth:<n>` | `parents:` | Folder depth from root |
-| `root:` | | No parent folder |
+| `root:` | | Top-level entries (one level below the filesystem root) |
 
 #### Attribute Functions
 
 | Function | Description |
 |----------|-------------|
 | `attrib:<attrs>` | File attributes (see attribute constants below) |
-| `type:<type>` | File type string |
+| `type:<list>` | Same as `ext:` |
 
 #### Content Functions
 
 | Function | Description |
 |----------|-------------|
 | `content:<text>` | Full-text search via Tantivy |
-| `utf8content:<text>` | Treat file as UTF-8 |
-| `ansicontent:<text>` | Treat file as ANSI |
+| `utf8content:<text>` | Same as `content:` |
+| `ansicontent:<text>` | Same as `content:` |
 
 #### Folder Stat Functions
 
 | Function | Description |
 |----------|-------------|
-| `childcount:<n>` | Exactly N children |
-| `childfilecount:<n>` | Exactly N files |
-| `childfoldercount:<n>` | Exactly N subfolders |
-| `empty:` | Empty folder |
+| `childcount:<n>` | Not supported (query error) |
+| `childfilecount:<n>` | Not supported (query error) |
+| `childfoldercount:<n>` | Not supported (query error) |
+| `empty:` | Not supported (query error) |
 
 #### Duplicate Functions
 
 | Function | Description |
 |----------|-------------|
-| `dupe:` | Same filename as another file |
-| `namepartdupe:` | Same name without extension |
+| `dupe:` | Same filename as another file (`namedupe:`) |
+| `namepartdupe:` | Not supported (query error) |
 | `sizedupe:` | Same size |
 | `dmdupe:` | Same date modified |
 | `dcdupe:` | Same date created |
-| `dadupe:` | Same date accessed |
-| `attribdupe:` | Same attributes |
+| `dadupe:` | Not supported (query error) |
+| `attribdupe:` | Not supported (query error) |
 
 #### Result Control
 
@@ -153,7 +153,7 @@ drive.
 
 | Function | Description |
 |----------|-------------|
-| `archiveof:<path>` | All indexed inner files of a specific outer archive (glob supported) |
+| `archiveof:<path>` | All indexed inner files of a specific outer archive. `*` and `?` match the whole archive path, ignoring case unless `case:` |
 
 #### fs Extensions (not in voidtools Everything)
 
@@ -563,7 +563,7 @@ pub fn plan(expr: &Expr, default_modifiers: &Modifiers) -> Result<QueryPlan, Que
 | `dm:`, `dc:`, `da:` | resolve `DateExpr` → `MtimeRange`/`CtimeRange` |
 | `size:` | `SizeRange` or `SizeOp` |
 | `ext:list` | `ExtIn(list)` |
-| `parent:path` | `ParentPath(path)` |
+| `parent:path` | `ParentPath(path)` + `DepthOp(Eq, depth(path) + 1)` |
 | `content:text` | `tantivy_query = Some(text)`, strategy = `TantivyThenSqlite` |
 | `fuzzy:term` | strategy = `FuzzyFilter(term)` |
 | `dupe:` | strategy = `DupeSearch(DupeKind::Name)` |
@@ -573,8 +573,8 @@ pub fn plan(expr: &Expr, default_modifiers: &Modifiers) -> Result<QueryPlan, Que
 | `depth:` | `Depth(op, val)` |
 | `attrib:` | `PostFilter::Attrib(flags)` |
 | `child:` | `PostFilter::Child(name)` |
-| `startwith:` | `PostFilter::StartWith(text)` |
-| `endwith:` | `PostFilter::EndWith(text)` |
+| `startwith:` | `NameLike("text%")`; `PostFilter::StartWith` with `case:` |
+| `endwith:` | `NameLike("%text")`; `PostFilter::EndWith` with `case:` |
 | TypeMacro | expand → `ExtIn` |
 | `archive:` modifier | `IsArchiveEntry(true)` |
 | `noarchive:` modifier | `IsArchiveEntry(false)` |

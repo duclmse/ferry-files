@@ -353,7 +353,7 @@ fn like_syntax_in_terms_is_escaped() {
     };
     assert!(has("my_file", r"%my\_file%"));
     assert!(has("100%", r"%100\%%"));
-    assert!(has("path:/a_b", r"/a\_b%"));
+    assert!(has("path:/a_b", r"%/a\_b%"));
     assert!(has("path: *.rs", "%.rs"));
     assert!(has("path: */a_b/?.rs", r"%/a\_b/_.rs"));
 }
@@ -514,5 +514,178 @@ mod modifiers_end_to_end {
         check(&FileStore::Memory(Arc::new(
             MemoryStore::new(dir.path()).unwrap(),
         )));
+    }
+}
+
+mod functions_end_to_end {
+    use super::*;
+    use crate::store::{
+        memory_store::MemoryStore, sqlite_store::SqliteStore, FileRecord, FileStore,
+    };
+    use std::sync::Arc;
+
+    fn rec(path: &str, is_dir: bool) -> FileRecord {
+        let name: String = path.rsplit('/').next().unwrap_or(path).into();
+        FileRecord {
+            id: None,
+            path: path.into(),
+            extension: (!is_dir)
+                .then(|| name.rsplit_once('.').map(|(_, e)| e.to_lowercase()))
+                .flatten(),
+            name,
+            size_bytes: 10,
+            mtime: 0,
+            ctime: 0,
+            is_dir,
+            is_hidden: false,
+            is_symlink: false,
+            attrib_bitmask: 0,
+            content_indexed: false,
+            tantivy_id: None,
+            indexed_at: 0,
+            archive_path: None,
+        }
+    }
+
+    fn run(store: &FileStore, q: &str) -> Vec<String> {
+        let p = parse_plan(q);
+        let rows = store.search_conditions(&p.sql_conditions, 1000).unwrap();
+        let mut paths: Vec<String> = apply_post_filters(rows, &p.post_filters, store)
+            .into_iter()
+            .map(|r| r.path)
+            .collect();
+        paths.sort();
+        paths
+    }
+
+    fn check(store: &FileStore) {
+        for (p, d) in [
+            ("/r", true),
+            ("/r/src", true),
+            ("/r/src/Main.RS", false),
+            ("/r/src/lib.rs", false),
+            ("/r/src/sub", true),
+            ("/r/src/sub/x.rs", false),
+            ("/r/docs", true),
+            ("/r/docs/café.md", false),
+            ("/r/a_b", true),
+            ("/r/a_b/in.txt", false),
+            ("/r/aXb", true),
+            ("/r/aXb/out.txt", false),
+        ] {
+            store.upsert_file(&rec(p, d)).unwrap();
+        }
+        let src_children: &[&str] = &["/r/src/Main.RS", "/r/src/lib.rs", "/r/src/sub"];
+        let cases: &[(&str, &[&str])] = &[
+            (
+                "path:src",
+                &[
+                    "/r/src",
+                    "/r/src/Main.RS",
+                    "/r/src/lib.rs",
+                    "/r/src/sub",
+                    "/r/src/sub/x.rs",
+                ],
+            ),
+            ("path:sub/*.rs", &[]),
+            ("path:*/sub/*.rs", &["/r/src/sub/x.rs"]),
+            ("startwith:main", &["/r/src/Main.RS"]),
+            ("case: startwith:main", &[]),
+            ("case: startwith:Main", &["/r/src/Main.RS"]),
+            (
+                "endwith:.rs",
+                &["/r/src/Main.RS", "/r/src/lib.rs", "/r/src/sub/x.rs"],
+            ),
+            ("case: endwith:.RS", &["/r/src/Main.RS"]),
+            (
+                "len:7",
+                &["/r/aXb/out.txt", "/r/docs/café.md", "/r/src/Main.RS"],
+            ),
+            ("parent:/r/src", src_children),
+            ("parent:/r/src/", src_children),
+            ("infolder:/r/src", src_children),
+            ("nosubfolders:/r/src", src_children),
+            ("parent:/r/a_b", &["/r/a_b/in.txt"]),
+            ("parents:2", &["/r/aXb", "/r/a_b", "/r/docs", "/r/src"]),
+            ("root:", &["/r"]),
+            (
+                "folder:",
+                &["/r", "/r/aXb", "/r/a_b", "/r/docs", "/r/src", "/r/src/sub"],
+            ),
+            ("file: <lib | café>", &["/r/docs/café.md", "/r/src/lib.rs"]),
+        ];
+        for (q, want) in cases {
+            assert_eq!(run(store, q), *want, "query {q:?}");
+        }
+    }
+
+    #[test]
+    fn sqlite_backend() {
+        let dir = tempfile::TempDir::new().unwrap();
+        let s = SqliteStore::new(&dir.path().join("i.db")).unwrap();
+        check(&FileStore::Sqlite(Arc::new(s)));
+    }
+
+    #[test]
+    fn memory_backend() {
+        let dir = tempfile::TempDir::new().unwrap();
+        check(&FileStore::Memory(Arc::new(
+            MemoryStore::new(dir.path()).unwrap(),
+        )));
+    }
+
+    #[test]
+    fn dupe_spellings_from_the_docs_parse() {
+        for q in ["dmdupe:", "dcdupe:", "sizedupe:", "namedupe:", "dmdup:"] {
+            assert!(
+                matches!(parse_plan(q).strategy, EvalStrategy::DupeSearch(_)),
+                "{q}"
+            );
+        }
+    }
+
+    #[test]
+    fn archiveof_accepts_wildcards() {
+        let dir = tempfile::TempDir::new().unwrap();
+        let s = SqliteStore::new(&dir.path().join("i.db")).unwrap();
+        let mem = MemoryStore::new(dir.path()).unwrap();
+        for store in [
+            FileStore::Sqlite(Arc::new(s)),
+            FileStore::Memory(Arc::new(mem)),
+        ] {
+            for (outer, inner) in [("/z/Backup.zip", "a.txt"), ("/z/other.zip", "b.txt")] {
+                let mut r = rec(&format!("{outer}!/{inner}"), false);
+                r.archive_path = Some(outer.into());
+                store.upsert_file(&r).unwrap();
+            }
+            store.upsert_file(&rec("/z/c.txt", false)).unwrap();
+            assert_eq!(
+                run(&store, "archiveof:*/backup.zip"),
+                ["/z/Backup.zip!/a.txt"]
+            );
+            assert_eq!(
+                run(&store, "case: archiveof:*/backup.zip"),
+                Vec::<String>::new()
+            );
+            assert_eq!(
+                run(&store, "archiveof:/z/other.zip"),
+                ["/z/other.zip!/b.txt"]
+            );
+        }
+    }
+
+    #[test]
+    fn unsupported_functions_are_errors_not_text() {
+        let macros = MacroConfig::default();
+        for q in [
+            "rc:today",
+            "dr:today",
+            "childcount:2",
+            "childfilecount:1",
+            "empty:",
+            "dadupe:",
+        ] {
+            assert!(parse(q, &macros).is_err(), "{q}");
+        }
     }
 }
