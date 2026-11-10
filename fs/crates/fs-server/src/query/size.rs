@@ -13,11 +13,9 @@ pub fn parse_size_value(s: &str) -> Result<RangeExpr<u64>> {
         "gigantic" => return Ok(RangeExpr::Gte(128 * 1024 * 1024 + 1)),
         _ => {}
     }
-    // Range: 1mb..10mb
-    if let Some(pos) = s.find("..") {
-        let lo = parse_bytes(&s[..pos])?;
-        let hi = parse_bytes(&s[pos + 2..])?;
-        return Ok(RangeExpr::Between(lo, hi));
+    // Range: 1mb..10mb or 1mb-10mb
+    if let Some((lo, hi)) = s.split_once("..").or_else(|| s.split_once('-')) {
+        return Ok(RangeExpr::Between(parse_bytes(lo)?, parse_bytes(hi)?));
     }
     // Comparison prefixes
     if let Some(rest) = s.strip_prefix("<=") {
@@ -47,19 +45,25 @@ fn parse_bytes(s: &str) -> Result<u64> {
         (&s[..s.len() - 2], 1024 * 1024)
     } else if lower.ends_with("gb") {
         (&s[..s.len() - 2], 1024 * 1024 * 1024)
+    } else if lower.ends_with("tb") {
+        (&s[..s.len() - 2], 1024u64.pow(4))
     } else if lower.ends_with('k') {
         (&s[..s.len() - 1], 1024)
     } else if lower.ends_with('m') {
         (&s[..s.len() - 1], 1024 * 1024)
     } else if lower.ends_with('g') {
         (&s[..s.len() - 1], 1024 * 1024 * 1024)
+    } else if lower.ends_with('t') {
+        (&s[..s.len() - 1], 1024u64.pow(4))
     } else {
         (s, 1)
     };
-    let n: f64 = num_str
-        .trim()
-        .parse()
-        .map_err(|_| AppError::Query(format!("invalid size value: '{s}'")))?;
+    let invalid = || AppError::Query(format!("invalid size value: '{s}'"));
+    let n: f64 = num_str.trim().parse().map_err(|_| invalid())?;
+    // `-1`, `nan` and `inf` parse as f64 but are not sizes.
+    if !n.is_finite() || n < 0.0 {
+        return Err(invalid());
+    }
     Ok((n * mult as f64) as u64)
 }
 

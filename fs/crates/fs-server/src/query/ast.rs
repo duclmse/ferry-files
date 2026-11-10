@@ -78,8 +78,11 @@ pub enum DateExpr {
     Constant(DateConstant),
     /// Absolute range of Unix seconds (lo, hi inclusive).
     Range(i64, i64),
-    /// `<op> timestamp` - open-ended comparison.
-    Comparison(CmpOp, i64),
+    /// `<op> period`: compared against the whole period, so `<=2024-01-01`
+    /// includes all of that day and `>2024-01-01` starts the day after.
+    Comparison(CmpOp, Box<DateExpr>),
+    /// `a..b` / `a-b`: from the start of `a` to the end of `b`.
+    Between(Box<DateExpr>, Box<DateExpr>),
 }
 
 #[derive(Debug, Clone)]

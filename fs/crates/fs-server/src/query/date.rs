@@ -1,4 +1,6 @@
-use chrono::{DateTime, Datelike, Duration, FixedOffset, NaiveDate, NaiveDateTime, TimeZone};
+use chrono::{
+    DateTime, Datelike, Duration, FixedOffset, Local, NaiveDate, NaiveDateTime, NaiveTime, TimeZone,
+};
 
 use super::ast::{DateConstant, DateExpr};
 use crate::error::{AppError, Result};
@@ -9,87 +11,96 @@ use crate::store::CmpOp;
 // ---------------------------------------------------------------------------
 
 pub fn parse_date_value(s: &str) -> Result<DateExpr> {
-    let lower = s.trim().to_ascii_lowercase();
-
-    // Named constants
-    match lower.as_str() {
-        "today" => return Ok(DateExpr::Constant(DateConstant::Today)),
-        "yesterday" => return Ok(DateExpr::Constant(DateConstant::Yesterday)),
-        "thisweek" => return Ok(DateExpr::Constant(DateConstant::ThisWeek)),
-        "lastweek" => return Ok(DateExpr::Constant(DateConstant::LastWeek)),
-        "thismonth" => return Ok(DateExpr::Constant(DateConstant::ThisMonth)),
-        "lastmonth" => return Ok(DateExpr::Constant(DateConstant::LastMonth)),
-        "thisyear" => return Ok(DateExpr::Constant(DateConstant::ThisYear)),
-        "lastyear" => return Ok(DateExpr::Constant(DateConstant::LastYear)),
-        "january" | "jan" => return Ok(DateExpr::Constant(DateConstant::Month(1))),
-        "february" | "feb" => return Ok(DateExpr::Constant(DateConstant::Month(2))),
-        "march" | "mar" => return Ok(DateExpr::Constant(DateConstant::Month(3))),
-        "april" | "apr" => return Ok(DateExpr::Constant(DateConstant::Month(4))),
-        "may" => return Ok(DateExpr::Constant(DateConstant::Month(5))),
-        "june" | "jun" => return Ok(DateExpr::Constant(DateConstant::Month(6))),
-        "july" | "jul" => return Ok(DateExpr::Constant(DateConstant::Month(7))),
-        "august" | "aug" => return Ok(DateExpr::Constant(DateConstant::Month(8))),
-        "september" | "sep" => return Ok(DateExpr::Constant(DateConstant::Month(9))),
-        "october" | "oct" => return Ok(DateExpr::Constant(DateConstant::Month(10))),
-        "november" | "nov" => return Ok(DateExpr::Constant(DateConstant::Month(11))),
-        "december" | "dec" => return Ok(DateExpr::Constant(DateConstant::Month(12))),
-        "sunday" | "sun" => return Ok(DateExpr::Constant(DateConstant::Weekday(0))),
-        "monday" | "mon" => return Ok(DateExpr::Constant(DateConstant::Weekday(1))),
-        "tuesday" | "tue" => return Ok(DateExpr::Constant(DateConstant::Weekday(2))),
-        "wednesday" | "wed" => return Ok(DateExpr::Constant(DateConstant::Weekday(3))),
-        "thursday" | "thu" => return Ok(DateExpr::Constant(DateConstant::Weekday(4))),
-        "friday" | "fri" => return Ok(DateExpr::Constant(DateConstant::Weekday(5))),
-        "saturday" | "sat" => return Ok(DateExpr::Constant(DateConstant::Weekday(6))),
-        _ => {}
-    }
-
-    // last<N>days / lastNhours / lastNminutes / lastNweeks / lastNmonths
-    if let Some(rest) = lower.strip_prefix("last") {
-        macro_rules! try_suffix {
-            ($suffix:literal, $variant:ident) => {
-                if let Some(n_str) = rest.strip_suffix($suffix) {
-                    if let Ok(n) = n_str.parse::<u32>() {
-                        return Ok(DateExpr::Constant(DateConstant::$variant(n)));
-                    }
-                }
-            };
+    let s = s.trim();
+    for (op_str, op) in [
+        ("<=", CmpOp::Lte),
+        (">=", CmpOp::Gte),
+        ("<", CmpOp::Lt),
+        (">", CmpOp::Gt),
+        ("=", CmpOp::Eq),
+    ] {
+        if let Some(rest) = s.strip_prefix(op_str) {
+            return Ok(DateExpr::Comparison(
+                op,
+                Box::new(parse_period(rest.trim())?),
+            ));
         }
-        try_suffix!("days", LastNDays);
-        try_suffix!("hours", LastNHours);
-        try_suffix!("minutes", LastNMinutes);
-        try_suffix!("weeks", LastNWeeks);
-        try_suffix!("months", LastNMonths);
+    }
+    if let Some((a, b)) = s.split_once("..") {
+        return Ok(DateExpr::Between(
+            Box::new(parse_period(a.trim())?),
+            Box::new(parse_period(b.trim())?),
+        ));
+    }
+    if let Ok(e) = parse_period(s) {
+        return Ok(e);
+    }
+    // `a-b` ranges: dates contain dashes too, so take the first split where
+    // both halves are valid (`2024-01-01-2024-12-31`, `2023-2024`).
+    for (i, _) in s.match_indices('-') {
+        if let (Ok(a), Ok(b)) = (parse_period(&s[..i]), parse_period(&s[i + 1..])) {
+            return Ok(DateExpr::Between(Box::new(a), Box::new(b)));
+        }
+    }
+    Err(AppError::Query(format!("invalid date: '{s}'")))
+}
+
+type MakeConstant = fn(u32) -> DateConstant;
+
+/// One named or absolute period: `today`, `jan`, `last3days`, `2024`,
+/// `2024-01`, `2024-01-15`, `20240115`, `2024-01-15T10:00:00`.
+fn parse_period(s: &str) -> Result<DateExpr> {
+    let lower = s.to_ascii_lowercase();
+    let constant = match lower.as_str() {
+        "today" => Some(DateConstant::Today),
+        "yesterday" => Some(DateConstant::Yesterday),
+        "thisweek" => Some(DateConstant::ThisWeek),
+        "lastweek" => Some(DateConstant::LastWeek),
+        "thismonth" => Some(DateConstant::ThisMonth),
+        "lastmonth" => Some(DateConstant::LastMonth),
+        "thisyear" => Some(DateConstant::ThisYear),
+        "lastyear" => Some(DateConstant::LastYear),
+        "january" | "jan" => Some(DateConstant::Month(1)),
+        "february" | "feb" => Some(DateConstant::Month(2)),
+        "march" | "mar" => Some(DateConstant::Month(3)),
+        "april" | "apr" => Some(DateConstant::Month(4)),
+        "may" => Some(DateConstant::Month(5)),
+        "june" | "jun" => Some(DateConstant::Month(6)),
+        "july" | "jul" => Some(DateConstant::Month(7)),
+        "august" | "aug" => Some(DateConstant::Month(8)),
+        "september" | "sep" => Some(DateConstant::Month(9)),
+        "october" | "oct" => Some(DateConstant::Month(10)),
+        "november" | "nov" => Some(DateConstant::Month(11)),
+        "december" | "dec" => Some(DateConstant::Month(12)),
+        "sunday" | "sun" => Some(DateConstant::Weekday(0)),
+        "monday" | "mon" => Some(DateConstant::Weekday(1)),
+        "tuesday" | "tue" => Some(DateConstant::Weekday(2)),
+        "wednesday" | "wed" => Some(DateConstant::Weekday(3)),
+        "thursday" | "thu" => Some(DateConstant::Weekday(4)),
+        "friday" | "fri" => Some(DateConstant::Weekday(5)),
+        "saturday" | "sat" => Some(DateConstant::Weekday(6)),
+        _ => None,
+    };
+    if let Some(c) = constant {
+        return Ok(DateExpr::Constant(c));
     }
 
-    let trimmed = s.trim();
-
-    // Comparison operators (must use original case for date string after op)
-    if let Some(rest) = trimmed.strip_prefix("<=") {
-        let ts = parse_absolute_date(rest.trim())?;
-        return Ok(DateExpr::Comparison(CmpOp::Lte, ts));
-    }
-    if let Some(rest) = trimmed.strip_prefix(">=") {
-        let ts = parse_absolute_date(rest.trim())?;
-        return Ok(DateExpr::Comparison(CmpOp::Gte, ts));
-    }
-    if let Some(rest) = trimmed.strip_prefix('<') {
-        let ts = parse_absolute_date(rest.trim())?;
-        return Ok(DateExpr::Comparison(CmpOp::Lt, ts));
-    }
-    if let Some(rest) = trimmed.strip_prefix('>') {
-        let ts = parse_absolute_date(rest.trim())?;
-        return Ok(DateExpr::Comparison(CmpOp::Gt, ts));
+    if let Some(rest) = lower.strip_prefix("last") {
+        let units: [(&str, MakeConstant); 5] = [
+            ("days", DateConstant::LastNDays),
+            ("hours", DateConstant::LastNHours),
+            ("minutes", DateConstant::LastNMinutes),
+            ("weeks", DateConstant::LastNWeeks),
+            ("months", DateConstant::LastNMonths),
+        ];
+        for (suffix, make) in units {
+            if let Some(n) = rest.strip_suffix(suffix).and_then(|n| n.parse().ok()) {
+                return Ok(DateExpr::Constant(make(n)));
+            }
+        }
     }
 
-    // Absolute range: date1..date2
-    if let Some(pos) = trimmed.find("..") {
-        let lo = parse_absolute_date(trimmed[..pos].trim())?;
-        let hi = parse_absolute_date(trimmed[pos + 2..].trim())?;
-        return Ok(DateExpr::Range(lo, hi));
-    }
-
-    // Single absolute date → expand to range for the whole unit (day/month/year)
-    let (lo, hi) = parse_absolute_date_range(trimmed)?;
+    let (lo, hi) = parse_absolute_date_range(s)?;
     Ok(DateExpr::Range(lo, hi))
 }
 
@@ -206,94 +217,59 @@ fn prev_month(year: i32, month: u32) -> (i32, u32) {
     }
 }
 
-fn parse_absolute_date(s: &str) -> Result<i64> {
-    // YYYY-MM-DDThh:mm:ss
-    if let Ok(dt) = NaiveDateTime::parse_from_str(s, "%Y-%m-%dT%H:%M:%S") {
-        return Ok(dt.and_utc().timestamp());
-    }
-    // YYYY-MM-DD or YYYYMMDD
-    for fmt in &["%Y-%m-%d", "%Y%m%d"] {
-        if let Ok(d) = NaiveDate::parse_from_str(s, fmt) {
-            return Ok(d
-                .and_hms_opt(0, 0, 0)
-                .expect("infallible: 0,0,0 always valid")
-                .and_utc()
-                .timestamp());
-        }
-    }
-    // YYYY-MM → first day of that month
-    if s.len() == 7 && s.as_bytes().get(4) == Some(&b'-') {
-        if let Ok(d) = NaiveDate::parse_from_str(&format!("{s}-01"), "%Y-%m-%d") {
-            return Ok(d
-                .and_hms_opt(0, 0, 0)
-                .expect("infallible: 0,0,0 always valid")
-                .and_utc()
-                .timestamp());
-        }
-    }
-    // YYYY → first day of that year
-    if s.len() == 4 {
-        if let Ok(y) = s.parse::<i32>() {
-            if let Some(d) = NaiveDate::from_ymd_opt(y, 1, 1) {
-                return Ok(d
-                    .and_hms_opt(0, 0, 0)
-                    .expect("infallible: 0,0,0 always valid")
-                    .and_utc()
-                    .timestamp());
-            }
-        }
-    }
-    Err(AppError::Query(format!("invalid date: '{s}'")))
+/// Typed dates are local wall-clock time, like `today` and the other
+/// constants. A time skipped by a DST jump falls back to its UTC reading.
+fn local_ts(dt: NaiveDateTime) -> i64 {
+    Local
+        .from_local_datetime(&dt)
+        .earliest()
+        .map_or_else(|| dt.and_utc().timestamp(), |t| t.timestamp())
 }
 
-/// Like `parse_absolute_date` but expands to a (lo, hi) range covering
-/// the whole unit implied by the format (day → 24 h, month → whole month, year → whole year).
-fn parse_absolute_date_range(s: &str) -> Result<(i64, i64)> {
-    let lo = parse_absolute_date(s)?;
+fn day_start(d: NaiveDate) -> i64 {
+    local_ts(d.and_time(NaiveTime::MIN))
+}
 
-    // Determine granularity from string shape
-    if s.contains('T') {
-        // Exact second
-        return Ok((lo, lo));
+/// Last second of the period `[from, next)`, found from the next period's
+/// start so DST days and leap years need no special casing.
+fn until(next: NaiveDate) -> i64 {
+    day_start(next) - 1
+}
+
+/// The whole period implied by the format: an exact second, a day, a month
+/// or a year, as an inclusive `(lo, hi)` in Unix seconds.
+fn parse_absolute_date_range(s: &str) -> Result<(i64, i64)> {
+    let invalid = || AppError::Query(format!("invalid date: '{s}'"));
+    if let Ok(dt) = NaiveDateTime::parse_from_str(s, "%Y-%m-%dT%H:%M:%S") {
+        let t = local_ts(dt);
+        return Ok((t, t));
     }
-    let len = s.len();
-    if len == 10 || len == 8 {
-        // YYYY-MM-DD or YYYYMMDD - whole day
-        return Ok((lo, lo + 86400 - 1));
-    }
-    if len == 7 {
-        // YYYY-MM - whole month
-        let parts: Vec<&str> = s.splitn(2, '-').collect();
-        if parts.len() == 2 {
-            if let (Ok(y), Ok(m)) = (parts[0].parse::<i32>(), parts[1].parse::<u32>()) {
-                let end_ts = NaiveDate::from_ymd_opt(y, m, 1)
-                    .map(|_d| {
-                        let last = month_end(y, m);
-                        last.and_hms_opt(23, 59, 59)
-                            .expect("infallible: 23,59,59 always valid")
-                            .and_utc()
-                            .timestamp()
-                    })
-                    .unwrap_or(lo + 86400 - 1);
-                return Ok((lo, end_ts));
+    for fmt in ["%Y-%m-%d", "%Y%m%d"] {
+        if s.len() == if fmt == "%Y%m%d" { 8 } else { 10 } {
+            if let Ok(d) = NaiveDate::parse_from_str(s, fmt) {
+                let next = d.succ_opt().ok_or_else(invalid)?;
+                return Ok((day_start(d), until(next)));
             }
         }
     }
-    if len == 4 {
-        // YYYY - whole year
-        if let Ok(y) = s.parse::<i32>() {
-            let hi = NaiveDate::from_ymd_opt(y, 12, 31)
-                .map(|d| {
-                    d.and_hms_opt(23, 59, 59)
-                        .expect("infallible: 23,59,59 always valid")
-                        .and_utc()
-                        .timestamp()
-                })
-                .unwrap_or(lo + 365 * 86400);
-            return Ok((lo, hi));
+    if s.len() == 7 && s.as_bytes()[4] == b'-' {
+        if let Ok(d) = NaiveDate::parse_from_str(&format!("{s}-01"), "%Y-%m-%d") {
+            let (ny, nm) = if d.month() == 12 {
+                (d.year() + 1, 1)
+            } else {
+                (d.year(), d.month() + 1)
+            };
+            let next = NaiveDate::from_ymd_opt(ny, nm, 1).ok_or_else(invalid)?;
+            return Ok((day_start(d), until(next)));
         }
     }
-    Ok((lo, lo + 86400 - 1))
+    if s.len() == 4 && s.bytes().all(|b| b.is_ascii_digit()) {
+        let y: i32 = s.parse().map_err(|_| invalid())?;
+        let first = NaiveDate::from_ymd_opt(y, 1, 1).ok_or_else(invalid)?;
+        let next = NaiveDate::from_ymd_opt(y + 1, 1, 1).ok_or_else(invalid)?;
+        return Ok((day_start(first), until(next)));
+    }
+    Err(invalid())
 }
 
 // ---------------------------------------------------------------------------

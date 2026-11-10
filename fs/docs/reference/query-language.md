@@ -43,6 +43,9 @@ query error rather than evaluated with the wrong meaning.
 Double quotes only keep spaces and operators inside one term: `"my notes"`
 matches names containing `my notes`. Add `wfn:` to match the whole filename.
 
+A term containing `/` or `\` searches full paths, as if `path:` were given
+(`nopath:` turns this off).
+
 Wildcards match the **whole filename** by default (controlled by `wfn:` modifier).
 With `path:` they match the whole path, so `path: */src/*.rs` finds `.rs` files
 anywhere under a `src` directory (`*` also matches `/`).
@@ -102,8 +105,8 @@ drive.
 | `child:<name>` | | Folders containing a child with this name |
 | `startwith:<text>` | `startswith:` | Filename starts with text (ignores case unless `case:`) |
 | `endwith:<text>` | `endswith:` | Filename ends with text (ignores case unless `case:`) |
-| `len:<n>` | `length:` | Filename length in characters |
-| `depth:<n>` | `parents:` | Folder depth from root |
+| `len:<n>` | `length:` | Filename length in characters; `len:5..10` for a range |
+| `depth:<n>` | `parents:` | Folder depth from root; `depth:1..2` for a range |
 | `root:` | | Top-level entries (one level below the filesystem root) |
 
 #### Attribute Functions
@@ -194,6 +197,9 @@ drive.
 | `kb` | Kilobytes |
 | `mb` | Megabytes |
 | `gb` | Gigabytes |
+| `tb` | Terabytes |
+
+`k`, `m`, `g` and `t` work too. Ranges are `1mb..2mb` or `1mb-2mb`.
 
 Size constants:
 - `empty` = 0 bytes
@@ -207,7 +213,15 @@ Size constants:
 #### Date Values
 
 Absolute: `YYYY`, `YYYY-MM`, `YYYY-MM-DD`, `YYYY-MM-DDThh:mm:ss`,
-`YYYYMMDD`, locale-dependent formats (configurable).
+`YYYYMMDD`, in local time. Each value is a period (a year, month, day or
+second), and comparisons and ranges use the whole period:
+
+- `dm:2024-01-01` is that whole day; `dm:<=2024-01-01` includes all of it,
+  `dm:>2024-01-01` starts on Jan 2.
+- `dm:2024-01-01..2024-12-31`, `dm:2024-01-01-2024-12-31` and `dm:2024` are
+  all of 2024.
+- Comparisons and ranges also take constants: `dm:>=lastweek`,
+  `dm:yesterday..today`.
 
 Relative constants: `today`, `yesterday`, `thisweek`, `lastweek`,
 `thismonth`, `lastmonth`, `thisyear`, `lastyear`, `last7days`, `last30days`,
@@ -223,8 +237,8 @@ day names (`monday`–`sunday`, `mon`–`sun`),
 | Letter | Attribute |
 |--------|-----------|
 | `A` | Archive | `C` | Compressed | `D` | Directory |
-| `E` | Encrypted | `H` | Hidden | `I` | Not content indexed |
-| `L` | Reparse point / symlink | `N` | Normal | `O` | Offline |
+| `E` | Encrypted | `H` | Hidden | `I` | Not supported (query error) |
+| `L` | Reparse point / symlink (also `J`) | `N` | Normal | `O` | Offline |
 | `P` | Sparse | `R` | Read only | `S` | System | `T` | Temporary |
 
 ### 1.7 Character Escape Macros
@@ -331,10 +345,14 @@ pub enum AttributeFlag {
 
 ### 3.1 Input Normalisation (before tokenising)
 
-1. Strip leading/trailing whitespace.
-2. Expand character escape macros (`quot:` → `"`, etc.).
-3. Expand type macros (`audio:` → `ext:aac;...`).
-4. Resolve user-defined macros from config (no recursion).
+1. Resolve user-defined macros from config: `name:` is replaced only where a
+   token starts and outside quotes, in one pass (no recursion).
+2. Tokenise. `!` negates only at the start of a word, so `a.zip!/b` stays
+   one term.
+3. Expand character escape macros inside each word (`quot:` → `"`, etc.).
+   They expand only at a word boundary, so `result:` stays as typed, and the
+   characters they produce are literal text.
+4. Type macros (`audio:` → `ext:aac;...`) resolve in the predicate builder.
 
 ### 3.2 Token Types
 
@@ -463,7 +481,7 @@ Tests:
 "today"      → (today_midnight, today_end)
 "thisweek"   → (monday_midnight, sunday_end)
 "last7days"  → (now-7days, now)
-"2024-01-01" → exact date range
+"2024-01-01" → that whole local day
 ```
 
 ### 4.3 glob.rs [tested]

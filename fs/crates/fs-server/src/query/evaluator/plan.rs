@@ -147,7 +147,10 @@ fn emit_predicate(pred: &Predicate, mods: &Modifiers, p: &mut QueryPlan) -> Resu
 
         PredicateKind::Term(s) => {
             let case_sensitive = mods.case_sensitive.unwrap_or(false);
-            let match_path = mods.match_path.unwrap_or(false);
+            // Like Everything, a term with a path separator searches paths.
+            let match_path = mods
+                .match_path
+                .unwrap_or_else(|| s.contains('/') || s.contains('\\'));
             let whole_fn = mods.whole_filename.unwrap_or(false);
             let whole_word = mods.whole_word.unwrap_or(false);
             let wildcards = mods.wildcards.unwrap_or(true) && has_wildcards(s);
@@ -327,13 +330,17 @@ fn date_expr_to_range(de: &DateExpr, now: chrono::DateTime<chrono::FixedOffset>)
     match de {
         DateExpr::Constant(c) => resolve_date_constant(c, now),
         DateExpr::Range(lo, hi) => (*lo, *hi),
-        DateExpr::Comparison(op, ts) => match op {
-            CmpOp::Lt => (i64::MIN, *ts - 1),
-            CmpOp::Lte => (i64::MIN, *ts),
-            CmpOp::Gt => (*ts + 1, i64::MAX),
-            CmpOp::Gte => (*ts, i64::MAX),
-            CmpOp::Eq => (*ts, *ts),
-        },
+        DateExpr::Comparison(op, inner) => {
+            let (lo, hi) = date_expr_to_range(inner, now);
+            match op {
+                CmpOp::Lt => (i64::MIN, lo.saturating_sub(1)),
+                CmpOp::Lte => (i64::MIN, hi),
+                CmpOp::Gt => (hi.saturating_add(1), i64::MAX),
+                CmpOp::Gte => (lo, i64::MAX),
+                CmpOp::Eq => (lo, hi),
+            }
+        }
+        DateExpr::Between(a, b) => (date_expr_to_range(a, now).0, date_expr_to_range(b, now).1),
     }
 }
 

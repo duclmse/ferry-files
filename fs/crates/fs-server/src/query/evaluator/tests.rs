@@ -689,3 +689,138 @@ mod functions_end_to_end {
         }
     }
 }
+
+mod values {
+    use super::*;
+    use chrono::{Local, NaiveDate, TimeZone};
+
+    fn local(y: i32, m: u32, d: u32, h: u32, mi: u32, sec: u32) -> i64 {
+        let dt = NaiveDate::from_ymd_opt(y, m, d)
+            .unwrap()
+            .and_hms_opt(h, mi, sec)
+            .unwrap();
+        Local
+            .from_local_datetime(&dt)
+            .earliest()
+            .unwrap()
+            .timestamp()
+    }
+
+    fn mtime(q: &str) -> (i64, i64) {
+        match parse_plan(q).sql_conditions.as_slice() {
+            [SqlCondition::MtimeRange(lo, hi)] => (*lo, *hi),
+            other => panic!("{q}: {other:?}"),
+        }
+    }
+
+    #[test]
+    fn dates_cover_whole_local_periods() {
+        let day = (local(2024, 1, 1, 0, 0, 0), local(2024, 1, 1, 23, 59, 59));
+        assert_eq!(mtime("dm:2024-01-01"), day);
+        assert_eq!(mtime("dm:20240101"), day);
+        assert_eq!(mtime("dm:=2024-01-01"), day);
+        assert_eq!(
+            mtime("dm:2024"),
+            (local(2024, 1, 1, 0, 0, 0), local(2024, 12, 31, 23, 59, 59))
+        );
+        assert_eq!(
+            mtime("dm:2024-02"),
+            (local(2024, 2, 1, 0, 0, 0), local(2024, 2, 29, 23, 59, 59))
+        );
+        let t = local(2024, 1, 1, 10, 0, 0);
+        assert_eq!(mtime("dm:2024-01-01T10:00:00"), (t, t));
+    }
+
+    #[test]
+    fn date_ranges_include_the_whole_end_period() {
+        let want = (local(2024, 1, 1, 0, 0, 0), local(2024, 12, 31, 23, 59, 59));
+        assert_eq!(mtime("dm:2024-01-01..2024-12-31"), want);
+        assert_eq!(mtime("dm:2024-01-01-2024-12-31"), want);
+        assert_eq!(mtime("dm:2023..2024"), (local(2023, 1, 1, 0, 0, 0), want.1));
+        assert_eq!(mtime("dm:2023-2024"), mtime("dm:2023..2024"));
+    }
+
+    #[test]
+    fn date_comparisons_treat_the_value_as_a_period() {
+        assert_eq!(mtime("dm:>2024-01-01").0, local(2024, 1, 2, 0, 0, 0));
+        assert_eq!(mtime("dm:>=2024-01-01").0, local(2024, 1, 1, 0, 0, 0));
+        assert_eq!(mtime("dm:<2024-01-01").1, local(2023, 12, 31, 23, 59, 59));
+        assert_eq!(mtime("dm:<=2024-01-01").1, local(2024, 1, 1, 23, 59, 59));
+        assert_eq!(mtime("dm:<2024").1, local(2023, 12, 31, 23, 59, 59));
+    }
+
+    #[test]
+    fn date_comparisons_accept_constants() {
+        let (today_lo, today_hi) = mtime("dm:today");
+        assert_eq!(mtime("dm:>=today"), (today_lo, i64::MAX));
+        assert_eq!(mtime("dm:<today"), (i64::MIN, today_lo - 1));
+        assert_eq!(mtime("dm:yesterday..today").1, today_hi);
+    }
+
+    #[test]
+    fn sizes_accept_dash_ranges_and_terabytes() {
+        let conds = |q: &str| format!("{:?}", parse_plan(q).sql_conditions);
+        assert_eq!(conds("size:1kb-2kb"), conds("size:1kb..2kb"));
+        assert_eq!(conds("size:1tb"), format!("[SizeOp(Eq, {})]", 1u64 << 40));
+        let macros = MacroConfig::default();
+        assert!(parse("size:-1", &macros).is_err());
+        assert!(parse("size:nan", &macros).is_err());
+    }
+
+    #[test]
+    fn len_and_depth_accept_ranges() {
+        let conds = |q: &str| format!("{:?}", parse_plan(q).sql_conditions);
+        assert_eq!(
+            conds("len:5..10"),
+            "[NameLenOp(Gte, 5), NameLenOp(Lte, 10)]"
+        );
+        assert_eq!(conds("depth:1-2"), "[DepthOp(Gte, 1), DepthOp(Lte, 2)]");
+    }
+
+    #[test]
+    fn unknown_attribute_letters_are_errors() {
+        let macros = MacroConfig::default();
+        assert!(parse("attrib:Z", &macros).is_err());
+        assert_eq!(
+            format!("{:?}", parse_plan("attrib:L").sql_conditions),
+            format!("{:?}", parse_plan("attrib:J").sql_conditions)
+        );
+    }
+
+    #[test]
+    fn escapes_are_literal_characters() {
+        let conds = |q: &str| format!("{:?}", parse_plan(q).sql_conditions);
+        assert_eq!(conds("quot:a"), r#"[NameLike("%\"a%")]"#);
+        assert_eq!(conds("#x41:b"), r#"[NameLike("%Ab%")]"#);
+        assert_eq!(conds("lt:"), r#"[NameLike("%<%")]"#);
+    }
+
+    #[test]
+    fn terms_with_separators_search_paths() {
+        let conds = |q: &str| format!("{:?}", parse_plan(q).sql_conditions);
+        assert_eq!(conds("src/main"), r#"[PathLike("%src/main%")]"#);
+        assert_eq!(conds(r"docs\a"), r#"[PathLike("%docs\\\\a%")]"#);
+        assert_eq!(conds("nopath: src/main"), r#"[NameLike("%src/main%")]"#);
+    }
+
+    #[test]
+    fn archive_paths_with_bang_stay_one_term() {
+        let conds = |q: &str| format!("{:?}", parse_plan(q).sql_conditions);
+        assert_eq!(conds("b.zip!/c"), r#"[PathLike("%b.zip!/c%")]"#);
+    }
+}
+
+#[test]
+fn user_macros_expand_only_at_token_start() {
+    let mut macros = MacroConfig::default();
+    macros.entries.insert("work".into(), "ext:rs".into());
+    macros.entries.insert("w".into(), "ext:md".into());
+    let conds = |q: &str| {
+        let e = parse(q, &macros).unwrap();
+        format!("{:?}", plan(&e, &empty_mods()).unwrap().sql_conditions)
+    };
+    assert_eq!(conds("work:"), r#"[ExtIn(["rs"])]"#);
+    assert_eq!(conds("homework:x"), r#"[NameLike("%homework:x%")]"#);
+    assert_eq!(conds("!work:"), r#"[Not([ExtIn(["rs"])])]"#);
+    assert_eq!(conds(r#""work:""#), r#"[NameLike("%work:%")]"#);
+}

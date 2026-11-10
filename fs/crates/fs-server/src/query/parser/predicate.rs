@@ -76,18 +76,9 @@ pub(super) fn build_predicate(kw: &str, val: &str, mods: Modifiers) -> Result<Ex
             Function::Count(n)
         }
         "sort" => Function::Sort(parse_sort(val)?),
-        "len" | "length" => {
-            let (op, n) = parse_cmp_usize(val)?;
-            Function::Len(op, n)
-        }
-        "depth" | "parents" => {
-            let (op, n) = parse_cmp_usize(val)?;
-            Function::Depth(op, n)
-        }
-        "attrib" => {
-            let mask = attrib_mask(val);
-            Function::Attrib(mask)
-        }
+        "len" | "length" => return count_predicate(val, mods, Function::Len),
+        "depth" | "parents" => return count_predicate(val, mods, Function::Depth),
+        "attrib" => Function::Attrib(attrib_mask(val)?),
         "child" => Function::Child(val.to_owned()),
         "startwith" | "startswith" => Function::StartWith(val.to_owned()),
         "endwith" | "endswith" => Function::EndWith(val.to_owned()),
@@ -133,6 +124,31 @@ fn parse_sort(val: &str) -> Result<Sort> {
     Ok(Sort { key, descending })
 }
 
+/// `len:`/`depth:` value: a comparison, or an inclusive `a..b` / `a-b` range
+/// built as two comparisons.
+fn count_predicate(val: &str, mods: Modifiers, make: fn(CmpOp, usize) -> Function) -> Result<Expr> {
+    let pred = |f: Function| {
+        Expr::Predicate(Predicate {
+            kind: PredicateKind::Function(f),
+            modifiers: mods.clone(),
+        })
+    };
+    let range = val.split_once("..").or_else(|| val.split_once('-'));
+    if let Some((a, b)) = range {
+        let num = |s: &str| {
+            s.trim()
+                .parse::<usize>()
+                .map_err(|_| AppError::Query(format!("invalid number range: '{val}'")))
+        };
+        return Ok(Expr::And(
+            Box::new(pred(make(CmpOp::Gte, num(a)?))),
+            Box::new(pred(make(CmpOp::Lte, num(b)?))),
+        ));
+    }
+    let (op, n) = parse_cmp_usize(val)?;
+    Ok(pred(make(op, n)))
+}
+
 fn parse_cmp_usize(s: &str) -> Result<(CmpOp, usize)> {
     let (op, rest) = if let Some(r) = s.strip_prefix("<=") {
         (CmpOp::Lte, r)
@@ -154,7 +170,7 @@ fn parse_cmp_usize(s: &str) -> Result<(CmpOp, usize)> {
     Ok((op, n))
 }
 
-fn attrib_mask(s: &str) -> u32 {
+fn attrib_mask(s: &str) -> Result<u32> {
     use crate::store::{
         ATTRIB_ARCHIVE, ATTRIB_COMPRESSED, ATTRIB_DIRECTORY, ATTRIB_ENCRYPTED, ATTRIB_HIDDEN,
         ATTRIB_NORMAL, ATTRIB_OFFLINE, ATTRIB_READONLY, ATTRIB_REPARSE_POINT, ATTRIB_SPARSE,
@@ -168,15 +184,20 @@ fn attrib_mask(s: &str) -> u32 {
             'D' => ATTRIB_DIRECTORY,
             'E' => ATTRIB_ENCRYPTED,
             'H' => ATTRIB_HIDDEN,
-            'J' => ATTRIB_REPARSE_POINT,
+            'J' | 'L' => ATTRIB_REPARSE_POINT,
             'N' => ATTRIB_NORMAL,
             'O' => ATTRIB_OFFLINE,
             'P' => ATTRIB_SPARSE,
             'R' => ATTRIB_READONLY,
             'S' => ATTRIB_SYSTEM,
             'T' => ATTRIB_TEMPORARY,
-            _ => 0,
+            // Matching nothing beats matching everything with a zero mask.
+            _ => {
+                return Err(AppError::Query(format!(
+                    "unknown attribute '{c}' in attrib:{s}"
+                )))
+            }
         };
     }
-    mask
+    Ok(mask)
 }
