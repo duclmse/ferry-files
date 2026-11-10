@@ -48,6 +48,21 @@ fn post_filter_match(f: &PostFilter, r: &FileRecord, store: &FileStore) -> bool 
             };
             is_whole_word(&text, &word)
         }
+        PostFilter::CaseLiteral {
+            text,
+            whole,
+            on_path,
+        } => {
+            let hay = if *on_path { &r.path } else { &r.name };
+            if *whole {
+                hay == text
+            } else {
+                hay.contains(text.as_str())
+            }
+        }
+        PostFilter::CaseGlob { pattern, on_path } => {
+            crate::query::glob::wildcard_match(if *on_path { &r.path } else { &r.name }, pattern)
+        }
         PostFilter::StartWith(s) => r.name.starts_with(s.as_str()),
         PostFilter::EndWith(s) => r.name.ends_with(s.as_str()),
         PostFilter::ArchiveExclude => r.archive_path.is_none(),

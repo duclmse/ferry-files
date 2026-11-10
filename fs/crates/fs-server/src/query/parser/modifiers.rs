@@ -6,43 +6,63 @@ use crate::query::ast::Modifiers;
 
 pub(super) enum ModifierKind {
     CaseSensitive(bool),
-    MatchPath,
+    MatchPath(bool),
     FilesOnly,
     FoldersOnly,
-    WholeFilename,
-    WholeWord,
+    WholeFilename(bool),
+    WholeWord(bool),
     ArchiveOnly(bool),
+    Regex(bool),
+    Wildcards(bool),
+    /// Accepted for Everything compatibility. Comparisons are already UTF-8
+    /// aware, and accents always match exactly.
+    Ignored,
 }
 
 pub(super) fn modifier_from_kw(kw: &str, val: &str) -> Option<ModifierKind> {
-    // Only treat as modifier when there's no value attached; otherwise it may
-    // be a function with an empty-string value (e.g., archive: vs archiveof:).
-    match kw {
-        "cs" | "case" => Some(ModifierKind::CaseSensitive(true)),
-        "i" | "nocase" => Some(ModifierKind::CaseSensitive(false)),
-        "wfn" => Some(ModifierKind::WholeFilename),
-        "w" | "wholeword" | "ww" => Some(ModifierKind::WholeWord),
-        "file" => Some(ModifierKind::FilesOnly),
-        // "dir" / "folder" with no value = FoldersOnly modifier.
-        // "dir:name" with a value falls through to build_predicate as Function::Parent.
-        "folder" | "dir" if val.is_empty() => Some(ModifierKind::FoldersOnly),
-        // path: with no value is the path modifier; with a value it's a function
-        "path" if val.is_empty() => Some(ModifierKind::MatchPath),
-        "archive" if val.is_empty() => Some(ModifierKind::ArchiveOnly(true)),
-        "noarchive" if val.is_empty() => Some(ModifierKind::ArchiveOnly(false)),
-        _ => None,
+    // With a value attached these are functions (`path:/src`, `dir:name`,
+    // `regex:a.b`) or drive letters (`i:\data`); any other modifier applies to
+    // the attached value, so `case:Foo` means `case: Foo`.
+    if !val.is_empty()
+        && (kw.len() == 1 || matches!(kw, "path" | "dir" | "regex" | "archive" | "noarchive"))
+    {
+        return None;
     }
+    let m = match kw {
+        "cs" | "case" => ModifierKind::CaseSensitive(true),
+        "i" | "nocase" => ModifierKind::CaseSensitive(false),
+        "path" => ModifierKind::MatchPath(true),
+        "nopath" => ModifierKind::MatchPath(false),
+        "wfn" | "wholefilename" => ModifierKind::WholeFilename(true),
+        "nowfn" | "nowholefilename" => ModifierKind::WholeFilename(false),
+        "w" | "wholeword" | "wholewords" | "ww" => ModifierKind::WholeWord(true),
+        "nowholeword" | "nowholewords" | "noww" => ModifierKind::WholeWord(false),
+        "file" | "files" => ModifierKind::FilesOnly,
+        "folder" | "folders" | "dir" => ModifierKind::FoldersOnly,
+        "archive" => ModifierKind::ArchiveOnly(true),
+        "noarchive" => ModifierKind::ArchiveOnly(false),
+        "regex" => ModifierKind::Regex(true),
+        "noregex" => ModifierKind::Regex(false),
+        "wildcards" => ModifierKind::Wildcards(true),
+        "nowildcards" => ModifierKind::Wildcards(false),
+        "ascii" | "utf8" | "noascii" | "diacritics" | "nodiacritics" => ModifierKind::Ignored,
+        _ => return None,
+    };
+    Some(m)
 }
 
 pub(super) fn apply_modifier(mods: &mut Modifiers, m: ModifierKind) {
     match m {
         ModifierKind::CaseSensitive(v) => mods.case_sensitive = Some(v),
-        ModifierKind::MatchPath => mods.match_path = Some(true),
+        ModifierKind::MatchPath(v) => mods.match_path = Some(v),
         ModifierKind::FilesOnly => mods.files_only = Some(true),
         ModifierKind::FoldersOnly => mods.folders_only = Some(true),
-        ModifierKind::WholeFilename => mods.whole_filename = Some(true),
-        ModifierKind::WholeWord => mods.whole_word = Some(true),
+        ModifierKind::WholeFilename(v) => mods.whole_filename = Some(v),
+        ModifierKind::WholeWord(v) => mods.whole_word = Some(v),
         ModifierKind::ArchiveOnly(v) => mods.archive_only = Some(v),
+        ModifierKind::Regex(v) => mods.regex = Some(v),
+        ModifierKind::Wildcards(v) => mods.wildcards = Some(v),
+        ModifierKind::Ignored => {}
     }
 }
 

@@ -48,6 +48,37 @@ pub fn glob_to_like(pattern: &str) -> String {
     out
 }
 
+/// Case-sensitive match of `text` against a whole-string `*`/`?` pattern;
+/// every other character is literal.
+pub fn wildcard_match(text: &str, pattern: &str) -> bool {
+    let t: Vec<char> = text.chars().collect();
+    let p: Vec<char> = pattern.chars().collect();
+    let (mut ti, mut pi) = (0, 0);
+    // Last `*` seen and the text position it is currently absorbing up to.
+    let mut star: Option<(usize, usize)> = None;
+    while ti < t.len() {
+        match p.get(pi) {
+            Some('*') => {
+                star = Some((pi, ti));
+                pi += 1;
+            }
+            Some(&c) if c == '?' || c == t[ti] => {
+                ti += 1;
+                pi += 1;
+            }
+            _ => match star {
+                Some((sp, st)) => {
+                    pi = sp + 1;
+                    ti = st + 1;
+                    star = Some((sp, st + 1));
+                }
+                None => return false,
+            },
+        }
+    }
+    p[pi..].iter().all(|&c| c == '*')
+}
+
 /// Returns true if the pattern contains `*` or `?` wildcards.
 pub fn has_wildcards(s: &str) -> bool {
     s.contains('*') || s.contains('?')
@@ -64,6 +95,19 @@ mod tests {
         assert_eq!(glob_to_like("*.rs"), "%.rs");
         assert_eq!(glob_to_like("*/src/?_*"), r"%/src/_\_%");
         assert_eq!(glob_to_like(r"C:\a%*"), r"C:\\a\%%");
+    }
+
+    #[test]
+    fn wildcard_match_is_case_sensitive_and_whole_string() {
+        assert!(wildcard_match("/src/Main.RS", "*.RS"));
+        assert!(!wildcard_match("/src/main.rs", "*.RS"));
+        assert!(wildcard_match("abc", "a?c"));
+        assert!(!wildcard_match("abcd", "a?c"));
+        assert!(wildcard_match("a.b.c", "*.*"));
+        assert!(wildcard_match("", "*"));
+        assert!(!wildcard_match("ab", "a"));
+        assert!(wildcard_match("aXbXc", "a*b*c"));
+        assert!(wildcard_match("100%_x", "100%_?"));
     }
 
     #[test]

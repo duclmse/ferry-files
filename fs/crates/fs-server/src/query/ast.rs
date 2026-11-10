@@ -32,6 +32,10 @@ pub struct Modifiers {
     pub whole_filename: Option<bool>,
     pub whole_word: Option<bool>,
     pub ignore_diacritics: Option<bool>,
+    /// Treat the term as a regular expression (`regex: a.b`).
+    pub regex: Option<bool>,
+    /// `Some(false)` matches `*` and `?` literally.
+    pub wildcards: Option<bool>,
     /// None = include both real files and inner archive entries.
     /// Some(true)  = inner-archive entries only.
     /// Some(false) = real filesystem files only.

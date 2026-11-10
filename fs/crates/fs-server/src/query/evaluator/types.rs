@@ -43,6 +43,17 @@ pub enum PostFilter {
     Child(String),
     WholeWord(String, bool),
     StartWith(String),
+    /// Case-sensitive check for a literal term that SQL matched ignoring case.
+    CaseLiteral {
+        text: String,
+        whole: bool,
+        on_path: bool,
+    },
+    /// Case-sensitive `*`/`?` match over the whole name or path.
+    CaseGlob {
+        pattern: String,
+        on_path: bool,
+    },
     EndWith(String),
     ArchiveExclude,
     /// OR over branches that need post-fetch checks; SQL only narrows to a superset.

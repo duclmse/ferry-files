@@ -46,26 +46,29 @@ anywhere under a `src` directory (`*` also matches `/`).
 
 ### 1.3 Modifiers
 
+A modifier applies to the term after it (`case: Foo`) or to a value attached
+to it (`case:Foo`). `path:`, `dir:`, `regex:` and `archive:` with an attached
+value are functions instead, and a single letter with a value (`i:\data`) is a
+drive.
+
 | Modifier | Aliases | Effect |
 |----------|---------|--------|
-| `case:` | | Case-sensitive matching |
-| `nocase:` | | Case-insensitive (default) |
+| `case:` | `cs:` | Case-sensitive matching |
+| `nocase:` | `i:` | Case-insensitive (default) |
 | `path:` | | Match against full path + filename |
 | `nopath:` | | Match filename only (default) |
 | `file:` | `files:` | Files only |
 | `folder:` | `folders:` | Folders only |
-| `regex:` | | Treat term as regex |
+| `regex:` | | Treat term as regex (`regex: a.b` or `regex:a.b`) |
 | `noregex:` | | Disable regex |
 | `wildcards:` | | Enable wildcard matching |
 | `nowildcards:` | | Disable wildcard matching |
 | `wfn:` | `wholefilename:` | Match whole filename |
-| `nowfn:` | `nowholefilename:`, `exact:` | Match anywhere in filename |
-| `wholeword:` | `ww:` | Match whole words only |
-| `nowholeword:` | `noww:` | Match anywhere (default) |
-| `ascii:` | `utf8:` | Fast ASCII case comparison |
-| `noascii:` | | Unicode-aware comparison |
-| `diacritics:` | | Match accent marks exactly |
-| `nodiacritics:` | | Ignore accent marks (default) |
+| `nowfn:` | `nowholefilename:` | Match anywhere in filename |
+| `wholeword:` | `ww:`, `w:`, `wholewords:` | Match whole words only |
+| `nowholeword:` | `noww:`, `nowholewords:` | Match anywhere (default) |
+| `ascii:` | `utf8:`, `noascii:` | Accepted for compatibility; no effect |
+| `diacritics:` | `nodiacritics:` | Accepted for compatibility; accents always match exactly |
 | `archive:` | | Inner archive entries only (`archive_path IS NOT NULL`) |
 | `noarchive:` | | Real filesystem files only (`archive_path IS NULL`) |
 

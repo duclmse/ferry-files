@@ -141,26 +141,41 @@ fn emit_predicate(pred: &Predicate, mods: &Modifiers, p: &mut QueryPlan) -> Resu
     let now = Local::now().fixed_offset();
 
     match &pred.kind {
+        PredicateKind::Term(s) if mods.regex == Some(true) => {
+            let case_sensitive = mods.case_sensitive.unwrap_or(false);
+            let re = build_regex(s, case_sensitive)?;
+            p.post_filters.push(PostFilter::Regex(re, case_sensitive));
+        }
+
         PredicateKind::Term(s) => {
             let case_sensitive = mods.case_sensitive.unwrap_or(false);
             let match_path = mods.match_path.unwrap_or(false);
             let whole_fn = mods.whole_filename.unwrap_or(false);
             let whole_word = mods.whole_word.unwrap_or(false);
+            let wildcards = mods.wildcards.unwrap_or(true) && has_wildcards(s);
 
-            if has_wildcards(s) {
+            if wildcards {
                 // Wildcards match the whole filename, and with path: the whole path.
-                let glob = glob_to_sqlite(s, true);
                 if match_path {
                     p.sql_conditions
                         .push(SqlCondition::PathLike(glob_to_like(s)));
+                    if case_sensitive {
+                        p.post_filters.push(PostFilter::CaseGlob {
+                            pattern: s.clone(),
+                            on_path: true,
+                        });
+                    }
                 } else if case_sensitive {
-                    p.sql_conditions.push(SqlCondition::NameGlob(glob));
+                    p.sql_conditions
+                        .push(SqlCondition::NameGlob(glob_to_sqlite(s, true)));
                 } else {
-                    p.sql_conditions.push(SqlCondition::NameGlobNoCase(glob));
+                    p.sql_conditions
+                        .push(SqlCondition::NameGlobNoCase(glob_to_sqlite(s, true)));
                 }
             } else {
                 let literal = like_escape(s);
-                let pattern = if whole_fn && !match_path {
+                let whole = whole_fn && !match_path;
+                let pattern = if whole {
                     literal
                 } else {
                     format!("%{literal}%")
@@ -169,6 +184,14 @@ fn emit_predicate(pred: &Predicate, mods: &Modifiers, p: &mut QueryPlan) -> Resu
                     p.sql_conditions.push(SqlCondition::PathLike(pattern));
                 } else {
                     p.sql_conditions.push(SqlCondition::NameLike(pattern));
+                }
+                // LIKE ignores case, so it only narrows to a superset here.
+                if case_sensitive {
+                    p.post_filters.push(PostFilter::CaseLiteral {
+                        text: s.clone(),
+                        whole,
+                        on_path: match_path,
+                    });
                 }
             }
 
@@ -310,6 +333,8 @@ fn merge_mods(parent: &Modifiers, child: &Modifiers) -> Modifiers {
         whole_filename: child.whole_filename.or(parent.whole_filename),
         whole_word: child.whole_word.or(parent.whole_word),
         ignore_diacritics: child.ignore_diacritics.or(parent.ignore_diacritics),
+        regex: child.regex.or(parent.regex),
+        wildcards: child.wildcards.or(parent.wildcards),
         archive_only: child.archive_only.or(parent.archive_only),
     }
 }

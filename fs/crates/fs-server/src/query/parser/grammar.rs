@@ -102,23 +102,42 @@ impl Parser {
     fn parse_term(&mut self) -> Result<Expr> {
         let mut mods = Modifiers::default();
 
+        let mut attached: Option<String> = None;
         loop {
-            let tok = match self.peek().clone() {
-                Token::Word(w) => w,
-                other => {
-                    return Err(AppError::Query(format!("expected term, got {other:?}")));
+            let tok = match attached.take() {
+                Some(t) => t,
+                None => {
+                    let t = match self.peek().clone() {
+                        Token::Word(w) => w,
+                        Token::QuotedPhrase(s) => {
+                            self.advance();
+                            return Ok(Expr::Predicate(Predicate {
+                                kind: PredicateKind::Term(s),
+                                modifiers: Modifiers {
+                                    whole_filename: mods.whole_filename.or(Some(true)),
+                                    ..mods
+                                },
+                            }));
+                        }
+                        other => {
+                            return Err(AppError::Query(format!("expected term, got {other:?}")));
+                        }
+                    };
+                    self.advance();
+                    t
                 }
             };
-            self.advance();
 
             // Split on first colon
             if let Some(colon) = tok.find(':') {
                 let kw = tok[..colon].to_ascii_lowercase();
                 let raw_val = tok[colon + 1..].to_owned();
 
-                // Modifier keyword - accumulate and loop
                 if let Some(m) = modifier_from_kw(&kw, &raw_val) {
                     apply_modifier(&mut mods, m);
+                    if !raw_val.is_empty() {
+                        attached = Some(raw_val);
+                    }
                     continue;
                 }
 

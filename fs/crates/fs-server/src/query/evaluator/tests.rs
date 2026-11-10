@@ -357,3 +357,143 @@ fn like_syntax_in_terms_is_escaped() {
     assert!(has("path: *.rs", "%.rs"));
     assert!(has("path: */a_b/?.rs", r"%/a\_b/_.rs"));
 }
+
+#[test]
+fn bare_and_attached_modifiers_parse() {
+    let conds = |q: &str| format!("{:?}", parse_plan(q).sql_conditions);
+    // Documented modifiers used to fall through and become literal search text.
+    for q in [
+        "nopath: foo",
+        "files: foo",
+        "folders: foo",
+        "noww: foo",
+        "nowfn: foo",
+        "noregex: foo",
+        "ascii: foo",
+        "nodiacritics: foo",
+        "wildcards: foo",
+    ] {
+        assert!(!conds(q).contains(':'), "{q} => {}", conds(q));
+    }
+    // An attached value is the term, not dropped.
+    assert_eq!(conds("case:Foo"), conds("case: Foo"));
+    assert!(conds("case:Foo").contains("Foo"));
+    assert_eq!(conds("wfn:foo"), r#"[NameLike("foo")]"#);
+    assert_eq!(conds("nopath: path: foo"), conds("path: foo"));
+    // Single letters with a value stay drive letters.
+    assert!(conds(r"i:\data").contains("PathLike"));
+    assert!(conds(r"w:\data").contains("PathLike"));
+    // Function keywords keep their meaning when valued.
+    assert!(conds("path:/src").contains("PathLike"));
+    assert!(conds("dir:src").contains("Parent"));
+}
+
+#[test]
+fn nowildcards_matches_star_literally() {
+    assert_eq!(
+        format!("{:?}", parse_plan("nowildcards: a*b").sql_conditions),
+        r#"[NameLike("%a*b%")]"#
+    );
+}
+
+#[test]
+fn spaced_regex_modifier_is_a_regex_search() {
+    let p = parse_plan("regex: a.b");
+    assert!(p.sql_conditions.is_empty(), "{:?}", p.sql_conditions);
+    assert!(
+        matches!(&p.post_filters[..], [PostFilter::Regex(re, false)] if re.as_str().contains("a.b"))
+    );
+}
+
+#[test]
+fn modifier_before_quoted_phrase() {
+    let p = parse_plan(r#"case: "Foo Bar""#);
+    assert!(
+        matches!(&p.post_filters[..], [PostFilter::CaseLiteral { text, whole: true, .. }] if text == "Foo Bar")
+    );
+}
+
+mod modifiers_end_to_end {
+    use super::*;
+    use crate::store::{
+        memory_store::MemoryStore, sqlite_store::SqliteStore, FileRecord, FileStore,
+    };
+    use std::sync::Arc;
+
+    fn rec(path: &str) -> FileRecord {
+        FileRecord {
+            id: None,
+            path: path.into(),
+            name: path.rsplit('/').next().unwrap_or(path).into(),
+            extension: path.rsplit_once('.').map(|(_, e)| e.into()),
+            size_bytes: 10,
+            mtime: 0,
+            ctime: 0,
+            is_dir: false,
+            is_hidden: false,
+            is_symlink: false,
+            attrib_bitmask: 0,
+            content_indexed: false,
+            tantivy_id: None,
+            indexed_at: 0,
+            archive_path: None,
+        }
+    }
+
+    fn run(store: &FileStore, q: &str) -> Vec<String> {
+        let p = parse_plan(q);
+        let rows = store.search_conditions(&p.sql_conditions, 1000).unwrap();
+        let mut paths: Vec<String> = apply_post_filters(rows, &p.post_filters, store)
+            .into_iter()
+            .map(|r| r.path)
+            .collect();
+        paths.sort();
+        paths
+    }
+
+    fn check(store: &FileStore) {
+        for path in [
+            "/Src/Foo.RS",
+            "/src/foo.rs",
+            "/src/a*b.txt",
+            "/src/aXb.txt",
+            "/src/a.b",
+        ] {
+            store.upsert_file(&rec(path)).unwrap();
+        }
+        let cases: &[(&str, &[&str])] = &[
+            ("case: Foo", &["/Src/Foo.RS"]),
+            ("case:foo", &["/src/foo.rs"]),
+            ("foo", &["/Src/Foo.RS", "/src/foo.rs"]),
+            ("case: wfn: foo.rs", &["/src/foo.rs"]),
+            ("case: path: Src", &["/Src/Foo.RS"]),
+            ("case: path: *.RS", &["/Src/Foo.RS"]),
+            ("path: *.rs", &["/Src/Foo.RS", "/src/foo.rs"]),
+            ("case: *.RS", &["/Src/Foo.RS"]),
+            ("a*b*.txt", &["/src/a*b.txt", "/src/aXb.txt"]),
+            ("nowildcards: a*b", &["/src/a*b.txt"]),
+            (r"regex: /a\.b$", &["/src/a.b"]),
+            ("nopath: src", &[]),
+            ("<case: Foo> | aXb", &["/Src/Foo.RS", "/src/aXb.txt"]),
+            ("!case: Foo foo", &["/src/foo.rs"]),
+        ];
+        for (q, want) in cases {
+            assert_eq!(run(store, q), *want, "query {q:?}");
+        }
+    }
+
+    #[test]
+    fn sqlite_backend() {
+        let dir = tempfile::TempDir::new().unwrap();
+        let s = SqliteStore::new(&dir.path().join("i.db")).unwrap();
+        check(&FileStore::Sqlite(Arc::new(s)));
+    }
+
+    #[test]
+    fn memory_backend() {
+        let dir = tempfile::TempDir::new().unwrap();
+        check(&FileStore::Memory(Arc::new(
+            MemoryStore::new(dir.path()).unwrap(),
+        )));
+    }
+}
