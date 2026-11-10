@@ -41,6 +41,8 @@ query error rather than evaluated with the wrong meaning.
 | `*.` | Files with no extension |
 
 Wildcards match the **whole filename** by default (controlled by `wfn:` modifier).
+With `path:` they match the whole path, so `path: */src/*.rs` finds `.rs` files
+anywhere under a `src` directory (`*` also matches `/`).
 
 ### 1.3 Modifiers
 
@@ -548,7 +550,7 @@ pub fn plan(expr: &Expr, default_modifiers: &Modifiers) -> Result<QueryPlan, Que
 |-----------|--------|
 | Plain term (no wildcards) | `NameLike("%term%")` |
 | Term with `*`/`?` | `NameGlobNoCase(glob_to_sqlite(term))`; `NameGlob` with `case:` |
-| `path:` modifier | `PathLike` instead of `NameLike` |
+| `path:` modifier | `PathLike` instead of `NameLike`; with wildcards, `PathLike(glob_to_like(term))` over the whole path |
 | `regex:` modifier | compile regex → `PostFilter::Regex` |
 | `file:` modifier | `IsDir(false)` |
 | `folder:` modifier | `IsDir(true)` |

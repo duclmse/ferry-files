@@ -451,4 +451,33 @@ fn memory_and_sqlite_agree_on_escaped_like_patterns() {
         &["my_file.txt", "myXfile.txt", "MY_FILE.TXT"],
     );
     check(r"my\_f%.txt".into(), &["my_file.txt", "MY_FILE.TXT"]);
+
+    let check_path = |pattern: String, want: &[&str]| {
+        let cond = [SqlCondition::PathLike(pattern.clone())];
+        let by = |rows: Vec<FileRecord>| sorted(rows.into_iter().map(|r| r.name).collect());
+        let sql = by(store.search_conditions(&cond, 100).unwrap());
+        let mem = by(memory.search_conditions(&cond, 100).unwrap());
+        assert_eq!(sql, mem, "stores disagree on path {pattern:?}");
+        assert_eq!(
+            sql,
+            sorted(want.iter().map(|s| s.to_string()).collect()),
+            "path {pattern:?}"
+        );
+    };
+    use crate::query::glob::glob_to_like;
+    check_path(
+        glob_to_like("*.txt"),
+        &[
+            "my_file.txt",
+            "myXfile.txt",
+            "100%.txt",
+            "100 percent.txt",
+            r"back\slash.txt",
+            "MY_FILE.TXT",
+        ],
+    );
+    check_path(glob_to_like("/r/?lead"), &["_lead", "%lead"]);
+    check_path(glob_to_like("/r/_*"), &["_lead"]);
+    check_path(glob_to_like("*lead*"), &["_lead", "%lead"]);
+    check_path(glob_to_like("lead"), &[]);
 }

@@ -354,4 +354,6 @@ fn like_syntax_in_terms_is_escaped() {
     assert!(has("my_file", r"%my\_file%"));
     assert!(has("100%", r"%100\%%"));
     assert!(has("path:/a_b", r"/a\_b%"));
+    assert!(has("path: *.rs", "%.rs"));
+    assert!(has("path: */a_b/?.rs", r"%/a\_b/_.rs"));
 }

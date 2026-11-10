@@ -29,6 +29,25 @@ pub fn like_escape(s: &str) -> String {
     out
 }
 
+/// Converts an Everything-style wildcard pattern to a `LIKE ... ESCAPE '\\'`
+/// pattern that must match the whole string: `*` becomes `%`, `?` becomes
+/// `_`, and literal `%`, `_` and `\` are escaped.
+pub fn glob_to_like(pattern: &str) -> String {
+    let mut out = String::with_capacity(pattern.len() + 4);
+    for c in pattern.chars() {
+        match c {
+            '*' => out.push('%'),
+            '?' => out.push('_'),
+            '%' | '_' | '\\' => {
+                out.push('\\');
+                out.push(c);
+            }
+            _ => out.push(c),
+        }
+    }
+    out
+}
+
 /// Returns true if the pattern contains `*` or `?` wildcards.
 pub fn has_wildcards(s: &str) -> bool {
     s.contains('*') || s.contains('?')
@@ -39,6 +58,13 @@ pub fn has_wildcards(s: &str) -> bool {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn glob_to_like_translates_wildcards_and_escapes_the_rest() {
+        assert_eq!(glob_to_like("*.rs"), "%.rs");
+        assert_eq!(glob_to_like("*/src/?_*"), r"%/src/_\_%");
+        assert_eq!(glob_to_like(r"C:\a%*"), r"C:\\a\%%");
+    }
 
     #[test]
     fn like_escape_protects_only_like_syntax() {

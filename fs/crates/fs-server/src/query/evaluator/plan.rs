@@ -3,7 +3,7 @@ use chrono::Local;
 use crate::error::{AppError, Result};
 use crate::query::ast::{DateExpr, Expr, Function, Modifiers, Predicate, PredicateKind, RangeExpr};
 use crate::query::date::resolve_date_constant;
-use crate::query::glob::{glob_to_sqlite, has_wildcards, like_escape};
+use crate::query::glob::{glob_to_like, glob_to_sqlite, has_wildcards, like_escape};
 use crate::query::macros::expand_type_macro;
 use crate::store::{CmpOp, SqlCondition};
 
@@ -148,10 +148,11 @@ fn emit_predicate(pred: &Predicate, mods: &Modifiers, p: &mut QueryPlan) -> Resu
             let whole_word = mods.whole_word.unwrap_or(false);
 
             if has_wildcards(s) {
-                let glob = glob_to_sqlite(s, whole_fn || has_wildcards(s));
+                // Wildcards match the whole filename, and with path: the whole path.
+                let glob = glob_to_sqlite(s, true);
                 if match_path {
                     p.sql_conditions
-                        .push(SqlCondition::PathLike(format!("%{}%", like_escape(s))));
+                        .push(SqlCondition::PathLike(glob_to_like(s)));
                 } else if case_sensitive {
                     p.sql_conditions.push(SqlCondition::NameGlob(glob));
                 } else {
