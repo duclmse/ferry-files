@@ -60,7 +60,7 @@ drive.
 | Modifier | Aliases | Effect |
 |----------|---------|--------|
 | `case:` | `cs:` | Case-sensitive matching |
-| `nocase:` | `i:` | Case-insensitive (default) |
+| `nocase:` | `i:` | Case-insensitive (default), for any letter with upper and lower case (`CAFÉ` finds `café`) |
 | `path:` | | Match against full path + filename. `path:src` is `path: src`: the path contains `src` |
 | `nopath:` | | Match filename only (default) |
 | `file:` | `files:` | Files only |
@@ -493,6 +493,13 @@ pub fn glob_to_sqlite(pattern: &str, whole_filename: bool) -> String
 - `*` → `*`, `?` → `?` (SQLite GLOB syntax)
 - `whole_filename = false` → wrap: `"*" + pattern + "*"`
 - Case-insensitive: `LOWER(name) GLOB LOWER(?)`
+
+SQLite's `LIKE` and `LOWER()` fold ASCII only. For a case-insensitive term
+with a non-ASCII letter that has another case, `like_escape_nocase` /
+`glob_to_like_nocase` turn that letter into `_` (one character), and the
+planner adds a post-filter that compares with `fold_case`. Wildcard names
+with such letters, or with `[` (a GLOB character class), go through `LIKE`
+instead of `GLOB`. Terms without them keep the plain SQL path.
 
 ### 4.4 macros.rs
 

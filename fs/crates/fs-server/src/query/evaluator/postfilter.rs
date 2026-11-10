@@ -1,8 +1,11 @@
+use std::borrow::Cow;
+
 use nucleo::{Config as NucleoConfig, Matcher, Utf32Str};
 use rayon::prelude::*;
 use regex::Regex;
 
 use crate::error::{AppError, Result};
+use crate::query::glob::{fold_case, wildcard_match};
 use crate::store::{FileRecord, FileStore};
 
 use super::types::{Branch, PostFilter};
@@ -35,49 +38,60 @@ fn post_filter_match(f: &PostFilter, r: &FileRecord, store: &FileStore) -> bool 
         PostFilter::Child(name) => store
             .has_child(&r.path, &crate::query::glob::like_escape(name))
             .unwrap_or(false),
-        PostFilter::WholeWord(w, cs) => {
-            let text = if *cs {
-                r.name.clone()
-            } else {
-                r.name.to_ascii_lowercase()
-            };
-            let word = if *cs {
-                w.clone()
-            } else {
-                w.to_ascii_lowercase()
-            };
-            is_whole_word(&text, &word)
-        }
-        PostFilter::CaseLiteral {
+        PostFilter::WholeWord(w, cs) => is_whole_word(&folded(&r.name, *cs), &folded(w, *cs)),
+        PostFilter::Literal {
             text,
             whole,
             on_path,
+            case_sensitive,
         } => {
-            let hay = if *on_path { &r.path } else { &r.name };
+            let hay = folded(if *on_path { &r.path } else { &r.name }, *case_sensitive);
+            let text = folded(text, *case_sensitive);
             if *whole {
                 hay == text
             } else {
-                hay.contains(text.as_str())
+                hay.contains(&*text)
             }
         }
         PostFilter::ArchiveGlob {
             pattern,
             case_sensitive,
         } => r.archive_path.as_deref().is_some_and(|a| {
-            if *case_sensitive {
-                crate::query::glob::wildcard_match(a, pattern)
-            } else {
-                crate::query::glob::wildcard_match(&a.to_lowercase(), &pattern.to_lowercase())
-            }
+            wildcard_match(
+                &folded(a, *case_sensitive),
+                &folded(pattern, *case_sensitive),
+            )
         }),
-        PostFilter::CaseGlob { pattern, on_path } => {
-            crate::query::glob::wildcard_match(if *on_path { &r.path } else { &r.name }, pattern)
+        PostFilter::Glob {
+            pattern,
+            on_path,
+            case_sensitive,
+        } => {
+            let hay = if *on_path { &r.path } else { &r.name };
+            wildcard_match(
+                &folded(hay, *case_sensitive),
+                &folded(pattern, *case_sensitive),
+            )
         }
-        PostFilter::StartWith(s) => r.name.starts_with(s.as_str()),
-        PostFilter::EndWith(s) => r.name.ends_with(s.as_str()),
+        PostFilter::StartWith {
+            text,
+            case_sensitive,
+        } => folded(&r.name, *case_sensitive).starts_with(&*folded(text, *case_sensitive)),
+        PostFilter::EndWith {
+            text,
+            case_sensitive,
+        } => folded(&r.name, *case_sensitive).ends_with(&*folded(text, *case_sensitive)),
         PostFilter::ArchiveExclude => r.archive_path.is_none(),
         PostFilter::Any(branches) => branches.iter().any(|b| branch_match(b, r, store)),
         PostFilter::Not(b) => !branch_match(b, r, store),
+    }
+}
+
+fn folded(s: &str, case_sensitive: bool) -> Cow<'_, str> {
+    if case_sensitive {
+        Cow::Borrowed(s)
+    } else {
+        Cow::Owned(fold_case(s))
     }
 }
 

@@ -45,24 +45,33 @@ pub enum PostFilter {
     },
     Child(String),
     WholeWord(String, bool),
-    StartWith(String),
-    /// Case-sensitive check for a literal term that SQL matched ignoring case.
-    CaseLiteral {
+    /// Rechecks of text that SQL matched as a superset: SQL either ignored
+    /// case under `case:`, or widened non-ASCII letters it cannot fold.
+    StartWith {
+        text: String,
+        case_sensitive: bool,
+    },
+    EndWith {
+        text: String,
+        case_sensitive: bool,
+    },
+    Literal {
         text: String,
         whole: bool,
         on_path: bool,
+        case_sensitive: bool,
     },
     /// `archiveof:` with wildcards, matched against the outer archive's path.
     ArchiveGlob {
         pattern: String,
         case_sensitive: bool,
     },
-    /// Case-sensitive `*`/`?` match over the whole name or path.
-    CaseGlob {
+    /// `*`/`?` match over the whole name or path.
+    Glob {
         pattern: String,
         on_path: bool,
+        case_sensitive: bool,
     },
-    EndWith(String),
     ArchiveExclude,
     /// OR over branches that need post-fetch checks; SQL only narrows to a superset.
     Any(Vec<Branch>),

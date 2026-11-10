@@ -3,7 +3,10 @@ use chrono::Local;
 use crate::error::{AppError, Result};
 use crate::query::ast::{DateExpr, Expr, Function, Modifiers, Predicate, PredicateKind, RangeExpr};
 use crate::query::date::resolve_date_constant;
-use crate::query::glob::{glob_to_like, glob_to_sqlite, has_wildcards, like_escape};
+use crate::query::glob::{
+    glob_to_like, glob_to_like_nocase, glob_to_sqlite, has_wildcards, like_escape,
+    like_escape_nocase,
+};
 use crate::query::macros::expand_type_macro;
 use crate::store::{CmpOp, SqlCondition};
 
@@ -157,13 +160,22 @@ fn emit_predicate(pred: &Predicate, mods: &Modifiers, p: &mut QueryPlan) -> Resu
 
             if wildcards {
                 // Wildcards match the whole filename, and with path: the whole path.
-                if match_path {
-                    p.sql_conditions
-                        .push(SqlCondition::PathLike(glob_to_like(s)));
-                    if case_sensitive {
-                        p.post_filters.push(PostFilter::CaseGlob {
+                let (like, widened) =
+                    like_pattern(s, case_sensitive, glob_to_like, glob_to_like_nocase);
+                let recheck = case_sensitive || widened;
+                // SQLite's GLOB reads `[` as a character class, and its LOWER()
+                // folds ASCII only, so those names go through LIKE as well.
+                if match_path || widened || s.contains('[') {
+                    p.sql_conditions.push(if match_path {
+                        SqlCondition::PathLike(like)
+                    } else {
+                        SqlCondition::NameLike(like)
+                    });
+                    if recheck {
+                        p.post_filters.push(PostFilter::Glob {
                             pattern: s.clone(),
-                            on_path: true,
+                            on_path: match_path,
+                            case_sensitive,
                         });
                     }
                 } else if case_sensitive {
@@ -174,7 +186,8 @@ fn emit_predicate(pred: &Predicate, mods: &Modifiers, p: &mut QueryPlan) -> Resu
                         .push(SqlCondition::NameGlobNoCase(glob_to_sqlite(s, true)));
                 }
             } else {
-                let literal = like_escape(s);
+                let (literal, widened) =
+                    like_pattern(s, case_sensitive, like_escape, like_escape_nocase);
                 let whole = whole_fn && !match_path;
                 let pattern = if whole {
                     literal
@@ -186,12 +199,12 @@ fn emit_predicate(pred: &Predicate, mods: &Modifiers, p: &mut QueryPlan) -> Resu
                 } else {
                     p.sql_conditions.push(SqlCondition::NameLike(pattern));
                 }
-                // LIKE ignores case, so it only narrows to a superset here.
-                if case_sensitive {
-                    p.post_filters.push(PostFilter::CaseLiteral {
+                if case_sensitive || widened {
+                    p.post_filters.push(PostFilter::Literal {
                         text: s.clone(),
                         whole,
                         on_path: match_path,
+                        case_sensitive,
                     });
                 }
             }
@@ -293,19 +306,30 @@ fn emit_function(
         Function::Child(name) => {
             p.post_filters.push(PostFilter::Child(name.clone()));
         }
-        // LIKE ignores case, so the post-filters only run for case:.
         Function::StartWith(s) => {
+            let case_sensitive = mods.case_sensitive == Some(true);
+            let (literal, widened) =
+                like_pattern(s, case_sensitive, like_escape, like_escape_nocase);
             p.sql_conditions
-                .push(SqlCondition::NameLike(format!("{}%", like_escape(s))));
-            if mods.case_sensitive == Some(true) {
-                p.post_filters.push(PostFilter::StartWith(s.clone()));
+                .push(SqlCondition::NameLike(format!("{literal}%")));
+            if case_sensitive || widened {
+                p.post_filters.push(PostFilter::StartWith {
+                    text: s.clone(),
+                    case_sensitive,
+                });
             }
         }
         Function::EndWith(s) => {
+            let case_sensitive = mods.case_sensitive == Some(true);
+            let (literal, widened) =
+                like_pattern(s, case_sensitive, like_escape, like_escape_nocase);
             p.sql_conditions
-                .push(SqlCondition::NameLike(format!("%{}", like_escape(s))));
-            if mods.case_sensitive == Some(true) {
-                p.post_filters.push(PostFilter::EndWith(s.clone()));
+                .push(SqlCondition::NameLike(format!("%{literal}")));
+            if case_sensitive || widened {
+                p.post_filters.push(PostFilter::EndWith {
+                    text: s.clone(),
+                    case_sensitive,
+                });
             }
         }
         Function::ArchiveOf(path) if has_wildcards(path) => {
@@ -320,6 +344,22 @@ fn emit_function(
         }
     }
     Ok(())
+}
+
+/// The SQL `LIKE` pattern for `s` and whether it was widened. Either way it
+/// selects a superset: `LIKE` ignores ASCII case even for `case:`, and a
+/// widened pattern needs a [`fold_case`](crate::query::glob::fold_case) recheck.
+fn like_pattern(
+    s: &str,
+    case_sensitive: bool,
+    exact: fn(&str) -> String,
+    nocase: fn(&str) -> (String, bool),
+) -> (String, bool) {
+    if case_sensitive {
+        (exact(s), false)
+    } else {
+        nocase(s)
+    }
 }
 
 // ---------------------------------------------------------------------------

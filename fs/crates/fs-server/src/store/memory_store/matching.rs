@@ -70,8 +70,19 @@ pub(super) fn meta_filter_matches<R: RecordView + ?Sized>(r: &R, f: &MetaFilters
     true
 }
 
+/// Byte length of the UTF-8 character that starts with `lead`.
+fn utf8_len(lead: u8) -> usize {
+    match lead {
+        0x00..=0x7F => 1,
+        0x80..=0xDF => 2,
+        0xE0..=0xEF => 3,
+        _ => 4,
+    }
+}
+
 /// Wildcard match without recursion or allocation; backtracks only to the
 /// latest `many`, so a pattern with several of them stays O(text * pattern).
+/// `one` matches a whole UTF-8 character, as in SQLite.
 fn wild_match(text: &[u8], pattern: &[u8], many: u8, one: u8, fold_case: bool) -> bool {
     let same = |a: u8, b: u8| a == b || (fold_case && a.eq_ignore_ascii_case(&b));
     let (mut t, mut p) = (0, 0);
@@ -82,7 +93,12 @@ fn wild_match(text: &[u8], pattern: &[u8], many: u8, one: u8, fold_case: bool) -
                 p += 1;
                 retry = Some((p, t));
             }
-            Some(&c) if c == one || same(c, text[t]) => {
+            // A retry can resume inside a character; `one` must not start there.
+            Some(&c) if c == one && (text[t] & 0xC0) != 0x80 => {
+                p += 1;
+                t = (t + utf8_len(text[t])).min(text.len());
+            }
+            Some(&c) if c != one && same(c, text[t]) => {
                 p += 1;
                 t += 1;
             }
@@ -148,7 +164,7 @@ fn sub_cow<'a>(c: &Cow<'a, [u8]>, range: std::ops::Range<usize>) -> Cow<'a, [u8]
 
 /// A SQLite `LIKE ... ESCAPE '\'` pattern, classified once per query rather
 /// than per entry. Case-insensitive for ASCII; `%` = any sequence, `_` = any
-/// byte, and `\` makes the next character literal.
+/// character, and `\` makes the next character literal.
 pub(super) enum Like<'a> {
     Prefix(Cow<'a, [u8]>),
     Contains(Cow<'a, [u8]>),
@@ -211,7 +227,7 @@ impl<'a> GlobShape<'a> {
 }
 
 /// A SQLite `GLOB` pattern, classified once per query rather than per entry.
-/// Case-sensitive; `*` = any sequence, `?` = any byte.
+/// Case-sensitive; `*` = any sequence, `?` = any character.
 pub(super) enum Glob<'a> {
     Prefix(&'a [u8]),
     Suffix(&'a [u8]),

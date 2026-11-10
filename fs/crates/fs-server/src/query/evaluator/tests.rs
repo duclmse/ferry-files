@@ -409,7 +409,7 @@ fn spaced_regex_modifier_is_a_regex_search() {
 fn modifier_before_quoted_phrase() {
     let p = parse_plan(r#"case: "Foo Bar""#);
     assert!(
-        matches!(&p.post_filters[..], [PostFilter::CaseLiteral { text, whole: false, .. }] if text == "Foo Bar")
+        matches!(&p.post_filters[..], [PostFilter::Literal { text, whole: false, case_sensitive: true, .. }] if text == "Foo Bar")
     );
 }
 
@@ -458,6 +458,13 @@ mod modifiers_end_to_end {
             "/src/a*b.txt",
             "/src/aXb.txt",
             "/src/a.b",
+            "/u/CAFÉ.txt",
+            "/u/Café.md",
+            "/u/cafe.txt",
+            "/u/ΣΟΦΙΑ.txt",
+            "/u/x[1].log",
+            "/u/x1.log",
+            "/Ünï/ö.txt",
         ] {
             store.upsert_file(&rec(path)).unwrap();
         }
@@ -487,6 +494,24 @@ mod modifiers_end_to_end {
                     "/src/foo.rs",
                 ],
             ),
+            // Case folding beyond ASCII; accents still match exactly.
+            ("café", &["/u/CAFÉ.txt", "/u/Café.md"]),
+            ("CAFÉ", &["/u/CAFÉ.txt", "/u/Café.md"]),
+            ("case: CAFÉ", &["/u/CAFÉ.txt"]),
+            ("wfn: café.MD", &["/u/Café.md"]),
+            ("cafÉ.*", &["/u/CAFÉ.txt", "/u/Café.md"]),
+            ("*?É.TXT", &["/u/CAFÉ.txt"]),
+            ("σοφια", &["/u/ΣΟΦΙΑ.txt"]),
+            ("startwith:cafÉ", &["/u/CAFÉ.txt", "/u/Café.md"]),
+            ("endwith:É.TXT", &["/u/CAFÉ.txt"]),
+            ("path: /üNÏ/", &["/Ünï/ö.txt"]),
+            ("path: *ünï/Ö*", &["/Ünï/ö.txt"]),
+            ("w: café", &["/u/CAFÉ.txt", "/u/Café.md"]),
+            // `_` and `?` are one character, not one byte.
+            ("caf?.txt", &["/u/CAFÉ.txt", "/u/cafe.txt"]),
+            // GLOB would read `[1]` as a character class.
+            ("x[1]*", &["/u/x[1].log"]),
+            ("case: x[1]*", &["/u/x[1].log"]),
             (r"case: path: regex:Src", &["/Src/Foo.RS"]),
             ("\"foo\"", &["/Src/Foo.RS", "/src/foo.rs"]),
             ("\"oo.r\"", &["/Src/Foo.RS", "/src/foo.rs"]),
