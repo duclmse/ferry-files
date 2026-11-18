@@ -144,6 +144,8 @@ iframe.page { flex: 1; width: 100%; border: 0; background: #fff; color-scheme: l
 .statusbar > span { overflow: hidden; text-overflow: ellipsis; min-width: 0; }
 .statusbar .sel { color: var(--ink); }
 .statusbar .unsaved { color: var(--accent); font-weight: 600; }
+.statusbar .seg { flex: none; }
+.statusbar .seg button { padding: 0 7px; font-size: 12px; line-height: 18px; }
 
 /* View switcher */
 .bar .seg button { padding: 3px 9px; font-size: 14px; line-height: 1.2; }

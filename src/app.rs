@@ -1383,12 +1383,6 @@ fn PaneView(pane: Pane) -> impl IntoView {
                 </div>
                 <Crumbs pane=p/>
                 {move || p.loading.get().then(|| view! { <span class="spin"></span> })}
-                <div class="seg" role="group" aria-label="View">
-                    {ViewMode::ALL.map(|m| view! {
-                        <button title=format!("View as {}", m.label()) aria-label=m.label()
-                            class:active=move || p.view.get() == m on:click=move |_| ctx.set_view(p, m)>{m.glyph()}</button>
-                    })}
-                </div>
                 <button class="btn" title="Refresh" aria-label="Refresh" on:click=move |_| ctx.refresh(p)>"⟳"</button>
                 {(p.id == 1).then(|| view! {
                     <button class="btn" title="Hide this pane (⌘\\)" aria-label="Hide this pane"
@@ -1699,6 +1693,12 @@ fn ListStatus(pane: Pane) -> impl IntoView {
             <span class="sel">{selection}</span>
             <span class="spacer"></span>
             <span>{place}</span>
+            <div class="seg" role="group" aria-label="View">
+                {ViewMode::ALL.map(|m| view! {
+                    <button title=format!("View as {}", m.label()) aria-label=m.label()
+                        class:active=move || p.view.get() == m on:click=move |_| ctx.set_view(p, m)>{m.glyph()}</button>
+                })}
+            </div>
         </div>
     }
 }
