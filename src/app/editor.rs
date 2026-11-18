@@ -49,9 +49,15 @@ impl Ctx {
             self.confirm_discard.set(true);
             return;
         }
-        self.editor.set(None);
+        self.leave_editor();
         self.confirm_discard.set(false);
         self.reload_all();
+    }
+
+    /// Closes the editor and lets go of its text (a file of up to a few MB, held twice).
+    pub(super) fn leave_editor(self) {
+        self.editor.set(None);
+        self.text.set(String::new());
     }
 }
 

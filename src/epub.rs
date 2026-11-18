@@ -103,6 +103,13 @@ impl Ep {
     /// Opens the book at `path` on `src` ("mac" or a device id); `place` names it for sentences.
     pub async fn open(self, src: &str, place: String, path: String) -> Result<(), String> {
         let book = call::<Book>("epub_open", json!({ "src": src, "path": path })).await?;
+        // A book still open here is replaced: the backend lets go of it.
+        let old = self.id();
+        if old != 0 && old != book.id {
+            spawn_local(async move {
+                let _ = call::<()>("epub_close", json!({ "id": old })).await;
+            });
+        }
         self.place.set(place);
         self.view.set(View::Info);
         self.mode.set(Mode::Visual);

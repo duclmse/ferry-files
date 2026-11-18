@@ -108,7 +108,7 @@ impl Ctx {
             let id = src.key();
             self.phones.update(|ps| ps.retain(|i| i.id != id));
             if self.editor.with_untracked(|e| e.as_ref().is_some_and(|e| e.src == src)) {
-                self.editor.set(None);
+                self.leave_editor();
             }
             for p in self.panes {
                 p.last.update_value(|l| {

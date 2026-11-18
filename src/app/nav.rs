@@ -212,7 +212,7 @@ impl Ctx {
                 self.confirm_discard.set(true);
                 return;
             }
-            self.editor.set(None);
+            self.leave_editor();
         }
         self.load_select(p, src, path, select);
     }
@@ -227,7 +227,7 @@ impl Ctx {
                 self.confirm_discard.set(true);
                 return;
             }
-            self.editor.set(None);
+            self.leave_editor();
         }
         self.open_remembered(p, src);
     }
