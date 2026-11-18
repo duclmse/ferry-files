@@ -187,8 +187,8 @@ fn file(app: &AppHandle, q: &str, range: Option<&str>) -> Response<Vec<u8>> {
         Response::builder()
             .header("Content-Type", ctype)
             .header("Accept-Ranges", "bytes")
-            // The URL has the size and date, so a changed file gets a new URL.
-            .header("Cache-Control", "max-age=3600")
+            // Not kept by the web view: a video's pieces would pile up in its memory cache.
+            .header("Cache-Control", "no-store")
             .header("Access-Control-Allow-Origin", "*")
     };
     match range.and_then(|h| parse_range(h, size)) {

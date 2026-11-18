@@ -59,36 +59,41 @@ pub(super) async fn read_text(state: State<'_, AppState>, src: Option<String>, p
     .await
 }
 
-/// The start of a text file, for the preview.
+/// A piece of a text file, for the preview.
 #[derive(Serialize)]
 pub(super) struct Peek {
     text: String,
-    /// The file goes on past `text`.
-    more: bool,
+    /// Where the next piece starts, when the file goes on.
+    next: Option<u64>,
 }
 
-/// Bytes the preview reads: enough to fill it, quick even over MTP.
+/// Bytes the preview reads at a time: enough to fill it, quick even over MTP.
 const PEEK_MAX: u64 = 64 * 1024;
 
-/// The text in the first `PEEK_MAX` bytes. A character cut in two at the end is dropped; bytes that
-/// aren't UTF-8 elsewhere show as �.
-fn peek_of(data: Vec<u8>, more: bool) -> Peek {
-    let data = match std::str::from_utf8(&data) {
-        Err(e) if more && e.error_len().is_none() => data[..e.valid_up_to()].to_vec(),
-        _ => data,
-    };
-    Peek { text: String::from_utf8_lossy(&data).into_owned(), more }
+/// The text in `data`, read from `start`. When the file goes on (`more`), a character cut in two
+/// at the end is left for the next piece; bytes that aren't UTF-8 elsewhere show as �.
+fn peek_of(mut data: Vec<u8>, start: u64, more: bool) -> Peek {
+    if more {
+        if let Err(e) = std::str::from_utf8(&data) {
+            if e.error_len().is_none() {
+                data.truncate(e.valid_up_to());
+            }
+        }
+    }
+    let next = more.then(|| start + data.len() as u64);
+    Peek { text: String::from_utf8_lossy(&data).into_owned(), next }
 }
 
-/// Reads only the start of the file, never the whole of a big one.
+/// Reads `PEEK_MAX` bytes of the file from `start` (0 when left out), never the whole of a big one.
 #[tauri::command(rename_all = "snake_case")]
-pub(super) async fn peek_text(state: State<'_, AppState>, src: Option<String>, path: String) -> Result<Peek, String> {
+pub(super) async fn peek_text(state: State<'_, AppState>, src: Option<String>, path: String, start: Option<u64>) -> Result<Peek, String> {
     let dev = state.source(src.as_deref())?;
+    let start = start.unwrap_or(0);
     blocking(move || {
-        let data = dev.read_range(&path, 0, PEEK_MAX + 1).map_err(msg)?;
+        let mut data = dev.read_range(&path, start, PEEK_MAX + 1).map_err(msg)?;
         let more = data.len() as u64 > PEEK_MAX;
-        let data = data.into_iter().take(PEEK_MAX as usize).collect();
-        Ok(peek_of(data, more))
+        data.truncate(PEEK_MAX as usize);
+        Ok(peek_of(data, start, more))
     })
     .await
 }
@@ -276,13 +281,13 @@ pub(super) fn opened_dir() -> std::path::PathBuf {
 mod tests {
     #[test]
     fn peek_drops_a_cut_character() {
-        // "é" is two bytes; cut after the first.
-        let p = super::peek_of(vec![b'a', 0xC3], true);
-        assert_eq!((p.text.as_str(), p.more), ("a", true));
-        let p = super::peek_of(vec![b'a', 0xC3, 0xA9], false);
-        assert_eq!(p.text, "aé");
-        let p = super::peek_of(vec![b'a', 0xFF, b'b'], false);
-        assert_eq!(p.text, "a\u{FFFD}b");
+        // "é" is two bytes; cut after the first, it starts the next piece.
+        let p = super::peek_of(vec![b'a', 0xC3], 10, true);
+        assert_eq!((p.text.as_str(), p.next), ("a", Some(11)));
+        let p = super::peek_of(vec![b'a', 0xC3, 0xA9], 0, false);
+        assert_eq!((p.text.as_str(), p.next), ("aé", None));
+        let p = super::peek_of(vec![b'a', 0xFF, b'b'], 0, true);
+        assert_eq!((p.text.as_str(), p.next), ("a\u{FFFD}b", Some(3)));
     }
 
     #[test]

@@ -12,8 +12,9 @@ copied between them.
   status bar).
 - The preview, to the right of the files in every view (the last button in
   the status bar shows or hides it), shows the selected item: a bigger
-  picture, details, and videos and audio that play straight from the device
-  without copying them first (GIF, HEIC, AVIF and SVG images too).
+  picture, details, videos and audio that play straight from the device
+  without copying them first (GIF, HEIC, AVIF and SVG images too), and the
+  text of text files, read a piece at a time as you scroll (up to 8 MB).
 - Drag the edges to resize the sidebar, the two panes, the files beside the
   preview, the column view's columns and the list's columns; double-click an
   edge for its default width. The sizes are remembered.
@@ -144,7 +145,8 @@ file (HTTP Range on `yomi://localhost/file`) and only those parts are read. Over
 adb each part is read with `dd`. Over MTP it uses libmtp's
 `LIBMTP_GetPartialObject`; when the phone or libmtp doesn't support it, the
 file is copied once to the app's temporary folder (only the latest one is kept)
-and read from there.
+and read from there. The web view doesn't cache these parts, and a player lets
+go of its file when the preview moves on.
 
 ## Build and run
 

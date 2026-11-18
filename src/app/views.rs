@@ -230,12 +230,10 @@ pub(super) fn Preview(pane: Pane) -> impl IntoView {
                                 Some(Media::Image) => view! {
                                     <div class="pic"><img class="full" src=stream_url(src, &e) alt=""/></div>
                                 }.into_any(),
-                                Some(Media::Video) => view! {
-                                    <video class="play" controls preload="metadata" src=stream_url(src, &e)></video>
-                                }.into_any(),
+                                Some(Media::Video) => view! { <Player url=stream_url(src, &e) video=true/> }.into_any(),
                                 Some(Media::Audio) => view! {
                                     <div class="pic"><Thumbnail src=src entry=e.clone()/></div>
-                                    <audio class="play" controls preload="metadata" src=stream_url(src, &e)></audio>
+                                    <Player url=stream_url(src, &e) video=false/>
                                 }.into_any(),
                                 None if is_text(&e) => view! { <TextPeek src=src entry=e.clone()/> }.into_any(),
                             None => view! {
@@ -262,25 +260,100 @@ fn is_text(e: &Entry) -> bool {
     !e.dir && TEXT_EXTS.contains(&ext(&e.name).as_str())
 }
 
-/// The start of a text file.
+/// A video or audio player streaming from the device. When the preview moves on, it stops and
+/// lets go of the file, so the web view drops what it buffered.
+#[component]
+fn Player(url: String, video: bool) -> impl IntoView {
+    let el = StoredValue::new_local(None::<web_sys::HtmlMediaElement>);
+    let keep = move |e: &web_sys::HtmlMediaElement| el.set_value(Some(e.clone()));
+    on_cleanup(move || {
+        if let Some(m) = el.try_update_value(Option::take).flatten() {
+            let _ = m.pause();
+            let _ = m.remove_attribute("src");
+            m.load();
+        }
+    });
+    let video_ref = NodeRef::<html::Video>::new();
+    let audio_ref = NodeRef::<html::Audio>::new();
+    video_ref.on_load(move |v| keep(&v));
+    audio_ref.on_load(move |a| keep(&a));
+    if video {
+        view! { <video class="play" controls preload="metadata" src=url node_ref=video_ref></video> }.into_any()
+    } else {
+        view! { <audio class="play" controls preload="metadata" src=url node_ref=audio_ref></audio> }.into_any()
+    }
+}
+
+/// How much of a text file the preview loads, at most, as it's scrolled.
+const PEEK_CAP: u64 = 8 * 1024 * 1024;
+
+/// A text file, a piece at a time: the next piece loads when the end is scrolled near.
 #[component]
 fn TextPeek(src: Src, entry: Entry) -> impl IntoView {
-    let got = RwSignal::new(None::<Result<Peek, String>>);
-    spawn_local(async move {
-        let r = call::<Peek>("peek_text", json!({ "src": src.key(), "path": entry.path })).await;
-        // The preview may show something else by now.
-        let _ = got.try_set(Some(r));
-    });
+    let pieces = RwSignal::new(Vec::<String>::new());
+    // Where the next piece starts; None once the whole file is in.
+    let next = RwSignal::new(None::<u64>);
+    let error = RwSignal::new(None::<String>);
+    let loading = RwSignal::new(false);
+    let path = StoredValue::new(entry.path);
+    let fetch = move |start: u64| {
+        if loading.get_untracked() {
+            return;
+        }
+        loading.set(true);
+        spawn_local(async move {
+            let path = path.try_get_value().unwrap_or_default();
+            let r = call::<Peek>("peek_text", json!({ "src": src.key(), "path": path, "start": start })).await;
+            // The preview may show something else by now: then these are gone and nothing is set.
+            match r {
+                Ok(p) => {
+                    if pieces.try_update(|v| v.push(p.text)).is_some() {
+                        next.set(p.next);
+                    }
+                }
+                Err(e) => {
+                    let _ = error.try_set(Some(e));
+                }
+            }
+            let _ = loading.try_set(false);
+        });
+    };
+    fetch(0);
+    let capped = move || next.get().is_some_and(|n| n >= PEEK_CAP);
+    let scrolled = move |ev: web_sys::Event| {
+        let Some(pre) = ev.target().and_then(|t| t.dyn_into::<web_sys::Element>().ok()) else { return };
+        let left = pre.scroll_height() - pre.scroll_top() - pre.client_height();
+        match next.get_untracked() {
+            Some(n) if n < PEEK_CAP && left < 600 && error.get_untracked().is_none() => fetch(n),
+            _ => {}
+        }
+    };
+    let empty = move || pieces.with(|v| v.len() == 1 && v[0].trim().is_empty()) && next.get().is_none();
     view! {
         <div class="peek">
-            {move || match got.get() {
-                None => view! { <span class="spin"></span> }.into_any(),
-                Some(Err(e)) => view! { <span class="hint">{e}</span> }.into_any(),
-                Some(Ok(Peek { text, .. })) if text.trim().is_empty() => view! { <span class="hint">"Empty"</span> }.into_any(),
-                Some(Ok(Peek { text, more })) => view! {
-                    <pre>{text}</pre>
-                    {more.then(|| view! { <span class="more">"Only the start is shown. Double-click to open it all."</span> })}
-                }.into_any(),
+            {move || if pieces.with(Vec::is_empty) {
+                match error.get() {
+                    Some(e) => view! { <span class="hint">{e}</span> }.into_any(),
+                    None => view! { <span class="spin"></span> }.into_any(),
+                }
+            } else if empty() {
+                view! { <span class="hint">"Empty"</span> }.into_any()
+            } else {
+                view! {
+                    <pre on:scroll=scrolled>
+                        <For each=move || 0..pieces.with(Vec::len) key=|i| *i
+                            children=move |i| pieces.with_untracked(|v| v[i].clone())/>
+                    </pre>
+                    {move || if let Some(e) = error.get() {
+                        view! { <span class="more">{e}</span> }.into_any()
+                    } else if capped() {
+                        view! { <span class="more">"Only the first 8 MB is shown. Double-click to open it all."</span> }.into_any()
+                    } else if loading.get() {
+                        view! { <span class="more">"Loading more…"</span> }.into_any()
+                    } else {
+                        ().into_any()
+                    }}
+                }.into_any()
             }}
         </div>
     }
