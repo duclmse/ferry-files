@@ -174,6 +174,14 @@ impl UsbDevice {
     }
 }
 
+/// The start of a text file (`peek_text`).
+#[derive(Clone, Debug, PartialEq, Deserialize)]
+pub struct Peek {
+    pub text: String,
+    /// The file goes on past `text`.
+    pub more: bool,
+}
+
 #[derive(Clone, Debug, Deserialize)]
 pub struct TextFile {
     pub text: String,

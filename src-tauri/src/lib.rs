@@ -122,6 +122,7 @@ pub fn run() {
             files::list,
             files::refresh,
             files::read_text,
+            files::peek_text,
             files::write_text,
             files::mkdir,
             files::remove,

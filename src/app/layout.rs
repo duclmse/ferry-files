@@ -16,7 +16,8 @@ pub(super) enum Target {
     ParentLeft,
 }
 
-/// A handle dragged sideways to change `size`, which is saved to `key` when the drag ends.
+/// A handle dragged sideways to change `size`, which is saved to `key` (unless empty) when the
+/// drag ends.
 /// Double-click sets it back to 0 (the default). The size stays between `min` and `max`, and,
 /// when `room` is set, leaves that much of the grip's container free to its right.
 #[component]
@@ -32,6 +33,7 @@ pub(super) fn Grip(
     let el = NodeRef::<html::Div>::new();
     let listeners = StoredValue::new_local(None::<(WindowListenerHandle, WindowListenerHandle)>);
     let key = StoredValue::new(key);
+    let save = move |v: &str| key.with_value(|k| if !k.is_empty() { store(k, v) });
     let stop = move || {
         if let Some((a, b)) = listeners.try_update_value(Option::take).flatten() {
             a.remove();
@@ -72,7 +74,7 @@ pub(super) fn Grip(
         });
         let up = window_event_listener(ev::mouseup, move |_| {
             stop();
-            store(&key.get_value(), &size.get_untracked().to_string());
+            save(&size.get_untracked().to_string());
         });
         stop();
         listeners.set_value(Some((moved, up)));
@@ -88,7 +90,7 @@ pub(super) fn Grip(
             on:dblclick=move |ev| {
                 ev.stop_propagation();
                 size.set(0.0);
-                store(&key.get_value(), "0");
+                save("0");
             }></div>
     }
 }

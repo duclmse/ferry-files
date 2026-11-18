@@ -186,8 +186,19 @@ pub(super) fn ColumnView(pane: Pane) -> impl IntoView {
             // Keyed by side too, so switching between phone and Mac rebuilds the columns.
             <For each=move || { let s = p.src.get(); chain.get().into_iter().map(move |d| (s, d)).collect::<Vec<_>>() }
                 key=|(s, d)| (s.key(), d.clone()) let((_s, dir))>
-                <Column pane=p dir chain/>
-                <Grip size=p.col_w key=format!("yomi-files.col-w.{}", p.id) min=140.0 max=600.0 class="grip col-grip"/>
+                {
+                    // Each column has its own width; dragging one leaves the others.
+                    let width = RwSignal::new(p.col_ws.with_value(|m| m.get(&dir).copied().unwrap_or(0.0)));
+                    let d = dir.clone();
+                    Effect::new(move |_| {
+                        let w = width.get();
+                        p.col_ws.update_value(|m| { m.insert(d.clone(), w); });
+                    });
+                    view! {
+                        <Column pane=p dir chain width/>
+                        <Grip size=width key=String::new() min=140.0 max=600.0 class="grip col-grip"/>
+                    }
+                }
             </For>
         </div>
     }
@@ -226,7 +237,8 @@ pub(super) fn Preview(pane: Pane) -> impl IntoView {
                                     <div class="pic"><Thumbnail src=src entry=e.clone()/></div>
                                     <audio class="play" controls preload="metadata" src=stream_url(src, &e)></audio>
                                 }.into_any(),
-                                None => view! {
+                                None if is_text(&e) => view! { <TextPeek src=src entry=e.clone()/> }.into_any(),
+                            None => view! {
                                     <div class="pic"><Thumbnail src=src entry=e.clone()/></div>
                                 }.into_any(),
                             }
@@ -245,8 +257,37 @@ pub(super) fn Preview(pane: Pane) -> impl IntoView {
     }
 }
 
+/// Text files the preview shows the start of: any size, as only the start is read.
+fn is_text(e: &Entry) -> bool {
+    !e.dir && TEXT_EXTS.contains(&ext(&e.name).as_str())
+}
+
+/// The start of a text file.
 #[component]
-pub(super) fn Column(pane: Pane, dir: String, chain: Memo<Vec<String>>) -> impl IntoView {
+fn TextPeek(src: Src, entry: Entry) -> impl IntoView {
+    let got = RwSignal::new(None::<Result<Peek, String>>);
+    spawn_local(async move {
+        let r = call::<Peek>("peek_text", json!({ "src": src.key(), "path": entry.path })).await;
+        // The preview may show something else by now.
+        let _ = got.try_set(Some(r));
+    });
+    view! {
+        <div class="peek">
+            {move || match got.get() {
+                None => view! { <span class="spin"></span> }.into_any(),
+                Some(Err(e)) => view! { <span class="hint">{e}</span> }.into_any(),
+                Some(Ok(Peek { text, .. })) if text.trim().is_empty() => view! { <span class="hint">"Empty"</span> }.into_any(),
+                Some(Ok(Peek { text, more })) => view! {
+                    <pre>{text}</pre>
+                    {more.then(|| view! { <span class="more">"Only the start is shown. Double-click to open it all."</span> })}
+                }.into_any(),
+            }}
+        </div>
+    }
+}
+
+#[component]
+pub(super) fn Column(pane: Pane, dir: String, chain: Memo<Vec<String>>, width: RwSignal<f64>) -> impl IntoView {
     let ctx = expect_context::<Ctx>();
     let p = pane;
     let d = dir.clone();
@@ -268,7 +309,7 @@ pub(super) fn Column(pane: Pane, dir: String, chain: Memo<Vec<String>>) -> impl 
     let data_dir = dir.clone();
     view! {
         <div class="col" class:current=current on:contextmenu=bg_menu data-dir=data_dir
-            style=move || match p.col_w.get() { w if w > 0.0 => format!("flex-basis: {w}px"), _ => String::new() }
+            style=move || match width.get() { w if w > 0.0 => format!("flex-basis: {w}px"), _ => String::new() }
             class:drop=move || ctx.drop_at.get().as_deref() == Some(key.as_str())
             on:dragover=over on:drop=drop>
             {move || match entries() {

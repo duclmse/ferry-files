@@ -59,6 +59,40 @@ pub(super) async fn read_text(state: State<'_, AppState>, src: Option<String>, p
     .await
 }
 
+/// The start of a text file, for the preview.
+#[derive(Serialize)]
+pub(super) struct Peek {
+    text: String,
+    /// The file goes on past `text`.
+    more: bool,
+}
+
+/// Bytes the preview reads: enough to fill it, quick even over MTP.
+const PEEK_MAX: u64 = 64 * 1024;
+
+/// The text in the first `PEEK_MAX` bytes. A character cut in two at the end is dropped; bytes that
+/// aren't UTF-8 elsewhere show as �.
+fn peek_of(data: Vec<u8>, more: bool) -> Peek {
+    let data = match std::str::from_utf8(&data) {
+        Err(e) if more && e.error_len().is_none() => data[..e.valid_up_to()].to_vec(),
+        _ => data,
+    };
+    Peek { text: String::from_utf8_lossy(&data).into_owned(), more }
+}
+
+/// Reads only the start of the file, never the whole of a big one.
+#[tauri::command(rename_all = "snake_case")]
+pub(super) async fn peek_text(state: State<'_, AppState>, src: Option<String>, path: String) -> Result<Peek, String> {
+    let dev = state.source(src.as_deref())?;
+    blocking(move || {
+        let data = dev.read_range(&path, 0, PEEK_MAX + 1).map_err(msg)?;
+        let more = data.len() as u64 > PEEK_MAX;
+        let data = data.into_iter().take(PEEK_MAX as usize).collect();
+        Ok(peek_of(data, more))
+    })
+    .await
+}
+
 #[tauri::command(rename_all = "snake_case")]
 pub(super) async fn write_text(
     state: State<'_, AppState>,
@@ -240,6 +274,17 @@ pub(super) fn opened_dir() -> std::path::PathBuf {
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn peek_drops_a_cut_character() {
+        // "é" is two bytes; cut after the first.
+        let p = super::peek_of(vec![b'a', 0xC3], true);
+        assert_eq!((p.text.as_str(), p.more), ("a", true));
+        let p = super::peek_of(vec![b'a', 0xC3, 0xA9], false);
+        assert_eq!(p.text, "aé");
+        let p = super::peek_of(vec![b'a', 0xFF, b'b'], false);
+        assert_eq!(p.text, "a\u{FFFD}b");
+    }
+
     #[test]
     fn find_searches_subfolders_and_rename_refuses_taken_names() {
         use std::fs;

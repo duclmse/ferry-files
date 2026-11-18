@@ -15,6 +15,7 @@
     "allow-list",
     "allow-refresh",
     "allow-read-text",
+    "allow-peek-text",
     "allow-write-text",
     "allow-mkdir",
     "allow-remove",

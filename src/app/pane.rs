@@ -264,7 +264,7 @@ pub(super) fn PaneView(pane: Pane) -> impl IntoView {
                     }}
                 </div>
                 {move || p.preview.get().then(|| view! {
-                    <Grip size=p.view_w key=format!("yomi-files.view-w.{}", p.id) min=200.0 room=500.0/>
+                    <Grip size=p.view_w key=format!("yomi-files.view-w.{}", p.id) min=200.0 room=360.0/>
                     <Preview pane=p/>
                 })}
             </div>

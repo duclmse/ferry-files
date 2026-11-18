@@ -1,7 +1,7 @@
 //! The file browser UI: connect screen, one or two panes of folders (each on the phone or the Mac,
 //! in a list, thumbnail or column view, with a context menu), and a text editor.
 
-use crate::api::{call, Backup, BookInfo, CompareReport, Issue, Devices, Space, Entry, FileDrop, Info, Progress, TextFile, TransferReport, UsbDevice, WriteResult};
+use crate::api::{call, Backup, BookInfo, CompareReport, Issue, Devices, Space, Entry, FileDrop, Info, Peek, Progress, TextFile, TransferReport, UsbDevice, WriteResult};
 use leptos::ev;
 use leptos::html;
 use leptos::prelude::*;
@@ -275,10 +275,11 @@ struct Pane {
     renaming: RwSignal<Option<String>>,
     /// Whether the preview is shown to the right of the files.
     preview: RwSignal<bool>,
-    /// Widths the user dragged (0: the default): the files beside the preview, the column view's
-    /// columns, and the list's kind, date and size columns.
+    /// Widths the user dragged (0: the default): the files beside the preview, and the list's
+    /// kind, date and size columns.
     view_w: RwSignal<f64>,
-    col_w: RwSignal<f64>,
+    /// Widths of the column view's columns, by folder, for this session.
+    col_ws: StoredValue<HashMap<String, f64>>,
     list_w: [RwSignal<f64>; 3],
 }
 
@@ -305,7 +306,7 @@ impl Pane {
             renaming: RwSignal::new(None),
             preview: RwSignal::new(stored_flag(&format!("yomi-files.preview.{id}"), true)),
             view_w: stored_px(&format!("yomi-files.view-w.{id}")),
-            col_w: stored_px(&format!("yomi-files.col-w.{id}")),
+            col_ws: StoredValue::new(HashMap::new()),
             list_w: [0, 1, 2].map(|n| stored_px(&format!("yomi-files.list-w.{id}.{n}"))),
         }
     }
