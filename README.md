@@ -149,6 +149,8 @@ half per way to connect (a half is greyed out when that way isn't available; the
 highlighted one is the suggested way). If a phone is waiting for USB debugging
 to be allowed, the sidebar says so. Several devices can be connected at once. ⏏
 next to a device's name disconnects it, and panes showing it go back to the Mac.
+Quitting disconnects every device too: transfers are cancelled and MTP copies
+stopped, so the phone's MTP session is closed before the app ends.
 MTP devices share one libmtp lock, so a long transfer on one MTP device makes
 the others wait. Only one program can use MTP at a time, so quit Android File
 Transfer, Image Capture and other MTP tools first. If MTP still won't connect,

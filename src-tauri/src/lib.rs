@@ -94,14 +94,16 @@ impl AppState {
     }
 
     /// Lets go of every connected device, for quitting: an MTP phone's session is closed only
-    /// when its device is dropped, and quitting doesn't drop the app's state. Running transfers
-    /// are cancelled, and work still using a device gets up to 3 seconds to finish with it.
+    /// when its device is dropped, and quitting doesn't drop the app's state. Transfers are
+    /// cancelled and file copies on MTP stopped, so what still uses a device lets go of it soon;
+    /// that gets up to 10 seconds (a phone that stopped answering may never let go).
     fn close_all(&self) {
+        mtp::stop_copies();
         for cancel in self.jobs.lock().unwrap_or_else(|e| e.into_inner()).values() {
             cancel.store(true, std::sync::atomic::Ordering::Relaxed);
         }
         let mut devs: Vec<Arc<Device>> = self.devs().drain().map(|(_, c)| c.dev).collect();
-        let until = std::time::Instant::now() + std::time::Duration::from_secs(3);
+        let until = std::time::Instant::now() + std::time::Duration::from_secs(10);
         while devs.iter().any(|d| Arc::strong_count(d) > 1) && std::time::Instant::now() < until {
             std::thread::sleep(std::time::Duration::from_millis(50));
         }

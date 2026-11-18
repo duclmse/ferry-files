@@ -886,23 +886,30 @@ pub fn App() -> impl IntoView {
     });
 
     // Keep the item last picked visible when the keyboard moves the selection. That item, not
-    // the first one picked: with several picked, ⌘-clicking one mustn't scroll to another.
-    Effect::new(move |_| {
-        let p = ctx.panes[ctx.active.get()];
-        let Some(path) = p.selected.get() else { return };
-        p.view.track();
-        request_animation_frame(move || {
-            let Ok(found) = document().query_selector_all(".pane.active .selected[data-path]") else { return };
-            let el = (0..found.length())
-                .filter_map(|n| found.item(n).and_then(|e| e.dyn_into::<web_sys::Element>().ok()))
-                .find(|e| e.get_attribute("data-path").as_deref() == Some(path.as_str()));
-            if let Some(el) = el {
-                let opts = web_sys::ScrollIntoViewOptions::new();
-                opts.set_block(web_sys::ScrollLogicalPosition::Nearest);
-                opts.set_inline(web_sys::ScrollLogicalPosition::Nearest);
-                el.scroll_into_view_with_scroll_into_view_options(&opts);
+    // the first one picked: with several picked, ⌘-clicking one mustn't scroll to another. Only a
+    // pane whose selection (or view) changed scrolls: clicking into a pane makes it active first,
+    // and scrolling then would move the list to the old selection under the pointer.
+    Effect::new(move |prev: Option<[(Option<String>, ViewMode); 2]>| {
+        let now = ctx.panes.map(|p| (p.selected.get(), p.view.get()));
+        for (i, (path, _)) in now.iter().enumerate() {
+            let Some(path) = path.clone() else { continue };
+            if prev.as_ref().is_some_and(|prev| prev[i] == now[i]) {
+                continue;
             }
-        });
+            request_animation_frame(move || {
+                let Ok(found) = document().query_selector_all(&format!(".pane[data-pane=\"{i}\"] [data-path]")) else { return };
+                let el = (0..found.length())
+                    .filter_map(|n| found.item(n).and_then(|e| e.dyn_into::<web_sys::Element>().ok()))
+                    .find(|e| e.get_attribute("data-path").as_deref() == Some(path.as_str()));
+                if let Some(el) = el {
+                    let opts = web_sys::ScrollIntoViewOptions::new();
+                    opts.set_block(web_sys::ScrollLogicalPosition::Nearest);
+                    opts.set_inline(web_sys::ScrollLogicalPosition::Nearest);
+                    el.scroll_into_view_with_scroll_into_view_options(&opts);
+                }
+            });
+        }
+        now
     });
 
     view! {

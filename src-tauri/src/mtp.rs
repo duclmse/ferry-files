@@ -93,13 +93,29 @@ struct Lib {
     files_and_folders: unsafe extern "C" fn(Dev, u32, u32) -> *mut MtpFile,
     filemetadata: unsafe extern "C" fn(Dev, u32) -> *mut MtpFile,
     destroy_file: unsafe extern "C" fn(*mut MtpFile),
-    get_file_to_file: unsafe extern "C" fn(Dev, u32, *const c_char, *mut c_void, *mut c_void) -> c_int,
-    send_file_from_file: unsafe extern "C" fn(Dev, *const c_char, *mut MtpFile, *mut c_void, *mut c_void) -> c_int,
+    get_file_to_file: unsafe extern "C" fn(Dev, u32, *const c_char, Option<Progress>, *const c_void) -> c_int,
+    send_file_from_file: unsafe extern "C" fn(Dev, *const c_char, *mut MtpFile, Option<Progress>, *const c_void) -> c_int,
     set_file_name: unsafe extern "C" fn(Dev, *mut MtpFile, *const c_char) -> c_int,
     delete_object: unsafe extern "C" fn(Dev, u32) -> c_int,
     create_folder: unsafe extern "C" fn(Dev, *mut c_char, u32, u32) -> u32,
     /// `LIBMTP_GetPartialObject`; missing from old libmtp builds.
     get_partial: Option<unsafe extern "C" fn(Dev, u32, u64, u32, *mut *mut u8, *mut u32) -> c_int>,
+}
+
+/// `LIBMTP_progressfunc_t`: called as a file is copied; anything but 0 stops the copy.
+type Progress = extern "C" fn(sent: u64, total: u64, data: *const c_void) -> c_int;
+
+/// Set when the app quits: file copies to and from the phone stop at their next piece, so the
+/// phone can be let go of without waiting for them.
+static QUITTING: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
+
+/// Stops the file copies under way, for quitting.
+pub fn stop_copies() {
+    QUITTING.store(true, std::sync::atomic::Ordering::Relaxed);
+}
+
+extern "C" fn progress(_sent: u64, _total: u64, _data: *const c_void) -> c_int {
+    QUITTING.load(std::sync::atomic::Ordering::Relaxed) as c_int
 }
 
 extern "C" {
@@ -306,7 +322,7 @@ impl Link {
 
     fn download_to(&self, id: u32, to: &std::path::Path) -> Result<()> {
         let c = CString::new(to.to_string_lossy().as_bytes()).unwrap();
-        let rc = unsafe { (self.lib.get_file_to_file)(self.dev, id, c.as_ptr(), std::ptr::null_mut(), std::ptr::null_mut()) };
+        let rc = unsafe { (self.lib.get_file_to_file)(self.dev, id, c.as_ptr(), Some(progress), std::ptr::null()) };
         if rc == 0 { Ok(()) } else { Err(self.error("Reading the file")) }
     }
 
@@ -344,7 +360,7 @@ impl Link {
             next: std::ptr::null_mut(),
         };
         let rc = unsafe {
-            (self.lib.send_file_from_file)(self.dev, path.as_ptr(), &mut meta, std::ptr::null_mut(), std::ptr::null_mut())
+            (self.lib.send_file_from_file)(self.dev, path.as_ptr(), &mut meta, Some(progress), std::ptr::null())
         };
         let _ = std::fs::remove_file(&tmp);
         if rc != 0 {
