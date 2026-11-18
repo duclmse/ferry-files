@@ -1,7 +1,7 @@
 //! The file browser UI: connect screen, one or two panes of folders (each on the phone or the Mac,
 //! in a list, thumbnail or column view, with a context menu), and a text editor.
 
-use crate::api::{call, Backup, BookInfo, CompareReport, Issue, Devices, Space, Entry, FileDrop, Info, MediaInfo, Peek, Progress, TextFile, TransferReport, UsbDevice, WriteResult};
+use crate::api::{call, Backup, BookInfo, CompareReport, Issue, Devices, Space, Entry, FileDrop, Info, Progress, TextFile, TransferReport, UsbDevice, WriteResult};
 use leptos::ev;
 use leptos::html;
 use leptos::prelude::*;
@@ -18,6 +18,7 @@ mod layout;
 mod menu;
 mod nav;
 mod pane;
+mod preview;
 mod safety;
 mod sidebar;
 mod transfer;
@@ -30,6 +31,7 @@ use editor::*;
 use layout::*;
 use menu::*;
 use pane::*;
+use preview::*;
 use safety::*;
 use sidebar::*;
 use transfer::*;
@@ -205,6 +207,9 @@ enum Act {
     Refresh,
     View(ViewMode),
     Split,
+    CopyName,
+    CopyPath,
+    ShowAs(PeekAs),
 }
 
 enum MenuItem {
@@ -281,6 +286,10 @@ struct Pane {
     /// Widths of the column view's columns, by folder, for this session.
     col_ws: StoredValue<HashMap<String, f64>>,
     list_w: [RwSignal<f64>; 3],
+    /// A file the preview shows as text or bytes, whatever its type, from the context menu.
+    peek_as: RwSignal<Option<(String, PeekAs)>>,
+    /// Whether the path above the files is being typed in.
+    editing_path: RwSignal<bool>,
 }
 
 impl Pane {
@@ -308,6 +317,8 @@ impl Pane {
             view_w: stored_px(&format!("yomi-files.view-w.{id}")),
             col_ws: StoredValue::new(HashMap::new()),
             list_w: [0, 1, 2].map(|n| stored_px(&format!("yomi-files.list-w.{id}.{n}"))),
+            peek_as: RwSignal::new(None),
+            editing_path: RwSignal::new(false),
         }
     }
 
@@ -468,6 +479,12 @@ struct Ctx {
     /// Widths the user dragged (0: the default): the sidebar, and the left pane when there are two.
     side_w: RwSignal<f64>,
     pane_w: RwSignal<f64>,
+    /// The last searches (Enter in the filter), newest first, offered as the filter is typed in.
+    searches: RwSignal<Vec<String>>,
+    /// Settings: "auto", "light" or "dark".
+    theme: RwSignal<String>,
+    /// Whether the list of keyboard shortcuts is shown.
+    help: RwSignal<bool>,
 }
 
 impl Ctx {
@@ -505,6 +522,9 @@ impl Ctx {
             drop_at: RwSignal::new(None),
             side_w: stored_px(SIDE_W_KEY),
             pane_w: stored_px(PANE_W_KEY),
+            searches: RwSignal::new(stored(SEARCHES_KEY).and_then(|s| serde_json::from_str(&s).ok()).unwrap_or_default()),
+            theme: RwSignal::new(stored(THEME_KEY).unwrap_or_else(|| "auto".into())),
+            help: RwSignal::new(false),
         }
     }
 
@@ -575,6 +595,7 @@ impl Ctx {
 #[component]
 pub fn App() -> impl IntoView {
     let ctx = Ctx::new();
+    apply_theme(&ctx.theme.get_untracked());
     provide_context(ctx);
     let ep = ctx.ep;
     provide_context(ep);
@@ -623,6 +644,13 @@ pub fn App() -> impl IntoView {
             if e.key() == "Escape" {
                 e.prevent_default();
                 ctx.close_panel();
+            }
+            return;
+        }
+        if ctx.help.get_untracked() {
+            if matches!(e.key().as_str(), "Escape" | "?") {
+                e.prevent_default();
+                ctx.help.set(false);
             }
             return;
         }
@@ -709,15 +737,30 @@ pub fn App() -> impl IntoView {
                 e.prevent_default();
                 ctx.quick_look(p);
             }
-            ("f", true) => {
+            ("f", true) | ("k", true) | ("/", false) => {
                 e.prevent_default();
                 if let Some(el) = document().query_selector(".pane.active .filter").ok().flatten() {
                     let _ = el.unchecked_into::<web_sys::HtmlElement>().focus();
                 }
             }
-            ("Backspace", true) => {
+            ("Backspace", true) | ("Delete", _) => {
                 e.prevent_default();
                 ctx.ask_delete(p);
+            }
+            ("?", _) => {
+                e.prevent_default();
+                ctx.help.set(true);
+            }
+            ("l", true) => {
+                e.prevent_default();
+                p.editing_path.set(true);
+            }
+            // In the list, ← and → go to the previous and next picture, video or sound.
+            ("ArrowRight", false) | ("ArrowLeft", false) if view == ViewMode::List => {
+                if let Some(x) = current.filter(|x| media(x).is_some()) {
+                    e.prevent_default();
+                    step_media(p, &x, if e.key() == "ArrowRight" { 1 } else { -1 });
+                }
             }
             ("ArrowDown", false) => {
                 e.prevent_default();
@@ -819,6 +862,7 @@ pub fn App() -> impl IntoView {
         <Browser/>
         <ContextMenu/>
         {move || ctx.settings.get().then(|| view! { <Settings/> })}
+        {move || ctx.help.get().then(|| view! { <Shortcuts/> })}
         {move || ctx.panel.get().map(|w| match w {
             Panel::Backups => view! { <Backups/> }.into_any(),
             Panel::History => view! { <History/> }.into_any(),

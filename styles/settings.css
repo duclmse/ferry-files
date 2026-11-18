@@ -76,3 +76,46 @@
   -webkit-user-select: text;
   user-select: text;
 }
+
+.dialog label.row {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+
+.dialog select {
+  font: inherit;
+  color: var(--ink);
+  background: var(--panel);
+  border: 1px solid var(--line);
+  border-radius: 6px;
+  padding: 3px 6px;
+}
+
+/* Keyboard shortcuts. */
+.dialog.shortcuts dl {
+  display: grid;
+  grid-template-columns: max-content 1fr;
+  gap: 6px 14px;
+  margin: 0;
+  font-size: 13px;
+}
+
+.dialog.shortcuts dt {
+  text-align: right;
+}
+
+.dialog.shortcuts dd {
+  margin: 0;
+  color: var(--muted);
+}
+
+.dialog.shortcuts kbd {
+  font: 12px ui-monospace, SFMono-Regular, Menlo, monospace;
+  padding: 1px 6px;
+  border: 1px solid var(--line);
+  border-bottom-width: 2px;
+  border-radius: 5px;
+  background: var(--bg);
+  color: var(--ink);
+}

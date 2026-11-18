@@ -1,0 +1,11 @@
+# Automatically generated - DO NOT EDIT!
+
+[[permission]]
+identifier = "allow-zip-list"
+description = "Enables the zip_list command without any pre-configured scope."
+commands.allow = ["zip_list"]
+
+[[permission]]
+identifier = "deny-zip-list"
+description = "Denies the zip_list command without any pre-configured scope."
+commands.deny = ["zip_list"]

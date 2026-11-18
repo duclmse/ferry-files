@@ -296,3 +296,26 @@ pub struct MediaInfo {
     /// Seconds.
     pub duration: Option<f64>,
 }
+
+/// Raw bytes of a file, a piece at a time.
+#[derive(Clone, Debug, Deserialize)]
+pub struct Bytes {
+    pub bytes: Vec<u8>,
+    /// Where the next piece starts, when the file goes on.
+    pub next: Option<u64>,
+}
+
+/// An item in a ZIP file.
+#[derive(Clone, Debug, Deserialize)]
+pub struct Packed {
+    pub name: String,
+    pub size: u64,
+    pub dir: bool,
+}
+
+/// What's in a ZIP file: the first items, and how many there are in all.
+#[derive(Clone, Debug, Deserialize)]
+pub struct Listing {
+    pub items: Vec<Packed>,
+    pub total: u64,
+}

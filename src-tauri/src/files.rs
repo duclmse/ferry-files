@@ -288,6 +288,46 @@ pub(super) async fn media_info(state: State<'_, AppState>, src: Option<String>, 
     .await
 }
 
+/// Bytes of any file, for the hex view: `PEEK_MAX` from `start`.
+#[derive(Serialize)]
+pub(super) struct Bytes {
+    bytes: Vec<u8>,
+    next: Option<u64>,
+}
+
+#[tauri::command(rename_all = "snake_case")]
+pub(super) async fn peek_bytes(state: State<'_, AppState>, src: Option<String>, path: String, start: Option<u64>) -> Result<Bytes, String> {
+    let dev = state.source(src.as_deref())?;
+    let start = start.unwrap_or(0);
+    blocking(move || {
+        let mut bytes = dev.read_range(&path, start, PEEK_MAX + 1).map_err(msg)?;
+        let next = (bytes.len() as u64 > PEEK_MAX).then_some(start + PEEK_MAX);
+        bytes.truncate(PEEK_MAX as usize);
+        Ok(Bytes { bytes, next })
+    })
+    .await
+}
+
+/// What's in a ZIP file of `size` bytes, read from its end.
+#[tauri::command(rename_all = "snake_case")]
+pub(super) async fn zip_list(state: State<'_, AppState>, src: Option<String>, path: String, size: u64) -> Result<crate::archive::Listing, String> {
+    let dev = state.source(src.as_deref())?;
+    blocking(move || crate::archive::list(size, &mut |at, len| dev.read_range(&path, at, len).map_err(msg))).await
+}
+
+/// Puts text on the Mac's clipboard.
+#[tauri::command(rename_all = "snake_case")]
+pub(super) async fn copy_text(text: String) -> Result<(), String> {
+    blocking(move || {
+        use std::io::Write;
+        let mut p = std::process::Command::new("/usr/bin/pbcopy").stdin(std::process::Stdio::piped()).spawn().map_err(|e| e.to_string())?;
+        p.stdin.take().ok_or("No pbcopy input.")?.write_all(text.as_bytes()).map_err(|e| e.to_string())?;
+        let ok = p.wait().map_err(|e| e.to_string())?.success();
+        if ok { Ok(()) } else { Err("Couldn't copy.".into()) }
+    })
+    .await
+}
+
 #[cfg(test)]
 mod tests {
     #[test]

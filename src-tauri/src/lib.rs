@@ -1,4 +1,5 @@
 pub mod adb;
+pub mod archive;
 pub mod books;
 pub mod device;
 pub mod epub;
@@ -125,6 +126,9 @@ pub fn run() {
             files::read_text,
             files::peek_text,
             files::media_info,
+            files::peek_bytes,
+            files::zip_list,
+            files::copy_text,
             files::write_text,
             files::mkdir,
             files::remove,

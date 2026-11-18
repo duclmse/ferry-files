@@ -18,11 +18,20 @@ copied between them.
   and the length of videos and audio), videos and audio that play straight from the device
   without copying them first (GIF, HEIC, AVIF and SVG images too), and the
   text of text files, read a piece at a time as you scroll (up to 8 MB).
+  Pictures zoom (− and +, pinch, or double-click), drag around when zoomed, and
+  turn (⟲ ⟳); videos and audio skip back 10 s or ahead 10 or 30 s and play at
+  1×, 1.25×, 1.5× or 2×, and videos turn. ‹ and › (or ← and → in the list) go to
+  the previous and next picture, video or sound in the folder. PDFs (up to
+  64 MB) show in the preview, fonts (TTF, OTF, WOFF, WOFF2) as samples, and
+  ZIP, APK and JAR files as the list of what's in them (read from the end of the
+  file, without unpacking; the first 5000 items). Right-click a file for "Show
+  as text" or "Show as hex" (bytes, 16 to a line, up to 4 MB as you scroll).
 - Drag the edges to resize the sidebar, the two panes, the files beside the
   preview, the column view's columns and the list's columns; double-click an
   edge for its default width. The sizes are remembered.
 - Right-click a file or folder for open, Quick Look, download, copy (F5) or move
-  (F6) to the other pane, rename (F2, in place: Enter keeps it, Escape cancels), favourites and delete; right-click empty
+  (F6) to the other pane, rename (F2, in place: Enter keeps it, Escape cancels), favourites,
+  copy name, copy path and delete; right-click empty
   space for new folder, new file, upload, the books in the folder, sync to the
   other pane, favourites, refresh, the view options and the second pane. Each
   pane's status bar shows the folder's contents, the picked items and their
@@ -38,8 +47,12 @@ copied between them.
   to copy or ⌘ to move. Files dragged in from Finder are copied.
 - Sort by clicking the list's column headers (name, kind, date, size; folders
   first). The filter box in the pane's bar narrows the folder by name; Enter
-  searches all its subfolders too, and "Back to folder" ends the search. ⌘F goes
-  to the filter box.
+  searches all its subfolders too, and "Back to folder" ends the search. ⌘F, ⌘K
+  or / goes to the filter box, which offers the last 10 searches.
+- Click the empty part of the path above the files (or press ⌘L) to type a
+  path; Enter goes there, Escape cancels.
+- ? lists the keyboard shortcuts (also in Settings). Delete or ⌘⌫ deletes.
+- Settings: appearance (as the Mac, light or dark).
 - Space opens Quick Look (phone files are copied to the Mac first).
 - Favourites (sidebar): any folder on the Mac or a device, added from the
   right-click menu. Each pane remembers its last folder for each device and the

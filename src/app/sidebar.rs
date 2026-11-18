@@ -198,6 +198,19 @@ pub(super) fn Settings() -> impl IntoView {
         <div class="overlay" on:click=move |_| ctx.settings.set(false)>
             <div class="dialog" on:click=|e| e.stop_propagation()>
                 <h2>"Settings"</h2>
+                <label class="row">
+                    "Appearance"
+                    <select prop:value=move || ctx.theme.get() on:change=move |e| {
+                        let t = event_target_value(&e);
+                        apply_theme(&t);
+                        store(THEME_KEY, &t);
+                        ctx.theme.set(t);
+                    }>
+                        <option value="auto">"As the Mac"</option>
+                        <option value="light">"Light"</option>
+                        <option value="dark">"Dark"</option>
+                    </select>
+                </label>
                 <label class="check">
                     <input type="checkbox" prop:checked=move || ctx.show_hidden.get()
                         on:change=move |e| ctx.set_show_hidden(event_target_checked(&e))/>
@@ -220,8 +233,48 @@ pub(super) fn Settings() -> impl IntoView {
                 {folder("opened", "Opened phone files", "Copies made to open phone files in Mac apps. Changes to them don't go back to the phone.")}
                 {move || error.get().map(|e| view! { <p class="error">{e}</p> })}
                 <div class="actions">
+                    <button class="btn" on:click=move |_| { ctx.settings.set(false); ctx.help.set(true); }>"Keyboard shortcuts"</button>
                     <span class="grow"></span>
                     <button class="btn primary" on:click=move |_| ctx.settings.set(false)>"Done"</button>
+                </div>
+            </div>
+        </div>
+    }
+}
+
+/// The keyboard shortcuts, from ? or Settings.
+#[component]
+pub(super) fn Shortcuts() -> impl IntoView {
+    let ctx = expect_context::<Ctx>();
+    const KEYS: &[(&str, &str)] = &[
+        ("↑ ↓", "Move through the files"),
+        ("← →", "Previous or next picture, video or sound (list); left and right (thumbnails, columns)"),
+        ("↵ or ⌘↓", "Open"),
+        ("⌫ or ⌘↑", "Up a folder"),
+        ("Space", "Quick Look"),
+        ("/ or ⌘F or ⌘K", "Filter; Enter searches subfolders"),
+        ("⌘L", "Type a path"),
+        ("F2", "Rename"),
+        ("⌘⌫ or Delete", "Delete"),
+        ("F5 / F6", "Copy or move to the other pane"),
+        ("⌘A", "Pick everything"),
+        ("⌘-click, Shift-click", "Pick some"),
+        ("Esc", "Unpick, or close"),
+        ("Tab", "The other pane"),
+        ("⌘\\", "Show or hide the second pane"),
+        ("⌘S", "Save, in the editor"),
+        ("?", "This list"),
+    ];
+    view! {
+        <div class="overlay" on:click=move |_| ctx.help.set(false)>
+            <div class="dialog shortcuts" on:click=|e| e.stop_propagation()>
+                <h2>"Keyboard shortcuts"</h2>
+                <dl>
+                    {KEYS.iter().map(|(k, what)| view! { <dt><kbd>{*k}</kbd></dt><dd>{*what}</dd> }).collect_view()}
+                </dl>
+                <div class="actions">
+                    <span class="grow"></span>
+                    <button class="btn primary" on:click=move |_| ctx.help.set(false)>"Done"</button>
                 </div>
             </div>
         </div>

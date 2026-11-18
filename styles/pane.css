@@ -265,3 +265,25 @@ th.num {
   }
 
 }
+
+/* The path being typed in (click the empty part of the path, or ⌘L). */
+.crumbs {
+  cursor: text;
+}
+
+.crumbs button {
+  cursor: pointer;
+}
+
+.crumbs input.path {
+  flex: 1;
+  min-width: 0;
+  height: 26px;
+  padding: 0 8px;
+  border: 1px solid var(--accent);
+  border-radius: 6px;
+  background: var(--panel);
+  color: var(--ink);
+  font: inherit;
+  outline: none;
+}

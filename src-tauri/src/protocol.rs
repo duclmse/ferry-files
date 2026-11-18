@@ -157,6 +157,7 @@ fn media_type(path: &str) -> &'static str {
         "webp" => "image/webp",
         "heic" | "heif" => "image/heic",
         "bmp" => "image/bmp",
+        "avif" => "image/avif",
         "svg" => "image/svg+xml",
         "mp4" | "m4v" => "video/mp4",
         "mov" => "video/quicktime",
@@ -168,6 +169,10 @@ fn media_type(path: &str) -> &'static str {
         "flac" => "audio/flac",
         "ogg" | "oga" | "opus" => "audio/ogg",
         "pdf" => "application/pdf",
+        "ttf" => "font/ttf",
+        "otf" => "font/otf",
+        "woff" => "font/woff",
+        "woff2" => "font/woff2",
         _ => "application/octet-stream",
     }
 }

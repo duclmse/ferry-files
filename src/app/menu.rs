@@ -117,6 +117,12 @@ impl Ctx {
             let fav = if self.is_fav(p.src.get_untracked(), &e.path) { "Remove from Favourites" } else { "Add to Favourites" };
             v.push(item(fav, "", Act::Favourite));
         }
+        v.push(MenuItem::Sep);
+        if !e.dir {
+            v.push(item("Show as text", "", Act::ShowAs(PeekAs::Text)));
+            v.push(item("Show as hex", "", Act::ShowAs(PeekAs::Hex)));
+        }
+        v.extend([item("Copy name", "", Act::CopyName), item("Copy path", "", Act::CopyPath)]);
         v.extend([MenuItem::Sep, item("Refresh", "", Act::Refresh), MenuItem::Sep]);
         let label = if e.dir { "Delete folder if empty…" } else { "Delete…" };
         v.push(MenuItem::Do { label: label.into(), key: "⌘⌫", act: Act::Delete, danger: true, enabled: true });
@@ -145,6 +151,12 @@ impl Ctx {
             (Act::Refresh, _) => self.refresh(p),
             (Act::View(v), _) => self.set_view(p, v),
             (Act::Split, _) => self.set_split(!self.split.get_untracked()),
+            (Act::CopyName, Some(e)) => copy_text(p, e.name),
+            (Act::CopyPath, Some(e)) => copy_text(p, e.path),
+            (Act::ShowAs(how), Some(e)) => {
+                p.peek_as.set(Some((e.path, how)));
+                p.preview.set(true);
+            }
             _ => {}
         }
     }
@@ -174,4 +186,13 @@ pub(super) fn ContextMenu() -> impl IntoView {
             </div>
         }
     })
+}
+
+/// Puts `text` on the clipboard.
+fn copy_text(p: Pane, text: String) {
+    spawn_local(async move {
+        if let Err(e) = call::<()>("copy_text", json!({ "text": text })).await {
+            p.error(e);
+        }
+    });
 }

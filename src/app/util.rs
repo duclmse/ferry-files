@@ -172,6 +172,18 @@ pub(super) fn store(key: &str, value: &str) {
 }
 
 pub(super) const SPLIT_KEY: &str = "yomi-files.split";
+pub(super) const SEARCHES_KEY: &str = "yomi-files.searches";
+pub(super) const THEME_KEY: &str = "yomi-files.theme";
+
+/// Shows the app light, dark, or as the Mac is ("auto").
+pub(super) fn apply_theme(theme: &str) {
+    if let Some(root) = document().document_element() {
+        let _ = match theme {
+            "light" | "dark" => root.set_attribute("data-theme", theme),
+            _ => root.remove_attribute("data-theme"),
+        };
+    }
+}
 pub(super) const HIDDEN_KEY: &str = "yomi-files.hidden";
 pub(super) const PHONE_THUMBS_KEY: &str = "yomi-files.phone-thumbs";
 pub(super) const AUTO_CONNECT_KEY: &str = "yomi-files.auto-connect";

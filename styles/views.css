@@ -560,3 +560,160 @@ td.name input.rename {
   text-align: center;
   font-size: 12px;
 }
+
+/* Buttons under a picture or player: previous and next, zoom, turn, skip, speed. */
+.viewer-bar {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: center;
+  align-items: center;
+  gap: 4px;
+  width: 100%;
+}
+
+.viewer-bar .btn {
+  height: 26px;
+  padding: 0 8px;
+}
+
+.viewer-bar .zoom {
+  min-width: 52px;
+  justify-content: center;
+  font-variant-numeric: tabular-nums;
+}
+
+.viewer-bar .gap {
+  width: 6px;
+}
+
+.viewer-bar .seg button {
+  padding: 3px 8px;
+  color: var(--ink);
+}
+
+/* A picture that can be zoomed and turned: what goes past the edges is cut off. */
+.preview .pic.stage {
+  overflow: hidden;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.preview .pic.stage img.full {
+  transition: transform 0.12s ease-out;
+}
+
+.preview .pic.stage.zoomed {
+  cursor: grab;
+}
+
+.preview .pic.stage.zoomed:active {
+  cursor: grabbing;
+}
+
+.preview .pic.stage.zoomed img.full {
+  transition: none;
+}
+
+.preview video.play {
+  transition: transform 0.12s ease-out;
+}
+
+/* Bytes: offset, hex and text, so the lines can't wrap. */
+.preview .peek.hex pre {
+  white-space: pre;
+  word-break: normal;
+  font-size: 11px;
+}
+
+.preview iframe.pdf {
+  width: 100%;
+  height: 65vh;
+  border: 1px solid var(--line);
+  border-radius: 6px;
+  background: #fff;
+}
+
+.font-sample {
+  width: 100%;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  text-align: left;
+  overflow: hidden;
+}
+
+.font-sample .abc {
+  font-size: 18px;
+  line-height: 1.4;
+  word-break: break-all;
+}
+
+.font-sample .line {
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  line-height: 1.25;
+}
+
+.font-sample .px {
+  display: inline-block;
+  width: 24px;
+  margin-right: 6px;
+  font: 10px system-ui, sans-serif;
+  color: var(--muted);
+  vertical-align: middle;
+}
+
+/* What's in a ZIP. */
+.preview .zip {
+  width: 100%;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 4px;
+}
+
+.preview .zip-list {
+  width: 100%;
+  max-height: 55vh;
+  overflow: auto;
+  border: 1px solid var(--line);
+  border-radius: 6px;
+  background: var(--bg);
+}
+
+.preview .zip-list table {
+  width: 100%;
+  border-collapse: collapse;
+  table-layout: fixed;
+  font-size: 12px;
+  text-align: left;
+}
+
+.preview .zip-list td {
+  padding: 3px 8px;
+  border-bottom: 1px solid var(--line);
+}
+
+.preview .zip-list td.n {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.preview .zip-list td.s {
+  width: 76px;
+  text-align: right;
+  color: var(--muted);
+  font-variant-numeric: tabular-nums;
+}
+
+.preview .zip-list tr.dir td.n {
+  color: var(--muted);
+}
+
+.preview .zip .more {
+  color: var(--muted);
+  font-size: 11px;
+}

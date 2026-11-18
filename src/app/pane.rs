@@ -6,9 +6,17 @@ use super::*;
 pub(super) fn Crumbs(pane: Pane) -> impl IntoView {
     let ctx = expect_context::<Ctx>();
     let p = pane;
+    // A click on the empty part of the path (or ⌘L) turns it into a box to type a path in.
+    let edit = move |ev: web_sys::MouseEvent| {
+        if ev.target() == ev.current_target() {
+            p.editing_path.set(true);
+        }
+    };
     view! {
-        <div class="crumbs">
-            {move || {
+        <div class="crumbs" title="Click here or press ⌘L to type a path" on:click=edit>
+            {move || if p.editing_path.get() {
+                view! { <PathEdit pane=p/> }.into_any()
+            } else {
                 let cwd = p.cwd.get();
                 let mut acc = String::new();
                 let mut out = vec![view! { <button on:click=move |_| ctx.navigate(p, "/".into())>"/"</button> }.into_any()];
@@ -21,9 +29,46 @@ pub(super) fn Crumbs(pane: Pane) -> impl IntoView {
                     out.push(view! { <span class="sep">"/"</span> }.into_any());
                 }
                 out.pop_if(|_| cwd != "/");
-                out
+                out.into_any()
             }}
         </div>
+    }
+}
+
+/// The path as text: Enter goes there, Escape (or clicking away) leaves it as it was.
+#[component]
+fn PathEdit(pane: Pane) -> impl IntoView {
+    let ctx = expect_context::<Ctx>();
+    let p = pane;
+    let input = NodeRef::<html::Input>::new();
+    input.on_load(move |el| {
+        request_animation_frame(move || {
+            let _ = el.focus();
+            el.select();
+        });
+    });
+    let go = move || {
+        let typed = input.get_untracked().map(|el| el.value()).unwrap_or_default();
+        let typed = typed.trim();
+        p.editing_path.set(false);
+        let path = match typed.trim_end_matches('/') {
+            "" => "/".to_string(),
+            t if t.starts_with('/') => t.to_string(),
+            // Relative to the folder shown.
+            t => format!("{}/{t}", p.cwd.get_untracked().trim_end_matches('/')),
+        };
+        if path != p.cwd.get_untracked() {
+            ctx.navigate(p, path);
+        }
+    };
+    view! {
+        <input class="path" node_ref=input value=p.cwd.get_untracked() spellcheck="false" autocomplete="off"
+            on:keydown=move |ev| match ev.key().as_str() {
+                "Enter" => { ev.prevent_default(); go() }
+                "Escape" => { ev.prevent_default(); ev.stop_propagation(); p.editing_path.set(false) }
+                _ => {}
+            }
+            on:blur=move |_| p.editing_path.set(false)/>
     }
 }
 
@@ -217,8 +262,11 @@ pub(super) fn PaneView(pane: Pane) -> impl IntoView {
                     <svg class="filter-icon" viewBox="0 0 16 16" aria-hidden="true">
                         <circle cx="7" cy="7" r="4.5"/><path d="M10.5 10.5 14 14"/>
                     </svg>
-                    <input class="filter" type="search" placeholder="Filter" node_ref=filter_ref
-                        title="Show names containing this (⌘F). Enter searches subfolders too."
+                    <datalist id=format!("searches-{}", p.id)>
+                        {move || ctx.searches.get().into_iter().map(|q| view! { <option value=q></option> }).collect_view()}
+                    </datalist>
+                    <input class="filter" type="search" placeholder="Filter" node_ref=filter_ref list=format!("searches-{}", p.id)
+                        title="Show names containing this (⌘F or /). Enter searches subfolders too."
                         prop:value=move || p.filter.get()
                         on:input=move |ev| { p.filter.set(event_target_value(&ev)); p.arrange(); }
                         on:keydown=move |ev| match ev.key().as_str() {

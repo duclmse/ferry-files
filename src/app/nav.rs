@@ -88,6 +88,12 @@ impl Ctx {
         if query.is_empty() {
             return;
         }
+        self.searches.update(|v| {
+            v.retain(|q| *q != query);
+            v.insert(0, query.clone());
+            v.truncate(10);
+            store(SEARCHES_KEY, &serde_json::to_string(v).unwrap_or_default());
+        });
         let (src, dir) = (p.src.get_untracked(), p.cwd.get_untracked());
         p.loading.set(true);
         spawn_local(async move {
