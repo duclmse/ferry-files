@@ -2,22 +2,30 @@
 
 use crate::device::{basename, dirname, err, join, DevError, Entry, Result, Transport};
 use std::path::PathBuf;
-use std::process::{Command, Stdio};
+use std::process::Stdio;
 
-/// Apps started from Finder don't get the shell's PATH, so look in the usual places too.
+/// Apps started from the Finder (or a desktop menu) don't get the shell's PATH, so look where the
+/// Android SDK and package managers put adb too.
 pub fn adb_path() -> Option<PathBuf> {
+    let exe = format!("adb{}", std::env::consts::EXE_SUFFIX);
     let home = dirs::home_dir().unwrap_or_default();
-    let mut candidates: Vec<PathBuf> = Vec::new();
-    for var in ["ANDROID_HOME", "ANDROID_SDK_ROOT"] {
-        if let Ok(v) = std::env::var(var) {
-            candidates.push(PathBuf::from(v).join("platform-tools/adb"));
-        }
+    let mut sdks: Vec<PathBuf> = ["ANDROID_HOME", "ANDROID_SDK_ROOT"].iter().filter_map(|v| std::env::var_os(v)).map(PathBuf::from).collect();
+    let mut bins: Vec<PathBuf> = Vec::new();
+    if cfg!(target_os = "macos") {
+        sdks.push(home.join("Library/Android/sdk"));
+        bins.extend(["/opt/homebrew/bin", "/usr/local/bin"].map(PathBuf::from));
+    } else if cfg!(windows) {
+        sdks.extend(dirs::data_local_dir().map(|d| d.join("Android").join("Sdk")));
+        // Scoop's shims.
+        bins.push(home.join("scoop").join("shims"));
+    } else {
+        sdks.push(home.join("Android/Sdk"));
+        bins.extend(["/usr/bin", "/usr/local/bin", "/snap/bin"].map(PathBuf::from));
     }
-    candidates.push(home.join("Library/Android/sdk/platform-tools/adb"));
-    candidates.push("/opt/homebrew/bin/adb".into());
-    candidates.push("/usr/local/bin/adb".into());
-    if let Ok(path) = std::env::var("PATH") {
-        candidates.extend(std::env::split_paths(&path).map(|p| p.join("adb")));
+    let mut candidates: Vec<PathBuf> = sdks.into_iter().map(|s| s.join("platform-tools").join(&exe)).collect();
+    candidates.extend(bins.into_iter().map(|b| b.join(&exe)));
+    if let Some(path) = std::env::var_os("PATH") {
+        candidates.extend(std::env::split_paths(&path).map(|p| p.join(&exe)));
     }
     candidates.into_iter().find(|p| p.is_file())
 }
@@ -25,7 +33,7 @@ pub fn adb_path() -> Option<PathBuf> {
 /// Devices ready for adb, as (serial, model), the model from `adb devices -l` ("Pixel 7").
 pub fn ready_devices() -> Vec<(String, String)> {
     let Some(adb) = adb_path() else { return vec![] };
-    let Ok(out) = Command::new(adb).args(["devices", "-l"]).stdin(Stdio::null()).output() else { return vec![] };
+    let Ok(out) = crate::platform::command(adb).args(["devices", "-l"]).stdin(Stdio::null()).output() else { return vec![] };
     String::from_utf8_lossy(&out.stdout)
         .lines()
         .skip(1)
@@ -42,10 +50,10 @@ pub fn ready_devices() -> Vec<(String, String)> {
         .collect()
 }
 
-/// Serials of devices that adb sees but can't use yet: the phone hasn't allowed this Mac.
+/// Serials of devices that adb sees but can't use yet: the phone hasn't allowed this computer.
 pub fn unauthorized() -> Vec<String> {
     let Some(adb) = adb_path() else { return vec![] };
-    let Ok(out) = Command::new(adb).arg("devices").stdin(Stdio::null()).output() else { return vec![] };
+    let Ok(out) = crate::platform::command(adb).arg("devices").stdin(Stdio::null()).output() else { return vec![] };
     String::from_utf8_lossy(&out.stdout)
         .lines()
         .skip(1)
@@ -55,7 +63,7 @@ pub fn unauthorized() -> Vec<String> {
 
 pub fn ready_serials() -> Vec<String> {
     let Some(adb) = adb_path() else { return vec![] };
-    let Ok(out) = Command::new(adb).arg("devices").stdin(Stdio::null()).output() else { return vec![] };
+    let Ok(out) = crate::platform::command(adb).arg("devices").stdin(Stdio::null()).output() else { return vec![] };
     String::from_utf8_lossy(&out.stdout)
         .lines()
         .skip(1)
@@ -96,7 +104,7 @@ impl Adb {
     }
 
     fn run(&self, args: &[&str]) -> Result<Vec<u8>> {
-        let mut cmd = Command::new(&self.adb);
+        let mut cmd = crate::platform::command(&self.adb);
         if let Some(s) = &self.serial {
             cmd.args(["-s", s]);
         }
@@ -235,8 +243,8 @@ impl Transport for Adb {
 
     fn space(&self) -> Vec<crate::device::Space> {
         let out = self.shell("df -k /sdcard 2>/dev/null").unwrap_or_default();
-        crate::local::parse_df(&out)
-            .map(|(free, total)| vec![crate::device::Space { name: "Storage".into(), free, total }])
+        crate::platform::parse_df(&out)
+            .map(|(free, total)| vec![crate::device::Space { name: "Storage".into(), free, total, path: "/".into() }])
             .unwrap_or_default()
     }
 }

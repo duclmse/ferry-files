@@ -1,4 +1,4 @@
-//! Devices: finding them on USB and the Mac’s disks, connecting and disconnecting.
+//! Devices: finding them on USB and the computer’s disks, connecting and disconnecting.
 
 use super::*;
 
@@ -21,9 +21,9 @@ pub(super) struct Devices {
     found: Vec<Found>,
     adb_found: bool,
     mtp_error: Option<String>,
-    /// A phone is on USB with adb but hasn't allowed this Mac yet.
+    /// A phone is on USB with adb but hasn't allowed this computer yet.
     adb_waiting: bool,
-    /// Disks mounted on the Mac (USB drives, SD cards, disk images), as (name, path).
+    /// Disks mounted on the computer (USB drives, SD cards, disk images), as (name, path).
     drives: Vec<(String, String)>,
 }
 
@@ -49,35 +49,16 @@ pub(super) fn info_of(id: &str, c: Option<&Conn>, d: &Device) -> Info {
         transport: d.kind(),
         default_dir: d.default_dir(),
         quick_dirs: d.quick_dirs(),
-        backup_dir: device::backup_dir().display().to_string(),
+        backup_dir: crate::platform::app_path(&device::backup_dir()),
     }
 }
 
-/// Mounted disks other than the Mac's own startup disk.
+/// Disks other than the one the system is on.
 pub(super) fn drives() -> Vec<(String, String)> {
-    let root = std::fs::canonicalize("/").ok();
-    let mut out: Vec<(String, String)> = std::fs::read_dir("/Volumes")
-        .into_iter()
-        .flatten()
-        .flatten()
-        .filter_map(|e| {
-            let name = e.file_name().to_string_lossy().into_owned();
-            if name.starts_with('.') || name.starts_with("com.apple.") {
-                return None;
-            }
-            let path = e.path();
-            // The startup disk shows in /Volumes as a link to "/".
-            if std::fs::canonicalize(&path).ok() == root || !path.is_dir() {
-                return None;
-            }
-            Some((name, path.display().to_string()))
-        })
-        .collect();
-    out.sort();
-    out
+    crate::platform::drives()
 }
 
-/// Devices on USB that aren't connected yet, and the Mac's mounted disks.
+/// Devices on USB that aren't connected yet, and the computer's mounted disks.
 #[tauri::command(rename_all = "snake_case")]
 pub(super) async fn devices(state: State<'_, AppState>) -> Result<Devices, String> {
     // A connected phone can still show here the other way (same serial), so the app can offer to
@@ -96,11 +77,10 @@ pub(super) async fn devices(state: State<'_, AppState>) -> Result<Devices, Strin
             .collect();
         let mtp_error = match mtp::detect() {
             Ok(v) => {
-                let usb = if v.is_empty() { vec![] } else { usb::list() };
                 found.extend(v.into_iter().map(|d| Found {
                     usb: format!("mtp:{}", d.location),
                     transport: "mtp",
-                    serial: usb::serial_of(&usb, d.bus, d.devnum, d.vendor_id, d.product_id),
+                    serial: d.serial,
                     which: d.location,
                     name: d.name,
                 }));
@@ -177,7 +157,7 @@ mod tests {
         let root = std::fs::canonicalize("/").unwrap();
         for (name, path) in super::drives() {
             assert!(!name.starts_with('.'), "{name}");
-            assert_ne!(std::fs::canonicalize(&path).unwrap(), root, "{path}");
+            assert_ne!(std::fs::canonicalize(crate::platform::native(&path)).unwrap(), root, "{path}");
         }
     }
 }

@@ -444,7 +444,7 @@ pub(super) fn Column(pane: Pane, dir: String, chain: Memo<Vec<String>>, width: R
                     let (e1, e2) = (e.clone(), e.clone());
                     let dir = dir.clone();
                     let click = move |ev: web_sys::MouseEvent| {
-                        if current.get_untracked() && (ev.meta_key() || ev.shift_key()) {
+                        if current.get_untracked() && (crate::os::cmd(ev.meta_key(), ev.ctrl_key()) || ev.shift_key()) {
                             p.click(&ev, &e1.path);
                         } else if e1.dir {
                             ctx.navigate(p, e1.path.clone());

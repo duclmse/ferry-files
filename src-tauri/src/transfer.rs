@@ -318,7 +318,7 @@ mod tests {
         fs::write(src.join("book/inner/b.txt"), b"bb").unwrap();
         fs::write(dst.join("book/a.txt"), b"old").unwrap();
         let mac = crate::Device::new(Box::new(crate::local::Local));
-        let s = |p: &std::path::Path| p.display().to_string();
+        let s = |p: &std::path::Path| crate::platform::app_path(p);
         let stop = std::sync::atomic::AtomicBool::new(false);
         let paths = [s(&src.join("book"))];
         let r = super::run_transfer(&mac, &mac, true, 1, &paths, &s(&dst), false, &stop, |_| {}).unwrap();
@@ -361,7 +361,7 @@ mod tests {
         fs::write(a.join(".hid"), b"").unwrap();
         fs::write(b.join("x/only-b.txt"), b"").unwrap();
         let mac = crate::Device::new(Box::new(crate::local::Local));
-        let s = |p: &std::path::Path| p.display().to_string();
+        let s = |p: &std::path::Path| crate::platform::app_path(p);
         let mut c = super::Comparison::default();
         super::compare_dirs(&mac, &s(&a), &mac, &s(&b), "", false, &mut c).unwrap();
         let mut missing: Vec<_> = c.missing.iter().map(|i| i.to.strip_prefix(&s(&b)).unwrap().to_string()).collect();

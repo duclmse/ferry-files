@@ -1,6 +1,7 @@
 mod api;
 mod app;
 mod epub;
+mod os;
 
 fn main() {
     console_error_panic_hook::set_once();

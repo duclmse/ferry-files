@@ -1,0 +1,673 @@
+//! MTP transport on Windows, over Windows Portable Devices (WPD): Windows has its own MTP driver,
+//! so phones work without libmtp or a driver swap. Same paths and API as `mtp.rs`:
+//! /<storage description>/<folders...>/<file>, e.g. "/Internal storage/Download".
+//!
+//! WPD objects are COM objects. Every call here first makes sure COM is set up on the calling
+//! thread (multithreaded), and the device is only used under its lock.
+
+use crate::device::{basename, dirname, err, join, DevError, Entry, Result, Space, Transport};
+use std::collections::HashMap;
+use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::Mutex;
+use std::time::{Duration, Instant};
+use windows::core::{GUID, HSTRING, PWSTR};
+use windows::Win32::Devices::PortableDevices::*;
+use windows::Win32::Foundation::PROPERTYKEY;
+use windows::Win32::System::Com::StructuredStorage::{PropVariantClear, PROPVARIANT};
+use windows::Win32::System::Com::{
+    CoCreateInstance, CoInitializeEx, CoTaskMemFree, IStream, CLSCTX_INPROC_SERVER, COINIT_MULTITHREADED, STGC_DEFAULT,
+    STGM_READ,
+};
+use windows::Win32::System::Variant::VT_DATE;
+
+const CACHE_TTL: Duration = Duration::from_secs(3);
+/// The device itself, whose children are the storages.
+const DEVICE: &str = "DEVICE";
+
+pub const MTP_HINT: &str = "Check that the phone is unlocked, connected with a data cable, and set to \
+\"File transfer\" (USB notification on the phone). If it still isn't found, unplug it and plug it in again.";
+
+static QUITTING: AtomicBool = AtomicBool::new(false);
+
+/// Stops the file copies under way, for quitting.
+pub fn stop_copies() {
+    QUITTING.store(true, Ordering::Relaxed);
+}
+
+fn com() {
+    thread_local!(static READY: std::cell::Cell<bool> = const { std::cell::Cell::new(false) });
+    READY.with(|r| {
+        if !r.get() {
+            // Fails harmlessly when the thread already has COM set up another way.
+            let _ = unsafe { CoInitializeEx(None, COINIT_MULTITHREADED) };
+            r.set(true);
+        }
+    });
+}
+
+fn werr(what: &str, e: windows::core::Error) -> DevError {
+    DevError::Msg(format!("{what}: {}", e.message()))
+}
+
+/// A string WPD allocated, as a String; frees it.
+fn take(p: PWSTR) -> String {
+    if p.is_null() {
+        return String::new();
+    }
+    let s = unsafe { p.to_string() }.unwrap_or_default();
+    unsafe { CoTaskMemFree(Some(p.0 as *const _)) };
+    s
+}
+
+fn create<T: windows::core::Interface>(class: &GUID) -> Result<T> {
+    unsafe { CoCreateInstance(class, None, CLSCTX_INPROC_SERVER) }.map_err(|e| werr("Windows Portable Devices isn't available", e))
+}
+
+/// An MTP device on USB, not opened.
+pub struct Detected {
+    /// The device's Plug and Play ID: what `open` takes.
+    pub location: String,
+    pub name: String,
+    /// The USB serial number, which adb shows too: tells that both are the same phone.
+    pub serial: Option<String>,
+}
+
+/// The USB serial in a Plug and Play ID, `\\?\usb#vid_18d1&pid_4ee1#SERIAL#{guid}`. A phone that is
+/// also an adb device shows an interface ID there instead (with '&'), which isn't the serial.
+fn serial_in(pnp: &str) -> Option<String> {
+    let lower = pnp.to_ascii_lowercase();
+    if !lower.contains("usb#vid_") {
+        return None;
+    }
+    let part = pnp.split('#').nth(2)?;
+    (!part.is_empty() && !part.contains('&')).then(|| part.to_string())
+}
+
+/// MTP devices on USB, without opening them. USB drives also show up in WPD; they are left out
+/// (they're listed as drives).
+pub fn detect() -> Result<Vec<Detected>> {
+    com();
+    let manager: IPortableDeviceManager = create(&PortableDeviceManager)?;
+    let ids = unsafe {
+        let _ = manager.RefreshDeviceList();
+        let mut n = 0u32;
+        manager.GetDevices(std::ptr::null_mut(), &mut n).map_err(|e| werr("Couldn't list devices", e))?;
+        let mut raw = vec![PWSTR::null(); n as usize];
+        if n > 0 {
+            manager.GetDevices(raw.as_mut_ptr(), &mut n).map_err(|e| werr("Couldn't list devices", e))?;
+        }
+        raw.truncate(n as usize);
+        raw.into_iter().map(take).collect::<Vec<_>>()
+    };
+    Ok(ids
+        .into_iter()
+        .filter(|id| id.to_ascii_lowercase().contains("usb#vid_"))
+        .map(|id| {
+            let name = friendly_name(&manager, &id).unwrap_or_else(|| "MTP device".into());
+            Detected { serial: serial_in(&id), location: id, name }
+        })
+        .collect())
+}
+
+fn friendly_name(manager: &IPortableDeviceManager, id: &str) -> Option<String> {
+    let id = HSTRING::from(id);
+    let mut len = 0u32;
+    unsafe { manager.GetDeviceFriendlyName(&id, PWSTR::null(), &mut len) }.ok()?;
+    if len == 0 {
+        return None;
+    }
+    let mut buf = vec![0u16; len as usize];
+    unsafe { manager.GetDeviceFriendlyName(&id, PWSTR(buf.as_mut_ptr()), &mut len) }.ok()?;
+    let s = String::from_utf16_lossy(&buf[..buf.iter().position(|&c| c == 0).unwrap_or(buf.len())]);
+    (!s.trim().is_empty()).then(|| s.trim().to_string())
+}
+
+#[derive(Clone)]
+struct Child {
+    id: String,
+    name: String,
+    dir: bool,
+    size: u64,
+    mtime: i64,
+}
+
+#[derive(Clone)]
+struct Node {
+    /// The storage's object ID; None for "/".
+    storage: Option<String>,
+    id: String,
+    dir: bool,
+    size: u64,
+    mtime: i64,
+    name: String,
+    path: String,
+}
+
+/// The device's COM objects. They are made free-threaded (PortableDeviceFTM), so they can be used
+/// from any thread with COM set up, one at a time (the lock in `Wpd`).
+struct Link {
+    device: IPortableDevice,
+    content: IPortableDeviceContent,
+    props: IPortableDeviceProperties,
+}
+
+unsafe impl Send for Link {}
+
+impl Drop for Link {
+    fn drop(&mut self) {
+        com();
+        let _ = unsafe { self.device.Close() };
+    }
+}
+
+fn keys(list: &[PROPERTYKEY]) -> Result<IPortableDeviceKeyCollection> {
+    let keys: IPortableDeviceKeyCollection = create(&PortableDeviceKeyCollection)?;
+    for k in list {
+        unsafe { keys.Add(k) }.map_err(|e| werr("Couldn't ask for properties", e))?;
+    }
+    Ok(keys)
+}
+
+fn string(v: &IPortableDeviceValues, key: &PROPERTYKEY) -> Option<String> {
+    unsafe { v.GetStringValue(key) }.ok().map(take).filter(|s| !s.is_empty())
+}
+
+/// An OLE date (days since 30 December 1899) in seconds since 1970.
+fn ole_date(v: &IPortableDeviceValues, key: &PROPERTYKEY) -> i64 {
+    let Ok(mut pv) = (unsafe { v.GetValue(key) }) else { return 0 };
+    let secs = unsafe {
+        let inner = &pv.Anonymous.Anonymous;
+        if inner.vt == VT_DATE { ((inner.Anonymous.date - 25569.0) * 86400.0) as i64 } else { 0 }
+    };
+    let _ = unsafe { PropVariantClear(&mut pv) };
+    secs
+}
+
+impl Link {
+    fn values(&self) -> Result<IPortableDeviceValues> {
+        create(&PortableDeviceValues)
+    }
+
+    fn get(&self, id: &str, list: &[PROPERTYKEY]) -> Result<IPortableDeviceValues> {
+        unsafe { self.props.GetValues(&HSTRING::from(id), &keys(list)?) }.map_err(|e| werr("Couldn't read from the device", e))
+    }
+
+    fn ids(&self, parent: &str) -> Result<Vec<String>> {
+        let found = unsafe { self.content.EnumObjects(0, &HSTRING::from(parent), None) }
+            .map_err(|e| werr("Couldn't list the folder", e))?;
+        let mut out = vec![];
+        loop {
+            let mut batch = [PWSTR::null(); 64];
+            let mut n = 0u32;
+            let hr = unsafe { found.Next(&mut batch, &mut n) };
+            out.extend(batch[..n as usize].iter().map(|p| take(*p)));
+            if hr.is_err() {
+                return Err(werr("Couldn't list the folder", hr.into()));
+            }
+            if n == 0 || hr.0 == 1 {
+                // S_FALSE: that was the last of them.
+                return Ok(out);
+            }
+        }
+    }
+
+    fn children(&self, parent: &str) -> Vec<Child> {
+        let Ok(ids) = self.ids(parent) else { return vec![] };
+        let want = [WPD_OBJECT_ORIGINAL_FILE_NAME, WPD_OBJECT_NAME, WPD_OBJECT_CONTENT_TYPE, WPD_OBJECT_SIZE, WPD_OBJECT_DATE_MODIFIED];
+        ids.into_iter()
+            .filter_map(|id| {
+                let v = self.get(&id, &want).ok()?;
+                let name = string(&v, &WPD_OBJECT_ORIGINAL_FILE_NAME).or_else(|| string(&v, &WPD_OBJECT_NAME))?;
+                let kind = unsafe { v.GetGuidValue(&WPD_OBJECT_CONTENT_TYPE) }.unwrap_or_default();
+                let dir = kind == WPD_CONTENT_TYPE_FOLDER || kind == WPD_CONTENT_TYPE_FUNCTIONAL_OBJECT;
+                let size = if dir { 0 } else { unsafe { v.GetUnsignedLargeIntegerValue(&WPD_OBJECT_SIZE) }.unwrap_or(0) };
+                Some(Child { name: name.replace('/', "_"), dir, size, mtime: ole_date(&v, &WPD_OBJECT_DATE_MODIFIED), id })
+            })
+            .collect()
+    }
+
+    fn stream(&self, id: &str) -> Result<IStream> {
+        let res = unsafe { self.content.Transfer() }.map_err(|e| werr("Couldn't read from the device", e))?;
+        let mut size = 0u32;
+        let mut stream = None;
+        unsafe { res.GetStream(&HSTRING::from(id), &WPD_RESOURCE_DEFAULT, STGM_READ.0, &mut size, &mut stream) }
+            .map_err(|e| werr("Couldn't read the file", e))?;
+        stream.ok_or_else(|| DevError::Msg("The device sent no data.".into()))
+    }
+
+    /// Reads a stream to the end, into `out`.
+    fn drain(stream: &IStream, out: &mut impl std::io::Write) -> Result<()> {
+        let mut buf = vec![0u8; 256 * 1024];
+        loop {
+            if QUITTING.load(Ordering::Relaxed) {
+                return err("Stopped: the app is quitting.");
+            }
+            let mut n = 0u32;
+            let hr = unsafe { stream.Read(buf.as_mut_ptr().cast(), buf.len() as u32, Some(&mut n)) };
+            if hr.is_err() {
+                return Err(werr("Couldn't read the file", hr.into()));
+            }
+            if n == 0 {
+                return Ok(());
+            }
+            out.write_all(&buf[..n as usize]).map_err(|e| DevError::Msg(e.to_string()))?;
+        }
+    }
+
+    fn download(&self, id: &str) -> Result<Vec<u8>> {
+        let mut out = vec![];
+        Self::drain(&self.stream(id)?, &mut out)?;
+        Ok(out)
+    }
+
+    fn download_to(&self, id: &str, to: &std::path::Path) -> Result<()> {
+        let mut f = std::fs::File::create(to).map_err(|e| DevError::Msg(e.to_string()))?;
+        Self::drain(&self.stream(id)?, &mut f)
+    }
+
+    fn upload(&self, data: &[u8], name: &str, parent: &str) -> Result<String> {
+        let v = self.values()?;
+        let name_w = HSTRING::from(name);
+        unsafe {
+            v.SetStringValue(&WPD_OBJECT_PARENT_ID, &HSTRING::from(parent)).map_err(|e| werr("Couldn't send the file", e))?;
+            v.SetStringValue(&WPD_OBJECT_NAME, &name_w).map_err(|e| werr("Couldn't send the file", e))?;
+            v.SetStringValue(&WPD_OBJECT_ORIGINAL_FILE_NAME, &name_w).map_err(|e| werr("Couldn't send the file", e))?;
+            v.SetUnsignedLargeIntegerValue(&WPD_OBJECT_SIZE, data.len() as u64).map_err(|e| werr("Couldn't send the file", e))?;
+            v.SetGuidValue(&WPD_OBJECT_FORMAT, &WPD_OBJECT_FORMAT_UNSPECIFIED).map_err(|e| werr("Couldn't send the file", e))?;
+            v.SetGuidValue(&WPD_OBJECT_CONTENT_TYPE, &WPD_CONTENT_TYPE_GENERIC_FILE).map_err(|e| werr("Couldn't send the file", e))?;
+        }
+        let mut stream: Option<IStream> = None;
+        let mut chunk = 0u32;
+        unsafe { self.content.CreateObjectWithPropertiesAndData(&v, &mut stream, &mut chunk, std::ptr::null_mut()) }
+            .map_err(|e| werr(&format!("The device didn't take {name}"), e))?;
+        let stream = stream.ok_or_else(|| DevError::Msg(format!("The device didn't take {name}.")))?;
+        let chunk = (chunk as usize).clamp(16 * 1024, 1024 * 1024);
+        for piece in data.chunks(chunk) {
+            // Not committing drops the new file.
+            if QUITTING.load(Ordering::Relaxed) {
+                return err("Stopped: the app is quitting.");
+            }
+            let mut n = 0u32;
+            let hr = unsafe { stream.Write(piece.as_ptr().cast(), piece.len() as u32, Some(&mut n)) };
+            if hr.is_err() || n as usize != piece.len() {
+                return Err(werr(&format!("Couldn't send {name}"), hr.into()));
+            }
+        }
+        unsafe { stream.Commit(STGC_DEFAULT) }.map_err(|e| werr(&format!("Couldn't send {name}"), e))?;
+        use windows::core::Interface;
+        let data_stream: IPortableDeviceDataStream = stream.cast().map_err(|e| werr("Couldn't send the file", e))?;
+        Ok(take(unsafe { data_stream.GetObjectID() }.map_err(|e| werr("Couldn't send the file", e))?))
+    }
+
+    fn delete(&self, id: &str) -> Result<()> {
+        // The object ID as a PROPVARIANT string, made by WPD itself so it frees it right.
+        let v = self.values()?;
+        let list: IPortableDevicePropVariantCollection = create(&PortableDevicePropVariantCollection)?;
+        unsafe {
+            v.SetStringValue(&WPD_OBJECT_ID, &HSTRING::from(id)).map_err(|e| werr("Couldn't delete", e))?;
+            let mut pv: PROPVARIANT = v.GetValue(&WPD_OBJECT_ID).map_err(|e| werr("Couldn't delete", e))?;
+            let added = list.Add(&pv);
+            let _ = PropVariantClear(&mut pv);
+            added.map_err(|e| werr("Couldn't delete", e))?;
+            self.content
+                .Delete(PORTABLE_DEVICE_DELETE_NO_RECURSION.0 as u32, &list, std::ptr::null_mut())
+                .map_err(|e| werr("The device didn't delete it", e))
+        }
+    }
+
+    fn rename(&self, id: &str, name: &str) -> Result<()> {
+        let v = self.values()?;
+        let name_w = HSTRING::from(name);
+        unsafe {
+            v.SetStringValue(&WPD_OBJECT_ORIGINAL_FILE_NAME, &name_w).map_err(|e| werr("Couldn't rename", e))?;
+            self.props.SetValues(&HSTRING::from(id), &v).map_err(|e| werr("The device didn't rename it", e))?;
+            // The name shown is a separate property on some devices; it doesn't matter if it fails.
+            let shown = self.values()?;
+            if shown.SetStringValue(&WPD_OBJECT_NAME, &name_w).is_ok() {
+                let _ = self.props.SetValues(&HSTRING::from(id), &shown);
+            }
+        }
+        Ok(())
+    }
+
+    fn mkdir(&self, name: &str, parent: &str) -> Result<()> {
+        let v = self.values()?;
+        let name_w = HSTRING::from(name);
+        let mut id = PWSTR::null();
+        unsafe {
+            v.SetStringValue(&WPD_OBJECT_PARENT_ID, &HSTRING::from(parent)).map_err(|e| werr("Couldn't make the folder", e))?;
+            v.SetStringValue(&WPD_OBJECT_NAME, &name_w).map_err(|e| werr("Couldn't make the folder", e))?;
+            v.SetStringValue(&WPD_OBJECT_ORIGINAL_FILE_NAME, &name_w).map_err(|e| werr("Couldn't make the folder", e))?;
+            v.SetGuidValue(&WPD_OBJECT_CONTENT_TYPE, &WPD_CONTENT_TYPE_FOLDER).map_err(|e| werr("Couldn't make the folder", e))?;
+            v.SetGuidValue(&WPD_OBJECT_FORMAT, &WPD_OBJECT_FORMAT_PROPERTIES_ONLY).map_err(|e| werr("Couldn't make the folder", e))?;
+            self.content.CreateObjectWithPropertiesOnly(&v, &mut id).map_err(|e| werr(&format!("The device didn't make {name}"), e))?;
+        }
+        take(id);
+        Ok(())
+    }
+
+    /// Each storage: its object ID and description.
+    fn storages(&self) -> Result<Vec<(String, String)>> {
+        let mut out = vec![];
+        for id in self.ids(DEVICE)? {
+            let Ok(v) = self.get(&id, &[WPD_FUNCTIONAL_OBJECT_CATEGORY, WPD_STORAGE_DESCRIPTION, WPD_OBJECT_NAME]) else { continue };
+            if unsafe { v.GetGuidValue(&WPD_FUNCTIONAL_OBJECT_CATEGORY) }.ok() != Some(WPD_FUNCTIONAL_CATEGORY_STORAGE) {
+                continue;
+            }
+            let desc = string(&v, &WPD_STORAGE_DESCRIPTION).or_else(|| string(&v, &WPD_OBJECT_NAME)).unwrap_or_default();
+            out.push((id, desc));
+        }
+        Ok(out)
+    }
+}
+
+fn temp_name(name: &str) -> String {
+    format!(".{name}.ferry-tmp")
+}
+
+struct Inner {
+    link: Link,
+    cache: HashMap<String, (Instant, Vec<Child>)>,
+}
+
+impl Inner {
+    fn children(&mut self, parent: &str) -> Vec<Child> {
+        if let Some((at, kids)) = self.cache.get(parent) {
+            if at.elapsed() < CACHE_TTL {
+                return kids.clone();
+            }
+        }
+        let kids = self.link.children(parent);
+        self.cache.insert(parent.to_string(), (Instant::now(), kids.clone()));
+        kids
+    }
+
+    fn invalidate(&mut self, parent: &str) {
+        self.cache.remove(parent);
+    }
+}
+
+pub struct Wpd {
+    inner: Mutex<Inner>,
+    /// (name in paths, object ID)
+    storages: Vec<(String, String)>,
+    model: String,
+}
+
+/// The name the rest of the app knows the MTP transport by.
+pub type Mtp = Wpd;
+
+impl Wpd {
+    /// Opens the MTP device with Plug and Play ID `location` (from `detect`), or the first one.
+    pub fn open(location: Option<&str>) -> Result<Wpd> {
+        com();
+        let found = detect()?;
+        let dev = match location {
+            Some(loc) => found.into_iter().find(|d| d.location == loc),
+            None => found.into_iter().next(),
+        };
+        let Some(dev) = dev else {
+            return err(format!("No MTP device found. {MTP_HINT}"));
+        };
+        let client = create::<IPortableDeviceValues>(&PortableDeviceValues)?;
+        let device: IPortableDevice = create(&PortableDeviceFTM)?;
+        unsafe {
+            let _ = client.SetStringValue(&WPD_CLIENT_NAME, &HSTRING::from("Ferry Files"));
+            let _ = client.SetUnsignedIntegerValue(&WPD_CLIENT_MAJOR_VERSION, 1);
+            let _ = client.SetUnsignedIntegerValue(&WPD_CLIENT_MINOR_VERSION, 0);
+            let _ = client.SetUnsignedIntegerValue(&WPD_CLIENT_REVISION, 0);
+            device.Open(&HSTRING::from(dev.location.as_str()), &client).map_err(|e| werr(&format!("Couldn't open {}. {MTP_HINT}", dev.name), e))?;
+        }
+        let content = unsafe { device.Content() }.map_err(|e| werr("Couldn't read the device", e))?;
+        let props = unsafe { content.Properties() }.map_err(|e| werr("Couldn't read the device", e))?;
+        let link = Link { device, content, props };
+        let mut storages: Vec<(String, String)> = Vec::new();
+        for (id, desc) in link.storages()? {
+            let base = if desc.is_empty() { "Storage".to_string() } else { desc.replace('/', "_") };
+            let mut name = base.clone();
+            let mut n = 2;
+            while storages.iter().any(|(x, _)| *x == name) {
+                name = format!("{base} ({n})");
+                n += 1;
+            }
+            storages.push((name, id));
+        }
+        if storages.is_empty() {
+            return err("The device shows no storage. Unlock the phone and choose \"File transfer\".");
+        }
+        Ok(Wpd { inner: Mutex::new(Inner { link, cache: HashMap::new() }), storages, model: dev.name })
+    }
+
+    fn inner(&self) -> std::sync::MutexGuard<'_, Inner> {
+        com();
+        self.inner.lock().unwrap_or_else(|e| e.into_inner())
+    }
+
+    fn resolve(&self, inner: &mut Inner, path: &str) -> Option<Node> {
+        let parts: Vec<&str> = path.split('/').filter(|p| !p.is_empty()).collect();
+        let Some(first) = parts.first() else {
+            return Some(Node { storage: None, id: DEVICE.into(), dir: true, size: 0, mtime: 0, name: "/".into(), path: "/".into() });
+        };
+        let sid = self.storages.iter().find(|(n, _)| n == first).map(|(_, id)| id.clone())?;
+        let mut node = Node { storage: Some(sid.clone()), id: sid.clone(), dir: true, size: 0, mtime: 0, name: first.to_string(), path: format!("/{first}") };
+        for seg in &parts[1..] {
+            if !node.dir {
+                return None;
+            }
+            let kid = inner.children(&node.id).into_iter().find(|k| k.name == *seg)?;
+            node = Node { storage: Some(sid.clone()), id: kid.id, dir: kid.dir, size: kid.size, mtime: kid.mtime, path: join(&node.path, seg), name: kid.name };
+        }
+        Some(node)
+    }
+
+    /// The object ID of the folder `path` goes in.
+    fn parent_of(&self, inner: &mut Inner, path: &str) -> Result<String> {
+        match self.resolve(inner, &dirname(path)) {
+            Some(Node { storage: Some(_), id, dir: true, .. }) => Ok(id),
+            _ => err(format!("Files must go inside a storage folder, e.g. {}", self.default_dir())),
+        }
+    }
+
+    fn version_of(n: &Node) -> String {
+        format!("{}:{}:{}", n.id, n.size, n.mtime)
+    }
+
+    fn check_size(inner: &mut Inner, parent: &str, id: &str, size: u64, name: &str) -> Result<Child> {
+        inner.invalidate(parent);
+        match inner.children(parent).into_iter().find(|k| k.id == id) {
+            Some(k) if k.size == size && k.name == name => Ok(k),
+            _ => err(format!("Verification failed after writing {name}.")),
+        }
+    }
+
+    /// A whole copy of the file in the app's "opened" folder, for reading parts of it. Only the
+    /// latest one is kept.
+    fn stream_copy(&self, inner: &mut Inner, node: &Node) -> Result<std::path::PathBuf> {
+        let dir = crate::files::opened_dir().join("stream");
+        let key = format!("{}|{}|{}", self.model, node.path, Self::version_of(node));
+        let ext = node.name.rsplit_once('.').map_or(String::new(), |(_, x)| format!(".{x}"));
+        let file = dir.join(format!("{:x}{ext}", md5::compute(key)));
+        if !file.exists() {
+            let _ = std::fs::remove_dir_all(&dir);
+            std::fs::create_dir_all(&dir).map_err(|e| DevError::Msg(e.to_string()))?;
+            let tmp = dir.join(".partial");
+            inner.link.download_to(&node.id, &tmp)?;
+            std::fs::rename(&tmp, &file).map_err(|e| DevError::Msg(e.to_string()))?;
+        }
+        Ok(file)
+    }
+
+    fn public(n: &Node) -> Entry {
+        Entry { name: n.name.clone(), path: n.path.clone(), dir: n.dir, size: n.size, mtime: n.mtime }
+    }
+}
+
+impl Transport for Wpd {
+    fn kind(&self) -> &'static str { "mtp" }
+    fn label(&self) -> String { self.model.clone() }
+    fn default_dir(&self) -> String { format!("/{}", self.storages[0].0) }
+
+    fn quick_dirs(&self) -> Vec<(String, String)> {
+        self.storages.iter().map(|(n, _)| (n.clone(), format!("/{n}"))).collect()
+    }
+
+    fn refresh(&self) {
+        self.inner().cache.clear();
+    }
+
+    fn listdir(&self, path: &str) -> Result<Vec<Entry>> {
+        let mut inner = self.inner();
+        let node = match self.resolve(&mut inner, path) {
+            Some(n) if n.dir => n,
+            _ => return err(format!("Not a folder: {path}")),
+        };
+        if node.storage.is_none() {
+            return Ok(self
+                .storages
+                .iter()
+                .map(|(n, _)| Entry { name: n.clone(), path: format!("/{n}"), dir: true, size: 0, mtime: 0 })
+                .collect());
+        }
+        Ok(inner
+            .children(&node.id)
+            .into_iter()
+            .map(|k| Entry { path: join(&node.path, &k.name), name: k.name, dir: k.dir, size: k.size, mtime: k.mtime })
+            .collect())
+    }
+
+    fn stat(&self, path: &str) -> Result<Option<Entry>> {
+        let mut inner = self.inner();
+        Ok(self.resolve(&mut inner, path).map(|n| Self::public(&n)))
+    }
+
+    fn version(&self, path: &str) -> Result<Option<String>> {
+        let mut inner = self.inner();
+        if let Ok(parent) = self.parent_of(&mut inner, path) {
+            inner.invalidate(&parent);
+        }
+        Ok(self.resolve(&mut inner, path).filter(|n| !n.dir).map(|n| Self::version_of(&n)))
+    }
+
+    fn read_range(&self, path: &str, start: u64, len: u64) -> Result<Vec<u8>> {
+        let mut inner = self.inner();
+        let Some(node) = self.resolve(&mut inner, path).filter(|n| !n.dir) else {
+            return err(format!("No such file: {path}"));
+        };
+        if start >= node.size || len == 0 {
+            return Ok(vec![]);
+        }
+        let copy = self.stream_copy(&mut inner, &node)?;
+        crate::local::Local.read_range(&crate::platform::app_path(&copy), start, len)
+    }
+
+    fn read(&self, path: &str) -> Result<(Vec<u8>, String)> {
+        let mut inner = self.inner();
+        if let Ok(parent) = self.parent_of(&mut inner, path) {
+            inner.invalidate(&parent);
+        }
+        let Some(node) = self.resolve(&mut inner, path).filter(|n| !n.dir) else {
+            return err(format!("No such file: {path}"));
+        };
+        let data = inner.link.download(&node.id)?;
+        if data.len() as u64 != node.size {
+            return err(format!("Read {} bytes but the device reports {}.", data.len(), node.size));
+        }
+        Ok((data, Self::version_of(&node)))
+    }
+
+    /// MTP can't overwrite: upload under a temporary name, delete the old file, rename.
+    fn replace(&self, path: &str, data: &[u8], exists: bool) -> Result<String> {
+        let mut inner = self.inner();
+        let name = basename(path).to_string();
+        let parent = self.parent_of(&mut inner, path)?;
+        let old = if exists { self.resolve(&mut inner, path) } else { None };
+        let new_id = match old {
+            None => inner.link.upload(data, &name, &parent)?,
+            Some(old) => {
+                let tmp_name = temp_name(&name);
+                inner.invalidate(&parent);
+                if let Some(stale) = inner.children(&parent).into_iter().find(|k| k.name == tmp_name) {
+                    inner.link.delete(&stale.id)?;
+                }
+                let tmp_id = inner.link.upload(data, &tmp_name, &parent)?;
+                Self::check_size(&mut inner, &parent, &tmp_id, data.len() as u64, &tmp_name)?;
+                inner.link.delete(&old.id)?;
+                let renamed = inner.link.rename(&tmp_id, &name).and_then(|()| {
+                    Self::check_size(&mut inner, &parent, &tmp_id, data.len() as u64, &name).map(|_| ())
+                });
+                match renamed {
+                    Ok(()) => tmp_id,
+                    Err(_) => {
+                        // Some devices can't rename: upload again under the real name.
+                        inner.link.delete(&tmp_id)?;
+                        inner.link.upload(data, &name, &parent)?
+                    }
+                }
+            }
+        };
+        let k = Self::check_size(&mut inner, &parent, &new_id, data.len() as u64, &name)?;
+        Ok(format!("{}:{}:{}", k.id, k.size, k.mtime))
+    }
+
+    fn delete(&self, path: &str, _is_dir: bool) -> Result<()> {
+        let mut inner = self.inner();
+        let Some(node) = self.resolve(&mut inner, path) else {
+            return err(format!("No such file or folder: {path}"));
+        };
+        if node.storage.as_deref().is_none_or(|s| s == node.id) {
+            return err("Storages can't be removed.");
+        }
+        let parent = self.parent_of(&mut inner, path)?;
+        inner.link.delete(&node.id)?;
+        inner.invalidate(&parent);
+        Ok(())
+    }
+
+    fn make_dir(&self, path: &str) -> Result<()> {
+        let mut inner = self.inner();
+        let parent = self.parent_of(&mut inner, path)?;
+        inner.link.mkdir(basename(path), &parent)?;
+        inner.invalidate(&parent);
+        Ok(())
+    }
+
+    fn rename(&self, path: &str, new_name: &str) -> Result<()> {
+        let mut inner = self.inner();
+        let node = match self.resolve(&mut inner, path) {
+            Some(n) if n.storage.as_deref().is_some_and(|s| s != n.id) => n,
+            _ => return err(format!("{path} can't be renamed.")),
+        };
+        let parent = self.parent_of(&mut inner, path)?;
+        inner.link.rename(&node.id, new_name)?;
+        inner.invalidate(&parent);
+        if !inner.children(&parent).iter().any(|k| k.id == node.id && k.name == new_name) {
+            return err(format!("The device didn't rename {}.", node.name));
+        }
+        Ok(())
+    }
+
+    fn space(&self) -> Vec<Space> {
+        let inner = self.inner();
+        self.storages
+            .iter()
+            .filter_map(|(name, id)| {
+                let v = inner.link.get(id, &[WPD_STORAGE_FREE_SPACE_IN_BYTES, WPD_STORAGE_CAPACITY]).ok()?;
+                let free = unsafe { v.GetUnsignedLargeIntegerValue(&WPD_STORAGE_FREE_SPACE_IN_BYTES) }.ok()?;
+                let total = unsafe { v.GetUnsignedLargeIntegerValue(&WPD_STORAGE_CAPACITY) }.ok()?;
+                Some(Space { name: name.clone(), free, total, path: format!("/{name}") })
+            })
+            .collect()
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    #[test]
+    fn finds_the_serial() {
+        let id = r"\\?\usb#vid_18d1&pid_4ee1#0A1B2C3D#{6ac27878-a6fa-4155-ba85-f98f491d4f33}";
+        assert_eq!(super::serial_in(id).as_deref(), Some("0A1B2C3D"));
+        let composite = r"\\?\usb#vid_18d1&pid_4ee2&mi_00#6&2bd3f1a&0&0000#{6ac27878-a6fa-4155-ba85-f98f491d4f33}";
+        assert_eq!(super::serial_in(composite), None);
+        assert_eq!(super::serial_in(r"\\?\swd#wpdbusenum#_??_usbstor#disk"), None);
+    }
+}

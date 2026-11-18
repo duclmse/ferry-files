@@ -1,6 +1,6 @@
 //! Device files over a transport (adb or MTP), with the same safety rules as yomi-files.py:
 //! every write refuses if the file changed since it was read, keeps a backup of the old version
-//! on the Mac, and is verified afterwards.
+//! on the computer, and is verified afterwards.
 
 use serde::Serialize;
 use std::fmt;
@@ -69,6 +69,8 @@ pub struct Space {
     pub name: String,
     pub free: u64,
     pub total: u64,
+    /// The folder the storage starts at, for telling which one a folder is on; "" when unknown.
+    pub path: String,
 }
 
 /// Absolute, normalised device path ("/a/b", never a trailing slash except "/").
@@ -145,8 +147,7 @@ impl BackupNote {
 }
 
 pub fn backup_dir() -> PathBuf {
-    // Same folder as yomi-files.py, so backups from both tools are in one place.
-    dirs::home_dir().unwrap_or_else(|| PathBuf::from("/tmp")).join("Library/Caches/ferry-files/backups")
+    crate::platform::backup_dir()
 }
 
 #[derive(Serialize)]

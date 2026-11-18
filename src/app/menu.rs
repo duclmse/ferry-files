@@ -139,13 +139,14 @@ impl Ctx {
             v.push(item("Check book", "", Act::Check));
         }
         if !e.dir {
-            v.push(item("Quick Look", "Space", Act::QuickLook));
+            v.push(item(crate::os::quick_look(), "Space", Act::QuickLook));
         }
-        if !e.dir && kind(e) != Kind::Other {
+        // Elsewhere, Space already opens in the default app.
+        if !e.dir && kind(e) != Kind::Other && crate::os::is_mac() {
             v.push(item("Open in default app", "", Act::OpenInApp));
         }
         if device && !e.dir {
-            v.push(item("Download to Mac…", "", Act::Download));
+            v.push(item(&format!("Download to {}…", crate::os::computer()), "", Act::Download));
         }
         if split {
             let enabled = self.in_storage(self.other(p));
@@ -193,7 +194,7 @@ impl Ctx {
             (Act::View(v), _) => self.set_view(p, v),
             (Act::Split, _) => self.set_split(!self.split.get_untracked()),
             (Act::CopyName, Some(e)) => copy_text(p, e.name),
-            (Act::CopyPath, Some(e)) => copy_text(p, e.path),
+            (Act::CopyPath, Some(e)) => copy_text(p, if p.src.get_untracked() == Src::Mac { crate::os::native_path(&e.path) } else { e.path }),
             (Act::Column(c), _) if c < LIST_COLS.len() => {
                 let mut v = p.list_cols.get_untracked();
                 match v.iter().position(|&x| x == c) {
@@ -247,7 +248,7 @@ pub(super) fn ContextMenu() -> impl IntoView {
                                         _ => ctx.run(p, act, entry.clone()),
                                     }
                                 }>
-                                <span>{label}</span><span class="key">{key}</span>
+                                <span>{label}</span><span class="key">{crate::os::keys(key)}</span>
                             </button>
                         }.into_any()
                     }

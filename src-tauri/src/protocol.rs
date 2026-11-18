@@ -306,7 +306,7 @@ mod tests {
         let f = std::env::temp_dir().join(format!("ferry-range-test-{}", std::process::id()));
         std::fs::write(&f, b"0123456789").unwrap();
         let mac = crate::Device::new(Box::new(crate::local::Local));
-        let p = f.display().to_string();
+        let p = crate::platform::app_path(&f);
         assert_eq!(mac.read_range(&p, 3, 4).unwrap(), b"3456");
         assert_eq!(mac.read_range(&p, 8, 100).unwrap(), b"89");
         assert!(mac.read_range(&p, 20, 5).unwrap().is_empty());

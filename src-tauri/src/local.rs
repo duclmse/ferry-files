@@ -1,27 +1,13 @@
-//! The Mac's own files, as a transport. Wrapped in a `Device`, so writes and deletes get the same
-//! rules as on the phone: refuse if the file changed since it was opened, back up the old version.
+//! The computer's own files, as a transport. Wrapped in a `Device`, so writes and deletes get the
+//! same rules as on the phone: refuse if the file changed since it was opened, back up the old
+//! version. Paths are the app's ("/a/b"); `platform::native` turns them into the computer's.
 
 use crate::device::{basename, dirname, err, DevError, Entry, Result, Transport};
+use crate::platform::{app_path, native};
 use std::fs;
-use std::path::Path;
 use std::time::UNIX_EPOCH;
 
 pub struct Local;
-
-/// Free and total bytes of the disk holding `dir`, from `df -k`.
-fn df(dir: &str) -> Option<(u64, u64)> {
-    let out = std::process::Command::new("df").args(["-k", dir]).output().ok()?;
-    parse_df(&String::from_utf8_lossy(&out.stdout))
-}
-
-/// The second line of `df -k`: name, 1K-blocks, used, available, ...
-pub(crate) fn parse_df(out: &str) -> Option<(u64, u64)> {
-    let line = out.lines().nth(1)?;
-    let cols: Vec<&str> = line.split_whitespace().collect();
-    let total: u64 = cols.get(1)?.parse().ok()?;
-    let free: u64 = cols.get(3)?.parse().ok()?;
-    Some((free * 1024, total * 1024))
-}
 
 fn io(path: &str, e: std::io::Error) -> DevError {
     DevError::Msg(format!("{path}: {e}"))
@@ -53,21 +39,21 @@ impl Transport for Local {
     }
 
     fn label(&self) -> String {
-        "This Mac".into()
+        format!("This {}", crate::platform::COMPUTER)
     }
 
     fn default_dir(&self) -> String {
-        dirs::home_dir().map(|h| h.display().to_string()).unwrap_or_else(|| "/".into())
+        dirs::home_dir().map(|h| app_path(&h)).unwrap_or_else(|| "/".into())
     }
 
     fn quick_dirs(&self) -> Vec<(String, String)> {
         let mut out = vec![];
         if let Some(home) = dirs::home_dir() {
-            out.push(("Home".to_string(), home.display().to_string()));
+            out.push(("Home".to_string(), app_path(&home)));
             for name in ["Desktop", "Documents", "Downloads"] {
                 let p = home.join(name);
                 if p.is_dir() {
-                    out.push((name.to_string(), p.display().to_string()));
+                    out.push((name.to_string(), app_path(&p)));
                 }
             }
         }
@@ -76,13 +62,16 @@ impl Transport for Local {
 
     /// Lists hidden files too, like the phone transports; the app hides them unless asked.
     fn listdir(&self, path: &str) -> Result<Vec<Entry>> {
-        let rd = fs::read_dir(path).map_err(|e| io(path, e))?;
+        if cfg!(windows) && path == "/" {
+            return Ok(drive_letters().into_iter().map(|d| top(&d)).collect());
+        }
+        let rd = fs::read_dir(native(path)).map_err(|e| io(path, e))?;
         let mut out = vec![];
         for item in rd.flatten() {
             let name = item.file_name().to_string_lossy().into_owned();
             let p = crate::device::join(path, &name);
             // Follows symlinks; broken ones are skipped.
-            if let Ok(m) = fs::metadata(&p) {
+            if let Ok(m) = fs::metadata(native(&p)) {
                 out.push(entry(&p, &m));
             }
         }
@@ -90,7 +79,10 @@ impl Transport for Local {
     }
 
     fn stat(&self, path: &str) -> Result<Option<Entry>> {
-        match fs::metadata(path) {
+        if cfg!(windows) && path == "/" {
+            return Ok(Some(top("/")));
+        }
+        match fs::metadata(native(path)) {
             Ok(m) => Ok(Some(entry(path, &m))),
             Err(e) if e.kind() == std::io::ErrorKind::NotFound => Ok(None),
             Err(e) => Err(io(path, e)),
@@ -98,17 +90,17 @@ impl Transport for Local {
     }
 
     fn read(&self, path: &str) -> Result<(Vec<u8>, String)> {
-        let m = fs::metadata(path).map_err(|e| io(path, e))?;
+        let m = fs::metadata(native(path)).map_err(|e| io(path, e))?;
         if m.is_dir() {
             return err(format!("{path} is a folder."));
         }
-        let data = fs::read(path).map_err(|e| io(path, e))?;
+        let data = fs::read(native(path)).map_err(|e| io(path, e))?;
         Ok((data, version_of(&m)))
     }
 
     fn read_range(&self, path: &str, start: u64, len: u64) -> Result<Vec<u8>> {
         use std::io::{Read, Seek, SeekFrom};
-        let mut f = fs::File::open(path).map_err(|e| io(path, e))?;
+        let mut f = fs::File::open(native(path)).map_err(|e| io(path, e))?;
         f.seek(SeekFrom::Start(start)).map_err(|e| io(path, e))?;
         let mut out = Vec::new();
         f.take(len).read_to_end(&mut out).map_err(|e| io(path, e))?;
@@ -116,18 +108,18 @@ impl Transport for Local {
     }
 
     fn version(&self, path: &str) -> Result<Option<String>> {
-        Ok(fs::metadata(path).ok().filter(|m| m.is_file()).map(|m| version_of(&m)))
+        Ok(fs::metadata(native(path)).ok().filter(|m| m.is_file()).map(|m| version_of(&m)))
     }
 
     /// Writes next to the file, then renames over it, so a failed write leaves the old file intact.
     fn replace(&self, path: &str, data: &[u8], _exists: bool) -> Result<String> {
         let tmp = crate::device::join(&dirname(path), &format!(".{}.ferry-tmp", basename(path)));
-        fs::write(&tmp, data).map_err(|e| io(&tmp, e))?;
-        if let Err(e) = fs::rename(&tmp, path) {
-            let _ = fs::remove_file(&tmp);
+        fs::write(native(&tmp), data).map_err(|e| io(&tmp, e))?;
+        if let Err(e) = fs::rename(native(&tmp), native(path)) {
+            let _ = fs::remove_file(native(&tmp));
             return Err(io(path, e));
         }
-        let m = fs::metadata(path).map_err(|e| io(path, e))?;
+        let m = fs::metadata(native(path)).map_err(|e| io(path, e))?;
         if m.len() != data.len() as u64 {
             return err(format!("{path}: wrote {} bytes but the file has {}.", data.len(), m.len()));
         }
@@ -135,30 +127,46 @@ impl Transport for Local {
     }
 
     fn delete(&self, path: &str, is_dir: bool) -> Result<()> {
-        let r = if is_dir { fs::remove_dir(path) } else { fs::remove_file(path) };
+        let r = if is_dir { fs::remove_dir(native(path)) } else { fs::remove_file(native(path)) };
         r.map_err(|e| io(path, e))
     }
 
     fn make_dir(&self, path: &str) -> Result<()> {
-        fs::create_dir(Path::new(path)).map_err(|e| io(path, e))
+        if dirname(path) == "/" && cfg!(windows) {
+            return err("Folders can't be made next to the drives.");
+        }
+        fs::create_dir(native(path)).map_err(|e| io(path, e))
     }
 
     fn rename(&self, path: &str, new_name: &str) -> Result<()> {
-        fs::rename(path, crate::device::join(&dirname(path), new_name)).map_err(|e| io(path, e))
+        // Windows reads these as part of a path, or doesn't allow them in names.
+        if cfg!(windows) && new_name.contains(['\\', ':', '*', '?', '"', '<', '>', '|']) {
+            return err("Enter a name without \\ : * ? \" < > or |.");
+        }
+        fs::rename(native(path), native(&crate::device::join(&dirname(path), new_name))).map_err(|e| io(path, e))
     }
 
-    /// The disk holding the home folder, and each mounted disk.
+    /// The disk holding the home folder (named after the computer), and each other disk.
     fn space(&self) -> Vec<crate::device::Space> {
-        let mut dirs = vec![("Mac".to_string(), self.default_dir())];
-        for e in fs::read_dir("/Volumes").into_iter().flatten().flatten() {
-            let name = e.file_name().to_string_lossy().into_owned();
-            let real = fs::canonicalize(e.path()).ok();
-            if !name.starts_with('.') && real.as_deref() != Some(Path::new("/")) {
-                dirs.push((name, e.path().display().to_string()));
-            }
-        }
-        dirs.into_iter().filter_map(|(name, dir)| df(&dir).map(|(free, total)| crate::device::Space { name, free, total })).collect()
+        let mut dirs = vec![(crate::platform::COMPUTER.to_string(), self.default_dir())];
+        dirs.extend(crate::platform::drives());
+        dirs.into_iter()
+            .filter_map(|(name, dir)| {
+                crate::platform::free_space(&dir).map(|(free, total)| crate::device::Space { name, free, total, path: dir })
+            })
+            .collect()
     }
+}
+
+/// The drives, "C:" and so on, on Windows; nothing elsewhere.
+fn drive_letters() -> Vec<String> {
+    (b'A'..=b'Z').map(|c| format!("{}:", c as char)).filter(|d| cfg!(windows) && native(&format!("/{d}")).is_dir()).collect()
+}
+
+/// "/" on Windows, which holds the drives, or one of the drives in it.
+fn top(name: &str) -> Entry {
+    let path = if name == "/" { "/".to_string() } else { format!("/{name}") };
+    Entry { name: name.to_string(), path, dir: true, size: 0, mtime: 0 }
 }
 
 #[cfg(test)]
@@ -169,7 +177,7 @@ mod tests {
     fn mac_files_follow_the_device_rules() {
         let dir = std::env::temp_dir().join(format!("ferry-local-test-{}", std::process::id()));
         std::fs::create_dir_all(&dir).unwrap();
-        let root = dir.display().to_string();
+        let root = crate::platform::app_path(&dir);
         let dev = Device::new(Box::new(super::Local));
         let f = format!("{root}/a.txt");
         let w = dev.write(&f, b"one", None, true).unwrap();

@@ -1,0 +1,17 @@
+{
+  "$schema": "https://schema.tauri.app/config/2",
+  "build": {
+    "beforeBundleCommand": "bash scripts/bundle-libmtp.sh"
+  },
+  "bundle": {
+    "targets": ["app", "dmg"],
+    "macOS": {
+      "minimumSystemVersion": "11.0",
+      "frameworks": ["libs/libmtp.9.dylib", "libs/libusb-1.0.0.dylib"],
+      "files": {
+        "Resources/licenses/libmtp-COPYING.txt": "libs/libmtp-COPYING.txt",
+        "Resources/licenses/libusb-COPYING.txt": "libs/libusb-COPYING.txt"
+      }
+    }
+  }
+}

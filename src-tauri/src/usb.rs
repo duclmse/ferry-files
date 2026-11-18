@@ -1,7 +1,9 @@
-//! The Mac's list of USB devices, from `ioreg`: gives each one's serial number, which adb also
-//! uses, so an MTP device and an adb device can be told to be the same phone.
+//! The computer's list of USB devices, with each one's serial number, which adb also uses: so an
+//! MTP device and an adb device can be told to be the same phone. From `ioreg` on macOS and
+//! /sys/bus/usb on Linux. (On Windows, MTP devices come with their serial; see wpd.rs.)
 
-use std::process::{Command, Stdio};
+// `parse` is tested everywhere; the rest is for libmtp, which Windows doesn't use.
+#![cfg_attr(not(target_os = "macos"), allow(dead_code))]
 
 #[derive(Debug, Clone, PartialEq)]
 pub struct UsbDev {
@@ -13,11 +15,44 @@ pub struct UsbDev {
     pub serial: String,
 }
 
+#[cfg(target_os = "macos")]
 pub fn list() -> Vec<UsbDev> {
-    let Ok(out) = Command::new("ioreg").args(["-p", "IOUSB", "-l", "-w0"]).stdin(Stdio::null()).output() else {
+    let Ok(out) = crate::platform::command("ioreg").args(["-p", "IOUSB", "-l", "-w0"]).stdin(std::process::Stdio::null()).output() else {
         return vec![];
     };
     parse(&String::from_utf8_lossy(&out.stdout))
+}
+
+/// Each device in /sys/bus/usb/devices that has a serial: its bus and address are the ones
+/// libusb (and so libmtp) reports on Linux.
+#[cfg(not(target_os = "macos"))]
+pub fn list() -> Vec<UsbDev> {
+    let read = |d: &std::path::Path, name: &str| std::fs::read_to_string(d.join(name)).ok().map(|s| s.trim().to_string());
+    std::fs::read_dir("/sys/bus/usb/devices")
+        .into_iter()
+        .flatten()
+        .flatten()
+        .filter_map(|e| {
+            let d = e.path();
+            let serial = read(&d, "serial").filter(|s| !s.is_empty())?;
+            Some(UsbDev {
+                bus: read(&d, "busnum")?.parse().ok()?,
+                address: read(&d, "devnum")?.parse().ok()?,
+                vendor: u16::from_str_radix(&read(&d, "idVendor")?, 16).ok()?,
+                product: u16::from_str_radix(&read(&d, "idProduct")?, 16).ok()?,
+                serial,
+            })
+        })
+        .collect()
+}
+
+/// Names of what's on USB now, to notice something plugged in or taken out.
+#[cfg(not(target_os = "macos"))]
+pub fn snapshot() -> Vec<String> {
+    let mut v: Vec<String> =
+        std::fs::read_dir("/sys/bus/usb/devices").into_iter().flatten().flatten().map(|e| e.file_name().to_string_lossy().into_owned()).collect();
+    v.sort();
+    v
 }
 
 /// Reads the `+-o Name@... <class IOUSBHostDevice ...>` entries and the properties under each.

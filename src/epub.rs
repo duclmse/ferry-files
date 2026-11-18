@@ -207,7 +207,7 @@ impl Ep {
             let s = call::<Saved>("epub_save", json!({ "id": self.id() })).await?;
             self.book.set(Some(s.book));
             self.confirm_close.set(false);
-            let note = if s.backup { " The old version is backed up on the Mac." } else { "" };
+            let note = if s.backup { format!(" The old version is backed up on {}.", crate::os::the_computer()) } else { String::new() };
             self.say(format!("Saved to {}.{note}", self.place()), "ok");
             Ok(())
         });
@@ -368,8 +368,8 @@ pub fn EpubEditor() -> impl IntoView {
                     <span class="spacer"></span>
                     {move || ep.busy.get().then(|| view! { <span class="spin"></span> })}
                     <button class="btn" disabled=move || ep.busy.get() on:click=move |_| ep.export()
-                        title="Save the book, with your edits, to a file on the Mac">"Save copy on Mac…"</button>
-                    <button class="btn primary" title="⌘S" disabled=move || !dirty.get() || ep.busy.get()
+                        title=format!("Save the book, with your edits, to a file on {}", crate::os::the_computer())>{format!("Save copy on {}…", crate::os::computer())}</button>
+                    <button class="btn primary" title=crate::os::keys("⌘S") disabled=move || !dirty.get() || ep.busy.get()
                         on:click=move |_| ep.save()>{move || { ep.book.track(); if b_mac(ep) { "Save".to_string() } else { format!("Save to {}", ep.place()) } }}</button>
                 </div>
                 {move || ep.confirm_close.get().then(|| view! {
@@ -484,7 +484,7 @@ fn InfoView() -> impl IntoView {
                         None => view! { <div class="cover none">"No cover image"</div> }.into_any(),
                     }}
                     <div>
-                        <p class="sub">"Pick an image on the Mac (JPEG, PNG, GIF, WebP or SVG)."</p>
+                        <p class="sub">{format!("Pick an image on {} (JPEG, PNG, GIF, WebP or SVG).", crate::os::the_computer())}</p>
                         <button class="btn" disabled=move || ep.busy.get() on:click=move |_| ep.cover()>
                             {move || if book().is_some_and(|b| b.cover.is_some()) { "Replace cover…" } else { "Add a cover…" }}
                         </button>

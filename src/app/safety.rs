@@ -27,15 +27,12 @@ impl Ctx {
         let transport = self.src_info(src).map(|i| i.transport).unwrap_or_default();
         self.space.with(|m| {
             let list = m.get(&src.key())?;
+            // The storage whose folder holds this one most closely: a disk rather than the home
+            // folder it may be mounted in. On the computer, the first (home) one otherwise.
+            let holding = list.iter().filter(|s| !s.path.is_empty() && within(&cwd, &s.path)).max_by_key(|s| s.path.len());
             let s = match (src, transport.as_str()) {
-                (Src::Mac, _) => {
-                    let disk = cwd.strip_prefix("/Volumes/").map(|r| r.split('/').next().unwrap_or_default().to_string());
-                    list.iter().find(|s| Some(&s.name) == disk.as_ref()).or_else(|| list.iter().find(|s| s.name == "Mac"))
-                }
-                (_, "mtp") => {
-                    let first = cwd.trim_start_matches('/').split('/').next().unwrap_or_default();
-                    list.iter().find(|s| s.name == first)
-                }
+                (_, "mtp") => holding,
+                (Src::Mac, _) => holding.or_else(|| list.first()),
                 _ => list.first(),
             }?;
             Some(format!("{} free of {}", human_size(s.free), human_size(s.total)))
@@ -131,7 +128,7 @@ pub(super) fn Backups() -> impl IntoView {
                             let f = filter.get().to_lowercase();
                             bs.into_iter().filter(|b| b.name.to_lowercase().contains(&f)).map(|b| {
                                 let origin = b.note.as_ref().map(|n| {
-                                    let on = if n.place == "mac" { "the Mac".to_string() } else { n.place.split_once(':').map_or(n.place.clone(), |(_, l)| l.to_string()) };
+                                    let on = if n.place == "mac" { crate::os::the_computer().to_string() } else { n.place.split_once(':').map_or(n.place.clone(), |(_, l)| l.to_string()) };
                                     format!("{} {} on {on}", if n.reason == "deleted" { "Deleted from" } else { "Replaced at" }, n.path)
                                 }).unwrap_or_else(|| "Where it came from wasn't noted (an older backup).".into());
                                 let back = b.note.as_ref().and_then(|n| ctx.fav_src(&Fav { place: n.place.clone(), label: String::new(), path: n.path.clone() }).map(|s| (s, n.path.clone())));
@@ -145,7 +142,7 @@ pub(super) fn Backups() -> impl IntoView {
                                             <span class="about">{format!("{} · {}", when(b.mtime), human_size(b.size))}</span>
                                             <span class="path">{origin}</span>
                                         </div>
-                                        <button class="btn" title="Show it in Quick Look" on:click=move |_| preview(b3.clone())>"Preview"</button>
+                                        <button class="btn" title=if crate::os::is_mac() { "Show it in Quick Look" } else { "Open it in its app" } on:click=move |_| preview(b3.clone())>"Preview"</button>
                                         <button class="btn" title=back_tip disabled=back.is_none()
                                             on:click=move |_| if let Some((s, path)) = back.clone() { restore(b1.clone(), s, path) }>"Restore"</button>
                                         <button class="btn" title=here_tip on:click=move |_| {
@@ -161,7 +158,7 @@ pub(super) fn Backups() -> impl IntoView {
                     }}
                 </div>
                 <div class="actions">
-                    <button class="btn" on:click=move |_| { let _ = spawn_local(async move { let _ = call::<()>("open_folder", json!({ "which": "backups" })).await; }); }>"Open in Finder"</button>
+                    <button class="btn" on:click=move |_| { let _ = spawn_local(async move { let _ = call::<()>("open_folder", json!({ "which": "backups" })).await; }); }>{format!("Open in {}", crate::os::file_manager())}</button>
                     {move || if confirming.get() {
                         let n = count();
                         view! {

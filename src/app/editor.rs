@@ -32,7 +32,7 @@ impl Ctx {
             let args = json!({ "src": ed.src.key(), "path": ed.path, "text": text, "base_version": ed.version, "create": false });
             match call::<WriteResult>("write_text", args).await {
                 Ok(r) => {
-                    let note = if r.backup.is_some() { " The old version is backed up on the Mac." } else { "" };
+                    let note = if r.backup.is_some() { format!(" The old version is backed up on {}.", crate::os::the_computer()) } else { String::new() };
                     self.status.set((format!("Saved to {}.{note}", self.place(ed.src)), "ok"));
                     self.log(format!("Saved {} on {}", base(&ed.path), self.place(ed.src)));
                     self.editor.set(Some(Editor { version: r.version, saved_text: text, ..ed }));
@@ -71,11 +71,11 @@ pub(super) fn TextEditor() -> impl IntoView {
             <button class="btn back" title="Back to files" aria-label="Back to files" on:click=move |_| ctx.close_editor(false)><svg class="back-icon" viewBox="0 0 16 16" aria-hidden="true"><path d="M13 8H3M7.5 3.5 3 8l4.5 4.5"/></svg></button>
             <span class="title">{path}{move || dirty.get().then_some(" •")}</span>
             <span class="kind">{move || ctx.editor.get().map(|e| match e.src {
-                Src::Mac => "Mac".to_string(),
+                Src::Mac => crate::os::computer().to_string(),
                 src => ctx.src_info(src).map_or_else(|| "Device".into(), |i| i.label),
             })}</span>
             <span class="spacer"></span>
-            <button class="btn primary" title="⌘S" disabled=move || !dirty.get() || ctx.busy.get() on:click=move |_| ctx.save()>"Save"</button>
+            <button class="btn primary" title=crate::os::keys("⌘S") disabled=move || !dirty.get() || ctx.busy.get() on:click=move |_| ctx.save()>"Save"</button>
         </div>
         {move || ctx.confirm_discard.get().then(|| view! {
             <div class="notice">

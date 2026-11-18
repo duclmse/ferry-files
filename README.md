@@ -1,6 +1,6 @@
 # Ferry Files
 
-A Mac desktop app (Tauri 2 + Leptos, all Rust) for browsing, reading and editing
+A desktop app for macOS, Windows and Linux (Tauri 2 + Leptos, all Rust) for browsing, reading and editing
 the files on Android phones (and other MTP devices) connected by USB, EPUB books
 in particular. It shows the Mac's own files and disks too, so books can be
 copied between them.
@@ -122,8 +122,34 @@ Two ways to reach the phone, over USB:
   (`brew install --cask android-platform-tools`). Fast; paths look like
   `/sdcard/Download`.
 - **MTP**: the phone's normal "File transfer" USB mode, so no developer options
-  are needed. Needs libmtp (`brew install libmtp`), which is loaded at runtime.
-  Paths start with the storage name, e.g. `/Internal storage/Download`.
+  are needed. Paths start with the storage name, e.g. `/Internal storage/Download`.
+  On macOS and Linux this uses libmtp, loaded at runtime (so the app still starts
+  without it): the macOS app bundle carries its own copy, and the Linux packages
+  depend on the system's (`libmtp9`). Without a bundled copy, install it with
+  `brew install libmtp` or your package manager. On Windows it uses Windows'
+  own MTP support (Windows Portable Devices), so nothing needs installing.
+
+## Platforms
+
+The text above is written for macOS. Elsewhere:
+
+- **Windows**: the computer's files start at "/", which lists the drives
+  (`/C:/Users/...`); drives other than the system drive are listed as disks and
+  can be ejected. Ctrl takes the place of ⌘ (Ctrl-click picks several; dragging
+  with Ctrl copies and with Shift moves). Space opens a file in its default app.
+  The window looks for devices every few seconds instead of being told about USB.
+  adb is looked for in the Android SDK (`%LOCALAPPDATA%\Android\Sdk`), scoop and
+  `PATH`.
+- **Linux**: disks are the ones mounted under `/media`, `/run/media` and `/mnt`;
+  eject uses `udisksctl`. USB changes are noticed by looking at `/sys/bus/usb`
+  every second. If the desktop's file manager (gvfs) has the phone open over MTP,
+  unmount it there first. Using a phone over USB needs libmtp's udev rules
+  (installed with the `libmtp` package on most distributions).
+- Backups are kept in the app's data folder (`%LOCALAPPDATA%\ferry-files` or
+  `~/.local/share/ferry-files`) rather than `~/Library/Caches`.
+
+Windows and Linux builds are compiled by CI; they haven't had much use on real
+hardware yet.
 
 The app opens on the Mac's files. It looks for devices on USB and disks mounted
 on the Mac (USB drives, SD cards, disk images; they're listed under Mac in the
@@ -190,12 +216,22 @@ Requirements:
 - `trunk`
 - the Tauri CLI (`cargo install tauri-cli`)
 - adb and/or libmtp, as above
+- on Linux, Tauri's system packages: `libwebkit2gtk-4.1-dev libappindicator3-dev
+  librsvg2-dev patchelf`, and `libmtp-dev` for running with MTP
 
 ```sh
 cargo tauri dev                       # run in development
-cargo tauri build --debug             # build target/debug/bundle/macos/Ferry Files.app
+cargo tauri build --debug             # build target/debug/bundle/macos/Ferry Files.app (or .deb/.rpm/AppImage, .msi/.exe)
 cd src-tauri && cargo test --lib      # unit tests (XML tokenizer, EPUB editing, copy, sync, search, book tools)
 ```
+
+On macOS, `cargo tauri build` first runs `scripts/bundle-libmtp.sh`, which
+copies Homebrew's libmtp and libusb into `src-tauri/libs/` (pointing one at the
+other) for the bundle's `Contents/Frameworks`, with their licenses (LGPL-2.1) in
+`Contents/Resources/licenses`. So it needs `brew install libmtp` on the build
+machine. Homebrew builds for the macOS it runs on; for an app that works on
+older macOS versions, build libmtp with `MACOSX_DEPLOYMENT_TARGET=11.0` instead.
+On older Macs the app falls back to a Homebrew libmtp if there is one.
 
 Tests against a connected phone use scratch files only, and they delete those
 files and their backups afterwards:
@@ -218,8 +254,11 @@ cargo run --example epub_smoke    [-- adb|mtp]   # edits a copy of an .epub foun
 - `styles/`: the CSS, one file per part, loaded in order by `index.html`;
   `base.css` has the colour tokens.
 - `src-tauri/`: the backend.
-  - `device.rs`, `adb.rs`, `mtp.rs`, `local.rs`: transports (phone over adb or
-    MTP, and the Mac's own files), version checks, backups.
+  - `device.rs`, `adb.rs`, `mtp.rs` (libmtp; `wpd.rs` takes its place on
+    Windows), `local.rs`: transports (phone over adb or MTP, and the computer's
+    own files), version checks, backups.
+  - `platform.rs`: what differs between macOS, Windows and Linux (paths, disks,
+    eject, opening files, free space); `src/os.rs` is the frontend's side.
   - `xml.rs`, `epub.rs` (and `epub/`: info, chapter text, find and replace,
     checks): EPUB parsing, editing and checks.
   - `books.rs`: library info, checks, info changes and shrinking for many books.

@@ -1,5 +1,5 @@
 //! Files on one device: listing, reading and writing text, new folders, delete, download and
-//! upload, rename, opening in a Mac app or Quick Look, and finding by name.
+//! upload, rename, opening in the computer's apps or Quick Look, and finding by name.
 
 use super::*;
 
@@ -131,7 +131,7 @@ pub(super) async fn remove(state: State<'_, AppState>, src: Option<String>, path
     blocking(move || dev.remove(&path).map_err(msg)).await
 }
 
-/// Asks where to save, then copies the device file to the Mac. Returns the Mac path, or None if cancelled.
+/// Asks where to save, then copies the device file to the computer. Returns where it went, or None if cancelled.
 #[tauri::command(rename_all = "snake_case")]
 pub(super) async fn download(app: AppHandle, state: State<'_, AppState>, src: String, path: String) -> Result<Option<String>, String> {
     let dev = state.source(Some(&src))?;
@@ -147,7 +147,7 @@ pub(super) async fn download(app: AppHandle, state: State<'_, AppState>, src: St
     .await
 }
 
-/// Asks for Mac files and copies them into a device folder. Existing files are replaced
+/// Asks for files on the computer and copies them into a device folder. Existing files are replaced
 /// (the old version is backed up first). Returns one line per file.
 #[tauri::command(rename_all = "snake_case")]
 pub(super) async fn upload(app: AppHandle, state: State<'_, AppState>, src: String, dir: String) -> Result<Vec<String>, String> {
@@ -183,14 +183,11 @@ pub(super) async fn rename(state: State<'_, AppState>, src: String, path: String
     blocking(move || dev.rename(&path, &name).map_err(msg)).await
 }
 
-/// Opens a file in its default Mac app. Phone files are copied to the app's cache first
-/// (`~/Library/Caches/ferry-files/opened`), so changes made there don't go back to the phone.
-/// Returns the path that was opened.
-/// The file as a path on the Mac: itself for Mac files; device files are copied to the app's cache
-/// first (`~/Library/Caches/ferry-files/opened`), so changes made to them don't go back to the device.
+/// The file as a path on the computer: itself for the computer's files; device files are copied to
+/// the app's cache first (`files::opened_dir`), so changes made to them don't go back to the device.
 pub(super) fn local_copy(dev: &Device, mac: bool, path: &str) -> Result<std::path::PathBuf, String> {
     if mac {
-        return Ok(std::path::PathBuf::from(path));
+        return Ok(crate::platform::native(path));
     }
     use std::hash::{Hash, Hasher};
     let mut h = std::collections::hash_map::DefaultHasher::new();
@@ -204,39 +201,27 @@ pub(super) fn local_copy(dev: &Device, mac: bool, path: &str) -> Result<std::pat
     Ok(local)
 }
 
-/// Opens a file in its default Mac app (a device file: a copy of it). Returns the path opened.
+/// Opens a file in its default app (a device file: a copy of it). Returns the path opened.
 #[tauri::command(rename_all = "snake_case")]
 pub(super) async fn open_file(state: State<'_, AppState>, src: Option<String>, path: String) -> Result<String, String> {
     let mac = src.as_deref() == Some("mac");
     let dev = state.source(src.as_deref())?;
     blocking(move || {
         let local = local_copy(&dev, mac, &path)?;
-        let status = std::process::Command::new("open").arg(&local).status().map_err(|e| format!("Can't open {}: {e}", local.display()))?;
-        if !status.success() {
-            return Err(format!("No app on this Mac opens {}.", device::basename(&path)));
-        }
+        crate::platform::open(&local)
+            .map_err(|_| format!("No app on this {} opens {}.", crate::platform::COMPUTER, device::basename(&path)))?;
         Ok(local.display().to_string())
     })
     .await
 }
 
-/// Shows a file in Quick Look (`qlmanage -p`), in its own window. A device file is copied first.
+/// Shows a file in Quick Look, in its own window (elsewhere than macOS, opens it in its default
+/// app). A device file is copied first.
 #[tauri::command(rename_all = "snake_case")]
 pub(super) async fn quick_look(state: State<'_, AppState>, src: String, path: String) -> Result<(), String> {
     let mac = src == "mac";
     let dev = state.source(Some(&src))?;
-    blocking(move || {
-        let local = local_copy(&dev, mac, &path)?;
-        std::process::Command::new("qlmanage")
-            .arg("-p")
-            .arg(&local)
-            .stdout(std::process::Stdio::null())
-            .stderr(std::process::Stdio::null())
-            .spawn()
-            .map_err(|e| format!("Can't start Quick Look: {e}"))?;
-        Ok(())
-    })
-    .await
+    blocking(move || crate::platform::quick_look(&local_copy(&dev, mac, &path)?)).await
 }
 
 #[derive(Serialize)]
@@ -280,7 +265,7 @@ pub(super) fn find_in(dev: &Device, dir: &str, query: &str, hidden: bool, max: u
     Matches { entries: out, complete: true }
 }
 
-/// Where copies of phone files opened in Mac apps go.
+/// Where copies of phone files opened in the computer's apps go.
 pub(super) fn opened_dir() -> std::path::PathBuf {
     dirs::cache_dir().unwrap_or_else(std::env::temp_dir).join("ferry-files").join("opened")
 }
@@ -365,17 +350,11 @@ pub(super) async fn zip_list(state: State<'_, AppState>, src: Option<String>, pa
     blocking(move || crate::archive::list(size, &mut |at, len| dev.read_range(&path, at, len).map_err(msg))).await
 }
 
-/// Puts text on the Mac's clipboard.
+/// Puts text on the clipboard.
 #[tauri::command(rename_all = "snake_case")]
-pub(super) async fn copy_text(text: String) -> Result<(), String> {
-    blocking(move || {
-        use std::io::Write;
-        let mut p = std::process::Command::new("/usr/bin/pbcopy").stdin(std::process::Stdio::piped()).spawn().map_err(|e| e.to_string())?;
-        p.stdin.take().ok_or("No pbcopy input.")?.write_all(text.as_bytes()).map_err(|e| e.to_string())?;
-        let ok = p.wait().map_err(|e| e.to_string())?.success();
-        if ok { Ok(()) } else { Err("Couldn't copy.".into()) }
-    })
-    .await
+pub(super) fn copy_text(app: AppHandle, text: String) -> Result<(), String> {
+    use tauri_plugin_clipboard_manager::ClipboardExt;
+    app.clipboard().write_text(text).map_err(|e| format!("Couldn't copy: {e}"))
 }
 
 #[cfg(test)]
@@ -401,7 +380,7 @@ mod tests {
             fs::write(root.join(f), b"x").unwrap();
         }
         let mac = crate::Device::new(Box::new(crate::local::Local));
-        let r = root.display().to_string();
+        let r = crate::platform::app_path(&root);
         let names = |hidden| -> Vec<String> {
             super::find_in(&mac, &r, "BOOK", hidden, 100, std::time::Duration::from_secs(5)).entries.into_iter().map(|e| e.name).collect()
         };
@@ -415,7 +394,7 @@ mod tests {
         assert!(mac.rename(&format!("{r}/a/Book one.epub"), "x/y").is_err());
         let new = mac.rename(&format!("{r}/a/Book one.epub"), "BOOK ONE.epub").unwrap();
         assert!(new.ends_with("/a/BOOK ONE.epub"), "a change of case is allowed");
-        assert!(crate::local::parse_df("Filesystem 1024-blocks Used Available Capacity\n/dev/disk3 100 40 60 40% /\n") == Some((60 * 1024, 100 * 1024)));
+        assert!(crate::platform::parse_df("Filesystem 1024-blocks Used Available Capacity\n/dev/disk3 100 40 60 40% /\n") == Some((60 * 1024, 100 * 1024)));
         fs::remove_dir_all(&root).unwrap();
     }
 }

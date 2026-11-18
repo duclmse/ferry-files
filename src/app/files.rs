@@ -30,7 +30,7 @@ impl Ctx {
         spawn_local(async move {
             match call::<String>("open_file", json!({ "src": src.key(), "path": path })).await {
                 Ok(_) if src != Src::Mac => {
-                    p.notice.set(Notice::Ok(format!("Opened a copy of {}. Changes to it stay on the Mac.", base(&path))))
+                    p.notice.set(Notice::Ok(format!("Opened a copy of {}. Changes to it stay on {}.", base(&path), crate::os::the_computer())))
                 }
                 Ok(_) => {}
                 Err(e) => p.error(e),
@@ -94,7 +94,7 @@ impl Ctx {
                 }
             }
             let what = if items.len() == 1 { items[0].name.clone() } else { format!("{done} items") };
-            let note = if backups > 0 { " Backups are kept on the Mac." } else { "" };
+            let note = if backups > 0 { format!(" Backups are kept on {}.", crate::os::the_computer()) } else { String::new() };
             if done > 0 {
                 self.log(format!("Deleted {what} from {}", self.place(src)));
             }

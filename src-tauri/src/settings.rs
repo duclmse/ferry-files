@@ -1,4 +1,4 @@
-//! Settings: the app’s folders on the Mac, their sizes, opening and clearing them.
+//! Settings: the app’s folders on the computer, their sizes, opening and clearing them.
 
 use super::*;
 use crate::files::opened_dir;
@@ -12,7 +12,7 @@ pub(super) struct Folder {
 }
 
 /// The folders the app keeps on the Mac: "backups", "thumbs" (the thumbnail cache) or "opened"
-/// (copies of phone files opened in Mac apps).
+/// (copies of phone files opened in the computer's apps).
 pub(super) fn app_folder(which: &str) -> Result<std::path::PathBuf, String> {
     match which {
         "backups" => Ok(device::backup_dir()),
@@ -49,20 +49,19 @@ pub(super) async fn app_folders() -> Result<HashMap<String, Folder>, String> {
         for which in ["backups", "thumbs", "opened"] {
             let dir = app_folder(which)?;
             let (files, bytes) = folder_size(&dir);
-            out.insert(which.to_string(), Folder { path: dir.display().to_string(), files, bytes });
+            out.insert(which.to_string(), Folder { path: crate::platform::app_path(&dir), files, bytes });
         }
         Ok(out)
     })
     .await
 }
 
-/// Shows one of the app's folders in the Finder, creating it if it isn't there yet.
+/// Shows one of the app's folders in the file manager, creating it if it isn't there yet.
 #[tauri::command(rename_all = "snake_case")]
 pub(super) fn open_folder(which: String) -> Result<(), String> {
     let dir = app_folder(&which)?;
     std::fs::create_dir_all(&dir).map_err(|e| format!("Can't create {}: {e}", dir.display()))?;
-    std::process::Command::new("open").arg(&dir).spawn().map_err(|e| format!("Can't open {}: {e}", dir.display()))?;
-    Ok(())
+    crate::platform::open(&dir)
 }
 
 /// Empties the thumbnail cache (made again when shown) or the copies of opened phone files.

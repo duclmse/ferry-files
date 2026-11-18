@@ -125,14 +125,14 @@ pub(super) fn media(e: &Entry) -> Option<Media> {
 /// URL of the file itself, read in parts as the player asks for them, without copying it first.
 pub(super) fn stream_url(src: Src, e: &Entry) -> String {
     let p = String::from(js_sys::encode_uri_component(&e.path));
-    format!("ferry://localhost/file?src={}&p={p}&s={}&m={}", src.key(), e.size, e.mtime)
+    crate::os::served(&format!("file?src={}&p={p}&s={}&m={}", src.key(), e.size, e.mtime))
 }
 
 /// Thumbnail URL for images and EPUBs (their cover), served by the backend's `ferry://` scheme.
 pub(super) fn thumb_url(src: Src, e: &Entry) -> Option<String> {
     (!e.dir && e.size <= THUMB_MAX && THUMB_EXTS.contains(&ext(&e.name).as_str())).then(|| {
         let p = String::from(js_sys::encode_uri_component(&e.path));
-        format!("ferry://localhost/thumb?src={}&p={p}&s={}&m={}", src.key(), e.size, e.mtime)
+        crate::os::served(&format!("thumb?src={}&p={p}&s={}&m={}", src.key(), e.size, e.mtime))
     })
 }
 

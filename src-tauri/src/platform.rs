@@ -1,0 +1,314 @@
+//! What differs between macOS, Windows and Linux, kept in one place: the app's folders, opening
+//! files, disks (listing, free space, ejecting) and how the computer's paths map to the app's.
+//!
+//! The app's paths are "/a/b" on every system. On Windows the top folder "/" holds the drives,
+//! so "/C:/Users" is `C:\Users`; `native` and `app_path` convert between the two.
+
+use std::ffi::OsStr;
+use std::path::{Path, PathBuf};
+use std::process::Command;
+
+/// What the app calls the computer it runs on, in sentences ("Backups are kept on the Mac").
+pub const COMPUTER: &str = if cfg!(target_os = "macos") {
+    "Mac"
+} else if cfg!(windows) {
+    "PC"
+} else {
+    "computer"
+};
+
+/// A command that runs without flashing a console window on Windows.
+pub fn command(program: impl AsRef<OsStr>) -> Command {
+    #[allow(unused_mut)]
+    let mut c = Command::new(program);
+    #[cfg(windows)]
+    {
+        use std::os::windows::process::CommandExt;
+        const CREATE_NO_WINDOW: u32 = 0x0800_0000;
+        c.creation_flags(CREATE_NO_WINDOW);
+    }
+    c
+}
+
+/// Where backups of replaced and deleted files go. On macOS it's the folder yomi-files.py uses
+/// too, so backups from both are in one place. Elsewhere it's with the app's data rather than
+/// its cache, since a cache may be cleared by the system.
+pub fn backup_dir() -> PathBuf {
+    if cfg!(target_os = "macos") {
+        dirs::home_dir().unwrap_or_else(std::env::temp_dir).join("Library/Caches/ferry-files/backups")
+    } else {
+        dirs::data_local_dir().unwrap_or_else(std::env::temp_dir).join("ferry-files").join("backups")
+    }
+}
+
+/// The computer's path for an app path.
+pub fn native(path: &str) -> PathBuf {
+    #[cfg(windows)]
+    {
+        // "/C:/Users/me" is C:\Users\me, and "/C:" is the drive's top folder, C:\.
+        let mut s = path.trim_start_matches('/').replace('/', "\\");
+        if s.len() == 2 && s.ends_with(':') {
+            s.push('\\');
+        }
+        PathBuf::from(s)
+    }
+    #[cfg(not(windows))]
+    PathBuf::from(path)
+}
+
+/// The app path for a path on the computer (an absolute one).
+pub fn app_path(path: &Path) -> String {
+    #[cfg(windows)]
+    {
+        let s = path.to_string_lossy();
+        // `canonicalize` gives \\?\C:\..., which is still C:\...
+        let s = s.strip_prefix(r"\\?\").unwrap_or(&s).replace('\\', "/");
+        format!("/{}", s.trim_end_matches('/'))
+    }
+    #[cfg(not(windows))]
+    path.display().to_string()
+}
+
+/// Opens a file in its default app, or a folder in the file manager.
+pub fn open(path: &Path) -> Result<(), String> {
+    tauri_plugin_opener::open_path(path, None::<&str>).map_err(|e| format!("Can't open {}: {e}", path.display()))
+}
+
+/// Shows a file in Quick Look (`qlmanage -p`) on macOS. Other systems have no such preview, so
+/// the file opens in its default app instead.
+pub fn quick_look(path: &Path) -> Result<(), String> {
+    #[cfg(target_os = "macos")]
+    {
+        command("qlmanage")
+            .arg("-p")
+            .arg(path)
+            .stdout(std::process::Stdio::null())
+            .stderr(std::process::Stdio::null())
+            .spawn()
+            .map_err(|e| format!("Can't start Quick Look: {e}"))?;
+        Ok(())
+    }
+    #[cfg(not(target_os = "macos"))]
+    open(path)
+}
+
+/// Disks other than the one the system is on (USB drives, SD cards, disk images), as
+/// (name, app path).
+pub fn drives() -> Vec<(String, String)> {
+    let mut out = drives_here();
+    out.sort();
+    out
+}
+
+#[cfg(target_os = "macos")]
+fn drives_here() -> Vec<(String, String)> {
+    let root = std::fs::canonicalize("/").ok();
+    std::fs::read_dir("/Volumes")
+        .into_iter()
+        .flatten()
+        .flatten()
+        .filter_map(|e| {
+            let name = e.file_name().to_string_lossy().into_owned();
+            if name.starts_with('.') || name.starts_with("com.apple.") {
+                return None;
+            }
+            let path = e.path();
+            // The startup disk shows in /Volumes as a link to "/".
+            if std::fs::canonicalize(&path).ok() == root || !path.is_dir() {
+                return None;
+            }
+            Some((name, path.display().to_string()))
+        })
+        .collect()
+}
+
+/// What's mounted under /media, /run/media or /mnt (where desktops and people put removable
+/// disks), from /proc/self/mounts.
+#[cfg(all(unix, not(target_os = "macos")))]
+fn drives_here() -> Vec<(String, String)> {
+    let text = std::fs::read_to_string("/proc/self/mounts").unwrap_or_default();
+    mounts(&text)
+        .into_iter()
+        .filter(|(_, at)| ["/media/", "/run/media/", "/mnt/"].iter().any(|p| at.starts_with(p)))
+        .filter(|(_, at)| Path::new(at).is_dir())
+        .map(|(_, at)| (crate::device::basename(&at).to_string(), at))
+        .collect()
+}
+
+/// (device, mount point) of each line of /proc/mounts, whose spaces and such are written `\040`.
+#[cfg(all(unix, not(target_os = "macos")))]
+pub(crate) fn mounts(text: &str) -> Vec<(String, String)> {
+    fn unescape(s: &str) -> String {
+        let b = s.as_bytes();
+        let mut out = Vec::with_capacity(b.len());
+        let mut i = 0;
+        while i < b.len() {
+            if b[i] == b'\\' && i + 3 < b.len() && b[i + 1..i + 4].iter().all(|c| (b'0'..=b'7').contains(c)) {
+                out.push((b[i + 1] - b'0') * 64 + (b[i + 2] - b'0') * 8 + (b[i + 3] - b'0'));
+                i += 4;
+            } else {
+                out.push(b[i]);
+                i += 1;
+            }
+        }
+        String::from_utf8_lossy(&out).into_owned()
+    }
+    text.lines()
+        .filter_map(|l| {
+            let mut f = l.split(' ');
+            Some((unescape(f.next()?), unescape(f.next()?)))
+        })
+        .collect()
+}
+
+/// Every drive but the one Windows is on, named like File Explorer does: "USB stick (E:)".
+#[cfg(windows)]
+fn drives_here() -> Vec<(String, String)> {
+    use windows::Win32::Storage::FileSystem::{GetLogicalDrives, GetVolumeInformationW};
+    let system = std::env::var("SystemDrive").unwrap_or_else(|_| "C:".into()).to_uppercase();
+    let mask = unsafe { GetLogicalDrives() };
+    (0..26u8)
+        .filter(|i| mask & (1 << i) != 0)
+        .map(|i| format!("{}:", (b'A' + i) as char))
+        .filter(|d| *d != system && Path::new(&format!("{d}\\")).is_dir())
+        .map(|d| {
+            let root: Vec<u16> = format!("{d}\\").encode_utf16().chain([0]).collect();
+            let mut label = [0u16; 261];
+            let ok = unsafe {
+                GetVolumeInformationW(windows::core::PCWSTR(root.as_ptr()), Some(&mut label), None, None, None, None)
+            }
+            .is_ok();
+            let len = label.iter().position(|&c| c == 0).unwrap_or(0);
+            let label = if ok { String::from_utf16_lossy(&label[..len]) } else { String::new() };
+            let name = if label.is_empty() { format!("Drive ({d})") } else { format!("{label} ({d})") };
+            (name, format!("/{d}"))
+        })
+        .collect()
+}
+
+/// Free and total bytes of the disk holding the folder at app path `dir`.
+pub fn free_space(dir: &str) -> Option<(u64, u64)> {
+    #[cfg(windows)]
+    {
+        use windows::Win32::Storage::FileSystem::GetDiskFreeSpaceExW;
+        let path: Vec<u16> = native(dir).as_os_str().to_string_lossy().encode_utf16().chain([0]).collect();
+        let (mut free, mut total) = (0u64, 0u64);
+        unsafe { GetDiskFreeSpaceExW(windows::core::PCWSTR(path.as_ptr()), Some(&mut free), Some(&mut total), None) }.ok()?;
+        Some((free, total))
+    }
+    #[cfg(not(windows))]
+    {
+        // -P: one line per disk however long its name, the same on macOS and Linux.
+        let out = command("df").args(["-Pk", dir]).output().ok()?;
+        parse_df(&String::from_utf8_lossy(&out.stdout))
+    }
+}
+
+/// The second line of `df -Pk` (or of adb's `df -k`): name, 1K-blocks, used, available, ...
+pub(crate) fn parse_df(out: &str) -> Option<(u64, u64)> {
+    let line = out.lines().nth(1)?;
+    let cols: Vec<&str> = line.split_whitespace().collect();
+    let total: u64 = cols.get(1)?.parse().ok()?;
+    let free: u64 = cols.get(3)?.parse().ok()?;
+    Some((free * 1024, total * 1024))
+}
+
+/// Whether `path` is one of `drives()`, which are what can be ejected.
+fn is_drive(path: &str) -> bool {
+    drives().iter().any(|(_, p)| p == path)
+}
+
+/// Ejects a disk from `drives()` (its app path).
+pub fn eject(path: &str) -> Result<(), String> {
+    if !is_drive(path) {
+        return Err(format!("{path} isn't a disk that can be ejected."));
+    }
+    let name = crate::device::basename(path).to_string();
+    let failed = |why: String| {
+        let why = if why.trim().is_empty() { "the disk is in use".to_string() } else { why.trim().to_string() };
+        Err(format!("Couldn't eject {name}: {why}. Close files open on it and try again."))
+    };
+    #[cfg(target_os = "macos")]
+    {
+        let out = command("diskutil").args(["eject", path]).output().map_err(|e| format!("Can't run diskutil: {e}"))?;
+        if out.status.success() { Ok(()) } else { failed(String::from_utf8_lossy(&out.stderr).into_owned()) }
+    }
+    #[cfg(all(unix, not(target_os = "macos")))]
+    {
+        // udisks (what desktops mount removable disks with) unmounts it, then powers the
+        // disk off where it can; without it, `umount`, which works for disks in /etc/fstab.
+        let text = std::fs::read_to_string("/proc/self/mounts").unwrap_or_default();
+        let dev = mounts(&text).into_iter().find(|(_, at)| at == path).map(|(d, _)| d);
+        let unmounted = match &dev {
+            Some(dev) => command("udisksctl").args(["unmount", "-b", dev]).output(),
+            None => command("umount").arg(path).output(),
+        };
+        let out = match unmounted {
+            Ok(out) => out,
+            Err(_) => command("umount").arg(path).output().map_err(|e| format!("Can't run umount: {e}"))?,
+        };
+        if !out.status.success() {
+            return failed(String::from_utf8_lossy(&out.stderr).into_owned());
+        }
+        if let Some(dev) = dev {
+            let _ = command("udisksctl").args(["power-off", "-b", &dev]).output();
+        }
+        Ok(())
+    }
+    #[cfg(windows)]
+    {
+        // File Explorer's own Eject, through the shell.
+        let drive = path.trim_start_matches('/');
+        let script = format!("(New-Object -ComObject Shell.Application).Namespace(17).ParseName('{drive}').InvokeVerb('Eject')");
+        let out = command("powershell")
+            .args(["-NoProfile", "-NonInteractive", "-Command", &script])
+            .output()
+            .map_err(|e| format!("Can't run PowerShell: {e}"))?;
+        if !out.status.success() {
+            return failed(String::from_utf8_lossy(&out.stderr).into_owned());
+        }
+        // The verb doesn't say whether it worked: the drive going away does.
+        for _ in 0..20 {
+            if !Path::new(&format!("{drive}\\")).exists() {
+                return Ok(());
+            }
+            std::thread::sleep(std::time::Duration::from_millis(250));
+        }
+        failed(String::new())
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn reads_df() {
+        let out = "Filesystem 1024-blocks Used Available Capacity Mounted on\n/dev/disk3s1 971350180 500000000 400000000 56% /\n";
+        assert_eq!(parse_df(out), Some((400000000 * 1024, 971350180 * 1024)));
+        assert_eq!(parse_df("header only\n"), None);
+    }
+
+    #[cfg(not(windows))]
+    #[test]
+    fn app_paths_are_the_computers() {
+        assert_eq!(native("/a/b"), PathBuf::from("/a/b"));
+        assert_eq!(app_path(Path::new("/a/b")), "/a/b");
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn drives_are_top_folders() {
+        assert_eq!(native("/C:/Users/me"), PathBuf::from(r"C:\Users\me"));
+        assert_eq!(native("/C:"), PathBuf::from(r"C:\"));
+        assert_eq!(app_path(Path::new(r"C:\Users\me")), "/C:/Users/me");
+        assert_eq!(app_path(Path::new(r"\\?\D:\x\")), "/D:/x");
+    }
+
+    #[cfg(all(unix, not(target_os = "macos")))]
+    #[test]
+    fn reads_mounts() {
+        let text = "/dev/sdb1 /media/me/MY\\040STICK vfat rw 0 0\nproc /proc proc rw 0 0\n";
+        assert_eq!(mounts(text)[0], ("/dev/sdb1".to_string(), "/media/me/MY STICK".to_string()));
+    }
+}

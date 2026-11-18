@@ -36,7 +36,7 @@ pub(super) fn Sidebar() -> impl IntoView {
         (heading, open)
     };
     let (fav_heading, fav_open) = section("favs", "Favourites", false);
-    let (mac_heading, mac_open) = section("mac", "Mac", false);
+    let (mac_heading, mac_open) = section("mac", crate::os::computer(), false);
     let (dev_heading, dev_open) = section("devices", "Devices", true);
     // Disks mounted on the Mac: USB drives, SD cards, disk images.
     let drives = Memo::new(move |_| ctx.devices.with(|d| d.as_ref().map(|d| d.drives.clone()).unwrap_or_default()));
@@ -81,7 +81,7 @@ pub(super) fn Sidebar() -> impl IntoView {
                     let to = move || other.with(|o| o.as_ref().map(|o| if o.transport == "adb" { "adb" } else { "MTP" }));
                     let title = move || match to() {
                         Some(to) => format!("Connected with {now}. Click to connect with {to} instead."),
-                        None if now == "MTP" => format!("Connected with MTP. To use adb, turn on USB debugging on {label} and allow this Mac."),
+                        None if now == "MTP" => format!("Connected with MTP. To use adb, turn on USB debugging on {label} and allow {}.", crate::os::this_computer()),
                         None => "Connected with adb.".to_string(),
                     };
                     view! {
@@ -110,7 +110,7 @@ pub(super) fn Sidebar() -> impl IntoView {
                 {move || fav_open.get().then(|| ctx.favs.get().into_iter().map(|f| {
                     let src = ctx.fav_src(&f);
                     let name = base(&f.path);
-                    let on = if f.place == "mac" { "the Mac".to_string() } else { f.label.clone() };
+                    let on = if f.place == "mac" { crate::os::the_computer().to_string() } else { f.label.clone() };
                     let tip = match src {
                         Some(_) => format!("{} on {on}", f.path),
                         None => format!("{} on {on}. Connect {on} to open it.", f.path),
@@ -299,7 +299,7 @@ pub(super) fn Settings() -> impl IntoView {
                         store(THEME_KEY, &t);
                         ctx.theme.set(t);
                     }>
-                        <option value="auto">"As the Mac"</option>
+                        <option value="auto">{if crate::os::is_mac() { "As the Mac" } else { "As the system" }}</option>
                         <option value="light">"Light"</option>
                         <option value="dark">"Dark"</option>
                     </select>
@@ -314,16 +314,16 @@ pub(super) fn Settings() -> impl IntoView {
                         on:change=move |e| ctx.set_phone_thumbs(event_target_checked(&e))/>
                     "Thumbnails of phone files"
                 </label>
-                <p class="hint">"Each phone thumbnail reads the whole image or EPUB over USB, once; then it's cached on the Mac. Mac files always get thumbnails."</p>
+                <p class="hint">{format!("Each phone thumbnail reads the whole image or EPUB over USB, once; then it's cached on {}. Files on {} always get thumbnails.", crate::os::the_computer(), crate::os::the_computer())}</p>
                 <label class="check">
                     <input type="checkbox" prop:checked=move || ctx.auto_connect.get()
                         on:change=move |e| ctx.set_auto_connect(event_target_checked(&e))/>
                     "Connect phones when they're plugged in (adb if allowed, else MTP)"
                 </label>
-                <h3>"On this Mac"</h3>
+                <h3>{format!("On {}", crate::os::this_computer())}</h3>
                 {folder("backups", "Backups", "Copies of files from before they were replaced or deleted. Kept until you clear them in Backups, which moves them to the Trash.")}
                 {folder("thumbs", "Thumbnail cache", "Made again when needed, so it's safe to clear.")}
-                {folder("opened", "Opened phone files", "Copies made to open phone files in Mac apps. Changes to them don't go back to the phone.")}
+                {folder("opened", "Opened phone files", "Copies made to open phone files in other apps. Changes to them don't go back to the phone.")}
                 {move || error.get().map(|e| view! { <p class="error">{e}</p> })}
                 <div class="actions">
                     <button class="btn" on:click=move |_| { ctx.settings.set(false); ctx.help.set(true); }>"Keyboard shortcuts"</button>
@@ -344,7 +344,7 @@ pub(super) fn Shortcuts() -> impl IntoView {
         ("← →", "Previous or next picture, video or sound (list); left and right (thumbnails, columns)"),
         ("↵ or ⌘↓", "Open"),
         ("⌫ or ⌘↑", "Up a folder"),
-        ("Space", "Quick Look"),
+        ("Space", "Quick Look"), // Shown as os::quick_look().
         ("/ or ⌘F or ⌘K", "Filter; Enter searches subfolders"),
         ("⌘L", "Type a path"),
         ("F2", "Rename"),
@@ -363,7 +363,7 @@ pub(super) fn Shortcuts() -> impl IntoView {
             <div class="dialog shortcuts" on:click=|e| e.stop_propagation()>
                 <h2>"Keyboard shortcuts"</h2>
                 <dl>
-                    {KEYS.iter().map(|(k, what)| view! { <dt><kbd>{*k}</kbd></dt><dd>{*what}</dd> }).collect_view()}
+                    {KEYS.iter().map(|(k, what)| view! { <dt><kbd>{crate::os::keys(k)}</kbd></dt><dd>{if *what == "Quick Look" { crate::os::quick_look() } else { *what }}</dd> }).collect_view()}
                 </dl>
                 <div class="actions">
                     <span class="grow"></span>

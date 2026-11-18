@@ -6,7 +6,14 @@ pub mod epub;
 pub mod local;
 pub mod media;
 mod migrate;
+/// MTP over libmtp on macOS and Linux; on Windows over Windows' own Portable Devices API, since
+/// libmtp would need the phone's USB driver replaced there.
+#[cfg(not(windows))]
 pub mod mtp;
+#[cfg(windows)]
+#[path = "wpd.rs"]
+pub mod mtp;
+pub mod platform;
 mod protocol;
 pub mod thumbs;
 pub mod usb;
@@ -45,7 +52,7 @@ pub struct AppState {
     /// Connected devices by id ("d1", "d2", ...). Several can be connected at once.
     devs: Mutex<HashMap<String, Conn>>,
     next_dev: AtomicU32,
-    /// The Mac's own files, always available.
+    /// The computer's own files, always available.
     mac: Arc<Device>,
     /// Open EPUBs by id. protocol.rs serves their files to the chapter view.
     pub books: Mutex<HashMap<u32, Book>>,
@@ -77,7 +84,7 @@ impl Default for AppState {
 }
 
 impl AppState {
-    /// The files to work on: "mac" for the Mac's own, or a connected device's id.
+    /// The files to work on: "mac" for the computer's own, or a connected device's id.
     pub fn source(&self, src: Option<&str>) -> Result<Arc<Device>, String> {
         match src {
             Some("mac") => Ok(self.mac.clone()),
@@ -131,6 +138,7 @@ pub fn run() {
     migrate::run();
     tauri::Builder::default()
         .plugin(tauri_plugin_dialog::init())
+        .plugin(tauri_plugin_clipboard_manager::init())
         .manage(AppState::default())
         .register_asynchronous_uri_scheme_protocol("ferry", |ctx, request, responder| {
             let app = ctx.app_handle().clone();

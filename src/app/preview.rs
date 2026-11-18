@@ -188,7 +188,7 @@ fn BigCover(src: Src, entry: Entry) -> impl IntoView {
         }
     });
     let p = String::from(js_sys::encode_uri_component(&entry.path));
-    let url = format!("ferry://localhost/cover?src={}&p={p}&s={}&m={}", src.key(), entry.size, entry.mtime);
+    let url = crate::os::served(&format!("cover?src={}&p={p}&s={}&m={}", src.key(), entry.size, entry.mtime));
     view! {
         <div class="pic" class:whole=loaded node_ref=pic>
             {let e = entry.clone(); move || (!loaded.get()).then(|| view! { <Thumbnail src entry=e.clone()/> })}
@@ -590,14 +590,14 @@ fn Zipped(pane: Pane, src: Src, zip: Entry, name: String, size: u64) -> impl Int
     let p = pane;
     let short = name.rsplit('/').next().unwrap_or(&name).to_string();
     let e = Entry { name: short.clone(), path: name.clone(), dir: false, size, mtime: 0 };
-    let url = format!(
-        "ferry://localhost/zipped?src={}&p={}&s={}&m={}&e={}",
+    let url = crate::os::served(&format!(
+        "zipped?src={}&p={}&s={}&m={}&e={}",
         src.key(),
         String::from(js_sys::encode_uri_component(&zip.path)),
         zip.size,
         zip.mtime,
         String::from(js_sys::encode_uri_component(&name)),
-    );
+    ));
     let inner = Inner { name: name.clone(), zip_size: zip.size };
     let info = RwSignal::new(MediaInfo::default());
     let forced = RwSignal::new(None::<PeekAs>);

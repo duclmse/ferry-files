@@ -73,7 +73,7 @@ pub(super) fn Crumbs(pane: Pane) -> impl IntoView {
         }
     });
     view! {
-        <div class="crumbs" node_ref=el title="Click here or press ⌘L to type a path" on:click=edit>
+        <div class="crumbs" node_ref=el title=format!("Click here or press {} to type a path", crate::os::keys("⌘L")) on:click=edit>
             {move || if p.editing_path.get() {
                 view! { <PathEdit pane=p/> }.into_any()
             } else {
@@ -163,8 +163,8 @@ pub(super) fn Notices(pane: Pane) -> impl IntoView {
                 let place = ctx.place(p.src.get_untracked());
                 let label = match items.as_slice() {
                     [e] if e.dir => format!("Delete the folder {} from {place}? Only an empty folder can be deleted.", e.name),
-                    [e] => format!("Delete {} from {place}? A backup is kept on the Mac.", e.name),
-                    _ => format!("Delete {} items from {place}? Files are backed up on the Mac; folders are deleted only when empty.", items.len()),
+                    [e] => format!("Delete {} from {place}? A backup is kept on {}.", e.name, crate::os::the_computer()),
+                    _ => format!("Delete {} items from {place}? Files are backed up on {}; folders are deleted only when empty.", items.len(), crate::os::the_computer()),
                 };
                 view! {
                     <div class="notice"><span class="text">{label}</span>
@@ -305,7 +305,7 @@ pub(super) fn PaneView(pane: Pane) -> impl IntoView {
                 _ => String::new(),
             }>
             <div class="bar">
-                <button class="btn" title="Up (⌘↑)" disabled=move || p.cwd.get() == "/" on:click=move |_| ctx.go_up(p)>"↑"</button>
+                <button class="btn" title=format!("Up ({})", crate::os::keys("⌘↑")) disabled=move || p.cwd.get() == "/" on:click=move |_| ctx.go_up(p)>"↑"</button>
                 <Crumbs pane=p/>
                 {move || p.loading.get().then(|| view! { <span class="spin"></span> })}
                 // Narrow panes show only the icon; clicking it opens the field.
@@ -318,7 +318,7 @@ pub(super) fn PaneView(pane: Pane) -> impl IntoView {
                         {move || ctx.searches.get().into_iter().map(|q| view! { <option value=q></option> }).collect_view()}
                     </datalist>
                     <input class="filter" type="search" placeholder="Filter" node_ref=filter_ref list=format!("searches-{}", p.id)
-                        title="Show names containing this (⌘F or /). Enter searches subfolders too."
+                        title=format!("Show names containing this ({} or /). Enter searches subfolders too.", crate::os::keys("⌘F"))
                         prop:value=move || p.filter.get()
                         on:input=move |ev| { p.filter.set(event_target_value(&ev)); p.arrange(); }
                         on:keydown=move |ev| match ev.key().as_str() {
@@ -343,11 +343,11 @@ pub(super) fn PaneView(pane: Pane) -> impl IntoView {
                 </div>
                 {(p.id == 0).then(|| view! {
                     <button class="btn" class:active=move || ctx.split.get()
-                        title=move || if ctx.split.get() { "Hide the second pane (⌘\\)" } else { "Show a second pane (⌘\\)" }
+                        title=move || format!("{} ({})", if ctx.split.get() { "Hide the second pane" } else { "Show a second pane" }, crate::os::keys("⌘\\"))
                         aria-label="Second pane" on:click=move |_| ctx.set_split(!ctx.split.get_untracked())>"◫"</button>
                 })}
                 {(p.id == 1).then(|| view! {
-                    <button class="btn" title="Hide this pane (⌘\\)" aria-label="Hide this pane"
+                    <button class="btn" title=format!("Hide this pane ({})", crate::os::keys("⌘\\")) aria-label="Hide this pane"
                         on:click=move |_| ctx.set_split(false)>"✕"</button>
                 })}
             </div>
@@ -460,9 +460,11 @@ pub(super) fn dir_or_cwd(p: Pane, dir: &Option<String>) -> String {
 }
 
 pub(super) fn moves(ev: &web_sys::DragEvent, from: Src, to: Src) -> bool {
-    if ev.alt_key() {
+    // On the Mac ⌥ copies and ⌘ moves; elsewhere Ctrl copies and Shift moves, as in File Explorer.
+    let (copy, mv) = if crate::os::is_mac() { (ev.alt_key(), ev.meta_key()) } else { (ev.ctrl_key(), ev.shift_key()) };
+    if copy {
         false
-    } else if ev.meta_key() {
+    } else if mv {
         true
     } else {
         from == to

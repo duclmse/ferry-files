@@ -48,7 +48,7 @@ impl Ctx {
                         lines.push("Cancelled: the rest wasn't copied.".into());
                     }
                     if moving && !r.backups.is_empty() {
-                        lines.push("The originals are backed up on the Mac.".into());
+                        lines.push(format!("The originals are backed up on {}.", crate::os::the_computer()));
                     }
                     let shown = 5;
                     for (name, why) in r.skipped.iter().take(shown) {

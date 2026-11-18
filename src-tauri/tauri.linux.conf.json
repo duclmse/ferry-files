@@ -1,0 +1,14 @@
+{
+  "$schema": "https://schema.tauri.app/config/2",
+  "bundle": {
+    "targets": ["deb", "rpm", "appimage"],
+    "linux": {
+      "deb": {
+        "depends": ["libmtp9t64 | libmtp9"]
+      },
+      "rpm": {
+        "depends": ["libmtp"]
+      }
+    }
+  }
+}

@@ -13,11 +13,42 @@ const FILETYPE_UNKNOWN: c_int = 44; // LIBMTP_FILETYPE_UNKNOWN (libmtp 1.1.23)
 const ERROR_NO_DEVICE_ATTACHED: c_int = 5;
 const CACHE_TTL: Duration = Duration::from_secs(3);
 
-pub const MAC_MTP_HINT: &str = "Check that the phone is unlocked, connected with a data cable, and set to \
-\"File transfer\" (USB notification on the phone). On macOS, quit Android File Transfer, Image Capture, \
-Preview and yomi-files.py, and if it still fails run: killall ptpcamerad";
+#[cfg(target_os = "macos")]
+pub const MTP_HINT: &str = "Check that the phone is unlocked, connected with a data cable, and set to \
+\"File transfer\" (USB notification on the phone). Quit Android File Transfer, Image Capture and Preview, \
+and if it still fails run: killall ptpcamerad";
+#[cfg(not(target_os = "macos"))]
+pub const MTP_HINT: &str = "Check that the phone is unlocked, connected with a data cable, and set to \
+\"File transfer\" (USB notification on the phone). If the file manager has the phone open, unmount it \
+there first (gvfs holds it), and check that your user may use USB devices (udev rules from libmtp).";
 
-// ---- libmtp structs (only what we use; layouts match libmtp 1.1.x on 64-bit macOS) ----------
+/// How to get libmtp, when it isn't there.
+#[cfg(target_os = "macos")]
+const INSTALL: &str = "libmtp not found. Install it with: brew install libmtp";
+#[cfg(not(target_os = "macos"))]
+const INSTALL: &str = "libmtp not found. Install it with your package manager (libmtp9 on Debian and Ubuntu, \
+libmtp on Fedora and Arch).";
+
+/// Where libmtp may be: next to the app first (a bundle carries its own), then where it's installed.
+fn candidates() -> Vec<std::path::PathBuf> {
+    let mut out = vec![];
+    #[cfg(target_os = "macos")]
+    {
+        if let Some(dir) = std::env::current_exe().ok().and_then(|e| e.parent().map(|d| d.join("../Frameworks"))) {
+            out.push(dir.join("libmtp.9.dylib"));
+        }
+        for p in ["/opt/homebrew/lib/libmtp.dylib", "/usr/local/lib/libmtp.dylib", "libmtp.dylib"] {
+            out.push(p.into());
+        }
+    }
+    #[cfg(not(target_os = "macos"))]
+    for p in ["libmtp.so.9", "libmtp.so"] {
+        out.push(p.into());
+    }
+    out
+}
+
+// ---- libmtp structs (only what we use; layouts match libmtp 1.1.x on 64-bit macOS and Linux) ----------
 
 #[repr(C)]
 struct MtpFile {
@@ -156,11 +187,10 @@ fn lib() -> Result<&'static Lib> {
 }
 
 fn load() -> std::result::Result<Lib, String> {
-    let candidates = ["/opt/homebrew/lib/libmtp.dylib", "/usr/local/lib/libmtp.dylib", "libmtp.dylib"];
-    let library = candidates
+    let library = candidates()
         .iter()
         .find_map(|p| unsafe { libloading::Library::new(p) }.ok())
-        .ok_or("libmtp not found. Install it with: brew install libmtp")?;
+        .ok_or(INSTALL)?;
     // The library stays loaded for the life of the app.
     let library: &'static libloading::Library = Box::leak(Box::new(library));
     macro_rules! sym {
@@ -221,17 +251,17 @@ pub struct Detected {
     /// "bus-devnum": what `open` takes.
     pub location: String,
     pub name: String,
-    pub bus: u32,
-    pub devnum: u32,
-    pub vendor_id: u16,
-    pub product_id: u16,
+    /// The USB serial number, which adb shows too: tells that both are the same phone.
+    pub serial: Option<String>,
 }
 
 /// MTP devices on USB, without opening them.
 pub fn detect() -> Result<Vec<Detected>> {
     let lib = lib()?;
     let _lib = lib_lock();
-    Ok(raw_devices(lib)?
+    let raws = raw_devices(lib)?;
+    let usb = if raws.is_empty() { vec![] } else { crate::usb::list() };
+    Ok(raws
         .into_iter()
         .map(|r| {
             let (e, bus, devnum) = unsafe { (&(*r).device_entry, (*r).bus_location, (*r).devnum) };
@@ -240,10 +270,7 @@ pub fn detect() -> Result<Vec<Detected>> {
             Detected {
                 location: location(r),
                 name,
-                bus,
-                devnum: devnum as u32,
-                vendor_id: e.vendor_id,
-                product_id: e.product_id,
+                serial: crate::usb::serial_of(&usb, bus, devnum as u32, e.vendor_id, e.product_id),
             }
         })
         .collect())
@@ -490,7 +517,7 @@ impl Mtp {
                 None => raws.first().copied(),
             };
             let Some(raw) = found else {
-                return err(format!("No MTP device found. {MAC_MTP_HINT}"));
+                return err(format!("No MTP device found. {MTP_HINT}"));
             };
             // Uncached: don't enumerate the whole phone on connect (slow on Android).
             let dev = unsafe { (lib.open_uncached)(raw) };
@@ -499,7 +526,7 @@ impl Mtp {
             }
             tries += 1;
             if tries == 4 {
-                return err(format!("Couldn't open the MTP device. {MAC_MTP_HINT}"));
+                return err(format!("Couldn't open the MTP device. {MTP_HINT}"));
             }
             drop(lock);
             std::thread::sleep(std::time::Duration::from_millis(1500));
@@ -666,7 +693,7 @@ impl Transport for Mtp {
         }
         // The device can't send part of a file: copy it whole once, and read from the copy.
         let copy = self.stream_copy(&mut inner, &node)?;
-        crate::local::Local.read_range(&copy.to_string_lossy(), start, len)
+        crate::local::Local.read_range(&crate::platform::app_path(&copy), start, len)
     }
 
     fn read(&self, path: &str) -> Result<(Vec<u8>, String)> {
@@ -760,7 +787,7 @@ impl Transport for Mtp {
         while !s.is_null() {
             let (id, free, total) = unsafe { ((*s).id, (*s).free_space_in_bytes, (*s).max_capacity) };
             if let Some((name, _)) = self.storages.iter().find(|(_, sid)| *sid == id) {
-                out.push(crate::device::Space { name: name.clone(), free, total });
+                out.push(crate::device::Space { name: name.clone(), free, total, path: format!("/{name}") });
             }
             s = unsafe { (*s).next };
         }

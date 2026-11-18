@@ -79,6 +79,9 @@ pub struct Space {
     pub name: String,
     pub free: u64,
     pub total: u64,
+    /// The folder the storage starts at; "" when unknown.
+    #[serde(default)]
+    pub path: String,
 }
 
 #[derive(Clone, Debug, PartialEq, Deserialize)]

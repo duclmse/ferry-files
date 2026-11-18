@@ -397,7 +397,7 @@ impl Pane {
 
     /// A click on an item: ⌘ adds or removes it, Shift picks everything from the selected item to it.
     fn click(self, ev: &web_sys::MouseEvent, path: &str) {
-        if ev.meta_key() {
+        if crate::os::cmd(ev.meta_key(), ev.ctrl_key()) {
             let sel = self.selected.get_untracked();
             self.marked.update(|m| {
                 if m.is_empty() {
@@ -610,7 +610,7 @@ impl Ctx {
     /// For sentences: "Saved to the Mac." or "Saved to Pixel 7."
     fn place(self, src: Src) -> String {
         match src {
-            Src::Mac => "the Mac".into(),
+            Src::Mac => crate::os::the_computer().into(),
             Src::Dev(_) => self.src_info(src).map_or_else(|| "the device".into(), |i| i.label),
         }
     }
@@ -880,7 +880,7 @@ pub fn App() -> impl IntoView {
             }
         });
     });
-    // Files dragged in from Finder are copied to the folder (or pane) they're dropped on.
+    // Files dragged in from the file manager are copied to the folder (or pane) they're dropped on.
     crate::api::listen("tauri://drag-drop", move |d: FileDrop| {
         let dpr = window().device_pixel_ratio().max(1.0);
         let Some(el) = document().element_from_point((d.position.x / dpr) as f32, (d.position.y / dpr) as f32) else { return };
@@ -888,7 +888,8 @@ pub fn App() -> impl IntoView {
         let Some(p) = pane_el.get_attribute("data-pane").and_then(|i| i.parse::<usize>().ok()).and_then(|i| ctx.panes.get(i).copied()) else { return };
         let dir = el.closest("[data-dir]").ok().flatten().and_then(|f| f.get_attribute("data-dir")).unwrap_or_else(|| p.cwd.get_untracked());
         ctx.active.set(p.id);
-        ctx.transfer(p, Src::Mac, d.paths, p.src.get_untracked(), dir, false);
+        let paths = d.paths.iter().map(|f| crate::os::app_path(f)).collect();
+        ctx.transfer(p, Src::Mac, paths, p.src.get_untracked(), dir, false);
     });
 
     // Keep the item last picked visible when the keyboard moves the selection. That item, not
