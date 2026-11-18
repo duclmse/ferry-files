@@ -62,7 +62,6 @@
   display: flex;
   flex-direction: column;
   gap: 1px;
-  padding-left: 16px;
 }
 
 .device .name {
@@ -292,4 +291,48 @@
 
 .side > .btn {
   margin-top: 4px;
+}
+
+/* A folder in the sidebar, indented by its depth, with ▸ to show the folders in it. */
+.tree-row {
+  display: flex;
+  align-items: center;
+  min-width: 0;
+}
+
+.tree-row .item {
+  flex: 1;
+  min-width: 0;
+}
+
+.tree-row .twisty {
+  flex: none;
+  width: 18px;
+  height: 22px;
+  border: 0;
+  background: none;
+  padding: 0;
+  border-radius: 4px;
+  color: var(--muted);
+  cursor: pointer;
+}
+
+.tree-row .twisty:hover {
+  color: var(--ink);
+  background: var(--hover);
+}
+
+.tree-row .twisty.none {
+  visibility: hidden;
+}
+
+.tree-row .chev {
+  display: inline-block;
+  font-size: 14px;
+  line-height: 1;
+  transition: transform 0.12s;
+}
+
+.tree-row .chev.open {
+  transform: rotate(90deg);
 }

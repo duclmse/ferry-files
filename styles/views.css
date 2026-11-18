@@ -238,20 +238,47 @@
   display: flex;
   flex-direction: column;
   align-items: center;
-  gap: 6px;
-  padding: 20px 16px;
+  gap: 10px;
+  padding: 12px;
   text-align: center;
   overflow-y: auto;
 }
 
-/* Centered top to bottom; auto margins (not justify-content) so a tall preview still scrolls
-   from its top. */
-.preview > :first-child {
-  margin-top: auto;
+/* The picture, player or text takes all the height the few lines of details below leave. */
+.preview > .view {
+  flex: 1 1 auto;
+  min-height: 0;
+  width: 100%;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
 }
 
-.preview > :last-child {
-  margin-bottom: auto;
+.preview > .meta {
+  flex: none;
+  width: 100%;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 2px;
+  font-size: 12px;
+}
+
+.preview .meta .name {
+  font-size: 13px;
+}
+
+.preview .meta .path {
+  max-width: 100%;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.preview .meta .btn {
+  margin-top: 4px;
 }
 
 .preview .pic {
@@ -259,17 +286,19 @@
   height: 280px;
 }
 
-/* The whole image, once loaded: as wide as the preview and at most 70% of the window's height,
-   but never past its own size. */
+/* The whole image, once loaded: as big as the space above the details allows, but never past
+   its own size. */
 .preview .pic.whole {
   width: 100%;
   height: auto;
+  flex: 1 1 0;
+  min-height: 0;
 }
 
 .preview .pic img.full {
   display: block;
   max-width: 100%;
-  max-height: 70vh;
+  max-height: 100%;
   object-fit: contain;
 }
 
@@ -280,13 +309,18 @@
 }
 
 .preview video.play {
-  max-height: 60vh;
-  background: var(--line);
+  flex: 0 1 auto;
+  min-height: 0;
+  max-height: 100%;
+  object-fit: contain;
+  background: #000;
 }
 
 /* The start of a text file. */
 .preview .peek {
   width: 100%;
+  flex: 0 1 auto;
+  min-height: 0;
   display: flex;
   flex-direction: column;
   align-items: center;
@@ -295,7 +329,8 @@
 
 .preview .peek pre {
   width: 100%;
-  max-height: 55vh;
+  flex: 0 1 auto;
+  min-height: 0;
   margin: 0;
   padding: 10px 12px;
   overflow: auto;
@@ -324,30 +359,6 @@
 
 .preview .name {
   word-break: break-word;
-}
-
-.preview dl {
-  max-width: 420px;
-  display: grid;
-  grid-template-columns: auto 1fr;
-  gap: 4px 10px;
-  margin: 8px 0;
-  font-size: 12px;
-  text-align: left;
-  width: 100%;
-}
-
-.preview dt {
-  color: var(--muted);
-  text-align: right;
-}
-
-.preview dd {
-  margin: 0;
-}
-
-.preview .path {
-  word-break: break-all;
 }
 
 .preview .hint {
@@ -628,7 +639,8 @@ td.name input.rename {
 
 .preview iframe.pdf {
   width: 100%;
-  height: 65vh;
+  flex: 1 1 0;
+  min-height: 240px;
   border: 1px solid var(--line);
   border-radius: 6px;
   background: #fff;
@@ -636,11 +648,12 @@ td.name input.rename {
 
 .font-sample {
   width: 100%;
+  min-height: 0;
   display: flex;
   flex-direction: column;
   gap: 8px;
   text-align: left;
-  overflow: hidden;
+  overflow: auto;
 }
 
 .font-sample .abc {
@@ -668,6 +681,8 @@ td.name input.rename {
 /* What's in a ZIP. */
 .preview .zip {
   width: 100%;
+  flex: 0 1 auto;
+  min-height: 0;
   display: flex;
   flex-direction: column;
   align-items: center;
@@ -676,7 +691,8 @@ td.name input.rename {
 
 .preview .zip-list {
   width: 100%;
-  max-height: 55vh;
+  flex: 0 1 auto;
+  min-height: 0;
   overflow: auto;
   border: 1px solid var(--line);
   border-radius: 6px;

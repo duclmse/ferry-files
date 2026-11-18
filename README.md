@@ -61,6 +61,8 @@ copied between them.
   what's missing from the other pane, at any depth. Files that differ, and files
   only in the other pane, are listed but left alone.
 - Disks under Mac in the sidebar have ⏏ to eject them.
+- The sidebar's places, disks, device folders and favourites have ▸ to show the
+  folders in them, and theirs, as a tree.
 - Backups (sidebar): every file the app replaced or deleted, with where it came
   from. Restore puts it back where it was (when that device is connected);
   Restore here puts it in the active pane's folder. A file already there is

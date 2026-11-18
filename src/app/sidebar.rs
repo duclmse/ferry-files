@@ -7,17 +7,6 @@ use super::*;
 #[component]
 pub(super) fn Sidebar() -> impl IntoView {
     let ctx = expect_context::<Ctx>();
-    let place = move |src: Src, name: String, path: String| {
-        let p = path.clone();
-        let active = move || {
-            let pane = ctx.panes[ctx.active.get()];
-            pane.src.get() == src && pane.cwd.get() == p
-        };
-        view! {
-            <button class="item" class:active=active title=path.clone()
-                on:click=move |_| ctx.open_place(src, path.clone())>{name}</button>
-        }
-    };
     // A section heading that folds its section away; remembered across launches.
     let section = move |key: &'static str, title: &'static str| {
         let storage_key = format!("yomi-files.fold.{key}");
@@ -84,7 +73,7 @@ pub(super) fn Sidebar() -> impl IntoView {
             </div>
             {move || open.get().then(|| view! {
                 <div class="dev-dirs">
-                    {dirs.clone().into_iter().map(|(name, path)| place(src, name, path)).collect_view()}
+                    {dirs.clone().into_iter().map(|(name, path)| view! { <TreeNode src name path depth=1/> }).collect_view()}
                 </div>
             })}
         }
@@ -101,33 +90,38 @@ pub(super) fn Sidebar() -> impl IntoView {
                         Some(_) => format!("{} on {on}", f.path),
                         None => format!("{} on {on}. Connect {on} to open it.", f.path),
                     };
-                    let (f1, f2) = (f.clone(), f.clone());
-                    let active = move || src.is_some_and(|s| {
-                        let pane = ctx.panes[ctx.active.get()];
-                        pane.src.get() == s && pane.cwd.get() == f1.path
-                    });
-                    view! {
-                        <div class="fav">
-                            <button class="item" class:active=active class:off=src.is_none() title=tip
-                                on:click=move |_| if let Some(s) = src { ctx.open_place(s, f2.path.clone()) }>{name}</button>
+                    let fav_path = f.path.clone();
+                    let unfav = ViewFn::from(move || {
+                        let f = f.clone();
+                        view! {
                             <button class="unfav" title="Remove from Favourites" aria-label="Remove from Favourites"
                                 on:click=move |_| ctx.set_favs(ctx.favs.get_untracked().into_iter().filter(|x| *x != f).collect())>"✕"</button>
-                        </div>
+                        }
+                    });
+                    match src {
+                        Some(src) => view! { <TreeNode src name path=fav_path class="fav" tip extra=unfav/> }.into_any(),
+                        // Its device isn't connected: shown, but it can't be opened.
+                        None => view! {
+                            <div class="tree-row fav">
+                                <span class="twisty none"></span>
+                                <button class="item off" title=tip disabled=true>{name}</button>
+                                {unfav.run()}
+                            </div>
+                        }.into_any(),
                     }
                 }).collect_view())}
             })}
             {mac_heading}
             {move || mac_open.get().then(|| view! {
                 {ctx.mac.get().map(|i| i.quick_dirs).unwrap_or_default().into_iter()
-                    .map(|(name, path)| place(Src::Mac, name, path)).collect_view()}
+                    .map(|(name, path)| view! { <TreeNode src=Src::Mac name path/> }).collect_view()}
                 {drives.get().into_iter().map(|(name, path)| {
                     let (tip, at) = (format!("Eject {name}"), path.clone());
-                    view! {
-                        <div class="line drive">
-                            {place(Src::Mac, name, path)}
-                            <button class="act" title=tip aria-label="Eject" on:click=move |_| ctx.eject(at.clone())>"⏏"</button>
-                        </div>
-                    }
+                    let eject = ViewFn::from(move || {
+                        let (tip, at) = (tip.clone(), at.clone());
+                        view! { <button class="act" title=tip aria-label="Eject" on:click=move |_| ctx.eject(at.clone())>"⏏"</button> }
+                    });
+                    view! { <TreeNode src=Src::Mac name path class="drive" extra=eject/> }
                 }).collect_view()}
             })}
             {dev_heading}
@@ -144,6 +138,71 @@ pub(super) fn Sidebar() -> impl IntoView {
             </div>
             <button class="btn" on:click=move |_| ctx.settings.set(true)>"Settings"</button>
         </nav>
+    }
+}
+
+/// A folder in the sidebar that opens in the active pane, with ▸ to show the folders in it
+/// (listed when it's first opened, and again each time it's reopened), and so on down.
+#[component]
+fn TreeNode(
+    src: Src,
+    name: String,
+    path: String,
+    #[prop(default = 0)] depth: usize,
+    /// "fav" or "drive", for their marks.
+    #[prop(default = "")]
+    class: &'static str,
+    #[prop(optional)] tip: Option<String>,
+    /// Buttons at the end of the row (eject, remove).
+    #[prop(optional)]
+    extra: Option<ViewFn>,
+) -> impl IntoView {
+    let ctx = expect_context::<Ctx>();
+    let open = RwSignal::new(false);
+    // The folders in it: None until listed. A listing that fails shows nothing under it.
+    let kids = RwSignal::new(None::<Vec<(String, String)>>);
+    let at = StoredValue::new(path.clone());
+    let toggle = move |ev: web_sys::MouseEvent| {
+        ev.stop_propagation();
+        let now = !open.get_untracked();
+        open.set(now);
+        if !now {
+            return;
+        }
+        spawn_local(async move {
+            let args = json!({ "src": src.key(), "path": at.get_value(), "current": false });
+            let found = match call::<Vec<Entry>>("list", args).await {
+                Ok(es) => {
+                    let mut dirs: Vec<(String, String)> = ctx.visible(es).into_iter().filter(|e| e.dir).map(|e| (e.name, e.path)).collect();
+                    dirs.sort_by_key(|(n, _)| n.to_lowercase());
+                    dirs
+                }
+                Err(_) => vec![],
+            };
+            let _ = kids.try_set(Some(found));
+        });
+    };
+    let active = move || {
+        let pane = ctx.panes[ctx.active.get()];
+        pane.src.get() == src && at.with_value(|p| pane.cwd.with(|c| c == p))
+    };
+    // Nothing to show under it once listed and empty.
+    let leaf = move || kids.with(|k| k.as_ref().is_some_and(Vec::is_empty));
+    let fold_tip = move || if open.get() { "Hide folders" } else { "Show folders" };
+    let title = tip.unwrap_or_else(|| path.clone());
+    view! {
+        <div class=format!("tree-row {class}") style=format!("padding-left: {}px", depth * 14)>
+            <button class="twisty" class:none=leaf title=fold_tip aria-label=fold_tip
+                aria-expanded=move || open.get().to_string() on:click=toggle>
+                <span class="chev" class:open=move || open.get()>"▸"</span>
+            </button>
+            <button class="item" class:active=active title=title
+                on:click=move |_| ctx.open_place(src, at.get_value())>{name}</button>
+            {extra.map(|f| f.run())}
+        </div>
+        {move || open.get().then(|| kids.get().map(|k| k.into_iter().map(|(name, path)| {
+            view! { <TreeNode src name path depth=depth + 1/> }.into_any()
+        }).collect_view()))}
     }
 }
 

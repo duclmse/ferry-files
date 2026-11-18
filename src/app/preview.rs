@@ -79,24 +79,28 @@ pub(super) fn Preview(pane: Pane) -> impl IntoView {
                         _ if is_text(&e) => view! { <TextPeek src entry=e.clone()/> }.into_any(),
                         _ => thumb(&e).into_any(),
                     };
+                    // Kind, size, and the width × height and length once known, on one line.
+                    let size = (!e.dir).then(|| human_size(e.size));
+                    let facts = move || {
+                        let mut v = vec![what.to_string()];
+                        v.extend(size.clone());
+                        info.with(|i| {
+                            v.extend(i.width.zip(i.height).map(|(w, h)| format!("{w} × {h}")));
+                            v.extend(i.duration.map(length));
+                        });
+                        v.join(" · ")
+                    };
                     view! {
-                        {body}
-                        <b class="name">{e.name.clone()}</b>
-                        <span class="sub">{what}{(!e.dir).then(|| format!(" · {}", human_size(e.size)))}</span>
-                        <dl>
-                            {move || info.with(|i| i.width.zip(i.height)).map(|(w, h)| view! {
-                                <dt>"Dimensions"</dt><dd>{format!("{w} × {h}")}</dd>
+                        <div class="view">{body}</div>
+                        <div class="meta">
+                            <b class="name">{e.name.clone()}</b>
+                            <span class="sub">{facts}</span>
+                            {(e.mtime > 0).then(|| view! { <span class="sub">{format!("Modified {}", when(e.mtime))}</span> })}
+                            <span class="sub path" title=e.path.clone()>{parent(&e.path)}</span>
+                            {forced.map(|_| view! {
+                                <button class="btn small" on:click=move |_| p.peek_as.set(None)>"Show normally"</button>
                             })}
-                            {move || info.with(|i| i.duration).map(|d| view! {
-                                <dt>"Length"</dt><dd>{length(d)}</dd>
-                            })}
-                            <dt>"Modified"</dt><dd>{when(e.mtime)}</dd>
-                            <dt>"Where"</dt><dd class="path">{parent(&e.path)}</dd>
-                        </dl>
-                        {forced.map(|_| view! {
-                            <button class="btn" on:click=move |_| p.peek_as.set(None)>"Show normally"</button>
-                        })}
-                        <span class="hint">{if e.dir { "Double-click to open" } else { "Double-click to open · right-click for more" }}</span>
+                        </div>
                     }.into_any()
                 }
             }}
