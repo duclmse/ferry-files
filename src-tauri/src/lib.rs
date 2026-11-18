@@ -93,6 +93,22 @@ impl AppState {
         self.devs.lock().unwrap_or_else(|e| e.into_inner())
     }
 
+    /// Lets go of every connected device, for quitting: an MTP phone's session is closed only
+    /// when its device is dropped, and quitting doesn't drop the app's state. Running transfers
+    /// are cancelled, and work still using a device gets up to 3 seconds to finish with it.
+    fn close_all(&self) {
+        for cancel in self.jobs.lock().unwrap_or_else(|e| e.into_inner()).values() {
+            cancel.store(true, std::sync::atomic::Ordering::Relaxed);
+        }
+        let mut devs: Vec<Arc<Device>> = self.devs().drain().map(|(_, c)| c.dev).collect();
+        let until = std::time::Instant::now() + std::time::Duration::from_secs(3);
+        while devs.iter().any(|d| Arc::strong_count(d) > 1) && std::time::Instant::now() < until {
+            std::thread::sleep(std::time::Duration::from_millis(50));
+        }
+        // The last holder releases the ones still in use, if it gets there before the app ends.
+        devs.clear();
+    }
+
     pub fn is_viewing(&self, src: &str, dir: &str) -> bool {
         self.viewing.lock().unwrap_or_else(|e| e.into_inner()).values().any(|(s, d)| s == src && d == dir)
     }
@@ -168,8 +184,13 @@ pub fn run() {
             editor::epub_export,
             editor::epub_close,
         ])
-        .run(tauri::generate_context!())
-        .expect("error while running yomi-files");
+        .build(tauri::generate_context!())
+        .expect("error while running yomi-files")
+        .run(|app, event| {
+            if let tauri::RunEvent::Exit = event {
+                state(app).close_all();
+            }
+        });
 }
 
 pub fn state(app: &AppHandle) -> tauri::State<'_, AppState> {
