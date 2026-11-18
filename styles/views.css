@@ -491,19 +491,17 @@ body.resizing .grip:active::before {
 
 /* The line between the two panes stands out, with a grab mark in the middle. */
 .grip.pane-grip {
-  width: 6px;
-  background: var(--line);
-  border-left: 1px solid color-mix(in srgb, var(--ink) 18%, transparent);
-  border-right: 1px solid color-mix(in srgb, var(--ink) 18%, transparent);
+  width: 3px;
+  background: color-mix(in srgb, var(--ink) 16%, transparent);
 }
 
 .grip.pane-grip::before {
   content: "";
   position: absolute;
-  left: 1px;
-  right: 1px;
-  top: calc(50% - 14px);
-  height: 28px;
+  left: 0;
+  right: 0;
+  top: calc(50% - 12px);
+  height: 24px;
   border-radius: 2px;
   background: var(--muted);
   opacity: 0.6;
@@ -512,12 +510,11 @@ body.resizing .grip:active::before {
 .grip.pane-grip:hover,
 body.resizing .grip.pane-grip:active {
   background: var(--accent);
-  border-color: var(--accent);
 }
 
 .grip.pane-grip:hover::before {
-  inset: auto 1px;
-  top: calc(50% - 14px);
+  inset: auto 0;
+  top: calc(50% - 12px);
   background: var(--accent-ink);
 }
 

@@ -75,6 +75,7 @@ pub(super) fn Preview(pane: Pane) -> impl IntoView {
                             <iframe class="pdf" src=stream_url(src, &e) title="PDF"></iframe>
                         }.into_any(),
                         _ if has_ext(&e, FONT_EXTS) && e.size <= WHOLE_MAX => view! { <FontSample src entry=e.clone()/> }.into_any(),
+                        _ if has_ext(&e, &["epub"]) => view! { <BigCover src entry=e.clone()/> }.into_any(),
                         _ if has_ext(&e, ZIP_EXTS) => view! { <ZipList src entry=e.clone()/> }.into_any(),
                         _ if is_text(&e) => view! { <TextPeek src entry=e.clone()/> }.into_any(),
                         _ if e.dir => thumb(&e).into_any(),
@@ -160,6 +161,37 @@ fn turn_fit(turn: i32, w: u32, h: u32) -> f64 {
         1.0
     } else {
         w.min(h) as f64 / w.max(h) as f64
+    }
+}
+
+/// The thumbnail's size, in pixels (the backend makes them this big at most).
+const THUMB_PX: f64 = 320.0;
+
+/// An EPUB's cover: its thumbnail, then the cover itself when the preview has room for more
+/// pixels than the thumbnail has.
+#[component]
+fn BigCover(src: Src, entry: Entry) -> impl IntoView {
+    let want = RwSignal::new(false);
+    let loaded = RwSignal::new(false);
+    let pic = NodeRef::<html::Div>::new();
+    // The space the cover could take is the preview's, above the details.
+    request_animation_frame(move || {
+        let Some(room) = pic.get_untracked().and_then(|d| d.parent_element()) else { return };
+        let dpr = window().device_pixel_ratio().max(1.0);
+        if (room.client_width().max(room.client_height()) as f64) * dpr > THUMB_PX {
+            want.set(true);
+        }
+    });
+    let p = String::from(js_sys::encode_uri_component(&entry.path));
+    let url = format!("yomi://localhost/cover?src={}&p={p}&s={}&m={}", src.key(), entry.size, entry.mtime);
+    view! {
+        <div class="pic" class:whole=loaded node_ref=pic>
+            {let e = entry.clone(); move || (!loaded.get()).then(|| view! { <Thumbnail src entry=e.clone()/> })}
+            {move || want.get().then(|| view! {
+                <img class="full" src=url.clone() alt="" draggable="false" class:pending=move || !loaded.get()
+                    on:load=move |_| loaded.set(true)/>
+            })}
+        </div>
     }
 }
 

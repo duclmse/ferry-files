@@ -54,6 +54,9 @@ pub fn handle(app: &AppHandle, req: Request<Vec<u8>>) -> Response<Vec<u8>> {
     if path == "/thumb" {
         return thumb(app, req.uri().query().unwrap_or(""));
     }
+    if path == "/cover" {
+        return cover(app, req.uri().query().unwrap_or(""));
+    }
     if path == "/file" {
         let range = req.headers().get("range").and_then(|v| v.to_str().ok()).map(str::to_string);
         return file(app, req.uri().query().unwrap_or(""), range.as_deref());
@@ -118,6 +121,24 @@ fn thumb(app: &AppHandle, q: &str) -> Response<Vec<u8>> {
     let made = thumbs::make(&key, &dev, &path, size, mtime);
     match made {
         Ok(t) => thumb_response(t),
+        Err(e) => respond(StatusCode::INTERNAL_SERVER_ERROR, "text/plain", e.into_bytes()),
+    }
+}
+
+/// An EPUB's cover at its own size (the preview's, when it's bigger than the thumbnail).
+fn cover(app: &AppHandle, q: &str) -> Response<Vec<u8>> {
+    let (Some(path), Some(src)) = (query_param(q, "p"), query_param(q, "src")) else {
+        return respond(StatusCode::BAD_REQUEST, "text/plain", b"Bad cover request.".to_vec());
+    };
+    let size = query_param(q, "s").and_then(|s| s.parse::<u64>().ok()).unwrap_or(u64::MAX);
+    let dev = match crate::state(app).source(Some(&src)) {
+        Ok(d) => d,
+        Err(e) => return respond(StatusCode::NOT_FOUND, "text/plain", e.into_bytes()),
+    };
+    match thumbs::cover(&dev, &path, size) {
+        // Size and mtime are in the URL, so it changes when the book does.
+        Ok(Some((data, mime))) => respond_with(StatusCode::OK, &mime, "max-age=86400", data),
+        Ok(None) => respond(StatusCode::NOT_FOUND, "text/plain", b"No cover.".to_vec()),
         Err(e) => respond(StatusCode::INTERNAL_SERVER_ERROR, "text/plain", e.into_bytes()),
     }
 }

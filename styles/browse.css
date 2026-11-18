@@ -49,6 +49,8 @@ tbody tr.drop td,
 /* Sortable list headings and the Kind column. */
 th .sort {
   all: unset;
+  max-width: 100%;
+  overflow: hidden;
   cursor: pointer;
   display: inline-flex;
   gap: 4px;

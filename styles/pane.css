@@ -168,9 +168,14 @@ tbody tr.selected td {
   background: var(--sel);
 }
 
-td.name {
-  white-space: normal;
-  word-break: break-all;
+/* Long names are cut off with …; the whole path shows on hover. */
+td.name .where {
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+thead th {
+  white-space: nowrap;
 }
 
 td.num,

@@ -22,7 +22,8 @@ copied between them.
   turn (⟲ ⟳); videos and audio skip back 10 s or ahead 10 or 30 s and play at
   1×, 1.25×, 1.5× or 2×, and videos turn. ‹ and › (or ← and → in the list) go to
   the previous and next picture, video or sound in the folder. PDFs (up to
-  64 MB) show in the preview, fonts (TTF, OTF, WOFF, WOFF2) as samples, and
+  64 MB) show in the preview, fonts (TTF, OTF, WOFF, WOFF2) as samples, EPUBs as their cover (the cover
+  itself once the preview is bigger than its thumbnail), and
   ZIP, APK and JAR files as the list of what's in them (read from the end of the
   file, without unpacking; the first 5000 items). Right-click a file for "Show
   as text" or "Show as hex" (bytes, 16 to a line, up to 4 MB as you scroll).
@@ -47,7 +48,8 @@ copied between them.
   to copy or ⌘ to move. Files dragged in from Finder are copied.
 - Sort by clicking the list's column headers (name, kind, date, size; folders
   first). Drag a column's heading to move it; right-click the headings (or
-  empty space in the list) to show or hide Kind, Modified and Size. The filter box in the pane's bar narrows the folder by name; Enter
+  empty space in the list, or the list button in the status bar) to show or hide
+  Kind, Modified and Size. Text too long for its column is cut off with … The filter box in the pane's bar narrows the folder by name; Enter
   searches all its subfolders too, and "Back to folder" ends the search. ⌘F, ⌘K
   or / goes to the filter box, which offers the last 10 searches.
 - Click the empty part of the path above the files (or press ⌘L) to type a

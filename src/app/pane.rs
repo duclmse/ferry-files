@@ -479,8 +479,9 @@ pub(super) fn ListStatus(pane: Pane) -> impl IntoView {
             <span>{place}</span>
             <div class="seg" role="group" aria-label="View">
                 {ViewMode::ALL.map(|m| view! {
-                    <button title=format!("View as {}", m.label()) aria-label=m.label()
-                        class:active=move || p.view.get() == m on:click=move |_| ctx.set_view(p, m)>{m.glyph()}</button>
+                    <button title=if m == ViewMode::List { "View as list (right-click to choose its columns)".to_string() } else { format!("View as {}", m.label()) }
+                        aria-label=m.label() class:active=move || p.view.get() == m on:click=move |_| ctx.set_view(p, m)
+                        on:contextmenu=move |ev| if m == ViewMode::List { ctx.show_columns_menu(p, &ev) }>{m.glyph()}</button>
                 })}
             </div>
             <button class="btn small preview-toggle" class:active=move || p.preview.get()

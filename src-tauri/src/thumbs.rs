@@ -77,6 +77,18 @@ fn picture(path: &str, data: &[u8]) -> Option<DynamicImage> {
     }
 }
 
+/// An EPUB's cover as it is in the book, and its type, for the preview when it's bigger than the
+/// thumbnail. `None` when the book has none (or is too big to read for it).
+pub fn cover(dev: &Device, path: &str, size: u64) -> Result<Option<(Vec<u8>, String)>, String> {
+    if ext(path) != "epub" || size > MAX_SOURCE {
+        return Ok(None);
+    }
+    let (data, _) = dev.read(path).map_err(|e| e.to_string())?;
+    let Ok(book) = Book::open(&data, path.to_string(), String::new()) else { return Ok(None) };
+    let Some(at) = book.cover_path() else { return Ok(None) };
+    Ok(book.file(&at).map(|d| (d.to_vec(), book.media_type(&at))))
+}
+
 /// Reads the file (from `dev`, the phone or the Mac), makes the thumbnail and caches it.
 /// `size` and `mtime` are what the listing showed; they're only used for the cache key.
 pub fn make(src: &str, dev: &Device, path: &str, size: u64, mtime: i64) -> Result<Thumb, String> {

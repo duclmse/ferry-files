@@ -124,10 +124,10 @@ pub(super) fn Sidebar() -> impl IntoView {
                         }
                     });
                     match src {
-                        Some(src) => view! { <TreeNode src name path=fav_path class="fav" tip extra=unfav/> }.into_any(),
+                        Some(src) => view! { <TreeNode src name path=fav_path depth=1 class="fav" tip extra=unfav/> }.into_any(),
                         // Its device isn't connected: shown, but it can't be opened.
                         None => view! {
-                            <div class="tree-row fav">
+                            <div class="tree-row fav" style="--depth: 1">
                                 <span class="twisty none"></span>
                                 <button class="item off" title=tip disabled=true>{name}</button>
                                 {unfav.run()}
