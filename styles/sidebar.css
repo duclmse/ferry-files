@@ -1,13 +1,13 @@
 .side {
-  --row: 26px;
-  --indent: 16px;
-  --twisty: 16px;
+  --row: 24px;
+  --indent: 18px;
+  --twisty: 18px;
   background: var(--panel);
   border-right: 1px solid var(--line);
   padding: 8px 8px 12px;
   display: flex;
   flex-direction: column;
-  gap: 1px;
+  gap: 0;
   overflow: auto;
 }
 
@@ -21,13 +21,13 @@
   gap: 4px;
   min-width: 0;
   min-height: var(--row);
-  padding: 0 4px 0 calc(6px + var(--depth, 0) * var(--indent));
+  padding: 0 4px 0 calc(4px + var(--depth, 0) * var(--indent));
   border-radius: 6px;
 }
 
 /* Section titles. */
 .side h2 {
-  margin: 12px 0 2px;
+  margin: 8px 0 0;
   font-size: 11px;
   font-weight: 600;
   text-transform: uppercase;
@@ -61,14 +61,16 @@
   color: var(--ink);
 }
 
-/* ▸, turned when open. */
+/* The fold arrow, pointing down when open. */
 .side .chev {
-  display: inline-block;
+  flex: none;
   width: var(--twisty);
-  font-size: 13px;
-  line-height: 1;
-  text-align: center;
-  color: var(--muted);
+  height: var(--twisty);
+  fill: none;
+  stroke: var(--muted);
+  stroke-width: 2;
+  stroke-linecap: round;
+  stroke-linejoin: round;
   transition: transform 0.12s;
 }
 
@@ -83,7 +85,7 @@
   align-items: center;
   justify-content: center;
   width: var(--twisty);
-  height: 20px;
+  height: var(--twisty);
   border: 0;
   background: none;
   padding: 0;
@@ -91,9 +93,10 @@
   cursor: pointer;
 }
 
+.side h2 .fold:hover .chev,
 .device .fold:hover:not(:disabled) .chev,
 .tree-row .twisty:hover .chev {
-  color: var(--ink);
+  stroke: var(--ink);
 }
 
 .device .fold.none,
@@ -149,10 +152,7 @@
   cursor: default;
 }
 
-/* A device: a little room above it, its name bolder. */
-.device {
-  margin-top: 2px;
-}
+/* A device's name is bolder. */
 
 .device b {
   min-width: 0;
@@ -162,18 +162,46 @@
   white-space: nowrap;
 }
 
+/* How the device is connected (adb or MTP); a button when it can be connected the other way. */
 .device .kind {
   flex: none;
+  display: inline-flex;
+  align-items: center;
+  gap: 3px;
+  height: 18px;
+  padding: 0 5px;
+  border: 1px solid transparent;
+  border-radius: 5px;
+  background: none;
   color: var(--muted);
-  text-transform: uppercase;
   font-size: 10px;
+  text-transform: uppercase;
   letter-spacing: 0.03em;
+}
+
+.device .kind:disabled {
+  cursor: default;
+}
+
+.device .kind.can {
+  border-color: var(--line);
+  cursor: pointer;
+}
+
+.device .kind.can:hover:not(:disabled) {
+  background: var(--panel);
+  border-color: var(--accent);
+  color: var(--ink);
+}
+
+.device .kind .swap {
+  font-size: 11px;
+  letter-spacing: 0;
 }
 
 .dev-dirs {
   display: flex;
   flex-direction: column;
-  gap: 1px;
 }
 
 /* Marks before favourites and disks, in a column of their own. */
@@ -231,29 +259,6 @@
 .tree-row .unfav:hover {
   background: var(--panel);
   color: var(--ink);
-}
-
-.device .switch {
-  flex: none;
-  border: 1px solid var(--line);
-  background: none;
-  border-radius: 6px;
-  padding: 0 5px;
-  cursor: pointer;
-  color: var(--muted);
-  font-size: 10px;
-  text-transform: uppercase;
-  letter-spacing: 0.03em;
-}
-
-.device .switch:hover:not(:disabled) {
-  background: var(--hover);
-  color: var(--ink);
-}
-
-.device .switch:disabled {
-  opacity: 0.5;
-  cursor: default;
 }
 
 .side .hint {

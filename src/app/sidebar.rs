@@ -11,15 +11,18 @@ pub(super) fn Sidebar() -> impl IntoView {
     let section = move |key: &'static str, title: &'static str| {
         let storage_key = format!("yomi-files.fold.{key}");
         let open = RwSignal::new(!stored_flag(&storage_key, false));
-        let heading = view! {
+        let heading = move || {
+            let storage_key = storage_key.clone();
+            view! {
             <h2><button class="fold" aria-expanded=move || open.get().to_string()
                 on:click=move |_| {
                     let now = !open.get_untracked();
                     open.set(now);
                     store(&storage_key, if now { "0" } else { "1" });
                 }>
-                <span class="chev" class:open=move || open.get()>"▸"</span>{title}
+                {chev(open)}{title}
             </button></h2>
+            }
         };
         (heading, open)
     };
@@ -45,7 +48,7 @@ pub(super) fn Sidebar() -> impl IntoView {
                         open.set(now);
                         store(&fold_key, if now { "0" } else { "1" });
                     }>
-                    <span class="chev" class:open=move || open.get()>"▸"</span>
+                    {chev(open)}
                 </button>
                 // The device's name shows all its storage ("/").
                 <button class="name" title=format!("All storage on {}", i.label)
@@ -55,19 +58,32 @@ pub(super) fn Sidebar() -> impl IntoView {
                     }
                     on:click=move |_| ctx.open_place(src, "/".into())>
                     <b>{i.label.clone()}</b>
-                    <span class="kind">{i.transport.clone()}</span>
                 </button>
-                {move || {
-                    // The same phone, found the other way: offer to switch.
-                    let serial = i.serial.clone()?;
-                    let other = ctx.devices.with(|d| d.as_ref()?.found.iter().find(|f| f.serial.as_deref() == Some(serial.as_str())).cloned())?;
-                    let to = if other.transport == "adb" { "adb" } else { "MTP" };
-                    let title = format!("Connect with {to} instead");
-                    Some(view! {
-                        <button class="switch" title=title disabled=move || ctx.busy.get()
-                            on:click=move |_| ctx.switch(src, other.clone())>{to}</button>
-                    })
-                }}
+                {
+                    // The badge says how it's connected; when the same phone is also found the
+                    // other way, clicking it reconnects that way.
+                    let now = if i.transport == "adb" { "adb" } else { "MTP" };
+                    let label = i.label.clone();
+                    let serial = i.serial.clone();
+                    let other = Memo::new(move |_| {
+                        let serial = serial.clone()?;
+                        ctx.devices.with(|d| d.as_ref()?.found.iter().find(|f| f.serial.as_deref() == Some(serial.as_str())).cloned())
+                    });
+                    let to = move || other.with(|o| o.as_ref().map(|o| if o.transport == "adb" { "adb" } else { "MTP" }));
+                    let title = move || match to() {
+                        Some(to) => format!("Connected with {now}. Click to connect with {to} instead."),
+                        None if now == "MTP" => format!("Connected with MTP. To use adb, turn on USB debugging on {label} and allow this Mac."),
+                        None => "Connected with adb.".to_string(),
+                    };
+                    view! {
+                        <button class="kind" class:can=move || to().is_some() title=title
+                            disabled=move || to().is_none() || ctx.busy.get()
+                            on:click=move |_| if let Some(o) = other.get_untracked() { ctx.switch(src, o) }>
+                            {now}
+                            {move || to().map(|_| view! { <span class="swap" aria-hidden="true">"⇄"</span> })}
+                        </button>
+                    }
+                }
                 <button class="eject" title=format!("Disconnect {}", i.label) aria-label="Disconnect"
                     on:click=move |_| ctx.disconnect(src)>"⏏"</button>
             </div>
@@ -81,7 +97,7 @@ pub(super) fn Sidebar() -> impl IntoView {
     view! {
         <nav class="side">
             {move || (!ctx.favs.with(|f| f.is_empty())).then(|| view! {
-                {fav_heading.clone()}
+                {fav_heading()}
                 {move || fav_open.get().then(|| ctx.favs.get().into_iter().map(|f| {
                     let src = ctx.fav_src(&f);
                     let name = base(&f.path);
@@ -111,20 +127,20 @@ pub(super) fn Sidebar() -> impl IntoView {
                     }
                 }).collect_view())}
             })}
-            {mac_heading}
+            {mac_heading()}
             {move || mac_open.get().then(|| view! {
                 {ctx.mac.get().map(|i| i.quick_dirs).unwrap_or_default().into_iter()
-                    .map(|(name, path)| view! { <TreeNode src=Src::Mac name path/> }).collect_view()}
+                    .map(|(name, path)| view! { <TreeNode src=Src::Mac name path depth=1/> }).collect_view()}
                 {drives.get().into_iter().map(|(name, path)| {
                     let (tip, at) = (format!("Eject {name}"), path.clone());
                     let eject = ViewFn::from(move || {
                         let (tip, at) = (tip.clone(), at.clone());
                         view! { <button class="act" title=tip aria-label="Eject" on:click=move |_| ctx.eject(at.clone())>"⏏"</button> }
                     });
-                    view! { <TreeNode src=Src::Mac name path class="drive" extra=eject/> }
+                    view! { <TreeNode src=Src::Mac name path depth=1 class="drive" extra=eject/> }
                 }).collect_view()}
             })}
-            {dev_heading}
+            {dev_heading()}
             {move || dev_open.get().then(|| view! {
                 {ctx.phones.get().into_iter().map(device).collect_view()}
                 <DeviceFinder/>
@@ -194,7 +210,7 @@ fn TreeNode(
         <div class=format!("tree-row {class}") style=format!("--depth: {depth}")>
             <button class="twisty" class:none=leaf title=fold_tip aria-label=fold_tip
                 aria-expanded=move || open.get().to_string() on:click=toggle>
-                <span class="chev" class:open=move || open.get()>"▸"</span>
+                {chev(open)}
             </button>
             <button class="item" class:active=active title=title
                 on:click=move |_| ctx.open_place(src, at.get_value())>{name}</button>
@@ -203,6 +219,15 @@ fn TreeNode(
         {move || open.get().then(|| kids.get().map(|k| k.into_iter().map(|(name, path)| {
             view! { <TreeNode src name path depth=depth + 1/> }.into_any()
         }).collect_view()))}
+    }
+}
+
+/// The arrow that folds or unfolds a row, pointing down when open.
+fn chev(open: RwSignal<bool>) -> impl IntoView {
+    view! {
+        <svg class="chev" class:open=move || open.get() viewBox="0 0 16 16" aria-hidden="true">
+            <path d="M6 3.5 10.5 8 6 12.5"/>
+        </svg>
     }
 }
 

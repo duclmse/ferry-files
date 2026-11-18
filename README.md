@@ -131,8 +131,8 @@ adb and MTP aren't exclusive: a phone with both USB debugging and File transfer
 on is seen both ways. The app tells it's the same phone by its USB serial number
 (adb's serial, and the one macOS reports for the MTP device in `ioreg`), so it's
 shown once and connected once. When a connected phone is also available the
-other way, a small **adb** or **MTP** button next to its name switches to that
-way. Phones not connected show under Devices with an **adb | MTP** button, one
+other way, the **adb** or **MTP** badge next to its name shows ⇄, and clicking
+it reconnects the other way. Phones not connected show under Devices with an **adb | MTP** button, one
 half per way to connect (a half is greyed out when that way isn't available; the
 highlighted one is the suggested way). If a phone is waiting for USB debugging
 to be allowed, the sidebar says so. Several devices can be connected at once. ⏏
