@@ -223,14 +223,14 @@ pub(super) fn Preview(pane: Pane) -> impl IntoView {
                     let what = match k {
                         Kind::Folder => "Folder", Kind::Epub => "EPUB book", Kind::Text => "Text file", Kind::Other => "File",
                     };
+                    // Width × height of an image or video, once it has loaded.
+                    let dims = RwSignal::new(None::<(u32, u32)>);
                     view! {
                         {
                             let src = p.src.get_untracked();
                             match media(&e) {
-                                Some(Media::Image) => view! {
-                                    <div class="pic"><img class="full" src=stream_url(src, &e) alt=""/></div>
-                                }.into_any(),
-                                Some(Media::Video) => view! { <Player url=stream_url(src, &e) video=true/> }.into_any(),
+                                Some(Media::Image) => view! { <FullImage src entry=e.clone() dims/> }.into_any(),
+                                Some(Media::Video) => view! { <Player url=stream_url(src, &e) video=true dims/> }.into_any(),
                                 Some(Media::Audio) => view! {
                                     <div class="pic"><Thumbnail src=src entry=e.clone()/></div>
                                     <Player url=stream_url(src, &e) video=false/>
@@ -244,6 +244,9 @@ pub(super) fn Preview(pane: Pane) -> impl IntoView {
                         <b class="name">{e.name.clone()}</b>
                         <span class="sub">{what}{(!e.dir).then(|| format!(" · {}", human_size(e.size)))}</span>
                         <dl>
+                            {move || dims.get().map(|(w, h)| view! {
+                                <dt>"Dimensions"</dt><dd>{format!("{w} × {h}")}</dd>
+                            })}
                             <dt>"Modified"</dt><dd>{when(e.mtime)}</dd>
                             <dt>"Where"</dt><dd class="path">{parent(&e.path)}</dd>
                         </dl>
@@ -263,7 +266,7 @@ fn is_text(e: &Entry) -> bool {
 /// A video or audio player streaming from the device. When the preview moves on, it stops and
 /// lets go of the file, so the web view drops what it buffered.
 #[component]
-fn Player(url: String, video: bool) -> impl IntoView {
+fn Player(url: String, video: bool, #[prop(optional)] dims: Option<RwSignal<Option<(u32, u32)>>>) -> impl IntoView {
     let el = StoredValue::new_local(None::<web_sys::HtmlMediaElement>);
     let keep = move |e: &web_sys::HtmlMediaElement| el.set_value(Some(e.clone()));
     on_cleanup(move || {
@@ -278,9 +281,40 @@ fn Player(url: String, video: bool) -> impl IntoView {
     video_ref.on_load(move |v| keep(&v));
     audio_ref.on_load(move |a| keep(&a));
     if video {
-        view! { <video class="play" controls preload="metadata" src=url node_ref=video_ref></video> }.into_any()
+        let meta = move |ev: web_sys::Event| {
+            let v = ev.target().and_then(|t| t.dyn_into::<web_sys::HtmlVideoElement>().ok());
+            if let (Some(v), Some(dims)) = (v, dims) {
+                // 0 × 0 for a file with sound only.
+                if v.video_width() > 0 {
+                    dims.set(Some((v.video_width(), v.video_height())));
+                }
+            }
+        };
+        view! {
+            <video class="play" controls preload="metadata" src=url node_ref=video_ref on:loadedmetadata=meta></video>
+        }.into_any()
     } else {
         view! { <audio class="play" controls preload="metadata" src=url node_ref=audio_ref></audio> }.into_any()
+    }
+}
+
+/// The image itself, as big as the preview allows (never bigger than it is). Its thumbnail shows
+/// while the whole file is read, which can take a while from a phone.
+#[component]
+fn FullImage(src: Src, entry: Entry, dims: RwSignal<Option<(u32, u32)>>) -> impl IntoView {
+    let loaded = RwSignal::new(false);
+    let url = stream_url(src, &entry);
+    let load = move |ev: web_sys::Event| {
+        if let Some(img) = ev.target().and_then(|t| t.dyn_into::<web_sys::HtmlImageElement>().ok()) {
+            dims.set(Some((img.natural_width(), img.natural_height())));
+        }
+        loaded.set(true);
+    };
+    view! {
+        <div class="pic" class:whole=loaded>
+            {move || (!loaded.get()).then(|| view! { <Thumbnail src entry=entry.clone()/> })}
+            <img class="full" src=url alt="" draggable="false" class:pending=move || !loaded.get() on:load=load/>
+        </div>
     }
 }
 

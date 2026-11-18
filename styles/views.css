@@ -258,9 +258,17 @@
   height: 280px;
 }
 
-.preview .pic img.full {
+/* The whole image, once loaded: as wide as the preview and at most 70% of the window's height,
+   but never past its own size. */
+.preview .pic.whole {
   width: 100%;
-  height: 100%;
+  height: auto;
+}
+
+.preview .pic img.full {
+  display: block;
+  max-width: 100%;
+  max-height: 70vh;
   object-fit: contain;
 }
 

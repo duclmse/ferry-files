@@ -94,13 +94,13 @@ pub(super) const THUMB_MAX: u64 = 60 * 1024 * 1024;
 /// Files the preview can show or play itself, streamed from the device (see `stream_url`).
 #[derive(Clone, Copy, PartialEq)]
 pub(super) enum Media {
-    /// Images a thumbnail can't show well: animated, or a type thumbs.rs doesn't read.
+    /// Images, shown whole in the preview (sized to it) rather than as a thumbnail.
     Image,
     Video,
     Audio,
 }
 
-const IMAGE_EXTS: &[&str] = &["gif", "heic", "heif", "avif", "svg"];
+const IMAGE_EXTS: &[&str] = &["jpg", "jpeg", "png", "gif", "webp", "bmp", "heic", "heif", "avif", "svg"];
 const VIDEO_EXTS: &[&str] = &["mp4", "m4v", "mov", "webm", "3gp"];
 const AUDIO_EXTS: &[&str] = &["mp3", "m4a", "aac", "wav", "flac", "ogg", "oga", "opus"];
 /// Same as the backend's whole-file limit (protocol.rs): an `<img>` asks for the whole file.
