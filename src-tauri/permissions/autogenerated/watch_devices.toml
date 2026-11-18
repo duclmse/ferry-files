@@ -1,0 +1,11 @@
+# Automatically generated - DO NOT EDIT!
+
+[[permission]]
+identifier = "allow-watch-devices"
+description = "Enables the watch_devices command without any pre-configured scope."
+commands.allow = ["watch_devices"]
+
+[[permission]]
+identifier = "deny-watch-devices"
+description = "Denies the watch_devices command without any pre-configured scope."
+commands.deny = ["watch_devices"]

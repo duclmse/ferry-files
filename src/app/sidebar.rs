@@ -8,27 +8,36 @@ use super::*;
 pub(super) fn Sidebar() -> impl IntoView {
     let ctx = expect_context::<Ctx>();
     // A section heading that folds its section away; remembered across launches.
-    let section = move |key: &'static str, title: &'static str| {
+    // `refresh`: Devices has a button to look for devices again, at the right.
+    let section = move |key: &'static str, title: &'static str, refresh: bool| {
         let storage_key = format!("yomi-files.fold.{key}");
         let open = RwSignal::new(!stored_flag(&storage_key, false));
         let heading = move || {
             let storage_key = storage_key.clone();
             view! {
-            <h2><button class="fold" aria-expanded=move || open.get().to_string()
+            <h2>
+            <button class="fold" aria-expanded=move || open.get().to_string()
                 on:click=move |_| {
                     let now = !open.get_untracked();
                     open.set(now);
                     store(&storage_key, if now { "0" } else { "1" });
                 }>
                 {chev(open)}{title}
-            </button></h2>
+            </button>
+            {refresh.then(|| view! {
+                <button class="refresh" class:turning=move || ctx.looking.get()
+                    title="Look for devices and disks again" aria-label="Look for devices again"
+                    on:click=move |_| ctx.refresh_devices()>
+                    <svg viewBox="0 0 16 16" aria-hidden="true"><path d="M13 8a5 5 0 1 1-1.5-3.6"/><path d="M13 2.5v3h-3"/></svg>
+                </button>
+            })}</h2>
             }
         };
         (heading, open)
     };
-    let (fav_heading, fav_open) = section("favs", "Favourites");
-    let (mac_heading, mac_open) = section("mac", "Mac");
-    let (dev_heading, dev_open) = section("devices", "Devices");
+    let (fav_heading, fav_open) = section("favs", "Favourites", false);
+    let (mac_heading, mac_open) = section("mac", "Mac", false);
+    let (dev_heading, dev_open) = section("devices", "Devices", true);
     // Disks mounted on the Mac: USB drives, SD cards, disk images.
     let drives = Memo::new(move |_| ctx.devices.with(|d| d.as_ref().map(|d| d.drives.clone()).unwrap_or_default()));
     let device = move |i: Info| {

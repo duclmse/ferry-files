@@ -153,6 +153,13 @@ pub(super) fn connections(state: State<'_, AppState>) -> Vec<Info> {
     out
 }
 
+/// Starts telling the window ("devices-changed") when a USB device or disk comes or goes. Whether
+/// USB devices are watched; if not, the window keeps looking every few seconds.
+#[tauri::command(rename_all = "snake_case")]
+pub(super) fn watch_devices(app: AppHandle) -> bool {
+    crate::watch::start(&app)
+}
+
 /// A connected device, or with `src: "mac"`, the Mac's own files.
 #[tauri::command(rename_all = "snake_case")]
 pub(super) fn info(state: State<'_, AppState>, src: Option<String>) -> Option<Info> {

@@ -455,9 +455,16 @@ struct Ctx {
     ep: crate::epub::Ep,
     menu: RwSignal<Option<Menu>>,
     settings: RwSignal<bool>,
-    /// Devices on USB that aren't connected, and the Mac's disks (checked every few seconds).
+    /// Devices on USB that aren't connected, and the Mac's disks (looked for when something is
+    /// plugged in or taken out).
     devices: RwSignal<Option<Devices>>,
     scanning: StoredValue<bool>,
+    /// A look was asked for while one couldn't start: done at the next chance.
+    scan_again: StoredValue<bool>,
+    /// A look asked for with the refresh button is under way.
+    looking: RwSignal<bool>,
+    /// The device that last failed to connect, to try again.
+    failed: StoredValue<Option<UsbDevice>>,
     /// The device being connected (its `usb`).
     connecting: RwSignal<Option<String>>,
     conn_error: RwSignal<Option<String>>,
@@ -514,6 +521,9 @@ impl Ctx {
             settings: RwSignal::new(false),
             devices: RwSignal::new(None),
             scanning: StoredValue::new(false),
+            scan_again: StoredValue::new(false),
+            looking: RwSignal::new(false),
+            failed: StoredValue::new(None),
             connecting: RwSignal::new(None),
             conn_error: RwSignal::new(None),
             show_hidden: RwSignal::new(stored_flag(HIDDEN_KEY, false)),
@@ -630,9 +640,28 @@ pub fn App() -> impl IntoView {
             ctx.start(ctx.panes[1]);
         }
     });
-    // Look for devices and disks now and every few seconds.
+    // Look for devices and disks now, then when the backend says something was plugged in or taken
+    // out. Every few seconds as well while a phone waits for USB debugging to be allowed (that's
+    // not a USB change), after a look that couldn't start, and, when USB can't be watched, while
+    // no phone is connected.
     ctx.scan();
-    let _ = set_interval_with_handle(move || ctx.scan(), std::time::Duration::from_secs(3));
+    let watching = StoredValue::new(false);
+    spawn_local(async move {
+        if let Ok(on) = call::<bool>("watch_devices", json!({})).await {
+            watching.set_value(on);
+        }
+    });
+    crate::api::listen("devices-changed", move |_: ()| ctx.scan());
+    let _ = set_interval_with_handle(
+        move || {
+            let waiting = ctx.devices.with_untracked(|d| d.as_ref().is_some_and(|d| d.adb_waiting));
+            let unwatched = !watching.get_value() && ctx.phones.with_untracked(Vec::is_empty);
+            if waiting || unwatched || ctx.scan_again.get_value() {
+                ctx.scan();
+            }
+        },
+        std::time::Duration::from_secs(3),
+    );
 
     // Keyboard. ⌘S saves. In the panes: Tab switches pane, ⌘\ shows or hides the second one, arrows
     // move (←/→ also go up/in in the column view and move across in the thumbnail view), Enter or

@@ -17,11 +17,14 @@ impl Ctx {
         }
     }
 
-    /// Looks for devices on USB and disks on the Mac, unless the app is busy or a look is under way.
+    /// Looks for devices on USB and disks on the Mac. When the app is busy or a look is under way,
+    /// it's done later.
     pub(super) fn scan(self) {
         if self.busy.get_untracked() || self.scanning.get_value() || self.job.with_untracked(|j| j.is_some()) {
+            self.scan_again.set_value(true);
             return;
         }
+        self.scan_again.set_value(false);
         self.scanning.set_value(true);
         spawn_local(async move {
             if let Ok(d) = call::<Devices>("devices", json!({})).await {
@@ -34,7 +37,17 @@ impl Ctx {
                 }
             }
             self.scanning.set_value(false);
+            self.looking.set(false);
+            if self.scan_again.get_value() {
+                self.scan();
+            }
         });
+    }
+
+    /// The refresh button: looks now.
+    pub(super) fn refresh_devices(self) {
+        self.looking.set(true);
+        self.scan();
     }
 
     /// Keys of the connected phones: serial and USB place.
@@ -79,8 +92,14 @@ impl Ctx {
         self.conn_error.set(None);
         spawn_local(async move {
             match call::<Info>("connect", json!({ "transport": f.transport, "which": f.which, "serial": f.serial })).await {
-                Ok(info) => self.connected(info, show),
-                Err(e) => self.conn_error.set(Some(e)),
+                Ok(info) => {
+                    self.failed.set_value(None);
+                    self.connected(info, show);
+                }
+                Err(e) => {
+                    self.failed.set_value(Some(f));
+                    self.conn_error.set(Some(e));
+                }
             }
             self.busy.set(false);
             self.connecting.set(None);
@@ -141,7 +160,22 @@ impl Ctx {
 pub(super) fn DeviceFinder() -> impl IntoView {
     let ctx = expect_context::<Ctx>();
     move || {
-        let error = move || ctx.conn_error.get().map(|e| view! { <p class="error">{e}</p> });
+        // With Try again, when the device that failed is still there.
+        let error = move || {
+            ctx.conn_error.get().map(|e| {
+                let again = ctx.failed.get_value().filter(|f| ctx.devices.with(|d| d.as_ref().is_some_and(|d| d.found.contains(f))));
+                view! {
+                    <div class="conn-error">
+                        <p class="error">{e}</p>
+                        {again.map(|f| view! {
+                            <button class="btn small" disabled=move || ctx.busy.get()
+                                on:click=move |_| ctx.connect(f.clone(), true)>"Try again"</button>
+                        })}
+                        <button class="btn small" on:click=move |_| ctx.conn_error.set(None)>"Dismiss"</button>
+                    </div>
+                }
+            })
+        };
         let Some(d) = ctx.devices.get() else {
             return view! { <p class="hint">"Looking for devices…"</p> }.into_any();
         };

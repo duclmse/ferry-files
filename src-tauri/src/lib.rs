@@ -17,6 +17,7 @@ mod library;
 mod safety;
 mod settings;
 mod transfer;
+mod watch;
 
 use device::{DevError, Device, Entry, WriteResult};
 use serde::Serialize;
@@ -121,6 +122,7 @@ pub fn run() {
             connect::disconnect,
             connect::connections,
             connect::info,
+            connect::watch_devices,
             files::list,
             files::refresh,
             files::read_text,

@@ -118,15 +118,21 @@ Two ways to reach the phone, over USB:
   are needed. Needs libmtp (`brew install libmtp`), which is loaded at runtime.
   Paths start with the storage name, e.g. `/Internal storage/Download`.
 
-The app opens on the Mac's files. Every few seconds it looks for devices on USB
-and disks mounted on the Mac (USB drives, SD cards, disk images; they're listed
-under Mac in the sidebar). A phone is connected as soon as it's found: with adb
+The app opens on the Mac's files. It looks for devices on USB and disks mounted
+on the Mac (USB drives, SD cards, disk images; they're listed under Mac in the
+sidebar) when it starts and whenever macOS reports a USB device plugged in or
+taken out, or a disk mounted or ejected; ↻ next to Devices looks again. (While
+a phone waits for USB debugging to be allowed, it also looks every 3 seconds;
+if macOS can't report USB changes, it looks every 3 seconds while no phone is
+connected.) A phone is connected as soon as it's found: with adb
 when USB debugging is allowed, otherwise with MTP (File transfer). One plugged
 in while the app is open is shown in the active pane; one already plugged in
 when the app starts connects without taking over the window. Settings → "Connect
 phones when they're plugged in" turns this off. Each phone is connected
 automatically once: after a failure or a disconnect it waits until it's
-unplugged and plugged in again.
+unplugged and plugged in again. Opening an MTP phone is tried 4 times, 1.5 s
+apart, since macOS holds it for a moment after it's plugged in; if it still
+fails, the error has Try again.
 
 adb and MTP aren't exclusive: a phone with both USB debugging and File transfer
 on is seen both ways. The app tells it's the same phone by its USB serial number

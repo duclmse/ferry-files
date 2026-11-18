@@ -10,6 +10,7 @@
     "allow-disconnect",
     "allow-connections",
     "allow-info",
+    "allow-watch-devices",
     "allow-list",
     "allow-refresh",
     "allow-read-text",

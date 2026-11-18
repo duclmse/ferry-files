@@ -463,20 +463,31 @@ impl Mtp {
     /// Opens the MTP device at `location` (from `detect`), or the first one found.
     pub fn open(location: Option<&str>) -> Result<Mtp> {
         let lib = lib()?;
-        let _lib = lib_lock();
-        let raws = raw_devices(lib)?;
-        let found = match location {
-            Some(loc) => raws.iter().copied().find(|&r| self::location(r) == loc),
-            None => raws.first().copied(),
+        // Opening fails for a moment after the phone is plugged in, or switched to File transfer,
+        // while macOS (ptpcamerad) looks at it; so it's tried a few times.
+        let mut tries = 0;
+        let (dev, _lib) = loop {
+            let lock = lib_lock();
+            let raws = raw_devices(lib)?;
+            let found = match location {
+                Some(loc) => raws.iter().copied().find(|&r| self::location(r) == loc),
+                None => raws.first().copied(),
+            };
+            let Some(raw) = found else {
+                return err(format!("No MTP device found. {MAC_MTP_HINT}"));
+            };
+            // Uncached: don't enumerate the whole phone on connect (slow on Android).
+            let dev = unsafe { (lib.open_uncached)(raw) };
+            if !dev.is_null() {
+                break (dev, lock);
+            }
+            tries += 1;
+            if tries == 4 {
+                return err(format!("Couldn't open the MTP device. {MAC_MTP_HINT}"));
+            }
+            drop(lock);
+            std::thread::sleep(std::time::Duration::from_millis(1500));
         };
-        let Some(raw) = found else {
-            return err(format!("No MTP device found. {MAC_MTP_HINT}"));
-        };
-        // Uncached: don't enumerate the whole phone on connect (slow on Android).
-        let dev = unsafe { (lib.open_uncached)(raw) };
-        if dev.is_null() {
-            return err(format!("Couldn't open the MTP device. {MAC_MTP_HINT}"));
-        }
         let link = Link { lib, dev, partial: true };
         if unsafe { (lib.get_storage)(dev, 0) } != 0 {
             return Err(link.error("Reading the device's storage"));
