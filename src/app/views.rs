@@ -1,6 +1,7 @@
 //! The ways a pane shows a folder: list, thumbnails and columns.
 
 use super::*;
+use crate::api::{Listing, Packed};
 
 #[component]
 pub(super) fn ListView(pane: Pane) -> impl IntoView {
@@ -276,9 +277,14 @@ pub(super) fn ColumnView(pane: Pane) -> impl IntoView {
         }
     });
     let strip = NodeRef::<html::Div>::new();
+    // A ZIP file picked in the last column: what's in it, as more columns.
+    let zip = Memo::new(move |_| p.selected_entry().filter(|e| super::preview::has_ext(e, super::preview::ZIP_EXTS)));
+    let zip_open = RwSignal::new(Vec::<String>::new());
     // Show the newest column: scroll to the right end when the folder changes.
     Effect::new(move |_| {
         chain.track();
+        zip.track();
+        zip_open.track();
         request_animation_frame(move || {
             if let Some(el) = strip.get_untracked() {
                 el.set_scroll_left(el.scroll_width());
@@ -304,7 +310,99 @@ pub(super) fn ColumnView(pane: Pane) -> impl IntoView {
                     }
                 }
             </For>
+            {move || zip.get().map(|e| view! { <ZipColumns src=p.src.get_untracked() entry=e open=zip_open/> })}
         </div>
+    }
+}
+
+/// An item in a folder of a ZIP file: its full name in the ZIP (folders end in /), its name, and
+/// its unpacked size.
+#[derive(Clone)]
+struct ZipItem {
+    path: String,
+    name: String,
+    dir: bool,
+    size: u64,
+}
+
+/// What's in folder `prefix` ("" or "a/b/") of a ZIP: folders first, then by name. Folders are
+/// also made up from the files' names, since a ZIP needn't list them.
+fn zip_items(items: &[Packed], prefix: &str) -> Vec<ZipItem> {
+    let mut out: Vec<ZipItem> = Vec::new();
+    for i in items {
+        let Some(rest) = i.name.strip_prefix(prefix).filter(|r| !r.is_empty()) else { continue };
+        let item = match rest.find('/') {
+            Some(at) => ZipItem { path: format!("{prefix}{}/", &rest[..at]), name: rest[..at].to_string(), dir: true, size: 0 },
+            None => ZipItem { path: i.name.clone(), name: rest.to_string(), dir: false, size: i.size },
+        };
+        if !out.iter().any(|o| o.path == item.path) {
+            out.push(item);
+        }
+    }
+    out.sort_by_key(|i| (!i.dir, i.name.to_lowercase()));
+    out
+}
+
+/// A ZIP's folders as columns after the column view's own: the top, then each folder opened.
+/// `open` is the folders opened, deepest last; clicking an item picks it (and opens it, when it's
+/// a folder).
+#[component]
+fn ZipColumns(src: Src, entry: Entry, open: RwSignal<Vec<String>>) -> impl IntoView {
+    let got = RwSignal::new(None::<Result<Listing, String>>);
+    let picked = RwSignal::new(None::<String>);
+    open.set(vec![]);
+    let args = json!({ "src": src.key(), "path": entry.path, "size": entry.size });
+    spawn_local(async move {
+        let r = call::<Listing>("zip_list", args).await;
+        let _ = got.try_set(Some(r));
+    });
+    move || match got.get() {
+        None => view! { <div class="col zip-col"><div class="empty"><span class="spin"></span></div></div> }.into_any(),
+        Some(Err(e)) => view! { <div class="col zip-col"><div class="empty">{e}</div></div> }.into_any(),
+        Some(Ok(l)) => {
+            let l = StoredValue::new(l);
+            let short = l.with_value(|l| l.total > l.items.len() as u64);
+            let levels = move || std::iter::once(String::new()).chain(open.get()).enumerate().collect::<Vec<_>>();
+            view! {
+                <For each=levels key=|(n, prefix)| (*n, prefix.clone()) let((n, prefix))>
+                    {
+                        let width = RwSignal::new(0.0);
+                        let items = l.with_value(|l| zip_items(&l.items, &prefix));
+                        view! {
+                            <div class="col zip-col" style=move || match width.get() { w if w > 0.0 => format!("flex-basis: {w}px"), _ => String::new() }>
+                                {items.is_empty().then(|| view! { <div class="empty">"Empty"</div> })}
+                                {items.into_iter().map(|i| {
+                                    let (a, b, c) = (i.path.clone(), i.path.clone(), i.path.clone());
+                                    let tip = if i.dir { i.path.clone() } else { format!("{} · {}", i.path, human_size(i.size)) };
+                                    view! {
+                                        <div class="row" title=tip
+                                            class:open=move || i.dir && open.with(|o| o.get(n) == Some(&a))
+                                            class:selected=move || picked.with(|p| p.as_deref() == Some(b.as_str()))
+                                            on:click=move |ev| {
+                                                ev.stop_propagation();
+                                                picked.set(Some(c.clone()));
+                                                open.update(|o| {
+                                                    o.truncate(n);
+                                                    if i.dir {
+                                                        o.push(c.clone());
+                                                    }
+                                                });
+                                            }>
+                                            <span class="icon">{icon(if i.dir { Kind::Folder } else { Kind::Other })}</span>
+                                            <span class="name">{i.name.clone()}</span>
+                                            {(!i.dir).then(|| view! { <span class="size">{human_size(i.size)}</span> })}
+                                            {i.dir.then(|| view! { <span class="chev">"›"</span> })}
+                                        </div>
+                                    }
+                                }).collect_view()}
+                                {(n == 0 && short).then(|| view! { <div class="empty">"Only the first 5000 items are shown."</div> })}
+                            </div>
+                            <Grip size=width key=String::new() min=140.0 max=600.0 class="grip col-grip"/>
+                        }
+                    }
+                </For>
+            }.into_any()
+        }
     }
 }
 

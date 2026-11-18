@@ -18,14 +18,16 @@ copied between them.
   and the length of videos and audio), videos and audio that play straight from the device
   without copying them first (GIF, HEIC, AVIF and SVG images too), and the
   text of text files, read a piece at a time as you scroll (up to 8 MB).
-  Pictures zoom (− and +, pinch, or double-click), drag around when zoomed, and
+  Pictures zoom (− and +, pinch, or double-click; the % is of the picture's own
+  pixels, and clicking it or double-clicking switches between fitted and 100%), drag around when zoomed, and
   turn (⟲ ⟳); videos and audio skip back 10 s or ahead 10 or 30 s and play at
   1×, 1.25×, 1.5× or 2×, and videos turn. ‹ and › (or ← and → in the list) go to
   the previous and next picture, video or sound in the folder. PDFs (up to
   64 MB) show in the preview, fonts (TTF, OTF, WOFF, WOFF2) as samples, EPUBs as their cover (the cover
   itself once the preview is bigger than its thumbnail), and
   ZIP, APK and JAR files as the list of what's in them (read from the end of the
-  file, without unpacking; the first 5000 items). Right-click a file for "Show
+  file, without unpacking; the first 5000 items); in the column view, a ZIP
+  picked in the last column also opens as more columns, one per folder in it. Right-click a file for "Show
   as text" or "Show as hex" (bytes, 16 to a line, up to 4 MB as you scroll).
 - Drag the edges to resize the sidebar, the two panes, the files beside the
   preview, the column view's columns and the list's columns; double-click an

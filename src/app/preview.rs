@@ -3,6 +3,7 @@
 
 use super::*;
 use crate::api::{Bytes, Listing, MediaInfo, Peek};
+use wasm_bindgen::closure::Closure;
 
 /// A file shown another way than its type says, from the context menu.
 #[derive(Clone, Copy, PartialEq)]
@@ -13,11 +14,11 @@ pub(super) enum PeekAs {
 
 const PDF_EXTS: &[&str] = &["pdf"];
 const FONT_EXTS: &[&str] = &["ttf", "otf", "woff", "woff2"];
-const ZIP_EXTS: &[&str] = &["zip", "apk", "jar", "cbz", "xapk"];
+pub(super) const ZIP_EXTS: &[&str] = &["zip", "apk", "jar", "cbz", "xapk"];
 /// The backend serves a whole file (a PDF, a font) up to this size.
 const WHOLE_MAX: u64 = 64 * 1024 * 1024;
 
-fn has_ext(e: &Entry, exts: &[&str]) -> bool {
+pub(super) fn has_ext(e: &Entry, exts: &[&str]) -> bool {
     !e.dir && exts.contains(&ext(&e.name).as_str())
 }
 
@@ -206,6 +207,32 @@ fn FullImage(pane: Pane, src: Src, entry: Entry, info: RwSignal<MediaInfo>) -> i
     let turn = RwSignal::new(0i32);
     let pan = RwSignal::new((0.0f64, 0.0f64));
     let url = stream_url(src, &entry);
+    // How big the picture shows when it fits, against its own size (at most 1): `zoom` is on top
+    // of that, so the picture is at zoom × fit (× the turn's) of its pixels. Measured again when
+    // the preview changes size.
+    let fit = RwSignal::new(1.0f64);
+    let img_ref = NodeRef::<html::Img>::new();
+    let measure = move || {
+        if let Some(img) = img_ref.get_untracked() {
+            if img.natural_width() > 0 && img.offset_width() > 0 {
+                fit.set(img.offset_width() as f64 / img.natural_width() as f64);
+            }
+        }
+    };
+    let watcher = StoredValue::new_local(None::<(web_sys::ResizeObserver, Closure<dyn Fn()>)>);
+    Effect::new(move |_| {
+        let Some(img) = img_ref.get() else { return };
+        let cb = Closure::<dyn Fn()>::new(measure);
+        if let Ok(ro) = web_sys::ResizeObserver::new(cb.as_ref().unchecked_ref()) {
+            ro.observe(&img);
+            watcher.set_value(Some((ro, cb)));
+        }
+    });
+    on_cleanup(move || {
+        if let Some((ro, _)) = watcher.try_update_value(Option::take).flatten() {
+            ro.disconnect();
+        }
+    });
     let load = move |ev: web_sys::Event| {
         if let Some(img) = ev.target().and_then(|t| t.dyn_into::<web_sys::HtmlImageElement>().ok()) {
             natural.set((img.natural_width(), img.natural_height()));
@@ -216,9 +243,16 @@ fn FullImage(pane: Pane, src: Src, entry: Entry, info: RwSignal<MediaInfo>) -> i
             });
         }
         loaded.set(true);
+        request_animation_frame(measure);
     };
+    // How much of its own size the picture shows at `zoom` 1 (fitted), turn included.
+    let base = move || {
+        let (w, h) = natural.get();
+        fit.get() * turn_fit(turn.get(), w, h)
+    };
+    // Up to 800% of its pixels, and at least fitted.
     let set_zoom = move |z: f64| {
-        let z = z.clamp(1.0, 8.0);
+        let z = z.clamp(1.0, (8.0 / base()).max(1.0));
         zoom.set(z);
         if z == 1.0 {
             pan.set((0.0, 0.0));
@@ -260,20 +294,27 @@ fn FullImage(pane: Pane, src: Src, entry: Entry, info: RwSignal<MediaInfo>) -> i
             set_zoom(zoom.get_untracked() * (-ev.delta_y() * 0.01).exp());
         }
     };
+    // Fitted, or its actual size (100%): whichever it isn't. A picture that fits at its actual
+    // size goes to 200%.
+    let fit_or_actual = move || {
+        let actual = 1.0 / base();
+        set_zoom(if zoom.get_untracked() > 1.0 { 1.0 } else if actual > 1.001 { actual } else { 2.0 });
+    };
     view! {
         <div class="pic stage" class:whole=loaded class:zoomed=move || { zoom.get() > 1.0 }
             on:mousedown=down on:wheel=wheel
-            on:dblclick=move |ev| { ev.stop_propagation(); set_zoom(if zoom.get_untracked() > 1.0 { 1.0 } else { 2.0 }); }>
+            on:dblclick=move |ev| { ev.stop_propagation(); fit_or_actual(); }>
             {let e = entry.clone(); move || (!loaded.get()).then(|| view! { <Thumbnail src entry=e.clone()/> })}
-            <img class="full" src=url alt="" draggable="false" class:pending=move || !loaded.get()
+            <img class="full" node_ref=img_ref src=url alt="" draggable="false" class:pending=move || !loaded.get()
                 style=style on:load=load/>
         </div>
         <div class="viewer-bar">
             {neighbours(pane, &entry)}
             <span class="gap"></span>
             <button class="btn" title="Zoom out" on:click=move |_| set_zoom(zoom.get_untracked() / 1.25)>"−"</button>
-            <button class="btn zoom" title="Fit (double-click the picture to zoom)" on:click=move |_| set_zoom(1.0)>
-                {move || format!("{:.0}%", zoom.get() * 100.0)}
+            <button class="btn zoom" title="Of the picture's own size. Click (or double-click the picture) for 100% or to fit."
+                on:click=move |_| fit_or_actual()>
+                {move || format!("{:.0}%", zoom.get() * base() * 100.0)}
             </button>
             <button class="btn" title="Zoom in (or pinch)" on:click=move |_| set_zoom(zoom.get_untracked() * 1.25)>"+"</button>
             <span class="gap"></span>

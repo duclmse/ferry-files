@@ -217,6 +217,18 @@
   color: var(--muted);
 }
 
+/* What's in a ZIP file picked in the column view. */
+.col.zip-col {
+  background: color-mix(in srgb, var(--panel) 50%, transparent);
+}
+
+.col .row .size {
+  flex: none;
+  color: var(--muted);
+  font-size: 11px;
+  font-variant-numeric: tabular-nums;
+}
+
 .col .row.open {
   background: var(--hover);
   font-weight: 600;
