@@ -293,6 +293,42 @@ async fn copy(
     .await
 }
 
+/// Opens a file in its default Mac app. Phone files are copied to the app's cache first
+/// (`~/Library/Caches/yomi-files/opened`), so changes made there don't go back to the phone.
+/// Returns the path that was opened.
+#[tauri::command(rename_all = "snake_case")]
+async fn open_file(state: State<'_, AppState>, src: Option<String>, path: String) -> Result<String, String> {
+    let mac = src.as_deref() == Some("mac");
+    let dev = state.source(src.as_deref())?;
+    blocking(move || {
+        let local = if mac {
+            std::path::PathBuf::from(&path)
+        } else {
+            use std::hash::{Hash, Hasher};
+            let mut h = std::collections::hash_map::DefaultHasher::new();
+            path.hash(&mut h);
+            // One folder per phone path, so files with the same name don't overwrite each other.
+            let dir = opened_dir().join(format!("{:016x}", h.finish()));
+            std::fs::create_dir_all(&dir).map_err(|e| format!("Can't create {}: {e}", dir.display()))?;
+            let (data, _) = dev.read(&path).map_err(msg)?;
+            let local = dir.join(device::basename(&path));
+            std::fs::write(&local, data).map_err(|e| format!("Can't write {}: {e}", local.display()))?;
+            local
+        };
+        let status = std::process::Command::new("open").arg(&local).status().map_err(|e| format!("Can't open {}: {e}", local.display()))?;
+        if !status.success() {
+            return Err(format!("No app on this Mac opens {}.", device::basename(&path)));
+        }
+        Ok(local.display().to_string())
+    })
+    .await
+}
+
+/// Where copies of phone files opened in Mac apps go.
+fn opened_dir() -> std::path::PathBuf {
+    dirs::cache_dir().unwrap_or_else(std::env::temp_dir).join("yomi-files").join("opened")
+}
+
 // ----- Settings: the app's folders on the Mac -----
 
 #[derive(Serialize)]
@@ -302,11 +338,13 @@ struct Folder {
     bytes: u64,
 }
 
-/// The folders the app keeps on the Mac: "backups" or "thumbs" (the thumbnail cache).
+/// The folders the app keeps on the Mac: "backups", "thumbs" (the thumbnail cache) or "opened"
+/// (copies of phone files opened in Mac apps).
 fn app_folder(which: &str) -> Result<std::path::PathBuf, String> {
     match which {
         "backups" => Ok(device::backup_dir()),
         "thumbs" => Ok(thumbs::cache_dir()),
+        "opened" => Ok(opened_dir()),
         other => Err(format!("Unknown folder {other:?}.")),
     }
 }
@@ -335,7 +373,7 @@ fn folder_size(dir: &std::path::Path) -> (u64, u64) {
 async fn app_folders() -> Result<HashMap<String, Folder>, String> {
     blocking(|| {
         let mut out = HashMap::new();
-        for which in ["backups", "thumbs"] {
+        for which in ["backups", "thumbs", "opened"] {
             let dir = app_folder(which)?;
             let (files, bytes) = folder_size(&dir);
             out.insert(which.to_string(), Folder { path: dir.display().to_string(), files, bytes });
@@ -354,11 +392,15 @@ fn open_folder(which: String) -> Result<(), String> {
     Ok(())
 }
 
-/// Deletes the cached thumbnails. They're made again when shown. Backups are never touched.
+/// Empties the thumbnail cache (made again when shown) or the copies of opened phone files.
+/// Backups can't be cleared from the app.
 #[tauri::command(rename_all = "snake_case")]
-async fn clear_thumbs() -> Result<(), String> {
-    blocking(|| {
-        let dir = thumbs::cache_dir();
+async fn clear_cache(which: String) -> Result<(), String> {
+    blocking(move || {
+        if !matches!(which.as_str(), "thumbs" | "opened") {
+            return Err(format!("{which:?} can't be cleared."));
+        }
+        let dir = app_folder(&which)?;
         match std::fs::remove_dir_all(&dir) {
             Err(e) if e.kind() != std::io::ErrorKind::NotFound => Err(format!("Can't clear {}: {e}", dir.display())),
             _ => Ok(()),
@@ -553,7 +595,7 @@ pub fn run() {
         })
         .invoke_handler(tauri::generate_handler![
             devices, connect, disconnect, info, list, refresh, read_text, write_text, mkdir, remove, download,
-            upload, copy, app_folders, open_folder, clear_thumbs, epub_open, epub_chapter, epub_set_source, epub_set_body, epub_set_meta, epub_cover, epub_find,
+            upload, copy, open_file, app_folders, open_folder, clear_cache, epub_open, epub_chapter, epub_set_source, epub_set_body, epub_set_meta, epub_cover, epub_find,
             epub_replace, epub_save, epub_export, epub_close
         ])
         .run(tauri::generate_context!())

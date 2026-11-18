@@ -224,6 +224,7 @@ struct Menu {
 #[derive(Clone, Copy, PartialEq)]
 enum Act {
     Open,
+    OpenInApp,
     Download,
     Copy,
     Delete,
@@ -590,16 +591,17 @@ impl Ctx {
         };
         let mut v = vec![];
         let open = match kind(e) {
-            Kind::Folder => Some("Open"),
-            Kind::Epub => Some("Open in EPUB editor"),
-            Kind::Text => Some("Edit"),
-            Kind::Other => None,
+            Kind::Folder => "Open",
+            Kind::Epub => "Open in EPUB editor",
+            Kind::Text => "Edit",
+            Kind::Other => "Open",
         };
-        if let Some(label) = open {
-            v.push(item(label, "↵", Act::Open));
+        v.push(item(open, "↵", Act::Open));
+        if !e.dir && kind(e) != Kind::Other {
+            v.push(item("Open in default app", "", Act::OpenInApp));
         }
         if device && !e.dir {
-            v.push(item("Download to Mac…", if open.is_none() { "↵" } else { "" }, Act::Download));
+            v.push(item("Download to Mac…", "", Act::Download));
         }
         if split {
             let enabled = !e.dir && self.in_storage(self.other(p));
@@ -616,6 +618,7 @@ impl Ctx {
     fn run(self, p: Pane, act: Act, entry: Option<Entry>) {
         match (act, entry) {
             (Act::Open, Some(e)) => self.open(p, e),
+            (Act::OpenInApp, Some(e)) => self.open_in_app(p, e.path),
             (Act::Download, Some(e)) => self.download(p, e.path),
             (Act::Copy, Some(e)) => self.copy(p, e),
             (Act::Delete, Some(e)) => p.notice.set(Notice::ConfirmDelete(e)),
@@ -644,9 +647,25 @@ impl Ctx {
                 });
             }
             Kind::Text => self.open_text(p, e.path),
-            Kind::Other if src == Src::Device => self.download(p, e.path),
-            Kind::Other => {}
+            Kind::Other => self.open_in_app(p, e.path),
         }
+    }
+
+    /// Opens a file in its default Mac app. A phone file is copied to the Mac first; that copy is
+    /// what the app sees, so changes to it don't go back to the phone.
+    fn open_in_app(self, p: Pane, path: String) {
+        let src = p.src.get_untracked();
+        p.loading.set(true);
+        spawn_local(async move {
+            match call::<String>("open_file", json!({ "src": src.key(), "path": path })).await {
+                Ok(_) if src == Src::Device => {
+                    p.notice.set(Notice::Ok(format!("Opened a copy of {}. Changes to it stay on the Mac.", base(&path))))
+                }
+                Ok(_) => {}
+                Err(e) => p.error(e),
+            }
+            p.loading.set(false);
+        });
     }
 
     fn open_text(self, p: Pane, path: String) {
@@ -1164,9 +1183,9 @@ fn Settings() -> impl IntoView {
             }
         })
     };
-    let clear = move || {
+    let clear = move |which: &'static str| {
         spawn_local(async move {
-            match call::<()>("clear_thumbs", json!({})).await {
+            match call::<()>("clear_cache", json!({ "which": which })).await {
                 Ok(()) => load(),
                 Err(e) => error.set(Some(e)),
             }
@@ -1185,7 +1204,7 @@ fn Settings() -> impl IntoView {
                     }}</span>
                 </div>
                 <button class="btn" on:click=move |_| open(which)>"Open"</button>
-                {(which == "thumbs").then(|| view! { <button class="btn" on:click=move |_| clear()>"Clear"</button> })}
+                {(which != "backups").then(|| view! { <button class="btn" on:click=move |_| clear(which)>"Clear"</button> })}
             </div>
         }
     };
@@ -1207,6 +1226,7 @@ fn Settings() -> impl IntoView {
                 <h3>"On this Mac"</h3>
                 {folder("backups", "Backups", "Copies of files from before they were replaced or deleted. Never removed by the app.")}
                 {folder("thumbs", "Thumbnail cache", "Made again when needed, so it's safe to clear.")}
+                {folder("opened", "Opened phone files", "Copies made to open phone files in Mac apps. Changes to them don't go back to the phone.")}
                 {move || error.get().map(|e| view! { <p class="error">{e}</p> })}
                 <div class="actions">
                     <span class="grow"></span>

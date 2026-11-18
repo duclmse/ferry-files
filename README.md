@@ -5,6 +5,7 @@ A Mac desktop app (Tauri 2 + Leptos, all Rust) for browsing, reading and editing
 - One or two panes (⌘\ shows or hides the second; Tab switches between them). Each pane shows the phone or the Mac (📱 / 💻 in its toolbar), as a list, as thumbnails (images and EPUB covers), or in columns.
 - Right-click a file or folder for open, download, copy to the other pane (F5) and delete; right-click empty space for new folder, new file, upload, refresh, the view options and the second pane. Each pane's status bar shows the folder's contents and the selected item.
 - Files on the Mac can be edited too (text and EPUB).
+- Double-click (or Enter) opens: folders go in, text files open in the editor, EPUBs in the EPUB editor, anything else in its default Mac app. A phone file is copied to `~/Library/Caches/yomi-files/opened` first, so changes made in the Mac app stay on the Mac. The context menu also has "Open in default app" for text files and EPUBs.
 - Settings (sidebar): show hidden files (names starting with a dot; off by default, on the phone and the Mac), turn phone thumbnails off, and see, open or clear the app's folders on the Mac. "Open backup folder" in the sidebar shows the backups in the Finder.
 - Edit text files.
 - EPUB editor:
