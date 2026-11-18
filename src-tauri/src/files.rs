@@ -86,11 +86,19 @@ fn peek_of(mut data: Vec<u8>, start: u64, more: bool) -> Peek {
 
 /// Reads `PEEK_MAX` bytes of the file from `start` (0 when left out), never the whole of a big one.
 #[tauri::command(rename_all = "snake_case")]
-pub(super) async fn peek_text(state: State<'_, AppState>, src: Option<String>, path: String, start: Option<u64>) -> Result<Peek, String> {
+/// With `inner` (and the ZIP's `zip_size`), the file of that name packed in the ZIP at `path`.
+pub(super) async fn peek_text(
+    state: State<'_, AppState>,
+    src: Option<String>,
+    path: String,
+    start: Option<u64>,
+    inner: Option<String>,
+    zip_size: Option<u64>,
+) -> Result<Peek, String> {
     let dev = state.source(src.as_deref())?;
     let start = start.unwrap_or(0);
     blocking(move || {
-        let mut data = dev.read_range(&path, start, PEEK_MAX + 1).map_err(msg)?;
+        let mut data = read_part(&dev, &path, inner.as_deref(), zip_size, start, PEEK_MAX + 1)?;
         let more = data.len() as u64 > PEEK_MAX;
         data.truncate(PEEK_MAX as usize);
         Ok(peek_of(data, start, more))
@@ -296,16 +304,58 @@ pub(super) struct Bytes {
 }
 
 #[tauri::command(rename_all = "snake_case")]
-pub(super) async fn peek_bytes(state: State<'_, AppState>, src: Option<String>, path: String, start: Option<u64>) -> Result<Bytes, String> {
+/// With `inner`, as for `peek_text`.
+pub(super) async fn peek_bytes(
+    state: State<'_, AppState>,
+    src: Option<String>,
+    path: String,
+    start: Option<u64>,
+    inner: Option<String>,
+    zip_size: Option<u64>,
+) -> Result<Bytes, String> {
     let dev = state.source(src.as_deref())?;
     let start = start.unwrap_or(0);
     blocking(move || {
-        let mut bytes = dev.read_range(&path, start, PEEK_MAX + 1).map_err(msg)?;
+        let mut bytes = read_part(&dev, &path, inner.as_deref(), zip_size, start, PEEK_MAX + 1)?;
         let next = (bytes.len() as u64 > PEEK_MAX).then_some(start + PEEK_MAX);
         bytes.truncate(PEEK_MAX as usize);
         Ok(Bytes { bytes, next })
     })
     .await
+}
+
+/// Files packed in a ZIP are unpacked whole for the preview, up to this size.
+pub(super) const UNPACK_MAX: u64 = 64 * 1024 * 1024;
+
+/// The file `name` packed in the ZIP at `path` (`size` bytes), unpacked. The last one is kept, as
+/// the preview asks for it a piece at a time.
+pub(super) fn unpacked(dev: &Device, path: &str, size: u64, name: &str) -> Result<Arc<Vec<u8>>, String> {
+    static LAST: Mutex<Option<(String, Arc<Vec<u8>>)>> = Mutex::new(None);
+    let key = format!("{}:{}\n{path}\n{size}\n{name}", dev.kind(), dev.label());
+    let mut last = LAST.lock().unwrap_or_else(|e| e.into_inner());
+    if let Some((k, data)) = last.as_ref() {
+        if *k == key {
+            return Ok(data.clone());
+        }
+    }
+    *last = None;
+    let data = Arc::new(crate::archive::unpack(size, &mut |at, len| dev.read_range(path, at, len).map_err(msg), name, UNPACK_MAX)?);
+    *last = Some((key, data.clone()));
+    Ok(data)
+}
+
+/// `len` bytes from `start` of the file, or of the file `inner` packed in it.
+fn read_part(dev: &Device, path: &str, inner: Option<&str>, zip_size: Option<u64>, start: u64, len: u64) -> Result<Vec<u8>, String> {
+    match inner {
+        None => dev.read_range(path, start, len).map_err(msg),
+        Some(name) => {
+            let size = zip_size.ok_or("The ZIP's size is missing.")?;
+            let data = unpacked(dev, path, size, name)?;
+            let from = (start as usize).min(data.len());
+            let to = (start.saturating_add(len) as usize).min(data.len());
+            Ok(data[from..to].to_vec())
+        }
+    }
 }
 
 /// What's in a ZIP file of `size` bytes, read from its end.

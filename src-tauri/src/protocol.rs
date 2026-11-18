@@ -54,6 +54,10 @@ pub fn handle(app: &AppHandle, req: Request<Vec<u8>>) -> Response<Vec<u8>> {
     if path == "/thumb" {
         return thumb(app, req.uri().query().unwrap_or(""));
     }
+    if path == "/zipped" {
+        let range = req.headers().get("range").and_then(|v| v.to_str().ok()).map(str::to_string);
+        return zipped(app, req.uri().query().unwrap_or(""), range.as_deref());
+    }
     if path == "/cover" {
         return cover(app, req.uri().query().unwrap_or(""));
     }
@@ -123,6 +127,39 @@ fn thumb(app: &AppHandle, q: &str) -> Response<Vec<u8>> {
         Ok(t) => thumb_response(t),
         Err(e) => respond(StatusCode::INTERNAL_SERVER_ERROR, "text/plain", e.into_bytes()),
     }
+}
+
+/// A file packed in a ZIP (`e`, its name in it), unpacked whole, then sent in the parts asked
+/// for, as `file` does.
+fn zipped(app: &AppHandle, q: &str, range: Option<&str>) -> Response<Vec<u8>> {
+    let bad = || respond(StatusCode::BAD_REQUEST, "text/plain", b"Bad request.".to_vec());
+    let (Some(path), Some(src), Some(name)) = (query_param(q, "p"), query_param(q, "src"), query_param(q, "e")) else { return bad() };
+    let Some(size) = query_param(q, "s").and_then(|s| s.parse::<u64>().ok()) else { return bad() };
+    let dev = match crate::state(app).source(Some(&src)) {
+        Ok(d) => d,
+        Err(e) => return respond(StatusCode::NOT_FOUND, "text/plain", e.into_bytes()),
+    };
+    let data = match crate::files::unpacked(&dev, &path, size, &name) {
+        Ok(d) => d,
+        Err(e) => return respond(StatusCode::INTERNAL_SERVER_ERROR, "text/plain", e.into_bytes()),
+    };
+    let len = data.len() as u64;
+    let base = || {
+        Response::builder()
+            .header("Content-Type", media_type(&name))
+            .header("Accept-Ranges", "bytes")
+            .header("Cache-Control", "no-store")
+            .header("Access-Control-Allow-Origin", "*")
+    };
+    let body = match range.and_then(|h| parse_range(h, len)) {
+        Some(Err(())) => base().status(StatusCode::RANGE_NOT_SATISFIABLE).header("Content-Range", format!("bytes */{len}")).body(vec![]),
+        Some(Ok((start, end))) => base()
+            .status(StatusCode::PARTIAL_CONTENT)
+            .header("Content-Range", format!("bytes {start}-{end}/{len}"))
+            .body(data[start as usize..=end as usize].to_vec()),
+        None => base().status(StatusCode::OK).body(data.to_vec()),
+    };
+    body.unwrap_or_else(|_| Response::new(Vec::new()))
 }
 
 /// An EPUB's cover at its own size (the preview's, when it's bigger than the thumbnail).

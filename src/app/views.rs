@@ -117,7 +117,7 @@ pub(super) fn ListView(pane: Pane) -> impl IntoView {
                             let (over, drop) = drop_events(ctx, p, dir.clone());
                             let cells = [kind_label(&e), when(e.mtime), if e.dir { String::new() } else { human_size(e.size) }];
                             view! {
-                                <tr class:selected=move || p.is_picked(&path) class:drop=move || ctx.drop_at.get().as_deref() == Some(key.as_str())
+                                <tr data-path=e.path.clone() class:selected=move || p.is_picked(&path) class:drop=move || ctx.drop_at.get().as_deref() == Some(key.as_str())
                                     draggable=move || (!editing()).to_string() data-dir=dir
                                     on:dragstart=drag_start(ctx, p, e.path.clone()) on:dragend=drag_end(ctx)
                                     on:dragover=move |ev| if e.dir { over(ev) } on:drop=move |ev| if e.dir { drop(ev) }
@@ -229,7 +229,7 @@ pub(super) fn ThumbView(pane: Pane) -> impl IntoView {
                         let is_dir = e.dir;
                         view! {
                             <div class="tile" title=e.name.clone()
-                                class:selected=move || p.is_picked(&path) class:drop=move || ctx.drop_at.get().as_deref() == Some(key.as_str())
+                                data-path=e.path.clone() class:selected=move || p.is_picked(&path) class:drop=move || ctx.drop_at.get().as_deref() == Some(key.as_str())
                                 draggable=move || (!editing()).to_string() data-dir=dir
                                 on:dragstart=drag_start(ctx, p, e.path.clone()) on:dragend=drag_end(ctx)
                                 on:dragover=move |ev| if is_dir { over(ev) } on:drop=move |ev| if is_dir { drop(ev) }
@@ -310,7 +310,7 @@ pub(super) fn ColumnView(pane: Pane) -> impl IntoView {
                     }
                 }
             </For>
-            {move || zip.get().map(|e| view! { <ZipColumns src=p.src.get_untracked() entry=e open=zip_open/> })}
+            {move || zip.get().map(|e| view! { <ZipColumns pane=p src=p.src.get_untracked() entry=e open=zip_open/> })}
         </div>
     }
 }
@@ -345,12 +345,14 @@ fn zip_items(items: &[Packed], prefix: &str) -> Vec<ZipItem> {
 
 /// A ZIP's folders as columns after the column view's own: the top, then each folder opened.
 /// `open` is the folders opened, deepest last; clicking an item picks it (and opens it, when it's
-/// a folder).
+/// a folder, or shows it in the preview, when it's a file).
 #[component]
-fn ZipColumns(src: Src, entry: Entry, open: RwSignal<Vec<String>>) -> impl IntoView {
+fn ZipColumns(pane: Pane, src: Src, entry: Entry, open: RwSignal<Vec<String>>) -> impl IntoView {
     let got = RwSignal::new(None::<Result<Listing, String>>);
     let picked = RwSignal::new(None::<String>);
     open.set(vec![]);
+    pane.zip_pick.set(None);
+    let zip_path = StoredValue::new(entry.path.clone());
     let args = json!({ "src": src.key(), "path": entry.path, "size": entry.size });
     spawn_local(async move {
         let r = call::<Listing>("zip_list", args).await;
@@ -381,6 +383,8 @@ fn ZipColumns(src: Src, entry: Entry, open: RwSignal<Vec<String>>) -> impl IntoV
                                             on:click=move |ev| {
                                                 ev.stop_propagation();
                                                 picked.set(Some(c.clone()));
+                                                // A file shows in the preview; a folder leaves the ZIP there.
+                                                pane.zip_pick.set((!i.dir).then(|| (src, zip_path.get_value(), c.clone(), i.size)));
                                                 open.update(|o| {
                                                     o.truncate(n);
                                                     if i.dir {
@@ -458,7 +462,7 @@ pub(super) fn Column(pane: Pane, dir: String, chain: Memo<Vec<String>>, width: R
                     view! {
                         <div class="row"
                             class:open=move || open_child.get().as_deref() == Some(p1.as_str())
-                            class:selected=move || current.get() && p.is_picked(&p2)
+                            data-path=e.path.clone() class:selected=move || current.get() && p.is_picked(&p2)
                             class:drop=move || ctx.drop_at.get().as_deref() == Some(key.as_str())
                             draggable=move || (!editing()).to_string() data-dir=fdir
                             on:dragstart=drag_start(ctx, p, e.path.clone()) on:dragend=drag_end(ctx)

@@ -27,7 +27,8 @@ copied between them.
   itself once the preview is bigger than its thumbnail), and
   ZIP, APK and JAR files as the list of what's in them (read from the end of the
   file, without unpacking; the first 5000 items); in the column view, a ZIP
-  picked in the last column also opens as more columns, one per folder in it. Right-click a file for "Show
+  picked in the last column also opens as more columns, one per folder in it; a file
+  picked there shows in the preview (unpacked in memory, up to 64 MB). Right-click a file for "Show
   as text" or "Show as hex" (bytes, 16 to a line, up to 4 MB as you scroll).
 - Drag the edges to resize the sidebar, the two panes, the files beside the
   preview, the column view's columns and the list's columns; double-click an

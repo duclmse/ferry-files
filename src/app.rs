@@ -296,6 +296,9 @@ struct Pane {
     list_cols: RwSignal<Vec<usize>>,
     /// A file the preview shows as text or bytes, whatever its type, from the context menu.
     peek_as: RwSignal<Option<(String, PeekAs)>>,
+    /// A file picked in a ZIP's columns, which the preview shows instead of the ZIP: the side
+    /// and the ZIP's path, and the file's name in the ZIP and unpacked size.
+    zip_pick: RwSignal<Option<(Src, String, String, u64)>>,
     /// Whether the path above the files is being typed in.
     editing_path: RwSignal<bool>,
 }
@@ -327,6 +330,7 @@ impl Pane {
             list_w: [0, 1, 2].map(|n| stored_px(&format!("yomi-files.list-w.{id}.{n}"))),
             list_cols: RwSignal::new(stored_cols(id)),
             peek_as: RwSignal::new(None),
+            zip_pick: RwSignal::new(None),
             editing_path: RwSignal::new(false),
         }
     }
@@ -881,13 +885,18 @@ pub fn App() -> impl IntoView {
         ctx.transfer(p, Src::Mac, d.paths, p.src.get_untracked(), dir, false);
     });
 
-    // Keep the selected item visible when the keyboard moves the selection.
+    // Keep the item last picked visible when the keyboard moves the selection. That item, not
+    // the first one picked: with several picked, ⌘-clicking one mustn't scroll to another.
     Effect::new(move |_| {
         let p = ctx.panes[ctx.active.get()];
-        p.selected.track();
+        let Some(path) = p.selected.get() else { return };
         p.view.track();
-        request_animation_frame(|| {
-            if let Ok(Some(el)) = document().query_selector(".pane.active .selected") {
+        request_animation_frame(move || {
+            let Ok(found) = document().query_selector_all(".pane.active .selected[data-path]") else { return };
+            let el = (0..found.length())
+                .filter_map(|n| found.item(n).and_then(|e| e.dyn_into::<web_sys::Element>().ok()))
+                .find(|e| e.get_attribute("data-path").as_deref() == Some(path.as_str()));
+            if let Some(el) = el {
                 let opts = web_sys::ScrollIntoViewOptions::new();
                 opts.set_block(web_sys::ScrollLogicalPosition::Nearest);
                 opts.set_inline(web_sys::ScrollLogicalPosition::Nearest);

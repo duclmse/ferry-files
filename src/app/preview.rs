@@ -32,7 +32,10 @@ pub(super) fn Preview(pane: Pane) -> impl IntoView {
     let shown = Memo::new(move |_| {
         p.selected_entry().map(|e| {
             let forced = p.peek_as.with(|f| f.as_ref().filter(|(path, _)| *path == e.path).map(|f| f.1));
-            (e, forced)
+            // A file picked in this ZIP's columns.
+            let src = p.src.get();
+            let inner = p.zip_pick.with(|z| z.as_ref().filter(|z| z.0 == src && z.1 == e.path).map(|z| (z.2.clone(), z.3)));
+            (e, forced, inner)
         })
     });
     view! {
@@ -42,7 +45,8 @@ pub(super) fn Preview(pane: Pane) -> impl IntoView {
                     0 | 1 => "Pick an item to see it here.".to_string(),
                     n => format!("{n} items picked."),
                 }}</span> }.into_any(),
-                Some((e, forced)) => {
+                Some((zip, None, Some((name, size)))) => view! { <Zipped pane=p src=p.src.get_untracked() zip name size/> }.into_any(),
+                Some((e, forced, _)) => {
                     let what = match kind(&e) {
                         Kind::Folder => "Folder", Kind::Epub => "EPUB book", Kind::Text => "Text file", Kind::Other => "File",
                     };
@@ -200,13 +204,16 @@ fn BigCover(src: Src, entry: Entry) -> impl IntoView {
 /// while the whole file is read, which can take a while from a phone. It can be zoomed (buttons,
 /// pinch, double-click), dragged when zoomed, and turned.
 #[component]
-fn FullImage(pane: Pane, src: Src, entry: Entry, info: RwSignal<MediaInfo>) -> impl IntoView {
+/// With `url`, a picture from somewhere else than the file (one in a ZIP): no thumbnail while it
+/// loads, and no ‹ ›.
+fn FullImage(pane: Pane, src: Src, entry: Entry, info: RwSignal<MediaInfo>, #[prop(optional)] url: Option<String>) -> impl IntoView {
+    let alone = url.is_some();
     let loaded = RwSignal::new(false);
     let natural = RwSignal::new((0u32, 0u32));
     let zoom = RwSignal::new(1.0f64);
     let turn = RwSignal::new(0i32);
     let pan = RwSignal::new((0.0f64, 0.0f64));
-    let url = stream_url(src, &entry);
+    let url = url.unwrap_or_else(|| stream_url(src, &entry));
     // How big the picture shows when it fits, against its own size (at most 1): `zoom` is on top
     // of that, so the picture is at zoom × fit (× the turn's) of its pixels. Measured again when
     // the preview changes size.
@@ -304,13 +311,12 @@ fn FullImage(pane: Pane, src: Src, entry: Entry, info: RwSignal<MediaInfo>) -> i
         <div class="pic stage" class:whole=loaded class:zoomed=move || { zoom.get() > 1.0 }
             on:mousedown=down on:wheel=wheel
             on:dblclick=move |ev| { ev.stop_propagation(); fit_or_actual(); }>
-            {let e = entry.clone(); move || (!loaded.get()).then(|| view! { <Thumbnail src entry=e.clone()/> })}
+            {let e = entry.clone(); move || (!loaded.get() && !alone).then(|| view! { <Thumbnail src entry=e.clone()/> })}
             <img class="full" node_ref=img_ref src=url alt="" draggable="false" class:pending=move || !loaded.get()
                 style=style on:load=load/>
         </div>
         <div class="viewer-bar">
-            {neighbours(pane, &entry)}
-            <span class="gap"></span>
+            {(!alone).then(|| view! { {neighbours(pane, &entry)} <span class="gap"></span> })}
             <button class="btn" title="Zoom out" on:click=move |_| set_zoom(zoom.get_untracked() / 1.25)>"−"</button>
             <button class="btn zoom" title="Of the picture's own size. Click (or double-click the picture) for 100% or to fit."
                 on:click=move |_| fit_or_actual()>
@@ -328,7 +334,8 @@ fn FullImage(pane: Pane, src: Src, entry: Entry, info: RwSignal<MediaInfo>) -> i
 /// When the preview moves on, it stops and lets go of the file, so the web view drops what it
 /// buffered.
 #[component]
-fn Player(pane: Pane, entry: Entry, url: String, video: bool, info: RwSignal<MediaInfo>) -> impl IntoView {
+/// `alone`: no ‹ › (a file in a ZIP).
+fn Player(pane: Pane, entry: Entry, url: String, video: bool, info: RwSignal<MediaInfo>, #[prop(optional)] alone: bool) -> impl IntoView {
     let el = StoredValue::new_local(None::<web_sys::HtmlMediaElement>);
     let keep = move |e: &web_sys::HtmlMediaElement| el.set_value(Some(e.clone()));
     on_cleanup(move || {
@@ -397,8 +404,7 @@ fn Player(pane: Pane, entry: Entry, url: String, video: bool, info: RwSignal<Med
     view! {
         {player}
         <div class="viewer-bar">
-            {neighbours(pane, &entry)}
-            <span class="gap"></span>
+            {(!alone).then(|| view! { {neighbours(pane, &entry)} <span class="gap"></span> })}
             <button class="btn" title="Back 10 seconds" on:click=move |_| skip(-10.0)>"−10s"</button>
             <button class="btn" title="Forward 10 seconds" on:click=move |_| skip(10.0)>"+10s"</button>
             <button class="btn" title="Forward 30 seconds" on:click=move |_| skip(30.0)>"+30s"</button>
@@ -567,13 +573,84 @@ fn piece_view(
     }
 }
 
+/// A file packed in a ZIP: its name in it, and the ZIP's size.
+#[derive(Clone)]
+struct Inner {
+    name: String,
+    zip_size: u64,
+}
+
+/// Files in a ZIP are unpacked whole for the preview, up to this size (as the backend's).
+const UNPACK_MAX: u64 = 64 * 1024 * 1024;
+
+/// A file picked in a ZIP's columns, `size` bytes unpacked: shown like any other file, from the
+/// ZIP unpacked.
+#[component]
+fn Zipped(pane: Pane, src: Src, zip: Entry, name: String, size: u64) -> impl IntoView {
+    let p = pane;
+    let short = name.rsplit('/').next().unwrap_or(&name).to_string();
+    let e = Entry { name: short.clone(), path: name.clone(), dir: false, size, mtime: 0 };
+    let url = format!(
+        "yomi://localhost/zipped?src={}&p={}&s={}&m={}&e={}",
+        src.key(),
+        String::from(js_sys::encode_uri_component(&zip.path)),
+        zip.size,
+        zip.mtime,
+        String::from(js_sys::encode_uri_component(&name)),
+    );
+    let inner = Inner { name: name.clone(), zip_size: zip.size };
+    let info = RwSignal::new(MediaInfo::default());
+    let forced = RwSignal::new(None::<PeekAs>);
+    let body = move || {
+        let (e, url, inner) = (e.clone(), url.clone(), inner.clone());
+        if size > UNPACK_MAX {
+            return view! { <span class="hint">"Too big to show from inside the ZIP."</span> }.into_any();
+        }
+        match (forced.get(), media(&e)) {
+            (Some(PeekAs::Text), _) => view! { <TextPeek src entry=e inner/> }.into_any(),
+            (Some(PeekAs::Hex), _) => view! { <HexPeek src entry=e inner/> }.into_any(),
+            (None, Some(Media::Image)) => view! { <FullImage pane=p src entry=e info url/> }.into_any(),
+            (None, Some(Media::Video)) => view! { <Player pane=p entry=e url video=true info alone=true/> }.into_any(),
+            (None, Some(Media::Audio)) => view! { <Player pane=p entry=e url video=false info alone=true/> }.into_any(),
+            _ if has_ext(&e, PDF_EXTS) => view! { <iframe class="pdf" src=url title="PDF"></iframe> }.into_any(),
+            _ if is_text(&e) => view! { <TextPeek src entry=e inner/> }.into_any(),
+            _ => view! {
+                <div class="viewer-bar">
+                    <button class="btn" on:click=move |_| forced.set(Some(PeekAs::Text))>"Open as text"</button>
+                    <button class="btn" on:click=move |_| forced.set(Some(PeekAs::Hex))>"Open as binary"</button>
+                </div>
+            }.into_any(),
+        }
+    };
+    let facts = move || {
+        let mut v = vec!["In a ZIP".to_string(), human_size(size)];
+        info.with(|i| {
+            v.extend(i.width.zip(i.height).map(|(w, h)| format!("{w} × {h}")));
+            v.extend(i.duration.map(length));
+        });
+        v.join(" · ")
+    };
+    view! {
+        <div class="view">{body}</div>
+        <div class="meta">
+            <b class="name">{short}</b>
+            <span class="sub">{facts}</span>
+            <span class="sub path" title=format!("{}/{name}", zip.path)>{match name.rfind('/') { Some(at) => format!("{}/{}", zip.name, &name[..at]), None => zip.name.clone() }}</span>
+            {move || forced.get().map(|_| view! {
+                <button class="btn small" on:click=move |_| forced.set(None)>"Show normally"</button>
+            })}
+        </div>
+    }
+}
+
 /// A text file, a piece at a time: the next piece loads when the end is scrolled near.
 #[component]
-fn TextPeek(src: Src, entry: Entry) -> impl IntoView {
+fn TextPeek(src: Src, entry: Entry, #[prop(optional)] inner: Option<Inner>) -> impl IntoView {
     let path = StoredValue::new(entry.path);
+    let inner = StoredValue::new(inner);
     let get = move |start: u64| async move {
         let path = path.try_get_value().unwrap_or_default();
-        let p = call::<Peek>("peek_text", json!({ "src": src.key(), "path": path, "start": start })).await?;
+        let p = call::<Peek>("peek_text", json!({ "src": src.key(), "path": path, "start": start, "inner": inner.try_get_value().flatten().map(|i| i.name), "zipSize": inner.try_get_value().flatten().map(|i| i.zip_size) })).await?;
         Ok((p.text, p.next))
     };
     let (pieces, next, error, loading, scrolled) = pieces(get, TEXT_CAP);
@@ -582,11 +659,12 @@ fn TextPeek(src: Src, entry: Entry) -> impl IntoView {
 
 /// Any file's bytes, 16 to a line: where, in hex, and as text.
 #[component]
-fn HexPeek(src: Src, entry: Entry) -> impl IntoView {
+fn HexPeek(src: Src, entry: Entry, #[prop(optional)] inner: Option<Inner>) -> impl IntoView {
     let path = StoredValue::new(entry.path);
+    let inner = StoredValue::new(inner);
     let get = move |start: u64| async move {
         let path = path.try_get_value().unwrap_or_default();
-        let b = call::<Bytes>("peek_bytes", json!({ "src": src.key(), "path": path, "start": start })).await?;
+        let b = call::<Bytes>("peek_bytes", json!({ "src": src.key(), "path": path, "start": start, "inner": inner.try_get_value().flatten().map(|i| i.name), "zipSize": inner.try_get_value().flatten().map(|i| i.zip_size) })).await?;
         Ok((hex_lines(start, &b.bytes), b.next))
     };
     let (pieces, next, error, loading, scrolled) = pieces(get, HEX_CAP);
