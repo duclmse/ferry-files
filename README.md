@@ -7,7 +7,7 @@ copied between them.
 
 - One or two panes (◫ in the left pane's toolbar or ⌘\ shows or hides the
   second; Tab switches between them). Each pane shows the Mac or a connected
-  device (💻, then one 📱 per device, in its toolbar), as a list, as thumbnails
+  device (picked in the sidebar), as a list, as thumbnails
   (images and EPUB covers), or in columns (buttons at the right of the pane's
   status bar).
 - The preview, to the right of the files in every view (at its narrowest
@@ -56,7 +56,8 @@ copied between them.
   searches all its subfolders too, and "Back to folder" ends the search. ⌘F, ⌘K
   or / goes to the filter box, which offers the last 10 searches.
 - Click the empty part of the path above the files (or press ⌘L) to type a
-  path; Enter goes there, Escape cancels.
+  path; Enter goes there, Escape cancels. A path too long for its room folds
+  its first folders into …, which lists them.
 - ? lists the keyboard shortcuts (also in Settings). Delete or ⌘⌫ deletes.
 - Settings: appearance (as the Mac, light or dark).
 - Space opens Quick Look (phone files are copied to the Mac first).

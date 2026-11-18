@@ -19,7 +19,7 @@ impl Ctx {
         let (vw, vh) = (size(window().inner_width()), size(window().inner_height()));
         let x = (ev.client_x() as f64).min(vw - w - 4.0).max(4.0);
         let y = (ev.client_y() as f64).min(vh - h - 4.0).max(4.0);
-        self.menu.set(Some(Menu { x, y, pane: p.id, entry, columns: false }));
+        self.menu.set(Some(Menu { x, y, pane: p.id, entry, columns: false, folders: vec![] }));
     }
 
     /// The list's columns to show or hide, from a right-click on its header.
@@ -33,7 +33,19 @@ impl Ctx {
         let (vw, vh) = (size(window().inner_width()), size(window().inner_height()));
         let x = (ev.client_x() as f64).min(vw - w - 4.0).max(4.0);
         let y = (ev.client_y() as f64).min(vh - h - 4.0).max(4.0);
-        self.menu.set(Some(Menu { x, y, pane: p.id, entry: None, columns: true }));
+        self.menu.set(Some(Menu { x, y, pane: p.id, entry: None, columns: true, folders: vec![] }));
+    }
+
+    /// The path's folders folded into "…", under it.
+    pub(super) fn show_folders_menu(self, p: Pane, ev: &web_sys::MouseEvent, folders: Vec<String>) {
+        ev.stop_propagation();
+        self.active.set(p.id);
+        let (mut x, mut y) = (ev.client_x() as f64, ev.client_y() as f64);
+        if let Some(el) = ev.current_target().and_then(|t| t.dyn_into::<web_sys::Element>().ok()) {
+            let r = el.get_bounding_client_rect();
+            (x, y) = (r.left(), r.bottom() + 2.0);
+        }
+        self.menu.set(Some(Menu { x, y, pane: p.id, entry: None, columns: false, folders }));
     }
 
     /// ✓ beside each of the list's columns that's shown; Name is always shown.
@@ -211,7 +223,14 @@ pub(super) fn ContextMenu() -> impl IntoView {
     let ctx = expect_context::<Ctx>();
     move || ctx.menu.get().map(|m| {
         let p = ctx.panes[m.pane];
-        let items = if m.columns { ctx.column_items(p) } else { ctx.menu_items(p, m.entry.as_ref()) };
+        let items = if !m.folders.is_empty() {
+            m.folders.iter().enumerate().map(|(i, f)| item(base(f), "", Act::Go(i))).collect()
+        } else if m.columns {
+            ctx.column_items(p)
+        } else {
+            ctx.menu_items(p, m.entry.as_ref())
+        };
+        let folders = StoredValue::new(m.folders.clone());
         view! {
             <div class="menu" role="menu" style=format!("left:{}px;top:{}px", m.x, m.y)
                 on:contextmenu=|e| { e.prevent_default(); e.stop_propagation(); }>
@@ -221,7 +240,13 @@ pub(super) fn ContextMenu() -> impl IntoView {
                         let entry = m.entry.clone();
                         view! {
                             <button role="menuitem" class:danger=danger disabled=!enabled
-                                on:click=move |_| { ctx.menu.set(None); ctx.run(p, act, entry.clone()); }>
+                                on:click=move |_| {
+                                    ctx.menu.set(None);
+                                    match act {
+                                        Act::Go(i) => if let Some(f) = folders.with_value(|f| f.get(i).cloned()) { ctx.navigate(p, f) },
+                                        _ => ctx.run(p, act, entry.clone()),
+                                    }
+                                }>
                                 <span>{label}</span><span class="key">{key}</span>
                             </button>
                         }.into_any()

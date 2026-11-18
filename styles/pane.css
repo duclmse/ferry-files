@@ -15,13 +15,29 @@
   min-height: 48px;
 }
 
+/* The path on one line; what doesn't fit folds into "…" (pane.rs). */
 .crumbs {
   display: flex;
   align-items: center;
-  flex-wrap: wrap;
+  flex-wrap: nowrap;
   gap: 1px;
   min-width: 0;
   flex: 1;
+  overflow: hidden;
+  white-space: nowrap;
+}
+
+.crumbs .part {
+  flex: none;
+  display: flex;
+  align-items: center;
+  gap: 1px;
+  min-width: 0;
+}
+
+/* The last folder shrinks, cut short, when even it alone doesn't fit. */
+.crumbs .part.last {
+  flex: 0 1 auto;
 }
 
 .crumbs button {
@@ -30,6 +46,19 @@
   padding: 3px 6px;
   border-radius: 6px;
   cursor: pointer;
+  max-width: 220px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.crumbs .part.last button {
+  max-width: none;
+  min-width: 0;
+}
+
+.crumbs button.more {
+  color: var(--muted);
 }
 
 .crumbs button:hover {
@@ -40,8 +69,23 @@
   color: var(--muted);
 }
 
-.crumbs button:last-child {
+.crumbs .part.last button {
   font-weight: 600;
+}
+
+/* Back buttons: only an arrow. */
+.btn.back {
+  padding-inline: 8px;
+}
+
+.btn.back .back-icon {
+  width: 14px;
+  height: 14px;
+  fill: none;
+  stroke: currentColor;
+  stroke-width: 1.8;
+  stroke-linecap: round;
+  stroke-linejoin: round;
 }
 
 .btn {

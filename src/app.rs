@@ -186,6 +186,8 @@ struct Menu {
     entry: Option<Entry>,
     /// The list's columns to show or hide, from a right-click on its header.
     columns: bool,
+    /// Folders to go to: the path's folders folded into "…".
+    folders: Vec<String>,
 }
 
 #[derive(Clone, Copy, PartialEq)]
@@ -215,6 +217,8 @@ enum Act {
     /// Shows or hides one of the list's columns (an index into `LIST_COLS`).
     Column(usize),
     ResetColumns,
+    /// Goes to one of the menu's `folders`.
+    Go(usize),
 }
 
 enum MenuItem {

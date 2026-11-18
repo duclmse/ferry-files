@@ -510,7 +510,11 @@ pub(super) fn Reader(src: Src, path: String, back: Option<String>) -> impl IntoV
                             }
                         });
                     }>"Edit"</button>
-                    <button class="btn primary" on:click=move |_| close()>{if back.get_value().is_some() { "Back" } else { "Close" }}</button>
+                    {if back.get_value().is_some() {
+                        view! { <button class="btn back" title="Back" aria-label="Back" on:click=move |_| close()><svg class="back-icon" viewBox="0 0 16 16" aria-hidden="true"><path d="M13 8H3M7.5 3.5 3 8l4.5 4.5"/></svg></button> }.into_any()
+                    } else {
+                        view! { <button class="btn primary" on:click=move |_| close()>"Close"</button> }.into_any()
+                    }}
                 </div>
                 {move || match (book.get(), page.get()) {
                     (Some(Err(e)), _) | (_, Some(Err(e))) => view! { <p class="error">{e}</p> }.into_any(),

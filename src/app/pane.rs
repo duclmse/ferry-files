@@ -2,6 +2,8 @@
 
 use super::*;
 
+/// The path, one button per folder. When it doesn't fit, the folders after "/" fold into "…",
+/// from the left, as many as need to; "…" lists them.
 #[component]
 pub(super) fn Crumbs(pane: Pane) -> impl IntoView {
     let ctx = expect_context::<Ctx>();
@@ -12,24 +14,91 @@ pub(super) fn Crumbs(pane: Pane) -> impl IntoView {
             p.editing_path.set(true);
         }
     };
+    let el = NodeRef::<html::Div>::new();
+    // How many folders (after "/") are folded into "…".
+    let fold = RwSignal::new(0usize);
+    // With every folder shown, measures them and folds as many as it takes to fit.
+    let fit = move || {
+        fold.set(0);
+        request_animation_frame(move || {
+            let Some(el) = el.get_untracked() else { return };
+            let (need, room) = (el.scroll_width(), el.client_width());
+            if need <= room {
+                return;
+            }
+            let Ok(parts) = el.query_selector_all(".part") else { return };
+            let n = parts.length() as usize;
+            // "…" and the "/" after it take about this much.
+            let mut over = need - room + 32;
+            let mut k = 0;
+            // The last folder always shows.
+            while over > 0 && k + 1 < n {
+                let w = parts.item(k as u32).and_then(|e| e.dyn_into::<web_sys::HtmlElement>().ok()).map_or(0, |e| e.offset_width());
+                over -= w;
+                k += 1;
+            }
+            fold.set(k);
+        });
+    };
+    Effect::new(move |_| {
+        p.cwd.track();
+        if !p.editing_path.get() {
+            fit();
+        }
+    });
+    // Again when the path's room changes.
+    let watcher = StoredValue::new_local(None::<(web_sys::ResizeObserver, wasm_bindgen::closure::Closure<dyn Fn()>)>);
+    let width = StoredValue::new(0);
+    Effect::new(move |_| {
+        let Some(node) = el.get() else { return };
+        let cb = wasm_bindgen::closure::Closure::<dyn Fn()>::new(move || {
+            let w = el.get_untracked().map_or(0, |e| e.client_width());
+            if w != width.get_value() {
+                width.set_value(w);
+                fit();
+            }
+        });
+        if let Ok(ro) = web_sys::ResizeObserver::new(cb.as_ref().unchecked_ref()) {
+            ro.observe(&node);
+            watcher.set_value(Some((ro, cb)));
+        }
+    });
+    on_cleanup(move || {
+        if let Some((ro, _)) = watcher.try_update_value(Option::take).flatten() {
+            ro.disconnect();
+        }
+    });
     view! {
-        <div class="crumbs" title="Click here or press ⌘L to type a path" on:click=edit>
+        <div class="crumbs" node_ref=el title="Click here or press ⌘L to type a path" on:click=edit>
             {move || if p.editing_path.get() {
                 view! { <PathEdit pane=p/> }.into_any()
             } else {
                 let cwd = p.cwd.get();
+                let k = fold.get();
+                let mut paths = Vec::new();
                 let mut acc = String::new();
-                let mut out = vec![view! { <button on:click=move |_| ctx.navigate(p, "/".into())>"/"</button> }.into_any()];
                 for part in cwd.split('/').filter(|s| !s.is_empty()) {
                     acc = format!("{acc}/{part}");
-                    let target = acc.clone();
-                    out.push(view! {
-                        <button on:click=move |_| ctx.navigate(p, target.clone())>{part.to_string()}</button>
-                    }.into_any());
-                    out.push(view! { <span class="sep">"/"</span> }.into_any());
+                    paths.push((part.to_string(), acc.clone()));
                 }
-                out.pop_if(|_| cwd != "/");
-                out.into_any()
+                let folded: Vec<String> = paths.iter().take(k).map(|(_, path)| path.clone()).collect();
+                let last = paths.len().saturating_sub(1);
+                view! {
+                    <button on:click=move |_| ctx.navigate(p, "/".into())>"/"</button>
+                    {(k > 0).then(|| {
+                        let tip = folded.last().cloned().unwrap_or_default();
+                        view! {
+                            <span class="part"><button class="more" title=tip
+                                on:click=move |ev| ctx.show_folders_menu(p, &ev, folded.clone())>"…"</button></span>
+                        }
+                    })}
+                    {paths.into_iter().enumerate().skip(k).map(|(i, (name, path))| view! {
+                        <span class="part" class:last=i == last>
+                            {(i > 0).then(|| view! { <span class="sep">"/"</span> })}
+                            <button title=path.clone() on:click=move |_| ctx.navigate(p, path.clone())>{name}</button>
+                        </span>
+                    }).collect_view()}
+                }.into_any()
             }}
         </div>
     }
@@ -236,24 +305,6 @@ pub(super) fn PaneView(pane: Pane) -> impl IntoView {
             }>
             <div class="bar">
                 <button class="btn" title="Up (⌘↑)" disabled=move || p.cwd.get() == "/" on:click=move |_| ctx.go_up(p)>"↑"</button>
-                <div class="seg" role="group" aria-label="Show files on">
-                    <button title="Files on the Mac" aria-label="Mac" class:active=move || p.src.get() == Src::Mac
-                        on:click=move |_| ctx.switch_src(p, Src::Mac)>"💻"</button>
-                    // One button per connected device.
-                    {move || {
-                        let phones = ctx.phones.get();
-                        if phones.is_empty() {
-                            return view! { <button title="No device connected" aria-label="Device" disabled=true>"📱"</button> }.into_any();
-                        }
-                        phones.into_iter().map(|i| {
-                            let src = Src::of(&i.id);
-                            view! {
-                                <button title=format!("Files on {} ({})", i.label, i.transport) aria-label=i.label.clone()
-                                    class:active=move || p.src.get() == src on:click=move |_| ctx.switch_src(p, src)>"📱"</button>
-                            }
-                        }).collect_view().into_any()
-                    }}
-                </div>
                 <Crumbs pane=p/>
                 {move || p.loading.get().then(|| view! { <span class="spin"></span> })}
                 // Narrow panes show only the icon; clicking it opens the field.

@@ -363,7 +363,7 @@ pub fn EpubEditor() -> impl IntoView {
             </nav>
             <div class="main">
                 <div class="bar">
-                    <button class="btn" on:click=move |_| ep.close(false)>"← Files"</button>
+                    <button class="btn back" title="Back to files" aria-label="Back to files" on:click=move |_| ep.close(false)><svg class="back-icon" viewBox="0 0 16 16" aria-hidden="true"><path d="M13 8H3M7.5 3.5 3 8l4.5 4.5"/></svg></button>
                     <span class="title">{name}{move || dirty.get().then_some(" •")}</span>
                     <span class="spacer"></span>
                     {move || ep.busy.get().then(|| view! { <span class="spin"></span> })}

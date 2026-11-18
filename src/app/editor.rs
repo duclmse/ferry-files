@@ -68,7 +68,7 @@ pub(super) fn TextEditor() -> impl IntoView {
     let dirty = Memo::new(move |_| ctx.dirty());
     view! {
         <div class="bar">
-            <button class="btn" on:click=move |_| ctx.close_editor(false)>"← Files"</button>
+            <button class="btn back" title="Back to files" aria-label="Back to files" on:click=move |_| ctx.close_editor(false)><svg class="back-icon" viewBox="0 0 16 16" aria-hidden="true"><path d="M13 8H3M7.5 3.5 3 8l4.5 4.5"/></svg></button>
             <span class="title">{path}{move || dirty.get().then_some(" •")}</span>
             <span class="kind">{move || ctx.editor.get().map(|e| match e.src {
                 Src::Mac => "Mac".to_string(),

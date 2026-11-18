@@ -223,21 +223,6 @@ impl Ctx {
         self.load_select(p, src, path, select);
     }
 
-    /// Shows the phone or the Mac in pane `p`, in the folder it last showed there.
-    pub(super) fn switch_src(self, p: Pane, src: Src) {
-        if p.src.get_untracked() == src {
-            return;
-        }
-        if self.editor.get_untracked().is_some() {
-            if self.dirty() {
-                self.confirm_discard.set(true);
-                return;
-            }
-            self.leave_editor();
-        }
-        self.open_remembered(p, src);
-    }
-
     /// Opens a sidebar place in the active pane; the column view starts from it.
     pub(super) fn open_place(self, src: Src, path: String) {
         let p = self.act();
