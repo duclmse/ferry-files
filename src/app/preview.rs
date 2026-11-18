@@ -77,7 +77,18 @@ pub(super) fn Preview(pane: Pane) -> impl IntoView {
                         _ if has_ext(&e, FONT_EXTS) && e.size <= WHOLE_MAX => view! { <FontSample src entry=e.clone()/> }.into_any(),
                         _ if has_ext(&e, ZIP_EXTS) => view! { <ZipList src entry=e.clone()/> }.into_any(),
                         _ if is_text(&e) => view! { <TextPeek src entry=e.clone()/> }.into_any(),
-                        _ => thumb(&e).into_any(),
+                        _ if e.dir => thumb(&e).into_any(),
+                        // A type the preview doesn't know: offer to look inside anyway.
+                        _ => {
+                            let (a, b) = (e.path.clone(), e.path.clone());
+                            view! {
+                                {thumb(&e)}
+                                <div class="viewer-bar">
+                                    <button class="btn" on:click=move |_| p.peek_as.set(Some((a.clone(), PeekAs::Text)))>"Open as text"</button>
+                                    <button class="btn" on:click=move |_| p.peek_as.set(Some((b.clone(), PeekAs::Hex)))>"Open as binary"</button>
+                                </div>
+                            }.into_any()
+                        }
                     };
                     // Kind, size, and the width × height and length once known, on one line.
                     let size = (!e.dir).then(|| human_size(e.size));
