@@ -41,8 +41,23 @@ pub(super) fn Sidebar() -> impl IntoView {
     let drives = Memo::new(move |_| ctx.devices.with(|d| d.as_ref().map(|d| d.drives.clone()).unwrap_or_default()));
     let device = move |i: Info| {
         let src = Src::of(&i.id);
+        // Its folders fold away under its name; remembered for the device across launches.
+        let fold_key = format!("yomi-files.fold.dev.{}:{}", i.transport, i.label);
+        let open = RwSignal::new(!stored_flag(&fold_key, false));
+        let dirs = i.quick_dirs.clone();
+        let foldable = !dirs.is_empty();
+        let fold_tip = move || if open.get() { "Hide folders" } else { "Show folders" };
         view! {
             <div class="device">
+                <button class="fold" class:none=!foldable disabled=!foldable title=fold_tip aria-label=fold_tip
+                    aria-expanded=move || open.get().to_string()
+                    on:click=move |_| {
+                        let now = !open.get_untracked();
+                        open.set(now);
+                        store(&fold_key, if now { "0" } else { "1" });
+                    }>
+                    <span class="chev" class:open=move || open.get()>"▸"</span>
+                </button>
                 // The device's name shows all its storage ("/").
                 <button class="name" title=format!("All storage on {}", i.label)
                     class:active=move || {
@@ -67,7 +82,11 @@ pub(super) fn Sidebar() -> impl IntoView {
                 <button class="eject" title=format!("Disconnect {}", i.label) aria-label="Disconnect"
                     on:click=move |_| ctx.disconnect(src)>"⏏"</button>
             </div>
-            {i.quick_dirs.into_iter().map(|(name, path)| place(src, name, path)).collect_view()}
+            {move || open.get().then(|| view! {
+                <div class="dev-dirs">
+                    {dirs.clone().into_iter().map(|(name, path)| place(src, name, path)).collect_view()}
+                </div>
+            })}
         }
     };
     view! {
