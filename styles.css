@@ -34,7 +34,6 @@ button, input, textarea { font: inherit; color: inherit; }
 .side .item:hover { background: var(--hover); }
 .side .item.active { background: var(--sel); font-weight: 600; }
 .side .grow { flex: 1; }
-.side .foot { font-size: 11px; color: var(--muted); padding: 8px; word-break: break-all; -webkit-user-select: text; user-select: text; }
 
 .main { display: flex; flex-direction: column; min-width: 0; min-height: 0; }
 .bar { display: flex; align-items: center; gap: 8px; padding: 8px 12px; background: var(--panel); border-bottom: 1px solid var(--line); min-height: 48px; }
@@ -197,3 +196,15 @@ iframe.page { flex: 1; width: 100%; border: 0; background: #fff; color-scheme: l
 .pane:not(.active) .tile.selected,
 .pane:not(.active) .col .row.selected { background: var(--hover); }
 .side .btn.active { background: var(--sel); }
+
+/* Settings */
+.overlay { position: fixed; inset: 0; z-index: 60; background: rgba(0,0,0,.3); display: flex; align-items: center; justify-content: center; padding: 16px; }
+.dialog { width: min(560px, 100%); max-height: 100%; overflow: auto; padding: 18px 20px; background: var(--panel); border: 1px solid var(--line); border-radius: 12px; box-shadow: 0 12px 40px rgba(0,0,0,.3); display: flex; flex-direction: column; gap: 10px; }
+.dialog h2 { margin: 0 0 4px; font-size: 16px; }
+.dialog h3 { margin: 10px 0 0; font-size: 11px; text-transform: uppercase; letter-spacing: .04em; color: var(--muted); }
+.dialog .hint { margin: 0 0 0 24px; font-size: 12px; color: var(--muted); }
+.dialog .actions .grow { flex: 1; }
+.folder { display: flex; align-items: center; gap: 8px; padding: 8px 10px; border: 1px solid var(--line); border-radius: 8px; }
+.folder .what { flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 2px; }
+.folder .about { font-size: 12px; color: var(--muted); }
+.folder .path { font-size: 11px; color: var(--muted); word-break: break-all; -webkit-user-select: text; user-select: text; }

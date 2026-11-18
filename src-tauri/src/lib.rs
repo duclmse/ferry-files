@@ -293,6 +293,80 @@ async fn copy(
     .await
 }
 
+// ----- Settings: the app's folders on the Mac -----
+
+#[derive(Serialize)]
+struct Folder {
+    path: String,
+    files: u64,
+    bytes: u64,
+}
+
+/// The folders the app keeps on the Mac: "backups" or "thumbs" (the thumbnail cache).
+fn app_folder(which: &str) -> Result<std::path::PathBuf, String> {
+    match which {
+        "backups" => Ok(device::backup_dir()),
+        "thumbs" => Ok(thumbs::cache_dir()),
+        other => Err(format!("Unknown folder {other:?}.")),
+    }
+}
+
+fn folder_size(dir: &std::path::Path) -> (u64, u64) {
+    let (mut files, mut bytes) = (0, 0);
+    for item in std::fs::read_dir(dir).into_iter().flatten().flatten() {
+        match item.metadata() {
+            Ok(m) if m.is_dir() => {
+                let (f, b) = folder_size(&item.path());
+                files += f;
+                bytes += b;
+            }
+            Ok(m) => {
+                files += 1;
+                bytes += m.len();
+            }
+            Err(_) => {}
+        }
+    }
+    (files, bytes)
+}
+
+/// Where the backups and the thumbnail cache are, and how much they hold.
+#[tauri::command(rename_all = "snake_case")]
+async fn app_folders() -> Result<HashMap<String, Folder>, String> {
+    blocking(|| {
+        let mut out = HashMap::new();
+        for which in ["backups", "thumbs"] {
+            let dir = app_folder(which)?;
+            let (files, bytes) = folder_size(&dir);
+            out.insert(which.to_string(), Folder { path: dir.display().to_string(), files, bytes });
+        }
+        Ok(out)
+    })
+    .await
+}
+
+/// Shows one of the app's folders in the Finder, creating it if it isn't there yet.
+#[tauri::command(rename_all = "snake_case")]
+fn open_folder(which: String) -> Result<(), String> {
+    let dir = app_folder(&which)?;
+    std::fs::create_dir_all(&dir).map_err(|e| format!("Can't create {}: {e}", dir.display()))?;
+    std::process::Command::new("open").arg(&dir).spawn().map_err(|e| format!("Can't open {}: {e}", dir.display()))?;
+    Ok(())
+}
+
+/// Deletes the cached thumbnails. They're made again when shown. Backups are never touched.
+#[tauri::command(rename_all = "snake_case")]
+async fn clear_thumbs() -> Result<(), String> {
+    blocking(|| {
+        let dir = thumbs::cache_dir();
+        match std::fs::remove_dir_all(&dir) {
+            Err(e) if e.kind() != std::io::ErrorKind::NotFound => Err(format!("Can't clear {}: {e}", dir.display())),
+            _ => Ok(()),
+        }
+    })
+    .await
+}
+
 // ----- EPUB editor -----
 // A book is read from the device once, edited in memory, and written back by epub_save.
 
@@ -479,7 +553,7 @@ pub fn run() {
         })
         .invoke_handler(tauri::generate_handler![
             devices, connect, disconnect, info, list, refresh, read_text, write_text, mkdir, remove, download,
-            upload, copy, epub_open, epub_chapter, epub_set_source, epub_set_body, epub_set_meta, epub_cover, epub_find,
+            upload, copy, app_folders, open_folder, clear_thumbs, epub_open, epub_chapter, epub_set_source, epub_set_body, epub_set_meta, epub_cover, epub_find,
             epub_replace, epub_save, epub_export, epub_close
         ])
         .run(tauri::generate_context!())

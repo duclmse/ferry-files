@@ -158,6 +158,13 @@ fn store(key: &str, value: &str) {
 }
 
 const SPLIT_KEY: &str = "yomi-files.split";
+const HIDDEN_KEY: &str = "yomi-files.hidden";
+const PHONE_THUMBS_KEY: &str = "yomi-files.phone-thumbs";
+
+/// A setting kept in localStorage as "1" or "0".
+fn stored_flag(key: &str, default: bool) -> bool {
+    stored(key).map_or(default, |v| v == "1")
+}
 
 #[derive(Clone, Copy, PartialEq)]
 enum ViewMode {
@@ -319,6 +326,11 @@ struct Ctx {
     busy: RwSignal<bool>,
     ep: crate::epub::Ep,
     menu: RwSignal<Option<Menu>>,
+    settings: RwSignal<bool>,
+    /// Settings: list names starting with a dot.
+    show_hidden: RwSignal<bool>,
+    /// Settings: make thumbnails of phone files (each one reads the whole file over USB).
+    phone_thumbs: RwSignal<bool>,
 }
 
 impl Ctx {
@@ -336,7 +348,39 @@ impl Ctx {
             busy: RwSignal::new(false),
             ep: crate::epub::Ep::new(),
             menu: RwSignal::new(None),
+            settings: RwSignal::new(false),
+            show_hidden: RwSignal::new(stored_flag(HIDDEN_KEY, false)),
+            phone_thumbs: RwSignal::new(stored_flag(PHONE_THUMBS_KEY, true)),
         }
+    }
+
+    /// Drops hidden files from a listing unless the settings say to show them.
+    fn visible(self, entries: Vec<Entry>) -> Vec<Entry> {
+        if self.show_hidden.get_untracked() {
+            entries
+        } else {
+            entries.into_iter().filter(|e| !e.name.starts_with('.')).collect()
+        }
+    }
+
+    fn set_show_hidden(self, on: bool) {
+        self.show_hidden.set(on);
+        store(HIDDEN_KEY, if on { "1" } else { "0" });
+        self.reload_all();
+    }
+
+    fn set_phone_thumbs(self, on: bool) {
+        self.phone_thumbs.set(on);
+        store(PHONE_THUMBS_KEY, if on { "1" } else { "0" });
+    }
+
+    /// Shows the backups folder (or the thumbnail cache) in the Finder.
+    fn open_folder(self, which: &'static str) {
+        spawn_local(async move {
+            if let Err(e) = call::<()>("open_folder", json!({ "which": which })).await {
+                self.act().error(e);
+            }
+        });
     }
 
     fn act(self) -> Pane {
@@ -370,6 +414,7 @@ impl Ctx {
         spawn_local(async move {
             match call::<Vec<Entry>>("list", json!({ "src": src.key(), "path": path, "pane": p.id })).await {
                 Ok(entries) => {
+                    let entries = self.visible(entries);
                     if p.src.get_untracked() != src {
                         p.cols.set(HashMap::new());
                         p.src.set(src);
@@ -832,6 +877,13 @@ pub fn App() -> impl IntoView {
                 return;
             }
         }
+        if ctx.settings.get_untracked() {
+            if e.key() == "Escape" {
+                e.prevent_default();
+                ctx.settings.set(false);
+            }
+            return;
+        }
         if ep.book.with_untracked(|b| b.is_some()) {
             if meta && e.key() == "s" {
                 e.prevent_default();
@@ -974,6 +1026,7 @@ pub fn App() -> impl IntoView {
     view! {
         {move || if ctx.info.get().is_some() { view! { <Browser/> }.into_any() } else { view! { <Connect/> }.into_any() }}
         <ContextMenu/>
+        {move || ctx.settings.get().then(|| view! { <Settings/> })}
     }
 }
 
@@ -1081,9 +1134,86 @@ fn Sidebar() -> impl IntoView {
                 on:click=move |_| ctx.set_split(!ctx.split.get_untracked())>
                 {move || if ctx.split.get() { "Hide second pane" } else { "Show second pane" }}
             </button>
+            <button class="btn" title="Copies of files from before they were replaced or deleted"
+                on:click=move |_| ctx.open_folder("backups")>"Open backup folder"</button>
+            <button class="btn" on:click=move |_| ctx.settings.set(true)>"Settings"</button>
             <button class="btn" on:click=move |_| ctx.disconnect()>"Disconnect"</button>
-            <div class="foot">"Backups of replaced and deleted files: " {move || phone().map(|i| i.backup_dir).unwrap_or_default()}</div>
         </nav>
+    }
+}
+
+#[derive(Clone, serde::Deserialize)]
+struct Folder {
+    path: String,
+    files: u64,
+    bytes: u64,
+}
+
+/// Settings, and the folders the app keeps on the Mac.
+#[component]
+fn Settings() -> impl IntoView {
+    let ctx = expect_context::<Ctx>();
+    let folders = RwSignal::new(None::<Result<HashMap<String, Folder>, String>>);
+    let load = move || spawn_local(async move { folders.set(Some(call("app_folders", json!({})).await)) });
+    load();
+    let error = RwSignal::new(None::<String>);
+    let open = move |which: &'static str| {
+        spawn_local(async move {
+            if let Err(e) = call::<()>("open_folder", json!({ "which": which })).await {
+                error.set(Some(e));
+            }
+        })
+    };
+    let clear = move || {
+        spawn_local(async move {
+            match call::<()>("clear_thumbs", json!({})).await {
+                Ok(()) => load(),
+                Err(e) => error.set(Some(e)),
+            }
+        })
+    };
+    let folder = move |which: &'static str, title: &'static str, about: &'static str| {
+        view! {
+            <div class="folder">
+                <div class="what">
+                    <b>{title}</b>
+                    <span class="about">{about}</span>
+                    <span class="path">{move || match folders.get() {
+                        None => "…".to_string(),
+                        Some(Err(e)) => e,
+                        Some(Ok(f)) => f.get(which).map(|f| format!("{} · {} files, {}", f.path, f.files, human_size(f.bytes))).unwrap_or_default(),
+                    }}</span>
+                </div>
+                <button class="btn" on:click=move |_| open(which)>"Open"</button>
+                {(which == "thumbs").then(|| view! { <button class="btn" on:click=move |_| clear()>"Clear"</button> })}
+            </div>
+        }
+    };
+    view! {
+        <div class="overlay" on:click=move |_| ctx.settings.set(false)>
+            <div class="dialog" on:click=|e| e.stop_propagation()>
+                <h2>"Settings"</h2>
+                <label class="check">
+                    <input type="checkbox" prop:checked=move || ctx.show_hidden.get()
+                        on:change=move |e| ctx.set_show_hidden(event_target_checked(&e))/>
+                    "Show hidden files (names starting with a dot)"
+                </label>
+                <label class="check">
+                    <input type="checkbox" prop:checked=move || ctx.phone_thumbs.get()
+                        on:change=move |e| ctx.set_phone_thumbs(event_target_checked(&e))/>
+                    "Thumbnails of phone files"
+                </label>
+                <p class="hint">"Each phone thumbnail reads the whole image or EPUB over USB, once; then it's cached on the Mac. Mac files always get thumbnails."</p>
+                <h3>"On this Mac"</h3>
+                {folder("backups", "Backups", "Copies of files from before they were replaced or deleted. Never removed by the app.")}
+                {folder("thumbs", "Thumbnail cache", "Made again when needed, so it's safe to clear.")}
+                {move || error.get().map(|e| view! { <p class="error">{e}</p> })}
+                <div class="actions">
+                    <span class="grow"></span>
+                    <button class="btn primary" on:click=move |_| ctx.settings.set(false)>"Done"</button>
+                </div>
+            </div>
+        </div>
     }
 }
 
@@ -1264,12 +1394,15 @@ fn ListView(pane: Pane) -> impl IntoView {
 /// Files with no thumbnail, or whose thumbnail fails, keep the icon.
 #[component]
 fn Thumbnail(src: Src, entry: Entry) -> impl IntoView {
+    let ctx = expect_context::<Ctx>();
     let state = RwSignal::new(0u8); // 0 loading, 1 loaded, 2 failed
     let glyph = icon(kind(&entry));
     let url = thumb_url(src, &entry);
+    // Phone thumbnails can be turned off in the settings.
+    let allowed = move || src == Src::Mac || ctx.phone_thumbs.get();
     view! {
-        {move || (state.get() != 1).then(|| view! { <span class="glyph">{glyph}</span> })}
-        {url.map(|url| view! {
+        {move || (state.get() != 1 || !allowed()).then(|| view! { <span class="glyph">{glyph}</span> })}
+        {move || url.clone().filter(|_| allowed()).map(|url| view! {
             // Kept in the layout (just invisible) while loading, so lazy loading still starts it.
             <img src=url loading="lazy" decoding="async" draggable="false" alt=""
                 class:pending=move || state.get() != 1
@@ -1311,6 +1444,7 @@ fn ThumbView(pane: Pane) -> impl IntoView {
 /// selected item. Clicking a folder opens it; clicking a file in an earlier column goes back there.
 #[component]
 fn ColumnView(pane: Pane) -> impl IntoView {
+    let ctx = expect_context::<Ctx>();
     let p = pane;
     let chain = Memo::new(move |_| ancestors(&p.cwd.get()));
     // Fetch the folders to the left that aren't known yet (e.g. when starting deep in this view).
@@ -1325,6 +1459,7 @@ fn ColumnView(pane: Pane) -> impl IntoView {
                 let args = json!({ "src": src.key(), "path": dir, "current": false });
                 if let Ok(es) = call::<Vec<Entry>>("list", args).await {
                     if p.src.get_untracked() == src {
+                        let es = ctx.visible(es);
                         p.cols.update(|c| {
                             c.insert(dir, es);
                         });

@@ -59,15 +59,12 @@ impl Transport for Local {
         out
     }
 
-    /// Hidden files (names starting with a dot) aren't listed, as in the Finder.
+    /// Lists hidden files too, like the phone transports; the app hides them unless asked.
     fn listdir(&self, path: &str) -> Result<Vec<Entry>> {
         let rd = fs::read_dir(path).map_err(|e| io(path, e))?;
         let mut out = vec![];
         for item in rd.flatten() {
             let name = item.file_name().to_string_lossy().into_owned();
-            if name.starts_with('.') {
-                continue;
-            }
             let p = crate::device::join(path, &name);
             // Follows symlinks; broken ones are skipped.
             if let Ok(m) = fs::metadata(&p) {
@@ -145,9 +142,10 @@ mod tests {
         dev.mkdir(&format!("{root}/sub")).unwrap();
         std::fs::write(dir.join(".hidden"), b"").unwrap();
         let names: Vec<_> = dev.listdir(&root).unwrap().into_iter().map(|e| e.name).collect();
-        assert_eq!(names, ["sub", "a.txt"]);
+        assert_eq!(names, ["sub", ".hidden", "a.txt"]);
         let backups: Vec<_> = [w2.backup, dev.remove(&f).unwrap()].into_iter().flatten().collect();
         dev.remove(&format!("{root}/sub")).unwrap();
+        std::fs::remove_file(dir.join(".hidden")).unwrap();
         for b in backups {
             std::fs::remove_file(b).unwrap();
         }

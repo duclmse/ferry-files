@@ -4,7 +4,8 @@ A Mac desktop app (Tauri 2 + Leptos, all Rust) for browsing, reading and editing
 
 - One or two panes (⌘\ shows or hides the second; Tab switches between them). Each pane shows the phone or the Mac (📱 / 💻 in its toolbar), as a list, as thumbnails (images and EPUB covers), or in columns.
 - Right-click a file or folder for open, download, copy to the other pane (F5) and delete; right-click empty space for new folder, new file, upload, refresh, the view options and the second pane. Each pane's status bar shows the folder's contents and the selected item.
-- Files on the Mac can be edited too (text and EPUB). Hidden files (names starting with a dot) aren't listed.
+- Files on the Mac can be edited too (text and EPUB).
+- Settings (sidebar): show hidden files (names starting with a dot; off by default, on the phone and the Mac), turn phone thumbnails off, and see, open or clear the app's folders on the Mac. "Open backup folder" in the sidebar shows the backups in the Finder.
 - Edit text files.
 - EPUB editor:
   - book info, cover, and package stats;
@@ -28,10 +29,10 @@ When both work, adb is used. Only one program can use MTP at a time, so quit And
 The same rules apply to files on the phone and on the Mac. Every write or delete:
 
 1. refuses if the file changed on the phone since it was opened,
-2. backs up the old version to `~/Library/Caches/yomi-files/backups`,
+2. backs up the old version to `~/Library/Caches/yomi-files/backups` (sidebar: Open backup folder),
 3. writes the new version and checks it.
 
-Thumbnails need the whole file read (slow from the phone over MTP), so phone thumbnails are made one at a time and only for folders on screen. Files over 60 MB get none. They are cached in `~/Library/Caches/yomi-files/thumbs`; delete that folder to clear them.
+Thumbnails need the whole file read (slow from the phone over MTP), so phone thumbnails are made one at a time and only for folders on screen. Files over 60 MB get none. They are cached in `~/Library/Caches/yomi-files/thumbs`; Settings shows its size and can clear it (backups are never cleared by the app). Phone thumbnails can be turned off in Settings.
 
 ## Build and run
 
