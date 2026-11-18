@@ -1,0 +1,230 @@
+.dialog.library {
+  width: min(900px, 100%);
+  height: min(760px, 100%);
+}
+
+.dialog .about {
+  font-size: 12px;
+  color: var(--muted);
+  font-weight: normal;
+}
+
+.lib-bar {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  flex-wrap: wrap;
+}
+
+.lib-bar .filter-wide {
+  flex: 1;
+  min-width: 180px;
+}
+
+.lib-bar .grow,
+.reader-bar .grow,
+.dialog .actions .grow {
+  flex: 1;
+}
+
+.lib-form {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  padding: 10px 12px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: var(--bg);
+}
+
+.lib-form .hint {
+  margin: 0;
+}
+
+.lib-form .actions {
+  display: flex;
+  gap: 6px;
+}
+
+.field {
+  display: grid;
+  grid-template-columns: 220px 1fr;
+  align-items: center;
+  gap: 8px;
+  font-size: 13px;
+}
+
+.field input {
+  padding: 4px 8px;
+  border: 1px solid var(--line);
+  border-radius: 6px;
+  background: var(--panel);
+  color: var(--ink);
+  min-width: 0;
+}
+
+.lib-busy {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  color: var(--accent);
+  font-size: 12.5px;
+}
+
+.lib-busy .text {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.books {
+  flex: 1;
+  min-height: 0;
+  overflow: auto;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  display: flex;
+  flex-direction: column;
+}
+
+.books > .hint {
+  margin: 10px;
+}
+
+.book {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 6px 10px;
+  border-bottom: 1px solid var(--line);
+}
+
+.book:last-child {
+  border-bottom: 0;
+}
+
+.book.picked {
+  background: var(--sel);
+}
+
+.book .cover {
+  flex: none;
+  width: 36px;
+  height: 52px;
+  border-radius: 3px;
+  background: var(--hover);
+  overflow: hidden;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.book .cover img {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+}
+
+.book .what {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 1px;
+}
+
+.book .what b,
+.book .what .about,
+.book .what .path {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.book .what .path {
+  font-size: 11.5px;
+  color: var(--muted);
+}
+
+.book .note {
+  font-size: 12px;
+}
+
+.book .note.ok {
+  color: var(--ok);
+}
+
+.book .note.error,
+.book .about.error {
+  color: var(--danger);
+}
+
+.book .link {
+  border: 0;
+  background: none;
+  padding: 0;
+  color: var(--accent);
+  cursor: pointer;
+  font: inherit;
+}
+
+.book .issues {
+  margin: 4px 0 2px;
+  padding-left: 18px;
+  font-size: 12px;
+  color: var(--muted);
+  -webkit-user-select: text;
+  user-select: text;
+}
+
+.book .issues .serious {
+  color: var(--danger);
+}
+
+.dialog.reader {
+  width: min(980px, 100%);
+  height: 100%;
+  padding: 10px 12px;
+}
+
+.reader-bar {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.reader-bar .title {
+  min-width: 0;
+  max-width: 40%;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  margin-right: 6px;
+}
+
+.reader-bar select {
+  max-width: 220px;
+  padding: 3px 4px;
+  border: 1px solid var(--line);
+  border-radius: 6px;
+  background: var(--bg);
+  color: var(--ink);
+}
+
+.reader iframe.read {
+  flex: 1;
+  min-height: 0;
+  width: 100%;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: #fbfaf7;
+}
+
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) .reader iframe.read {
+    background: #1c1c1e;
+  }
+
+}

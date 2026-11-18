@@ -77,16 +77,17 @@ cargo run --example epub_smoke    [-- adb|mtp]   # edits a copy of an .epub foun
 ## Layout
 
 - `src/`: the frontend (Leptos 0.8, client-side, built by Trunk into `dist/`).
-  - `app.rs`: sidebar (devices, places, favourites), panes and file views, context menu, transfers, text editor, and the Backups, History, Library and Reader windows.
+  - `app.rs`: the shared state (`Ctx`, panes) and the window; `app/` has the rest, one file per part: `sidebar`, `devices`, `pane`, `views` (list, thumbnails, columns), `menu`, `nav`, `files`, `transfer`, `editor` (text), `safety` (backups, history), `books` (library, reader), `util`.
   - `epub.rs`: EPUB editor screens.
   - `api.rs`: calls to the backend, and the types shared with it.
+- `styles/`: the CSS, one file per part, loaded in order by `index.html`; `base.css` has the colour tokens.
 - `src-tauri/`: the backend.
   - `device.rs`, `adb.rs`, `mtp.rs`, `local.rs`: transports (phone over adb or MTP, and the Mac's own files), version checks, backups.
-  - `xml.rs`, `epub.rs`: EPUB parsing, editing and checks.
+  - `xml.rs`, `epub.rs` (and `epub/`: info, chapter text, find and replace, checks): EPUB parsing, editing and checks.
   - `books.rs`: library info, checks, info changes and shrinking for many books.
   - `protocol.rs`: the `yomi://` scheme that serves book images, styles and fonts, and thumbnails.
   - `thumbs.rs`: thumbnails and their cache.
-  - `lib.rs`: the commands the frontend calls, including copying, moving, syncing, searching and backups.
+  - `lib.rs`: the app's state and the command list. The commands are grouped in `connect.rs`, `files.rs`, `transfer.rs`, `safety.rs` (space, backups, eject), `settings.rs`, `library.rs` (books, many at a time) and `editor.rs` (the EPUB editor).
 
 ## EPUB editor limits
 
