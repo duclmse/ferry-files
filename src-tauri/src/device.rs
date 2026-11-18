@@ -124,8 +124,11 @@ impl BackupNote {
     fn append(&self, dir: &std::path::Path) -> std::io::Result<()> {
         use std::io::Write;
         let clean = |s: &str| s.replace(['\t', '\n', '\r'], " ");
+        let line = format!("{}\t{}\t{}\t{}\n", clean(&self.file), clean(&self.place), clean(&self.path), clean(&self.reason));
         let mut f = std::fs::OpenOptions::new().create(true).append(true).open(dir.join(INDEX))?;
-        writeln!(f, "{}\t{}\t{}\t{}", clean(&self.file), clean(&self.place), clean(&self.path), clean(&self.reason))
+        // One write per line: with O_APPEND it lands whole, even when two backups are noted at
+        // once (writeln! may split it into several writes that interleave).
+        f.write_all(line.as_bytes())
     }
 
     /// The notes in the index, by backup file name.
