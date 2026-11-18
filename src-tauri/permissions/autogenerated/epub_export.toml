@@ -1,0 +1,11 @@
+# Automatically generated - DO NOT EDIT!
+
+[[permission]]
+identifier = "allow-epub-export"
+description = "Enables the epub_export command without any pre-configured scope."
+commands.allow = ["epub_export"]
+
+[[permission]]
+identifier = "deny-epub-export"
+description = "Denies the epub_export command without any pre-configured scope."
+commands.deny = ["epub_export"]

@@ -1,0 +1,34 @@
+{
+  "$schema": "../gen/schemas/desktop-schema.json",
+  "identifier": "main",
+  "description": "The app window.",
+  "windows": [
+    "main"
+  ],
+  "permissions": [
+    "core:default",
+    "allow-devices",
+    "allow-connect",
+    "allow-disconnect",
+    "allow-info",
+    "allow-list",
+    "allow-refresh",
+    "allow-read-text",
+    "allow-write-text",
+    "allow-mkdir",
+    "allow-remove",
+    "allow-download",
+    "allow-upload",
+    "allow-epub-open",
+    "allow-epub-chapter",
+    "allow-epub-set-source",
+    "allow-epub-set-body",
+    "allow-epub-set-meta",
+    "allow-epub-cover",
+    "allow-epub-find",
+    "allow-epub-replace",
+    "allow-epub-save",
+    "allow-epub-export",
+    "allow-epub-close"
+  ]
+}

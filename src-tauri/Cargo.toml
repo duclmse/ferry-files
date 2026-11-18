@@ -1,0 +1,24 @@
+[package]
+name = "yomi-files-app"
+version = "0.1.0"
+description = "Browse, read and edit files on an Android phone from the Mac (adb or MTP)"
+edition = "2021"
+
+[lib]
+name = "yomi_files_app_lib"
+crate-type = ["staticlib", "cdylib", "rlib"]
+
+[build-dependencies]
+tauri-build = { version = "2", features = [] }
+
+[dependencies]
+tauri = { version = "2", features = [] }
+tauri-plugin-dialog = "2"
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+libloading = "0.8"
+md5 = "0.7"
+dirs = "6"
+chrono = { version = "0.4", default-features = false, features = ["clock"] }
+percent-encoding = "2"
+zip = { version = "2", default-features = false, features = ["deflate"] }

@@ -1,0 +1,11 @@
+# Automatically generated - DO NOT EDIT!
+
+[[permission]]
+identifier = "allow-epub-set-meta"
+description = "Enables the epub_set_meta command without any pre-configured scope."
+commands.allow = ["epub_set_meta"]
+
+[[permission]]
+identifier = "deny-epub-set-meta"
+description = "Denies the epub_set_meta command without any pre-configured scope."
+commands.deny = ["epub_set_meta"]

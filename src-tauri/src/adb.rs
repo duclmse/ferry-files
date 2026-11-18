@@ -1,0 +1,184 @@
+//! adb transport: runs the `adb` command. Paths are real device paths like /sdcard/Download.
+
+use crate::device::{basename, dirname, err, join, DevError, Entry, Result, Transport};
+use std::path::PathBuf;
+use std::process::{Command, Stdio};
+
+/// Apps started from Finder don't get the shell's PATH, so look in the usual places too.
+pub fn adb_path() -> Option<PathBuf> {
+    let home = dirs::home_dir().unwrap_or_default();
+    let mut candidates: Vec<PathBuf> = Vec::new();
+    for var in ["ANDROID_HOME", "ANDROID_SDK_ROOT"] {
+        if let Ok(v) = std::env::var(var) {
+            candidates.push(PathBuf::from(v).join("platform-tools/adb"));
+        }
+    }
+    candidates.push(home.join("Library/Android/sdk/platform-tools/adb"));
+    candidates.push("/opt/homebrew/bin/adb".into());
+    candidates.push("/usr/local/bin/adb".into());
+    if let Ok(path) = std::env::var("PATH") {
+        candidates.extend(std::env::split_paths(&path).map(|p| p.join("adb")));
+    }
+    candidates.into_iter().find(|p| p.is_file())
+}
+
+pub fn ready_serials() -> Vec<String> {
+    let Some(adb) = adb_path() else { return vec![] };
+    let Ok(out) = Command::new(adb).arg("devices").stdin(Stdio::null()).output() else { return vec![] };
+    String::from_utf8_lossy(&out.stdout)
+        .lines()
+        .skip(1)
+        .filter(|l| l.trim_end().ends_with("\tdevice"))
+        .filter_map(|l| l.split_whitespace().next().map(String::from))
+        .collect()
+}
+
+/// Quotes a path for the device shell.
+fn q(path: &str) -> String {
+    format!("'{}'", path.replace('\'', "'\\''"))
+}
+
+fn md5_hex(data: &[u8]) -> String {
+    format!("{:x}", md5::compute(data))
+}
+
+pub struct Adb {
+    adb: PathBuf,
+    serial: Option<String>,
+    model: String,
+}
+
+impl Adb {
+    pub fn open(serial: Option<String>) -> Result<Adb> {
+        let Some(adb) = adb_path() else {
+            return err("adb not found. Install it with: brew install --cask android-platform-tools");
+        };
+        let mut dev = Adb { adb, serial, model: String::new() };
+        dev.run(&["get-state"])?; // fails early with adb's own message if there's no device
+        dev.model = dev
+            .shell("getprop ro.product.model")
+            .map(|s| s.trim().to_string())
+            .ok()
+            .filter(|s| !s.is_empty())
+            .unwrap_or_else(|| "Android device".into());
+        Ok(dev)
+    }
+
+    fn run(&self, args: &[&str]) -> Result<Vec<u8>> {
+        let mut cmd = Command::new(&self.adb);
+        if let Some(s) = &self.serial {
+            cmd.args(["-s", s]);
+        }
+        let out = cmd
+            .args(args)
+            .stdin(Stdio::null())
+            .output()
+            .map_err(|e| DevError::Msg(format!("Couldn't run adb: {e}")))?;
+        if !out.status.success() {
+            let msg = String::from_utf8_lossy(if out.stderr.is_empty() { &out.stdout } else { &out.stderr })
+                .trim()
+                .to_string();
+            return err(if msg.is_empty() { format!("adb {} failed ({})", args[0], out.status) } else { msg });
+        }
+        Ok(out.stdout)
+    }
+
+    fn shell(&self, command: &str) -> Result<String> {
+        Ok(String::from_utf8_lossy(&self.run(&["shell", command])?).into_owned())
+    }
+
+    /// Parses `stat -c '%F|%s|%Y|%n'` output.
+    fn entry(line: &str, parent: Option<&str>) -> Option<Entry> {
+        let mut parts = line.splitn(4, '|');
+        let (kind, size, mtime, full) = (parts.next()?, parts.next()?, parts.next()?, parts.next()?);
+        let trimmed = full.trim_end_matches('/');
+        let name = if trimmed.is_empty() { "/".to_string() } else { basename(trimmed).to_string() };
+        Some(Entry {
+            path: parent.map(|p| join(p, &name)).unwrap_or_else(|| full.to_string()),
+            name,
+            dir: kind == "directory",
+            size: size.parse().unwrap_or(0),
+            mtime: mtime.parse().unwrap_or(0),
+        })
+    }
+}
+
+impl Transport for Adb {
+    fn kind(&self) -> &'static str { "adb" }
+    fn label(&self) -> String { self.model.clone() }
+    fn default_dir(&self) -> String { "/sdcard".into() }
+
+    fn quick_dirs(&self) -> Vec<(String, String)> {
+        [("Storage", "/sdcard"), ("Download", "/sdcard/Download"), ("Documents", "/sdcard/Documents"), ("Books", "/sdcard/Books")]
+            .iter()
+            .map(|(a, b)| (a.to_string(), b.to_string()))
+            .collect()
+    }
+
+    fn listdir(&self, path: &str) -> Result<Vec<Entry>> {
+        let d = q(&format!("{}/", path.trim_end_matches('/')));
+        let out = self.shell(&format!(
+            "[ -d {d} ] || {{ echo 'Not a folder: {}' >&2; exit 2; }}; \
+             find {d} -mindepth 1 -maxdepth 1 -exec stat -L -c '%F|%s|%Y|%n' {{}} + 2>/dev/null; true",
+            path.replace('\'', "")
+        ))?;
+        Ok(out.lines().filter_map(|l| Self::entry(l, Some(path))).collect())
+    }
+
+    fn stat(&self, path: &str) -> Result<Option<Entry>> {
+        let out = self.shell(&format!("stat -L -c '%F|%s|%Y|%n' {} 2>/dev/null; true", q(path)))?;
+        let line = out.trim();
+        Ok(if line.is_empty() {
+            None
+        } else {
+            Self::entry(line, None).map(|mut e| {
+                e.path = path.to_string();
+                if path == "/" { e.name = "/".into() }
+                e
+            })
+        })
+    }
+
+    fn version(&self, path: &str) -> Result<Option<String>> {
+        let out = self.shell(&format!("if [ -f {p} ]; then md5sum {p}; fi", p = q(path)))?;
+        Ok(out.split_whitespace().next().map(String::from))
+    }
+
+    fn read(&self, path: &str) -> Result<(Vec<u8>, String)> {
+        let Some(st) = self.stat(path)?.filter(|e| !e.dir) else {
+            return err(format!("No such file (or no permission): {path}"));
+        };
+        let data = self.run(&["exec-out", &format!("cat {}", q(path))])?;
+        if data.len() as u64 != st.size {
+            return err(format!("Read {} bytes but the file has {}. Is it readable?", data.len(), st.size));
+        }
+        let v = md5_hex(&data);
+        Ok((data, v))
+    }
+
+    fn replace(&self, path: &str, data: &[u8], _exists: bool) -> Result<String> {
+        let tmp_remote = join(&dirname(path), &format!(".{}.yomi-tmp", basename(path)));
+        let tmp_local = std::env::temp_dir().join(format!("yomi-files-{}-{}", std::process::id(), md5_hex(path.as_bytes())));
+        std::fs::write(&tmp_local, data).map_err(|e| DevError::Msg(format!("Can't write temp file: {e}")))?;
+        let pushed = self.run(&["push", &tmp_local.to_string_lossy(), &tmp_remote]);
+        let _ = std::fs::remove_file(&tmp_local);
+        pushed?;
+        self.shell(&format!("mv -f {} {}", q(&tmp_remote), q(path)))?;
+        let version = self.version(path)?;
+        let expected = md5_hex(data);
+        if version.as_deref() != Some(expected.as_str()) {
+            return err(format!("Verification failed after writing {path}."));
+        }
+        Ok(expected)
+    }
+
+    fn delete(&self, path: &str, is_dir: bool) -> Result<()> {
+        self.shell(&if is_dir { format!("rmdir {}", q(path)) } else { format!("rm -f {}", q(path)) })?;
+        Ok(())
+    }
+
+    fn make_dir(&self, path: &str) -> Result<()> {
+        self.shell(&format!("mkdir {}", q(path)))?;
+        Ok(())
+    }
+}
