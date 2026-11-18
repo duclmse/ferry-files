@@ -160,6 +160,29 @@ textarea {
   color: var(--ink);
 }
 
+.device .switch {
+  flex: none;
+  border: 1px solid var(--line);
+  background: none;
+  border-radius: 6px;
+  padding: 0 5px;
+  cursor: pointer;
+  color: var(--muted);
+  font-size: 10px;
+  text-transform: uppercase;
+  letter-spacing: 0.03em;
+}
+
+.device .switch:hover:not(:disabled) {
+  background: var(--hover);
+  color: var(--ink);
+}
+
+.device .switch:disabled {
+  opacity: 0.5;
+  cursor: default;
+}
+
 .side .hint {
   margin: 2px 8px 6px;
   font-size: 12px;

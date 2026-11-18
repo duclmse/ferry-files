@@ -7,7 +7,7 @@ use leptos::html;
 use leptos::prelude::*;
 use leptos::task::spawn_local;
 use serde_json::json;
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use wasm_bindgen::JsCast;
 
 const TEXT_EXTS: &[&str] = &[
@@ -166,6 +166,7 @@ fn store(key: &str, value: &str) {
 const SPLIT_KEY: &str = "yomi-files.split";
 const HIDDEN_KEY: &str = "yomi-files.hidden";
 const PHONE_THUMBS_KEY: &str = "yomi-files.phone-thumbs";
+const AUTO_CONNECT_KEY: &str = "yomi-files.auto-connect";
 
 /// A setting kept in localStorage as "1" or "0".
 fn stored_flag(key: &str, default: bool) -> bool {
@@ -555,6 +556,13 @@ struct Ctx {
     /// The device being connected (its `usb`).
     connecting: RwSignal<Option<String>>,
     conn_error: RwSignal<Option<String>>,
+    /// Settings: connect phones as soon as they're found, with adb when it can, else MTP.
+    auto_connect: RwSignal<bool>,
+    /// Phones (`UsbDevice::key`) connected automatically once already: not again, even after a
+    /// failure or a disconnect, until they're unplugged.
+    tried: StoredValue<HashSet<String>>,
+    /// Phones found by the last look, and how many looks there have been.
+    seen: StoredValue<(HashSet<String>, u32)>,
     /// Settings: list names starting with a dot.
     show_hidden: RwSignal<bool>,
     /// Settings: make thumbnails of phone files (each one reads the whole file over USB).
@@ -596,6 +604,9 @@ impl Ctx {
             conn_error: RwSignal::new(None),
             show_hidden: RwSignal::new(stored_flag(HIDDEN_KEY, false)),
             phone_thumbs: RwSignal::new(stored_flag(PHONE_THUMBS_KEY, true)),
+            auto_connect: RwSignal::new(stored_flag(AUTO_CONNECT_KEY, true)),
+            tried: StoredValue::new(HashSet::new()),
+            seen: StoredValue::new((HashSet::new(), 0)),
             job: RwSignal::new(None),
             next_job: StoredValue::new(1),
             space: RwSignal::new(HashMap::new()),
@@ -625,6 +636,14 @@ impl Ctx {
     fn set_phone_thumbs(self, on: bool) {
         self.phone_thumbs.set(on);
         store(PHONE_THUMBS_KEY, if on { "1" } else { "0" });
+    }
+
+    fn set_auto_connect(self, on: bool) {
+        self.auto_connect.set(on);
+        store(AUTO_CONNECT_KEY, if on { "1" } else { "0" });
+        if on {
+            self.scan();
+        }
     }
 
     fn act(self) -> Pane {
@@ -1536,21 +1555,61 @@ impl Ctx {
         self.scanning.set_value(true);
         spawn_local(async move {
             if let Ok(d) = call::<Devices>("devices", json!({})).await {
+                let pick = self.auto_pick(&d);
                 if self.devices.get_untracked().as_ref() != Some(&d) {
                     self.devices.set(Some(d));
+                }
+                if let Some((f, show)) = pick {
+                    self.connect(f, show);
                 }
             }
             self.scanning.set_value(false);
         });
     }
 
-    fn connect(self, f: UsbDevice) {
+    /// Keys of the connected phones: serial and USB place.
+    fn connected_keys(self) -> HashSet<String> {
+        self.phones.with_untracked(|ps| ps.iter().flat_map(|i| [i.serial.clone(), i.usb.clone()]).flatten().collect())
+    }
+
+    /// The phone to connect automatically, if any, and whether to show it. Phones there when the
+    /// app starts connect at once and don't take over the window; one plugged in later waits for a
+    /// second look, so adb has time to show up next to MTP, and is shown.
+    fn auto_pick(self, d: &Devices) -> Option<(UsbDevice, bool)> {
+        let connected = self.connected_keys();
+        let now: HashSet<String> = d.found.iter().map(UsbDevice::key).collect();
+        let (before, looks) = self.seen.get_value();
+        self.seen.set_value((now.clone(), looks + 1));
+        // Gone for two looks in a row: unplugged, so plugging it in again connects it again.
+        self.tried.update_value(|t| t.retain(|k| now.contains(k) || before.contains(k) || connected.contains(k)));
+        if !self.auto_connect.get_untracked() || self.busy.get_untracked() {
+            return None;
+        }
+        let first = looks == 0;
+        let f = d
+            .found
+            .iter()
+            .filter(|f| {
+                let k = f.key();
+                !connected.contains(&k) && !self.tried.with_value(|t| t.contains(&k)) && (first || before.contains(&k))
+            })
+            // adb first for each phone.
+            .min_by_key(|f| (f.key(), f.transport != "adb"))?
+            .clone();
+        self.tried.update_value(|t| {
+            t.insert(f.key());
+        });
+        Some((f, !first))
+    }
+
+    /// Connects a device found on USB; `show` opens it in the active pane.
+    fn connect(self, f: UsbDevice, show: bool) {
         self.busy.set(true);
         self.connecting.set(Some(f.usb.clone()));
         self.conn_error.set(None);
         spawn_local(async move {
-            match call::<Info>("connect", json!({ "transport": f.transport, "which": f.which })).await {
-                Ok(info) => self.connected(info, true),
+            match call::<Info>("connect", json!({ "transport": f.transport, "which": f.which, "serial": f.serial })).await {
+                Ok(info) => self.connected(info, show),
                 Err(e) => self.conn_error.set(Some(e)),
             }
             self.busy.set(false);
@@ -1561,6 +1620,15 @@ impl Ctx {
 
     /// Lets go of a device. Panes showing it go back to the Mac.
     fn disconnect(self, src: Src) {
+        self.disconnect_then(src, None);
+    }
+
+    /// Connects a connected phone the other way (adb or MTP).
+    fn switch(self, src: Src, to: UsbDevice) {
+        self.disconnect_then(src, Some(to));
+    }
+
+    fn disconnect_then(self, src: Src, then: Option<UsbDevice>) {
         if self.editor.with_untracked(|e| e.as_ref().is_some_and(|e| e.src == src)) && self.dirty() {
             self.confirm_discard.set(true);
             return;
@@ -1588,7 +1656,10 @@ impl Ctx {
                     }
                 }
             }
-            self.scan();
+            match then {
+                Some(f) => self.connect(f, true),
+                None => self.scan(),
+            }
         });
     }
 }
@@ -1920,6 +1991,17 @@ fn Sidebar() -> impl IntoView {
                     <b>{i.label.clone()}</b>
                     <span class="kind">{i.transport.clone()}</span>
                 </button>
+                {move || {
+                    // The same phone, found the other way: offer to switch.
+                    let serial = i.serial.clone()?;
+                    let other = ctx.devices.with(|d| d.as_ref()?.found.iter().find(|f| f.serial.as_deref() == Some(serial.as_str())).cloned())?;
+                    let to = if other.transport == "adb" { "adb" } else { "MTP" };
+                    let title = format!("Connect with {to} instead");
+                    Some(view! {
+                        <button class="switch" title=title disabled=move || ctx.busy.get()
+                            on:click=move |_| ctx.switch(src, other.clone())>{to}</button>
+                    })
+                }}
                 <button class="eject" title=format!("Disconnect {}", i.label) aria-label="Disconnect"
                     on:click=move |_| ctx.disconnect(src)>"⏏"</button>
             </div>
@@ -1995,9 +2077,13 @@ fn DeviceFinder() -> impl IntoView {
         let Some(d) = ctx.devices.get() else {
             return view! { <p class="hint">"Looking for devices…"</p> }.into_any();
         };
-        if d.found.is_empty() {
+        // A connected phone found the other way is offered as a switch on its own row instead.
+        let connected = ctx.phones.with(|ps| ps.iter().flat_map(|i| [i.serial.clone(), i.usb.clone()]).flatten().collect::<HashSet<_>>());
+        let found: Vec<UsbDevice> = d.found.iter().filter(|f| !connected.contains(&f.key())).cloned().collect();
+        let waiting = d.adb_waiting.then(|| view! { <p class="hint">"A phone is waiting: allow USB debugging on it to use adb."</p> });
+        if found.is_empty() {
             if !ctx.phones.with(|p| p.is_empty()) {
-                return view! { {error} }.into_any();
+                return view! { {waiting} {error} }.into_any();
             }
             let mut notes = vec!["No phone found. Plug one in by USB, then allow USB debugging (for adb) or set the USB mode to File transfer (for MTP).".to_string()];
             if !d.adb_found {
@@ -2006,19 +2092,36 @@ fn DeviceFinder() -> impl IntoView {
             notes.extend(d.mtp_error.clone());
             return view! {
                 {notes.into_iter().map(|n| view! { <p class="hint">{n}</p> }).collect_view()}
+                {waiting}
                 {error}
             }.into_any();
         }
-        let adb: Vec<UsbDevice> = d.found.iter().filter(|f| f.transport == "adb").cloned().collect();
-        let mtp: Vec<UsbDevice> = d.found.iter().filter(|f| f.transport == "mtp").cloned().collect();
-        // (name, adb, mtp) per row.
-        let rows: Vec<(String, Option<UsbDevice>, Option<UsbDevice>)> = if adb.len() == 1 && mtp.len() == 1 {
-            vec![(mtp[0].name.clone(), Some(adb[0].clone()), Some(mtp[0].clone()))]
-        } else {
-            adb.into_iter().map(|f| (f.name.clone(), Some(f), None))
-                .chain(mtp.into_iter().map(|f| (f.name.clone(), None, Some(f))))
-                .collect()
-        };
+        // (name, adb, mtp) per row: one row per phone, by serial number.
+        let mut rows: Vec<(String, Option<UsbDevice>, Option<UsbDevice>)> = vec![];
+        for f in found {
+            let row = rows.iter_mut().find(|(_, a, m)| a.iter().chain(m.iter()).any(|g| g.serial.is_some() && g.serial == f.serial));
+            let row = match row {
+                Some(r) => r,
+                None => {
+                    rows.push((f.name.clone(), None, None));
+                    rows.last_mut().expect("just pushed")
+                }
+            };
+            if f.transport == "adb" {
+                row.1 = Some(f);
+            } else {
+                row.0 = f.name.clone();
+                row.2 = Some(f);
+            }
+        }
+        // Without serials, one adb phone and one MTP phone are most likely the same.
+        if let [(_, Some(_), None), (_, None, Some(m))] | [(_, None, Some(m)), (_, Some(_), None)] = rows.as_slice() {
+            if m.serial.is_none() || rows.iter().any(|r| r.1.as_ref().is_some_and(|a| a.serial.is_none())) {
+                let m = m.clone();
+                let a = rows.iter().find_map(|r| r.1.clone());
+                rows = vec![(m.name.clone(), a, Some(m))];
+            }
+        }
         let adb_off = if d.adb_found { "Not available: allow USB debugging on the phone" } else { "Not available: adb isn't installed" };
         view! {
             {rows.into_iter().map(|(name, a, m)| {
@@ -2038,15 +2141,16 @@ fn DeviceFinder() -> impl IntoView {
                             view! {
                                 <div class="seg connect-as" role="group" aria-label="Connect with">
                                     <button title=adb_title disabled=move || !has_a || ctx.busy.get() class:pref=has_a
-                                        on:click=move |_| if let Some(f) = a.clone() { ctx.connect(f) }>"adb"</button>
+                                        on:click=move |_| if let Some(f) = a.clone() { ctx.connect(f, true) }>"adb"</button>
                                     <button title=mtp_title disabled=move || !has_m || ctx.busy.get() class:pref=has_m && !has_a
-                                        on:click=move |_| if let Some(f) = m.clone() { ctx.connect(f) }>"MTP"</button>
+                                        on:click=move |_| if let Some(f) = m.clone() { ctx.connect(f, true) }>"MTP"</button>
                                 </div>
                             }.into_any()
                         }}
                     </div>
                 }
             }).collect_view()}
+            {waiting}
             {error}
         }.into_any()
     }
@@ -2114,6 +2218,11 @@ fn Settings() -> impl IntoView {
                     "Thumbnails of phone files"
                 </label>
                 <p class="hint">"Each phone thumbnail reads the whole image or EPUB over USB, once; then it's cached on the Mac. Mac files always get thumbnails."</p>
+                <label class="check">
+                    <input type="checkbox" prop:checked=move || ctx.auto_connect.get()
+                        on:change=move |e| ctx.set_auto_connect(event_target_checked(&e))/>
+                    "Connect phones when they're plugged in (adb if allowed, else MTP)"
+                </label>
                 <h3>"On this Mac"</h3>
                 {folder("backups", "Backups", "Copies of files from before they were replaced or deleted. Never removed by the app.")}
                 {folder("thumbs", "Thumbnail cache", "Made again when needed, so it's safe to clear.")}

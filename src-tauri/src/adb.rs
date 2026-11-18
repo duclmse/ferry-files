@@ -42,6 +42,17 @@ pub fn ready_devices() -> Vec<(String, String)> {
         .collect()
 }
 
+/// Serials of devices that adb sees but can't use yet: the phone hasn't allowed this Mac.
+pub fn unauthorized() -> Vec<String> {
+    let Some(adb) = adb_path() else { return vec![] };
+    let Ok(out) = Command::new(adb).arg("devices").stdin(Stdio::null()).output() else { return vec![] };
+    String::from_utf8_lossy(&out.stdout)
+        .lines()
+        .skip(1)
+        .filter_map(|l| l.split_once('\t').filter(|(_, st)| st.trim() == "unauthorized").map(|(s, _)| s.to_string()))
+        .collect()
+}
+
 pub fn ready_serials() -> Vec<String> {
     let Some(adb) = adb_path() else { return vec![] };
     let Ok(out) = Command::new(adb).arg("devices").stdin(Stdio::null()).output() else { return vec![] };

@@ -137,6 +137,7 @@ pub struct Info {
     /// "mac", or the connected device's id ("d1", ...).
     pub id: String,
     pub usb: Option<String>,
+    pub serial: Option<String>,
     pub label: String,
     pub transport: String,
     pub default_dir: String,
@@ -150,6 +151,8 @@ pub struct Devices {
     pub found: Vec<UsbDevice>,
     pub adb_found: bool,
     pub mtp_error: Option<String>,
+    /// A phone is on USB with adb but hasn't allowed this Mac yet.
+    pub adb_waiting: bool,
     /// Disks mounted on the Mac, as (name, path).
     pub drives: Vec<(String, String)>,
 }
@@ -160,6 +163,15 @@ pub struct UsbDevice {
     pub transport: String,
     pub which: String,
     pub name: String,
+    /// The USB serial number when known: the same phone over adb and MTP has the same one.
+    pub serial: Option<String>,
+}
+
+impl UsbDevice {
+    /// Tells phones apart: the serial, or where it is on USB.
+    pub fn key(&self) -> String {
+        self.serial.clone().unwrap_or_else(|| self.usb.clone())
+    }
 }
 
 #[derive(Clone, Debug, Deserialize)]

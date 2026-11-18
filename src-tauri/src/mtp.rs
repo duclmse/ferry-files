@@ -192,17 +192,35 @@ fn location(r: *mut RawDevice) -> String {
     unsafe { format!("{}-{}", (*r).bus_location, (*r).devnum) }
 }
 
-/// MTP devices on USB, as (location, name), without opening them.
-pub fn detect() -> Result<Vec<(String, String)>> {
+/// An MTP device on USB, not opened.
+pub struct Detected {
+    /// "bus-devnum": what `open` takes.
+    pub location: String,
+    pub name: String,
+    pub bus: u32,
+    pub devnum: u32,
+    pub vendor_id: u16,
+    pub product_id: u16,
+}
+
+/// MTP devices on USB, without opening them.
+pub fn detect() -> Result<Vec<Detected>> {
     let lib = lib()?;
     let _lib = lib_lock();
     Ok(raw_devices(lib)?
         .into_iter()
         .map(|r| {
-            let e = unsafe { &(*r).device_entry };
+            let (e, bus, devnum) = unsafe { (&(*r).device_entry, (*r).bus_location, (*r).devnum) };
             let name = format!("{} {}", cstr(e.vendor), cstr(e.product)).trim().to_string();
             let name = if name.is_empty() { format!("{:04x}:{:04x}", e.vendor_id, e.product_id) } else { name };
-            (location(r), name)
+            Detected {
+                location: location(r),
+                name,
+                bus,
+                devnum: devnum as u32,
+                vendor_id: e.vendor_id,
+                product_id: e.product_id,
+            }
         })
         .collect())
 }
