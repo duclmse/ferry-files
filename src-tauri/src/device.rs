@@ -54,7 +54,18 @@ pub trait Transport: Send + Sync {
     fn make_dir(&self, path: &str) -> Result<()>;
     /// Renames a file or folder within its folder. The caller has checked the new name is free.
     fn rename(&self, path: &str, new_name: &str) -> Result<()>;
+    /// Each storage's free and total bytes, when the transport can tell.
+    fn space(&self) -> Vec<Space> {
+        vec![]
+    }
     fn refresh(&self) {}
+}
+
+#[derive(Clone, Debug, Serialize)]
+pub struct Space {
+    pub name: String,
+    pub free: u64,
+    pub total: u64,
 }
 
 /// Absolute, normalised device path ("/a/b", never a trailing slash except "/").
@@ -88,6 +99,43 @@ pub fn basename(path: &str) -> &str {
 
 pub fn join(dir: &str, name: &str) -> String {
     if dir.ends_with('/') { format!("{dir}{name}") } else { format!("{dir}/{name}") }
+}
+
+/// One line of the backups index (`index.tsv` in the backups folder): the backup's file name,
+/// where the file was ("mac" or "adb:Pixel 7"), its path there, and "replaced" or "deleted".
+#[derive(Clone, Debug, PartialEq, Serialize)]
+pub struct BackupNote {
+    pub file: String,
+    pub place: String,
+    pub path: String,
+    pub reason: String,
+}
+
+const INDEX: &str = "index.tsv";
+
+fn file_name(p: &std::path::Path) -> String {
+    p.file_name().map(|n| n.to_string_lossy().into_owned()).unwrap_or_default()
+}
+
+impl BackupNote {
+    fn append(&self, dir: &std::path::Path) -> std::io::Result<()> {
+        use std::io::Write;
+        let clean = |s: &str| s.replace(['\t', '\n', '\r'], " ");
+        let mut f = std::fs::OpenOptions::new().create(true).append(true).open(dir.join(INDEX))?;
+        writeln!(f, "{}\t{}\t{}\t{}", clean(&self.file), clean(&self.place), clean(&self.path), clean(&self.reason))
+    }
+
+    /// The notes in the index, by backup file name.
+    pub fn read_all(dir: &std::path::Path) -> std::collections::HashMap<String, BackupNote> {
+        let text = std::fs::read_to_string(dir.join(INDEX)).unwrap_or_default();
+        text.lines()
+            .filter_map(|l| {
+                let mut c = l.split('\t');
+                let n = BackupNote { file: c.next()?.into(), place: c.next()?.into(), path: c.next()?.into(), reason: c.next()?.into() };
+                Some((n.file.clone(), n))
+            })
+            .collect()
+    }
 }
 
 pub fn backup_dir() -> PathBuf {
@@ -171,7 +219,7 @@ impl Device {
         if !self.t.stat(&parent)?.is_some_and(|e| e.dir) {
             return err(format!("Folder doesn't exist: {parent}"));
         }
-        let backup = if current.is_some() { Some(self.backup(&path)?) } else { None };
+        let backup = if current.is_some() { Some(self.backup(&path, "replaced")?) } else { None };
         let version = self.t.replace(&path, data, current.is_some())?;
         Ok(WriteResult { version, backup: backup.map(|p| p.display().to_string()) })
     }
@@ -190,7 +238,7 @@ impl Device {
             self.t.delete(&path, true)?;
             return Ok(None);
         }
-        let backup = self.backup(&path)?;
+        let backup = self.backup(&path, "deleted")?;
         self.t.delete(&path, false)?;
         Ok(Some(backup.display().to_string()))
     }
@@ -229,7 +277,28 @@ impl Device {
         Ok(target)
     }
 
-    fn backup(&self, path: &str) -> Result<PathBuf> {
+    pub fn space(&self) -> Vec<Space> {
+        let _g = self.lock();
+        self.t.space()
+    }
+
+    /// "mac" for the Mac, otherwise the transport and device name ("adb:Pixel 7"), as the
+    /// frontend names places.
+    pub fn place(&self) -> String {
+        match self.t.kind() {
+            "mac" => "mac".into(),
+            k => format!("{k}:{}", self.t.label()),
+        }
+    }
+
+    /// The current version of a file, or None if there's no file there.
+    pub fn version(&self, path: &str) -> Result<Option<String>> {
+        let path = norm(path)?;
+        let _g = self.lock();
+        self.t.version(&path)
+    }
+
+    fn backup(&self, path: &str, reason: &str) -> Result<PathBuf> {
         let (data, _) = self.t.read(path)?;
         let dir = backup_dir();
         std::fs::create_dir_all(&dir).map_err(|e| DevError::Msg(format!("Can't create {}: {e}", dir.display())))?;
@@ -242,6 +311,10 @@ impl Device {
             n += 1;
         }
         std::fs::write(&dest, data).map_err(|e| DevError::Msg(format!("Can't write backup {}: {e}", dest.display())))?;
+        // Where it came from, so it can be put back. The backup itself is what matters, so a
+        // failure to note it isn't an error.
+        let line = BackupNote { file: file_name(&dest), place: self.place(), path: path.to_string(), reason: reason.into() };
+        let _ = line.append(&dir);
         Ok(dest)
     }
 }

@@ -635,4 +635,24 @@ impl Transport for Mtp {
         inner.invalidate(sid, pid);
         Ok(())
     }
+
+    /// Free space as libmtp last read it (refreshed first).
+    fn space(&self) -> Vec<crate::device::Space> {
+        let inner = self.inner();
+        let link = &inner.link;
+        if unsafe { (link.lib.get_storage)(link.dev, 0) } != 0 {
+            unsafe { (link.lib.clear_errorstack)(link.dev) };
+            return vec![];
+        }
+        let mut out = vec![];
+        let mut s = unsafe { (*link.dev).storage };
+        while !s.is_null() {
+            let (id, free, total) = unsafe { ((*s).id, (*s).free_space_in_bytes, (*s).max_capacity) };
+            if let Some((name, _)) = self.storages.iter().find(|(_, sid)| *sid == id) {
+                out.push(crate::device::Space { name: name.clone(), free, total });
+            }
+            s = unsafe { (*s).next };
+        }
+        out
+    }
 }

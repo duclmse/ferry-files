@@ -56,6 +56,32 @@ pub struct CompareReport {
     pub same: u32,
 }
 
+#[derive(Clone, Debug, PartialEq, Deserialize)]
+pub struct Space {
+    pub name: String,
+    pub free: u64,
+    pub total: u64,
+}
+
+#[derive(Clone, Debug, PartialEq, Deserialize)]
+pub struct BackupNote {
+    pub file: String,
+    /// "mac", or a device's transport and name ("adb:Pixel 7").
+    pub place: String,
+    pub path: String,
+    /// "replaced" or "deleted".
+    pub reason: String,
+}
+
+#[derive(Clone, Debug, PartialEq, Deserialize)]
+pub struct Backup {
+    pub file: String,
+    pub name: String,
+    pub size: u64,
+    pub mtime: i64,
+    pub note: Option<BackupNote>,
+}
+
 /// A file dropped on the window from Finder ("tauri://drag-drop"). The position is in physical pixels.
 #[derive(Clone, Debug, Deserialize)]
 pub struct FileDrop {

@@ -240,6 +240,25 @@ textarea {
   min-width: 0;
 }
 
+.side .drive .act {
+  border: 0;
+  background: none;
+  color: var(--muted);
+  cursor: pointer;
+  padding: 0 6px;
+  border-radius: 6px;
+  visibility: hidden;
+}
+
+.side .drive:hover .act {
+  visibility: visible;
+}
+
+.side .drive .act:hover {
+  background: var(--hover);
+  color: var(--ink);
+}
+
 .side .drive .item::before {
   content: "⛁";
   margin-right: 6px;
@@ -1373,6 +1392,24 @@ td.name .where {
   visibility: visible;
 }
 
+.side-buttons {
+  display: flex;
+  gap: 6px;
+  margin-top: auto;
+}
+
+.side-buttons .btn {
+  flex: 1;
+}
+
+.statusbar .free {
+  flex: none;
+}
+
+.dialog.wide {
+  width: min(760px, 100%);
+}
+
 .dialog .ok {
   color: var(--ok);
   margin: 0;
@@ -1383,4 +1420,81 @@ td.name .where {
   margin: 0;
   -webkit-user-select: text;
   user-select: text;
+}
+
+.dialog .filter-wide {
+  padding: 5px 8px;
+  border: 1px solid var(--line);
+  border-radius: 6px;
+  background: var(--bg);
+  color: var(--ink);
+}
+
+.backups,
+.history {
+  display: flex;
+  flex-direction: column;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  max-height: 55vh;
+  overflow: auto;
+}
+
+.backup {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 6px 10px;
+  border-bottom: 1px solid var(--line);
+}
+
+.backup:last-child,
+.event:last-child {
+  border-bottom: 0;
+}
+
+.backup .what {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 1px;
+}
+
+.backup .what b,
+.backup .path {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.backup .about,
+.backup .path {
+  font-size: 11.5px;
+  color: var(--muted);
+}
+
+.backup .btn:disabled {
+  opacity: 0.45;
+  cursor: default;
+}
+
+.event {
+  display: flex;
+  gap: 10px;
+  padding: 5px 10px;
+  border-bottom: 1px solid var(--line);
+  -webkit-user-select: text;
+  user-select: text;
+}
+
+.event .at {
+  color: var(--muted);
+  font-variant-numeric: tabular-nums;
+  flex: none;
+}
+
+.backups > .hint,
+.history > .hint {
+  margin: 8px 10px;
 }

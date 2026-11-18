@@ -3,13 +3,16 @@
 A Mac desktop app (Tauri 2 + Leptos, all Rust) for browsing, reading and editing the files on Android phones (and other MTP devices) connected by USB, EPUB books in particular. It shows the Mac's own files and disks too, so books can be copied between them.
 
 - One or two panes (◫ in the left pane's toolbar or ⌘\ shows or hides the second; Tab switches between them). Each pane shows the Mac or a connected device (💻, then one 📱 per device, in its toolbar), as a list, as thumbnails (images and EPUB covers), or in columns (buttons at the right of the pane's status bar).
-- Right-click a file or folder for open, Quick Look, download, copy (F5) or move (F6) to the other pane, rename (F2), favourites and delete; right-click empty space for new folder, new file, upload, sync to the other pane, favourites, refresh, the view options and the second pane. Each pane's status bar shows the folder's contents, and the picked items and their size.
+- Right-click a file or folder for open, Quick Look, download, copy (F5) or move (F6) to the other pane, rename (F2), favourites and delete; right-click empty space for new folder, new file, upload, sync to the other pane, favourites, refresh, the view options and the second pane. Each pane's status bar shows the folder's contents, the picked items and their size, and the free space on that disk or storage.
 - Pick several items with ⌘-click (one more) and Shift-click (a range), ⌘A (all) and Escape (none). Copy and move work on folders too, with everything in them: a folder already there is merged into, and a file already there is skipped, never replaced. Progress shows below the panes, with Cancel (it stops after the current file). Moving copies each file, then deletes the original (backed up, like any delete), so a move on the same device takes as long as a copy.
 - Drag items between panes, onto a folder, or onto a place in the sidebar. As in Finder, dragging to the same device moves and to another device copies; hold ⌥ to copy or ⌘ to move. Files dragged in from Finder are copied.
 - Sort by clicking the list's column headers (name, kind, date, size; folders first). The filter box in the pane's bar narrows the folder by name; Enter searches all its subfolders too, and "Back to folder" ends the search. ⌘F goes to the filter box.
 - Space opens Quick Look (phone files are copied to the Mac first).
 - Favourites (sidebar): any folder on the Mac or a device, added from the right-click menu. Each pane remembers its last folder for each device and the Mac.
 - Sync to the other pane: compares the two folders (files by size) and copies what's missing from the other pane, at any depth. Files that differ, and files only in the other pane, are listed but left alone.
+- Disks under Mac in the sidebar have ⏏ to eject them.
+- Backups (sidebar): every file the app replaced or deleted, with where it came from. Restore puts it back where it was (when that device is connected); Restore here puts it in the active pane's folder. A file already there is backed up first.
+- History (sidebar): what was done since the app started.
 - Files on the Mac can be edited too (text and EPUB).
 - Double-click (or Enter) opens: folders go in, text files open in the editor, EPUBs in the EPUB editor, anything else in its default Mac app. A phone file is copied to `~/Library/Caches/yomi-files/opened` first, so changes made in the Mac app stay on the Mac. The context menu also has "Open in default app" for text files and EPUBs.
 - Settings (sidebar): show hidden files (names starting with a dot; off by default, on the phone and the Mac), turn phone thumbnails off, and see, open or clear the app's folders on the Mac.
@@ -36,7 +39,7 @@ The app opens on the Mac's files. Every few seconds it looks for devices on USB 
 The same rules apply to files on the phone and on the Mac. Every write or delete:
 
 1. refuses if the file changed on the phone since it was opened,
-2. backs up the old version to `~/Library/Caches/yomi-files/backups` (sidebar: Open backup folder),
+2. backs up the old version to `~/Library/Caches/yomi-files/backups` (see Backups in the sidebar; `index.tsv` there notes where each backup came from),
 3. writes the new version and checks it.
 
 Thumbnails need the whole file read (slow from the phone over MTP), so phone thumbnails are made one at a time and only for folders on screen. Files over 60 MB get none. They are cached in `~/Library/Caches/yomi-files/thumbs`; Settings shows its size and can clear it (backups are never cleared by the app). Phone thumbnails can be turned off in Settings.
@@ -67,7 +70,7 @@ cargo run --example epub_smoke    [-- adb|mtp]   # edits a copy of an .epub foun
 ## Layout
 
 - `src/`: the frontend (Leptos 0.8, client-side, built by Trunk into `dist/`).
-  - `app.rs`: sidebar (devices, places, favourites), panes and file views, context menu, transfers, text editor.
+  - `app.rs`: sidebar (devices, places, favourites), panes and file views, context menu, transfers, text editor, and the Backups and History windows.
   - `epub.rs`: EPUB editor screens.
   - `api.rs`: calls to the backend, and the types shared with it.
 - `src-tauri/`: the backend.
@@ -75,7 +78,7 @@ cargo run --example epub_smoke    [-- adb|mtp]   # edits a copy of an .epub foun
   - `xml.rs`, `epub.rs`: EPUB parsing and editing.
   - `protocol.rs`: the `yomi://` scheme that serves book images, styles and fonts, and thumbnails.
   - `thumbs.rs`: thumbnails and their cache.
-  - `lib.rs`: the commands the frontend calls, including copying, moving, syncing and searching.
+  - `lib.rs`: the commands the frontend calls, including copying, moving, syncing, searching and backups.
 
 ## EPUB editor limits
 

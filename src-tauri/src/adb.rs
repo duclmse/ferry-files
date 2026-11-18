@@ -206,4 +206,11 @@ impl Transport for Adb {
         self.shell(&format!("mv -n {} {}", q(path), q(&join(&dirname(path), new_name))))?;
         Ok(())
     }
+
+    fn space(&self) -> Vec<crate::device::Space> {
+        let out = self.shell("df -k /sdcard 2>/dev/null").unwrap_or_default();
+        crate::local::parse_df(&out)
+            .map(|(free, total)| vec![crate::device::Space { name: "Storage".into(), free, total }])
+            .unwrap_or_default()
+    }
 }

@@ -1,7 +1,7 @@
 //! The file browser UI: connect screen, one or two panes of folders (each on the phone or the Mac,
 //! in a list, thumbnail or column view, with a context menu), and a text editor.
 
-use crate::api::{call, CompareReport, Devices, Entry, FileDrop, Info, Progress, TextFile, TransferReport, UsbDevice, WriteResult};
+use crate::api::{call, Backup, CompareReport, Devices, Space, Entry, FileDrop, Info, Progress, TextFile, TransferReport, UsbDevice, WriteResult};
 use leptos::ev;
 use leptos::html;
 use leptos::prelude::*;
@@ -509,6 +509,12 @@ impl Pane {
     }
 }
 
+#[derive(Clone, PartialEq)]
+enum Panel {
+    Backups,
+    History,
+}
+
 /// The copy or move running now (one at a time).
 #[derive(Clone, PartialEq)]
 struct Job {
@@ -549,6 +555,12 @@ struct Ctx {
     job: RwSignal<Option<Job>>,
     next_job: StoredValue<u32>,
     favs: RwSignal<Vec<Fav>>,
+    /// Free space per storage, by side ("mac", "d1", ...).
+    space: RwSignal<HashMap<String, Vec<Space>>>,
+    /// What was done this session, newest last: (time, what).
+    history: RwSignal<Vec<(String, String)>>,
+    /// The Backups or History window, when open.
+    panel: RwSignal<Option<Panel>>,
     /// What's being dragged from a pane: its side and paths.
     drag: StoredValue<Option<(Src, Vec<String>)>>,
     /// Where a drag would drop now ("pane:folder"), to highlight it.
@@ -579,6 +591,9 @@ impl Ctx {
             phone_thumbs: RwSignal::new(stored_flag(PHONE_THUMBS_KEY, true)),
             job: RwSignal::new(None),
             next_job: StoredValue::new(1),
+            space: RwSignal::new(HashMap::new()),
+            history: RwSignal::new(vec![]),
+            panel: RwSignal::new(None),
             favs: RwSignal::new(stored(FAVS_KEY).and_then(|s| serde_json::from_str(&s).ok()).unwrap_or_default()),
             drag: StoredValue::new(None),
             drop_at: RwSignal::new(None),
@@ -603,15 +618,6 @@ impl Ctx {
     fn set_phone_thumbs(self, on: bool) {
         self.phone_thumbs.set(on);
         store(PHONE_THUMBS_KEY, if on { "1" } else { "0" });
-    }
-
-    /// Shows the backups folder (or the thumbnail cache) in the Finder.
-    fn open_folder(self, which: &'static str) {
-        spawn_local(async move {
-            if let Err(e) = call::<()>("open_folder", json!({ "which": which })).await {
-                self.act().error(e);
-            }
-        });
     }
 
     fn act(self) -> Pane {
@@ -667,6 +673,9 @@ impl Ctx {
                     if new_src {
                         p.cols.set(HashMap::new());
                         p.src.set(src);
+                    }
+                    if new_src || !self.space.with_untracked(|m| m.contains_key(&src.key())) {
+                        self.load_space(src);
                     }
                     let reroot = std::mem::take(&mut *p.reroot.write_value());
                     if reroot || new_src || !within(&path, &p.root.get_untracked()) {
@@ -770,6 +779,72 @@ impl Ctx {
         });
     }
 
+    /// Closes the open window.
+    fn close_panel(self) {
+        self.panel.set(None);
+    }
+
+    /// Notes an action in the session's history.
+    fn log(self, what: impl Into<String>) {
+        let d = js_sys::Date::new_0();
+        let at = format!("{:02}:{:02}:{:02}", d.get_hours(), d.get_minutes(), d.get_seconds());
+        self.history.update(|h| h.push((at, what.into())));
+    }
+
+    /// Asks how much space is free on `src`'s storages.
+    fn load_space(self, src: Src) {
+        spawn_local(async move {
+            if let Ok(s) = call::<Vec<Space>>("space", json!({ "src": src.key() })).await {
+                self.space.update(|m| {
+                    m.insert(src.key(), s);
+                });
+            }
+        });
+    }
+
+    /// Free space on the storage holding the pane's folder, e.g. "12.3 GB free of 64 GB".
+    fn free_text(self, p: Pane) -> Option<String> {
+        let (src, cwd) = (p.src.get(), p.cwd.get());
+        let transport = self.src_info(src).map(|i| i.transport).unwrap_or_default();
+        self.space.with(|m| {
+            let list = m.get(&src.key())?;
+            let s = match (src, transport.as_str()) {
+                (Src::Mac, _) => {
+                    let disk = cwd.strip_prefix("/Volumes/").map(|r| r.split('/').next().unwrap_or_default().to_string());
+                    list.iter().find(|s| Some(&s.name) == disk.as_ref()).or_else(|| list.iter().find(|s| s.name == "Mac"))
+                }
+                (_, "mtp") => {
+                    let first = cwd.trim_start_matches('/').split('/').next().unwrap_or_default();
+                    list.iter().find(|s| s.name == first)
+                }
+                _ => list.first(),
+            }?;
+            Some(format!("{} free of {}", human_size(s.free), human_size(s.total)))
+        })
+    }
+
+    /// Ejects a disk. Panes showing it go back to the home folder first.
+    fn eject(self, path: String) {
+        if self.job.with_untracked(|j| j.is_some()) {
+            self.act().error("Wait for the copy to finish before ejecting.");
+            return;
+        }
+        for p in self.panes {
+            if p.src.get_untracked() == Src::Mac && within(&p.cwd.get_untracked(), &path) {
+                if let Some(home) = self.mac.get_untracked().map(|i| i.default_dir) {
+                    self.load_select(p, Src::Mac, home, None);
+                }
+            }
+        }
+        spawn_local(async move {
+            match call::<()>("eject", json!({ "path": path })).await {
+                Ok(()) => self.log(format!("Ejected {}", base(&path))),
+                Err(e) => self.act().error(e),
+            }
+            self.scan();
+        });
+    }
+
     fn set_favs(self, favs: Vec<Fav>) {
         store(FAVS_KEY, &serde_json::to_string(&favs).unwrap_or_default());
         self.favs.set(favs);
@@ -813,6 +888,7 @@ impl Ctx {
 
     /// Lists again every shown pane that's in folder `dir` on `src`, after something changed there.
     fn changed(self, src: Src, dir: &str) {
+        self.load_space(src);
         for p in self.shown() {
             if p.src.get_untracked() == src && p.cwd.get_untracked() == dir {
                 self.reload(p);
@@ -1116,6 +1192,7 @@ impl Ctx {
                 Ok(r) => {
                     let note = if r.backup.is_some() { " The old version is backed up on the Mac." } else { "" };
                     self.status.set((format!("Saved to {}.{note}", self.place(ed.src)), "ok"));
+                    self.log(format!("Saved {} on {}", base(&ed.path), self.place(ed.src)));
                     self.editor.set(Some(Editor { version: r.version, saved_text: text, ..ed }));
                     self.confirm_discard.set(false);
                 }
@@ -1216,6 +1293,7 @@ impl Ctx {
                     if r.skipped.len() > shown {
                         lines.push(format!("…and {} more skipped.", r.skipped.len() - shown));
                     }
+                    self.log(lines[0].clone());
                     let msg = lines.join("\n");
                     p.notice.set(if r.skipped.is_empty() { Notice::Ok(msg) } else { Notice::Error(msg) });
                 }
@@ -1282,6 +1360,7 @@ impl Ctx {
                     if r.skipped.len() > 5 {
                         lines.push(format!("…and {} more skipped.", r.skipped.len() - 5));
                     }
+                    self.log(lines[0].clone());
                     let msg = lines.join("\n");
                     p.notice.set(if r.skipped.is_empty() { Notice::Ok(msg) } else { Notice::Error(msg) });
                 }
@@ -1329,6 +1408,9 @@ impl Ctx {
             }
             let what = if items.len() == 1 { items[0].name.clone() } else { format!("{done} items") };
             let note = if backups > 0 { " Backups are kept on the Mac." } else { "" };
+            if done > 0 {
+                self.log(format!("Deleted {what} from {}", self.place(src)));
+            }
             match error {
                 None => p.notice.set(Notice::Ok(format!("Deleted {what}.{note}"))),
                 Some(err) if done == 0 => p.error(err),
@@ -1351,6 +1433,7 @@ impl Ctx {
             match call::<String>("rename", json!({ "src": src.key(), "path": e.path, "name": name })).await {
                 Ok(new) => {
                     p.notice.set(Notice::None);
+                    self.log(format!("Renamed {} to {}", e.name, base(&new)));
                     p.select_only(Some(new));
                     self.changed(src, &parent(&e.path));
                 }
@@ -1378,6 +1461,7 @@ impl Ctx {
             match result {
                 Ok(()) => {
                     p.notice.set(Notice::None);
+                    self.log(format!("Created {}", path));
                     if folder { self.changed(src, &dir) } else { self.open_text(p, path) }
                 }
                 Err(e) => p.error(e),
@@ -1510,6 +1594,13 @@ pub fn App() -> impl IntoView {
             if e.key() == "Escape" {
                 return;
             }
+        }
+        if ctx.panel.get_untracked().is_some() {
+            if e.key() == "Escape" {
+                e.prevent_default();
+                ctx.close_panel();
+            }
+            return;
         }
         if ctx.settings.get_untracked() {
             if e.key() == "Escape" {
@@ -1704,6 +1795,10 @@ pub fn App() -> impl IntoView {
         <Browser/>
         <ContextMenu/>
         {move || ctx.settings.get().then(|| view! { <Settings/> })}
+        {move || ctx.panel.get().map(|w| match w {
+            Panel::Backups => view! { <Backups/> }.into_any(),
+            Panel::History => view! { <History/> }.into_any(),
+        })}
     }
 }
 
@@ -1815,8 +1910,14 @@ fn Sidebar() -> impl IntoView {
             {move || mac_open.get().then(|| view! {
                 {ctx.mac.get().map(|i| i.quick_dirs).unwrap_or_default().into_iter()
                     .map(|(name, path)| place(Src::Mac, name, path)).collect_view()}
-                {drives.get().into_iter().map(|(name, path)| view! {
-                    <span class="drive">{place(Src::Mac, name, path)}</span>
+                {drives.get().into_iter().map(|(name, path)| {
+                    let (tip, at) = (format!("Eject {name}"), path.clone());
+                    view! {
+                        <div class="line drive">
+                            {place(Src::Mac, name, path)}
+                            <button class="act" title=tip aria-label="Eject" on:click=move |_| ctx.eject(at.clone())>"⏏"</button>
+                        </div>
+                    }
                 }).collect_view()}
             })}
             {dev_heading}
@@ -1825,8 +1926,12 @@ fn Sidebar() -> impl IntoView {
                 <DeviceFinder/>
             })}
             <span class="grow"></span>
-            <button class="btn" title="Copies of files from before they were replaced or deleted"
-                on:click=move |_| ctx.open_folder("backups")>"Open backup folder"</button>
+            <div class="side-buttons">
+                <button class="btn" title="Files replaced or deleted by the app, which can be put back"
+                    on:click=move |_| ctx.panel.set(Some(Panel::Backups))>"Backups"</button>
+                <button class="btn" title="What was done since the app started"
+                    on:click=move |_| ctx.panel.set(Some(Panel::History))>"History"</button>
+            </div>
             <button class="btn" on:click=move |_| ctx.settings.set(true)>"Settings"</button>
         </nav>
     }
@@ -1970,6 +2075,117 @@ fn Settings() -> impl IntoView {
                 <div class="actions">
                     <span class="grow"></span>
                     <button class="btn primary" on:click=move |_| ctx.settings.set(false)>"Done"</button>
+                </div>
+            </div>
+        </div>
+    }
+}
+
+/// The backups the app has made, newest first, each with Restore (to where it came from, when that
+/// device is connected) and Restore here (into the active pane's folder).
+#[component]
+fn Backups() -> impl IntoView {
+    let ctx = expect_context::<Ctx>();
+    let list = RwSignal::new(None::<Result<Vec<Backup>, String>>);
+    let load = move || spawn_local(async move { list.set(Some(call("backups", json!({})).await)) });
+    load();
+    let message = RwSignal::new(None::<(String, bool)>);
+    let filter = RwSignal::new(String::new());
+    let restore = move |b: Backup, src: Src, path: String| {
+        spawn_local(async move {
+            match call::<WriteResult>("restore", json!({ "file": b.file, "src": src.key(), "path": path })).await {
+                Ok(r) => {
+                    let note = if r.backup.is_some() { " The file that was there is backed up too." } else { "" };
+                    message.set(Some((format!("Restored {} to {path} on {}.{note}", b.name, ctx.place(src)), true)));
+                    ctx.log(format!("Restored {} to {path}", b.name));
+                    ctx.changed(src, &parent(&path));
+                    load();
+                }
+                Err(e) => message.set(Some((e, false))),
+            }
+        });
+    };
+    let close = move || ctx.panel.set(None);
+    view! {
+        <div class="overlay" on:click=move |_| close()>
+            <div class="dialog wide" on:click=|e| e.stop_propagation()>
+                <h2>"Backups"</h2>
+                <p class="hint">"Copies of files from before the app replaced or deleted them. Restoring puts a copy back; a file already there is backed up first."</p>
+                <input class="filter-wide" type="search" placeholder="Filter by name" prop:value=move || filter.get()
+                    on:input=move |ev| filter.set(event_target_value(&ev))/>
+                {move || message.get().map(|(m, ok)| view! { <p class:ok=ok class:error=!ok>{m}</p> })}
+                <div class="backups">
+                    {move || match list.get() {
+                        None => view! { <p class="hint">"Loading…"</p> }.into_any(),
+                        Some(Err(e)) => view! { <p class="error">{e}</p> }.into_any(),
+                        Some(Ok(bs)) if bs.is_empty() => view! { <p class="hint">"No backups yet."</p> }.into_any(),
+                        Some(Ok(bs)) => {
+                            let f = filter.get().to_lowercase();
+                            bs.into_iter().filter(|b| b.name.to_lowercase().contains(&f)).map(|b| {
+                                let origin = b.note.as_ref().map(|n| {
+                                    let on = if n.place == "mac" { "the Mac".to_string() } else { n.place.split_once(':').map_or(n.place.clone(), |(_, l)| l.to_string()) };
+                                    format!("{} {} on {on}", if n.reason == "deleted" { "Deleted from" } else { "Replaced at" }, n.path)
+                                }).unwrap_or_else(|| "Where it came from wasn't noted (an older backup).".into());
+                                let back = b.note.as_ref().and_then(|n| ctx.fav_src(&Fav { place: n.place.clone(), label: String::new(), path: n.path.clone() }).map(|s| (s, n.path.clone())));
+                                let back_tip = if back.is_some() { "Put it back where it was".to_string() } else if b.note.is_some() { "Connect that device to put it back where it was".into() } else { "Where it came from isn't known".into() };
+                                let (b1, b2) = (b.clone(), b.clone());
+                                let here_tip = "Restore into the folder open in the active pane";
+                                view! {
+                                    <div class="backup">
+                                        <div class="what">
+                                            <b>{b.name.clone()}</b>
+                                            <span class="about">{format!("{} · {}", when(b.mtime), human_size(b.size))}</span>
+                                            <span class="path">{origin}</span>
+                                        </div>
+                                        <button class="btn" title=back_tip disabled=back.is_none()
+                                            on:click=move |_| if let Some((s, path)) = back.clone() { restore(b1.clone(), s, path) }>"Restore"</button>
+                                        <button class="btn" title=here_tip on:click=move |_| {
+                                            let p = ctx.act();
+                                            let dir = p.cwd.get_untracked();
+                                            if dir.is_empty() { return }
+                                            restore(b2.clone(), p.src.get_untracked(), join(&dir, &b2.name));
+                                        }>"Restore here"</button>
+                                    </div>
+                                }
+                            }).collect_view().into_any()
+                        }
+                    }}
+                </div>
+                <div class="actions">
+                    <button class="btn" on:click=move |_| { let _ = spawn_local(async move { let _ = call::<()>("open_folder", json!({ "which": "backups" })).await; }); }>"Open in Finder"</button>
+                    <span class="grow"></span>
+                    <button class="btn primary" on:click=move |_| close()>"Done"</button>
+                </div>
+            </div>
+        </div>
+    }
+}
+
+/// What was done since the app started.
+#[component]
+fn History() -> impl IntoView {
+    let ctx = expect_context::<Ctx>();
+    let close = move || ctx.panel.set(None);
+    view! {
+        <div class="overlay" on:click=move |_| close()>
+            <div class="dialog wide" on:click=|e| e.stop_propagation()>
+                <h2>"History"</h2>
+                <p class="hint">"What was done since the app started. Replaced and deleted files can be put back from Backups."</p>
+                <div class="history">
+                    {move || {
+                        let h = ctx.history.get();
+                        if h.is_empty() {
+                            return view! { <p class="hint">"Nothing yet."</p> }.into_any();
+                        }
+                        h.into_iter().rev().map(|(at, what)| view! {
+                            <div class="event"><span class="at">{at}</span><span>{what}</span></div>
+                        }).collect_view().into_any()
+                    }}
+                </div>
+                <div class="actions">
+                    <button class="btn" on:click=move |_| ctx.panel.set(Some(Panel::Backups))>"Backups…"</button>
+                    <span class="grow"></span>
+                    <button class="btn primary" on:click=move |_| close()>"Done"</button>
                 </div>
             </div>
         </div>
@@ -2602,6 +2818,7 @@ fn ListStatus(pane: Pane) -> impl IntoView {
             <span>{summary}</span>
             <span class="sel">{selection}</span>
             <span class="spacer"></span>
+            <span class="free">{move || ctx.free_text(p)}</span>
             <span>{place}</span>
             <div class="seg" role="group" aria-label="View">
                 {ViewMode::ALL.map(|m| view! {

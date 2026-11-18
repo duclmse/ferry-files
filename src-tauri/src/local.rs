@@ -8,6 +8,21 @@ use std::time::UNIX_EPOCH;
 
 pub struct Local;
 
+/// Free and total bytes of the disk holding `dir`, from `df -k`.
+fn df(dir: &str) -> Option<(u64, u64)> {
+    let out = std::process::Command::new("df").args(["-k", dir]).output().ok()?;
+    parse_df(&String::from_utf8_lossy(&out.stdout))
+}
+
+/// The second line of `df -k`: name, 1K-blocks, used, available, ...
+pub(crate) fn parse_df(out: &str) -> Option<(u64, u64)> {
+    let line = out.lines().nth(1)?;
+    let cols: Vec<&str> = line.split_whitespace().collect();
+    let total: u64 = cols.get(1)?.parse().ok()?;
+    let free: u64 = cols.get(3)?.parse().ok()?;
+    Some((free * 1024, total * 1024))
+}
+
 fn io(path: &str, e: std::io::Error) -> DevError {
     DevError::Msg(format!("{path}: {e}"))
 }
@@ -121,6 +136,19 @@ impl Transport for Local {
 
     fn rename(&self, path: &str, new_name: &str) -> Result<()> {
         fs::rename(path, crate::device::join(&dirname(path), new_name)).map_err(|e| io(path, e))
+    }
+
+    /// The disk holding the home folder, and each mounted disk.
+    fn space(&self) -> Vec<crate::device::Space> {
+        let mut dirs = vec![("Mac".to_string(), self.default_dir())];
+        for e in fs::read_dir("/Volumes").into_iter().flatten().flatten() {
+            let name = e.file_name().to_string_lossy().into_owned();
+            let real = fs::canonicalize(e.path()).ok();
+            if !name.starts_with('.') && real.as_deref() != Some(Path::new("/")) {
+                dirs.push((name, e.path().display().to_string()));
+            }
+        }
+        dirs.into_iter().filter_map(|(name, dir)| df(&dir).map(|(free, total)| crate::device::Space { name, free, total })).collect()
     }
 }
 
