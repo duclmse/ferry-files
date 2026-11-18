@@ -2984,6 +2984,7 @@ fn PaneView(pane: Pane) -> impl IntoView {
     let ctx = expect_context::<Ctx>();
     let p = pane;
     let active = move || ctx.active.get() == p.id;
+    let filter_ref = NodeRef::<html::Input>::new();
     view! {
         <section class="pane" class:active=active data-pane=p.id.to_string() on:mousedown=move |_| ctx.active.set(p.id)>
             <div class="bar">
@@ -3008,18 +3009,36 @@ fn PaneView(pane: Pane) -> impl IntoView {
                 </div>
                 <Crumbs pane=p/>
                 {move || p.loading.get().then(|| view! { <span class="spin"></span> })}
-                <input class="filter" type="search" placeholder="Filter" title="Show names containing this (⌘F). Enter searches subfolders too."
-                    prop:value=move || p.filter.get()
-                    on:input=move |ev| { p.filter.set(event_target_value(&ev)); p.arrange(); }
-                    on:keydown=move |ev| match ev.key().as_str() {
-                        "Enter" => ctx.find(p),
-                        "Escape" => {
-                            p.filter.set(String::new());
-                            p.arrange();
-                            if let Some(t) = ev.target() { let _ = t.unchecked_into::<web_sys::HtmlElement>().blur(); }
-                        }
-                        _ => {}
-                    }/>
+                // Narrow panes show only the icon; clicking it opens the field.
+                <div class="filter-box" class:has=move || !p.filter.with(String::is_empty)
+                    on:click=move |_| if let Some(el) = filter_ref.get_untracked() { let _ = el.focus(); }>
+                    <svg class="filter-icon" viewBox="0 0 16 16" aria-hidden="true">
+                        <circle cx="7" cy="7" r="4.5"/><path d="M10.5 10.5 14 14"/>
+                    </svg>
+                    <input class="filter" type="search" placeholder="Filter" node_ref=filter_ref
+                        title="Show names containing this (⌘F). Enter searches subfolders too."
+                        prop:value=move || p.filter.get()
+                        on:input=move |ev| { p.filter.set(event_target_value(&ev)); p.arrange(); }
+                        on:keydown=move |ev| match ev.key().as_str() {
+                            "Enter" => ctx.find(p),
+                            "Escape" => {
+                                p.filter.set(String::new());
+                                p.arrange();
+                                if let Some(t) = ev.target() { let _ = t.unchecked_into::<web_sys::HtmlElement>().blur(); }
+                            }
+                            _ => {}
+                        }/>
+                    {move || (!p.filter.with(String::is_empty)).then(|| view! {
+                        <button class="filter-clear" title="Clear" aria-label="Clear filter"
+                            on:mousedown=|ev| ev.prevent_default()
+                            on:click=move |ev| {
+                                ev.stop_propagation();
+                                p.filter.set(String::new());
+                                p.arrange();
+                                if let Some(el) = filter_ref.get_untracked() { let _ = el.focus(); }
+                            }>"✕"</button>
+                    })}
+                </div>
                 {(p.id == 0).then(|| view! {
                     <button class="btn" class:active=move || ctx.split.get()
                         title=move || if ctx.split.get() { "Hide the second pane (⌘\\)" } else { "Show a second pane (⌘\\)" }
@@ -3030,12 +3049,13 @@ fn PaneView(pane: Pane) -> impl IntoView {
                         on:click=move |_| ctx.set_split(false)>"✕"</button>
                 })}
             </div>
-            <Notices pane=p/>
             {move || match p.view.get() {
                 ViewMode::List => view! { <ListView pane=p/> }.into_any(),
                 ViewMode::Thumbs => view! { <ThumbView pane=p/> }.into_any(),
                 ViewMode::Columns => view! { <ColumnView pane=p/> }.into_any(),
             }}
+            // Messages and questions about this pane, above its status bar.
+            <Notices pane=p/>
             <ListStatus pane=p/>
         </section>
     }

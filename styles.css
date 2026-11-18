@@ -430,6 +430,12 @@ textarea {
   flex-wrap: wrap;
 }
 
+/* A pane's notices sit at its bottom, above the status bar. */
+.pane > .notice {
+  border-bottom: 0;
+  border-top: 1px solid var(--line);
+}
+
 .notice.error {
   color: var(--danger);
 }
@@ -1104,6 +1110,16 @@ iframe.page {
   overflow-y: auto;
 }
 
+/* Centered top to bottom; auto margins (not justify-content) so a tall preview still scrolls
+   from its top. */
+.preview > :first-child {
+  margin-top: auto;
+}
+
+.preview > :last-child {
+  margin-bottom: auto;
+}
+
 .preview .pic {
   width: 200px;
   height: 200px;
@@ -1129,6 +1145,7 @@ iframe.page {
 
 .preview dt {
   color: var(--muted);
+  text-align: right;
 }
 
 .preview dd {
@@ -1352,21 +1369,98 @@ td.name .where {
   font-size: 11px;
 }
 
-/* The pane's filter field. */
-.bar .filter {
+/* The pane's filter field: icon, text, clear button. Collapses to the icon in a narrow pane. */
+.pane .bar {
+  container-type: inline-size;
+}
+
+.filter-box {
   margin-left: auto;
-  width: 150px;
+  display: flex;
+  align-items: center;
+  width: 170px;
   height: 28px;
-  padding: 0 8px;
+  padding: 0 4px 0 8px;
+  gap: 4px;
   border: 1px solid var(--line);
   border-radius: 7px;
   background: var(--bg);
+  color: var(--muted);
+  cursor: text;
+  transition: width .15s ease;
+}
+
+.filter-box:focus-within {
+  outline: 2px solid var(--accent);
+  outline-offset: -1px;
+}
+
+.filter-icon {
+  flex: none;
+  width: 14px;
+  height: 14px;
+  fill: none;
+  stroke: currentColor;
+  stroke-width: 1.6;
+  stroke-linecap: round;
+}
+
+.filter-box .filter {
+  flex: 1;
+  min-width: 0;
+  height: 100%;
+  padding: 0;
+  border: 0;
+  outline: 0;
+  background: none;
+  color: var(--ink);
+  font: inherit;
+}
+
+.filter-box .filter::-webkit-search-cancel-button {
+  display: none;
+}
+
+.filter-clear {
+  flex: none;
+  width: 18px;
+  height: 18px;
+  padding: 0;
+  border: 0;
+  border-radius: 50%;
+  background: var(--hover);
+  color: var(--muted);
+  font-size: 10px;
+  line-height: 18px;
+  cursor: pointer;
+}
+
+.filter-clear:hover {
   color: var(--ink);
 }
 
-.bar .filter:focus {
-  outline: 2px solid var(--accent);
-  outline-offset: -1px;
+@container (max-width: 520px) {
+  .filter-box:not(:focus-within):not(.has) {
+    width: 28px;
+    padding: 0;
+    justify-content: center;
+    cursor: pointer;
+  }
+
+  .filter-box:not(:focus-within):not(.has) .filter {
+    flex: 0 0 0;
+    width: 0;
+  }
+
+  .filter-box:not(:focus-within):not(.has):hover {
+    background: var(--hover);
+    color: var(--ink);
+  }
+
+  .filter-box:focus-within,
+  .filter-box.has {
+    width: 140px;
+  }
 }
 
 .statusbar .search {
