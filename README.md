@@ -2,7 +2,8 @@
 
 A Mac desktop app (Tauri 2 + Leptos, all Rust) for browsing, reading and editing the files on an Android phone connected by USB, EPUB books in particular.
 
-- Browse folders on the phone; download, upload, delete, and create folders.
+- Browse folders on the phone as a list, as thumbnails (images and EPUB covers), or in columns.
+- Right-click a file or folder for open, download and delete; right-click empty space for new folder, new file, upload, refresh and the view options. A status bar shows the folder's contents and the selected item.
 - Edit text files.
 - EPUB editor:
   - book info, cover, and package stats;
@@ -28,6 +29,8 @@ Every write or delete:
 1. refuses if the file changed on the phone since it was opened,
 2. backs up the old version to `~/Library/Caches/yomi-files/backups`,
 3. writes the new version and checks it.
+
+Thumbnails need the whole file read from the phone (slow over MTP), so they are made one at a time, only for the folder on screen, and only for files up to 60 MB. They are cached in `~/Library/Caches/yomi-files/thumbs`; delete that folder to clear them.
 
 ## Build and run
 
@@ -55,13 +58,14 @@ cargo run --example epub_smoke    [-- adb|mtp]   # edits a copy of an .epub foun
 ## Layout
 
 - `src/`: the frontend (Leptos 0.8, client-side, built by Trunk into `dist/`).
-  - `app.rs`: connect screen, file listing, text editor.
+  - `app.rs`: connect screen, file views, context menu, text editor.
   - `epub.rs`: EPUB editor screens.
   - `api.rs`: calls to the backend, and the types shared with it.
 - `src-tauri/`: the backend.
   - `device.rs`, `adb.rs`, `mtp.rs`: transports, version checks, backups.
   - `xml.rs`, `epub.rs`: EPUB parsing and editing.
-  - `protocol.rs`: the `yomi://` scheme that serves book images, styles and fonts.
+  - `protocol.rs`: the `yomi://` scheme that serves book images, styles and fonts, and thumbnails.
+  - `thumbs.rs`: thumbnails and their cache.
   - `lib.rs`: the commands the frontend calls.
 
 ## EPUB editor limits

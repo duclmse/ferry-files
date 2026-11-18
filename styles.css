@@ -131,3 +131,57 @@ mark { background: #ffe58a; color: #1b1f27; border-radius: 2px; }
 .fmt button:nth-child(2) { font-style: italic; }
 /* The book's own styles decide its colours, so the page is always light, like a printed page. */
 iframe.page { flex: 1; width: 100%; border: 0; background: #fff; color-scheme: light; }
+
+/* Status bar */
+.statusbar { display: flex; align-items: center; gap: 14px; padding: 4px 12px; min-height: 26px; border-top: 1px solid var(--line); background: var(--panel); color: var(--muted); font-size: 11.5px; white-space: nowrap; overflow: hidden; }
+.statusbar > span { overflow: hidden; text-overflow: ellipsis; min-width: 0; }
+.statusbar .sel { color: var(--ink); }
+.statusbar .unsaved { color: var(--accent); font-weight: 600; }
+
+/* View switcher */
+.bar .seg button { padding: 3px 9px; font-size: 14px; line-height: 1.2; }
+
+/* Context menu */
+.menu { position: fixed; z-index: 50; min-width: 210px; padding: 5px; background: var(--panel); border: 1px solid var(--line); border-radius: 8px; box-shadow: 0 8px 28px rgba(0,0,0,.22); display: flex; flex-direction: column; }
+.menu button { display: flex; align-items: center; gap: 18px; height: 26px; padding: 0 10px; border: 0; border-radius: 5px; background: none; color: var(--ink); text-align: left; cursor: default; font: inherit; }
+.menu button span:first-child { flex: 1; }
+.menu button:hover:not(:disabled) { background: var(--accent); color: var(--accent-ink); }
+.menu button:hover:not(:disabled) .key { color: inherit; }
+.menu button.danger { color: var(--danger); }
+.menu button.danger:hover:not(:disabled) { background: var(--danger); color: #fff; }
+.menu button:disabled { opacity: .4; }
+.menu .key { color: var(--muted); font-size: 11px; }
+.menu .sep { height: 1px; margin: 4px 6px; background: var(--line); }
+
+/* Thumbnail view: 128px tiles, 8px gap, 12px padding (the ↑/↓ keys assume these sizes). */
+.thumbs { display: grid; grid-template-columns: repeat(auto-fill, 128px); gap: 8px; padding: 12px; }
+.tile { display: flex; flex-direction: column; align-items: center; gap: 3px; padding: 8px 6px; border-radius: 8px; cursor: pointer; text-align: center; min-width: 0; }
+.tile:hover { background: var(--hover); }
+.tile.selected { background: var(--sel); }
+.pic { width: 96px; height: 96px; display: flex; align-items: center; justify-content: center; }
+.pic img { max-width: 100%; max-height: 100%; object-fit: contain; border-radius: 3px; box-shadow: 0 1px 4px rgba(0,0,0,.25); }
+.pic .glyph { font-size: 52px; line-height: 1; }
+.tile .label { font-size: 12px; line-height: 1.3; word-break: break-word; display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden; }
+.tile .sub, .preview .sub { color: var(--muted); font-size: 11px; }
+
+/* Column view */
+.columns { flex: 1; display: flex; overflow-x: auto; overflow-y: hidden; min-height: 0; }
+.col { flex: 0 0 230px; overflow-y: auto; border-right: 1px solid var(--line); padding: 4px 0; }
+.col .row { display: flex; align-items: center; gap: 6px; margin: 0 4px; padding: 3px 8px; border-radius: 5px; cursor: pointer; white-space: nowrap; }
+.col .row:hover { background: var(--hover); }
+.col .row .name { flex: 1; overflow: hidden; text-overflow: ellipsis; }
+.col .row .chev { color: var(--muted); }
+.col .row.open { background: var(--hover); font-weight: 600; }
+.col.current .row.open, .col .row.selected { background: var(--sel); }
+.col .empty { padding: 16px; }
+.preview { flex: 0 0 260px; display: flex; flex-direction: column; align-items: center; gap: 6px; padding: 20px 16px; text-align: center; overflow-y: auto; }
+.preview .pic { width: 200px; height: 200px; }
+.preview .pic .glyph { font-size: 96px; }
+.preview .name { word-break: break-word; }
+.preview dl { display: grid; grid-template-columns: auto 1fr; gap: 4px 10px; margin: 8px 0; font-size: 12px; text-align: left; width: 100%; }
+.preview dt { color: var(--muted); }
+.preview dd { margin: 0; }
+.preview .path { word-break: break-all; }
+.preview .hint { color: var(--muted); font-size: 11px; margin-top: 8px; }
+.pic { position: relative; }
+.pic img.pending { position: absolute; inset: 0; opacity: 0; }

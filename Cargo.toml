@@ -11,6 +11,7 @@ js-sys = "0.3"
 web-sys = { version = "0.3", features = [
     "KeyboardEvent", "HtmlTextAreaElement", "HtmlInputElement", "HtmlIFrameElement", "Document", "HtmlDocument",
     "Node", "NodeList", "Element", "HtmlElement", "XmlSerializer", "Event", "EventTarget",
+    "Storage", "MouseEvent", "ScrollIntoViewOptions", "ScrollLogicalPosition",
 ] }
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
@@ -19,3 +20,7 @@ console_error_panic_hook = "0.1"
 
 [workspace]
 members = ["src-tauri"]
+
+# Image decoding (thumbnails) is far too slow unoptimised; dependencies are built optimised even in dev.
+[profile.dev.package."*"]
+opt-level = 2

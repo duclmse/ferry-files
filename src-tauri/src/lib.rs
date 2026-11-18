@@ -3,6 +3,7 @@ pub mod device;
 pub mod epub;
 pub mod mtp;
 mod protocol;
+pub mod thumbs;
 pub mod xml;
 
 use device::{DevError, Device, Entry, WriteResult};
@@ -23,6 +24,10 @@ pub struct AppState {
     /// Open EPUBs by id. protocol.rs serves their files to the chapter view.
     pub books: Mutex<HashMap<u32, Book>>,
     next_book: AtomicU32,
+    /// The folder the user is looking at. Thumbnails for other folders aren't made.
+    viewing: Mutex<String>,
+    /// Held while a thumbnail is being made, so they're made one at a time.
+    pub thumb_lock: Mutex<()>,
 }
 
 impl AppState {
@@ -32,6 +37,10 @@ impl AppState {
             .unwrap_or_else(|e| e.into_inner())
             .clone()
             .ok_or_else(|| "Not connected to a device.".to_string())
+    }
+
+    pub fn is_viewing(&self, dir: &str) -> bool {
+        *self.viewing.lock().unwrap_or_else(|e| e.into_inner()) == dir
     }
 }
 
@@ -104,8 +113,13 @@ fn info(state: State<'_, AppState>) -> Option<Info> {
 }
 
 #[tauri::command(rename_all = "snake_case")]
-async fn list(state: State<'_, AppState>, path: String) -> Result<Vec<Entry>, String> {
+/// Lists a folder. `current` (default true) says it's the folder the user is now looking at;
+/// the column view passes false for the folders to its left.
+async fn list(state: State<'_, AppState>, path: String, current: Option<bool>) -> Result<Vec<Entry>, String> {
     let dev = state.device()?;
+    if current.unwrap_or(true) {
+        *state.viewing.lock().unwrap_or_else(|e| e.into_inner()) = device::norm(&path).map_err(msg)?;
+    }
     blocking(move || dev.listdir(&path).map_err(msg)).await
 }
 

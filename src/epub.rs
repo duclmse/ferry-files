@@ -372,6 +372,23 @@ pub fn EpubEditor() -> impl IntoView {
                     View::Find => view! { <FindView/> }.into_any(),
                     View::Chapter(path) => view! { <ChapterView path/> }.into_any(),
                 }}
+                <div class="statusbar">
+                    <span>{move || ep.book.with(|b| b.as_ref().map(|b| format!(
+                        "EPUB {} · {}", b.stats.version, plural(b.chapters.len(), "chapter", "chapters"))).unwrap_or_default())}</span>
+                    <span class="sel">{move || match ep.view.get() {
+                        View::Info => "Book info".to_string(),
+                        View::Find => "Find & replace".to_string(),
+                        View::Chapter(p) => {
+                            let label = ep.book.with(|b| b.as_ref()
+                                .and_then(|b| b.chapters.iter().find(|c| c.path == p).map(|c| c.label.clone()))
+                                .unwrap_or(p));
+                            let mode = match ep.mode.get() { Mode::Visual => "visual", Mode::Source => "source" };
+                            format!("{label} · {mode}")
+                        }
+                    }}</span>
+                    <span class="spacer"></span>
+                    <span class:unsaved=move || dirty.get()>{move || if dirty.get() { "Not saved to the phone" } else { "Saved" }}</span>
+                </div>
             </div>
         </div>
     }
