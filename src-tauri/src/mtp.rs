@@ -98,6 +98,13 @@ struct Lib {
     set_file_name: unsafe extern "C" fn(Dev, *mut MtpFile, *const c_char) -> c_int,
     delete_object: unsafe extern "C" fn(Dev, u32) -> c_int,
     create_folder: unsafe extern "C" fn(Dev, *mut c_char, u32, u32) -> u32,
+    /// `LIBMTP_GetPartialObject`; missing from old libmtp builds.
+    get_partial: Option<unsafe extern "C" fn(Dev, u32, u64, u32, *mut *mut u8, *mut u32) -> c_int>,
+}
+
+extern "C" {
+    /// libmtp hands back buffers from malloc.
+    fn free(p: *mut c_void);
 }
 
 /// libmtp isn't thread-safe, and several devices can be open at once (each used from its own
@@ -163,6 +170,7 @@ fn load() -> std::result::Result<Lib, String> {
         set_file_name: sym!("LIBMTP_Set_File_Name"),
         delete_object: sym!("LIBMTP_Delete_Object"),
         create_folder: sym!("LIBMTP_Create_Folder"),
+        get_partial: unsafe { library.get(b"LIBMTP_GetPartialObject\0") }.ok().map(|f| *f),
     };
     let init: unsafe extern "C" fn() = sym!("LIBMTP_Init");
     unsafe { init() };
@@ -238,6 +246,8 @@ struct Child {
 struct Link {
     lib: &'static Lib,
     dev: Dev,
+    /// False once the device has refused a partial read; ranges then come from a whole copy.
+    partial: bool,
 }
 
 // The raw device pointer is only touched while holding the mutex in `Mtp`.
@@ -289,11 +299,33 @@ impl Link {
 
     fn download(&self, id: u32) -> Result<Vec<u8>> {
         let tmp = temp_path("dl");
-        let c = CString::new(tmp.to_string_lossy().as_bytes()).unwrap();
-        let rc = unsafe { (self.lib.get_file_to_file)(self.dev, id, c.as_ptr(), std::ptr::null_mut(), std::ptr::null_mut()) };
-        let data = if rc == 0 { std::fs::read(&tmp).map_err(|e| DevError::Msg(e.to_string())) } else { Err(self.error("Reading the file")) };
+        let data = self.download_to(id, &tmp).and_then(|_| std::fs::read(&tmp).map_err(|e| DevError::Msg(e.to_string())));
         let _ = std::fs::remove_file(&tmp);
         data
+    }
+
+    fn download_to(&self, id: u32, to: &std::path::Path) -> Result<()> {
+        let c = CString::new(to.to_string_lossy().as_bytes()).unwrap();
+        let rc = unsafe { (self.lib.get_file_to_file)(self.dev, id, c.as_ptr(), std::ptr::null_mut(), std::ptr::null_mut()) };
+        if rc == 0 { Ok(()) } else { Err(self.error("Reading the file")) }
+    }
+
+    /// Part of a file straight from the device, or None when it (or libmtp) can't do that.
+    fn read_partial(&mut self, id: u32, start: u64, len: u32) -> Option<Vec<u8>> {
+        let f = self.lib.get_partial.filter(|_| self.partial)?;
+        let (mut data, mut size) = (std::ptr::null_mut::<u8>(), 0u32);
+        let rc = unsafe { f(self.dev, id, start, len, &mut data, &mut size) };
+        let out = (rc == 0).then(|| {
+            if data.is_null() { vec![] } else { unsafe { std::slice::from_raw_parts(data, size as usize) }.to_vec() }
+        });
+        if !data.is_null() {
+            unsafe { free(data.cast()) };
+        }
+        if out.is_none() {
+            unsafe { (self.lib.clear_errorstack)(self.dev) };
+            self.partial = false;
+        }
+        out
     }
 
     fn upload(&self, data: &[u8], name: &str, storage: u32, parent: u32) -> Result<u32> {
@@ -445,7 +477,7 @@ impl Mtp {
         if dev.is_null() {
             return err(format!("Couldn't open the MTP device. {MAC_MTP_HINT}"));
         }
-        let link = Link { lib, dev };
+        let link = Link { lib, dev, partial: true };
         if unsafe { (lib.get_storage)(dev, 0) } != 0 {
             return Err(link.error("Reading the device's storage"));
         }
@@ -515,6 +547,23 @@ impl Mtp {
         }
     }
 
+    /// A whole copy of the file in the app's "opened" folder, for devices that can't send part of a
+    /// file. Only the latest one is kept.
+    fn stream_copy(&self, inner: &mut Inner, node: &Node) -> Result<std::path::PathBuf> {
+        let dir = crate::files::opened_dir().join("stream");
+        let key = format!("{}|{}|{}", self.model, node.path, Self::version_of(node));
+        let ext = node.name.rsplit_once('.').map_or(String::new(), |(_, x)| format!(".{x}"));
+        let file = dir.join(format!("{:x}{ext}", md5::compute(key)));
+        if !file.exists() {
+            let _ = std::fs::remove_dir_all(&dir);
+            std::fs::create_dir_all(&dir).map_err(|e| DevError::Msg(e.to_string()))?;
+            let tmp = dir.join(".partial");
+            inner.link.download_to(node.id, &tmp)?;
+            std::fs::rename(&tmp, &file).map_err(|e| DevError::Msg(e.to_string()))?;
+        }
+        Ok(file)
+    }
+
     fn version_of(n: &Node) -> String {
         format!("{}:{}:{}", n.id, n.size, n.mtime)
     }
@@ -574,6 +623,23 @@ impl Transport for Mtp {
         let mut inner = self.inner();
         self.invalidate_parent(&mut inner, path);
         Ok(self.resolve(&mut inner, path).filter(|n| !n.dir).map(|n| Self::version_of(&n)))
+    }
+
+    fn read_range(&self, path: &str, start: u64, len: u64) -> Result<Vec<u8>> {
+        let mut inner = self.inner();
+        let Some(node) = self.resolve(&mut inner, path).filter(|n| !n.dir) else {
+            return err(format!("No such file: {path}"));
+        };
+        if start >= node.size || len == 0 {
+            return Ok(vec![]);
+        }
+        let len = len.min(node.size - start).min(u32::MAX as u64);
+        if let Some(data) = inner.link.read_partial(node.id, start, len as u32) {
+            return Ok(data);
+        }
+        // The device can't send part of a file: copy it whole once, and read from the copy.
+        let copy = self.stream_copy(&mut inner, &node)?;
+        crate::local::Local.read_range(&copy.to_string_lossy(), start, len)
     }
 
     fn read(&self, path: &str) -> Result<(Vec<u8>, String)> {

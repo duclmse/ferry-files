@@ -3,6 +3,9 @@
 //!       files from open EPUBs, so the chapter view can load the book's images, styles and fonts.
 //!   GET yomi://localhost/thumb?src={mac|device id}&p={path}&s={size}&m={mtime}
 //!       a thumbnail of an image file or an EPUB's cover (see thumbs.rs).
+//!   GET yomi://localhost/file?src={mac|device id}&p={path}&s={size}&m={mtime}
+//!       a file itself, for the preview's image, video and audio. Honours Range, and reads only the
+//!       part asked for, so a video starts and seeks without copying the file to the Mac.
 
 use percent_encoding::{percent_decode_str, utf8_percent_encode, AsciiSet, NON_ALPHANUMERIC};
 use tauri::http::{Request, Response, StatusCode};
@@ -50,6 +53,10 @@ pub fn handle(app: &AppHandle, req: Request<Vec<u8>>) -> Response<Vec<u8>> {
     let path = req.uri().path().to_string();
     if path == "/thumb" {
         return thumb(app, req.uri().query().unwrap_or(""));
+    }
+    if path == "/file" {
+        let range = req.headers().get("range").and_then(|v| v.to_str().ok()).map(str::to_string);
+        return file(app, req.uri().query().unwrap_or(""), range.as_deref());
     }
     let Some(rest) = path.strip_prefix("/book/") else { return not_found() };
     let Some((id, file)) = rest.split_once('/') else { return not_found() };
@@ -112,5 +119,134 @@ fn thumb(app: &AppHandle, q: &str) -> Response<Vec<u8>> {
     match made {
         Ok(t) => thumb_response(t),
         Err(e) => respond(StatusCode::INTERNAL_SERVER_ERROR, "text/plain", e.into_bytes()),
+    }
+}
+
+/// Most bytes sent for one range request. The player asks again for the rest; small pieces keep
+/// seeking quick and memory low.
+const CHUNK: u64 = 2 * 1024 * 1024;
+/// Most bytes sent for a request without Range (an `<img>`): the whole file.
+const WHOLE_MAX: u64 = 64 * 1024 * 1024;
+
+/// The bytes a Range header asks for, as (start, end inclusive), cut to `CHUNK` and the file.
+/// None: no usable range (send the whole file). Some(Err): a range past the end.
+fn parse_range(h: &str, size: u64) -> Option<std::result::Result<(u64, u64), ()>> {
+    let spec = h.trim().strip_prefix("bytes=")?;
+    // Several ranges at once aren't worth it here; take the first.
+    let (a, b) = spec.split(',').next()?.trim().split_once('-')?;
+    let (start, end) = match (a.trim(), b.trim()) {
+        ("", n) => {
+            let n: u64 = n.parse().ok()?;
+            (size.saturating_sub(n), size.saturating_sub(1))
+        }
+        (a, "") => (a.parse().ok()?, size.saturating_sub(1)),
+        (a, b) => (a.parse().ok()?, b.parse::<u64>().ok()?.min(size.saturating_sub(1))),
+    };
+    if size == 0 || start >= size || end < start {
+        return Some(Err(()));
+    }
+    Some(Ok((start, end.min(start + CHUNK - 1))))
+}
+
+fn media_type(path: &str) -> &'static str {
+    let ext = path.rsplit_once('.').map(|(_, e)| e.to_ascii_lowercase()).unwrap_or_default();
+    match ext.as_str() {
+        "jpg" | "jpeg" => "image/jpeg",
+        "png" => "image/png",
+        "gif" => "image/gif",
+        "webp" => "image/webp",
+        "heic" | "heif" => "image/heic",
+        "bmp" => "image/bmp",
+        "svg" => "image/svg+xml",
+        "mp4" | "m4v" => "video/mp4",
+        "mov" => "video/quicktime",
+        "webm" => "video/webm",
+        "3gp" => "video/3gpp",
+        "mp3" => "audio/mpeg",
+        "m4a" | "aac" => "audio/mp4",
+        "wav" => "audio/wav",
+        "flac" => "audio/flac",
+        "ogg" | "oga" | "opus" => "audio/ogg",
+        "pdf" => "application/pdf",
+        _ => "application/octet-stream",
+    }
+}
+
+fn file(app: &AppHandle, q: &str, range: Option<&str>) -> Response<Vec<u8>> {
+    let bad = || respond(StatusCode::BAD_REQUEST, "text/plain", b"Bad file request.".to_vec());
+    let Some(path) = query_param(q, "p") else { return bad() };
+    let Some(size) = query_param(q, "s").and_then(|s| s.parse::<u64>().ok()) else { return bad() };
+    let Some(src) = query_param(q, "src") else { return bad() };
+    let dev = match crate::state(app).source(Some(&src)) {
+        Ok(d) => d,
+        Err(e) => return respond(StatusCode::NOT_FOUND, "text/plain", e.into_bytes()),
+    };
+    let ctype = media_type(&path);
+    let fail = |e: crate::device::DevError| respond(StatusCode::INTERNAL_SERVER_ERROR, "text/plain", e.to_string().into_bytes());
+    let base = || {
+        Response::builder()
+            .header("Content-Type", ctype)
+            .header("Accept-Ranges", "bytes")
+            // The URL has the size and date, so a changed file gets a new URL.
+            .header("Cache-Control", "max-age=3600")
+            .header("Access-Control-Allow-Origin", "*")
+    };
+    match range.and_then(|h| parse_range(h, size)) {
+        Some(Err(())) => base()
+            .status(StatusCode::RANGE_NOT_SATISFIABLE)
+            .header("Content-Range", format!("bytes */{size}"))
+            .body(vec![])
+            .unwrap_or_else(|_| Response::new(Vec::new())),
+        Some(Ok((start, end))) => match dev.read_range(&path, start, end - start + 1) {
+            // The file may have shrunk since it was listed; say what was really read.
+            Ok(data) if !data.is_empty() => {
+                let end = start + data.len() as u64 - 1;
+                base()
+                    .status(StatusCode::PARTIAL_CONTENT)
+                    .header("Content-Range", format!("bytes {start}-{end}/{size}"))
+                    .body(data)
+                    .unwrap_or_else(|_| Response::new(Vec::new()))
+            }
+            Ok(_) => base()
+                .status(StatusCode::RANGE_NOT_SATISFIABLE)
+                .header("Content-Range", format!("bytes */{size}"))
+                .body(vec![])
+                .unwrap_or_else(|_| Response::new(Vec::new())),
+            Err(e) => fail(e),
+        },
+        None if size > WHOLE_MAX => respond(StatusCode::PAYLOAD_TOO_LARGE, "text/plain", b"Too big to show whole.".to_vec()),
+        None => match dev.read_range(&path, 0, size) {
+            Ok(data) => base().status(StatusCode::OK).body(data).unwrap_or_else(|_| Response::new(Vec::new())),
+            Err(e) => fail(e),
+        },
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{parse_range, CHUNK};
+
+    #[test]
+    fn ranges_are_read_and_cut_to_a_chunk() {
+        assert_eq!(parse_range("bytes=0-1", 100), Some(Ok((0, 1))));
+        assert_eq!(parse_range("bytes=10-", 100), Some(Ok((10, 99))));
+        assert_eq!(parse_range("bytes=-10", 100), Some(Ok((90, 99))));
+        assert_eq!(parse_range("bytes=50-500", 100), Some(Ok((50, 99))));
+        assert_eq!(parse_range("bytes=100-", 100), Some(Err(())));
+        assert_eq!(parse_range("bytes=0-", 10 * CHUNK), Some(Ok((0, CHUNK - 1))));
+        assert_eq!(parse_range("items=0-1", 100), None);
+        assert_eq!(parse_range("bytes=x-1", 100), None);
+    }
+
+    #[test]
+    fn mac_files_are_read_in_parts() {
+        let f = std::env::temp_dir().join(format!("yomi-range-test-{}", std::process::id()));
+        std::fs::write(&f, b"0123456789").unwrap();
+        let mac = crate::Device::new(Box::new(crate::local::Local));
+        let p = f.display().to_string();
+        assert_eq!(mac.read_range(&p, 3, 4).unwrap(), b"3456");
+        assert_eq!(mac.read_range(&p, 8, 100).unwrap(), b"89");
+        assert!(mac.read_range(&p, 20, 5).unwrap().is_empty());
+        std::fs::remove_file(&f).unwrap();
     }
 }

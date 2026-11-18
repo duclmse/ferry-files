@@ -47,6 +47,9 @@ pub trait Transport: Send + Sync {
     fn stat(&self, path: &str) -> Result<Option<Entry>>;
     /// The file's bytes and a version string that changes whenever the file changes.
     fn read(&self, path: &str) -> Result<(Vec<u8>, String)>;
+    /// Up to `len` bytes of the file from `start`, without reading the rest of it; fewer at the
+    /// end of the file. For streaming media into the preview.
+    fn read_range(&self, path: &str, start: u64, len: u64) -> Result<Vec<u8>>;
     fn version(&self, path: &str) -> Result<Option<String>>;
     /// Writes the whole file (under a temporary name, then swapped in). Returns the new version.
     fn replace(&self, path: &str, data: &[u8], exists: bool) -> Result<String>;
@@ -193,6 +196,14 @@ impl Device {
         let path = norm(path)?;
         let _g = self.lock();
         self.t.read(&path)
+    }
+
+    /// Part of a file (see `Transport::read_range`). Doesn't wait for the device's other work: a
+    /// read can't break a write's check-then-write, and media playback shouldn't stall behind a
+    /// long copy. (MTP still takes turns inside libmtp.)
+    pub fn read_range(&self, path: &str, start: u64, len: u64) -> Result<Vec<u8>> {
+        let path = norm(path)?;
+        self.t.read_range(&path, start, len)
     }
 
     /// Writes a file. With `base_version`, refuses if the device copy changed since it was read.

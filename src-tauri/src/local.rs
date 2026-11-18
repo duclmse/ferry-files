@@ -106,6 +106,15 @@ impl Transport for Local {
         Ok((data, version_of(&m)))
     }
 
+    fn read_range(&self, path: &str, start: u64, len: u64) -> Result<Vec<u8>> {
+        use std::io::{Read, Seek, SeekFrom};
+        let mut f = fs::File::open(path).map_err(|e| io(path, e))?;
+        f.seek(SeekFrom::Start(start)).map_err(|e| io(path, e))?;
+        let mut out = Vec::new();
+        f.take(len).read_to_end(&mut out).map_err(|e| io(path, e))?;
+        Ok(out)
+    }
+
     fn version(&self, path: &str) -> Result<Option<String>> {
         Ok(fs::metadata(path).ok().filter(|m| m.is_file()).map(|m| version_of(&m)))
     }

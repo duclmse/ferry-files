@@ -170,6 +170,21 @@ impl Transport for Adb {
         })
     }
 
+    /// `dd` in whole blocks (byte offsets need flags not every Android `dd` has), trimmed here.
+    fn read_range(&self, path: &str, start: u64, len: u64) -> Result<Vec<u8>> {
+        const BS: u64 = 64 * 1024;
+        if len == 0 {
+            return Ok(vec![]);
+        }
+        let first = start / BS;
+        let blocks = (start + len).div_ceil(BS) - first;
+        let cmd = format!("dd if={} bs={BS} skip={first} count={blocks} 2>/dev/null", q(path));
+        let data = self.run(&["exec-out", &cmd])?;
+        let from = ((start - first * BS) as usize).min(data.len());
+        let to = (from + len as usize).min(data.len());
+        Ok(data[from..to].to_vec())
+    }
+
     fn version(&self, path: &str) -> Result<Option<String>> {
         let out = self.shell(&format!("if [ -f {p} ]; then md5sum {p}; fi", p = q(path)))?;
         Ok(out.split_whitespace().next().map(String::from))
