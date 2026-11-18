@@ -90,25 +90,6 @@ pub(super) fn Notices(pane: Pane) -> impl IntoView {
                         <button class="btn" on:click=dismiss>{if go { "Cancel" } else { "Dismiss" }}</button></div>
                 }.into_any()
             }
-            Notice::Rename(e) => {
-                name.set(e.name.clone());
-                let e = StoredValue::new(e);
-                let submit = move || ctx.rename(p, e.get_value(), name.get_untracked());
-                view! {
-                    <div class="notice">
-                        <span>"Rename to:"</span>
-                        <input autofocus prop:value=move || name.get()
-                            on:input=move |ev| name.set(event_target_value(&ev))
-                            on:keydown=move |ev| match ev.key().as_str() {
-                                "Enter" => submit(),
-                                "Escape" => p.notice.set(Notice::None),
-                                _ => {}
-                            }/>
-                        <button class="btn primary" on:click=move |_| submit()>"Rename"</button>
-                        <button class="btn" on:click=dismiss>"Cancel"</button>
-                    </div>
-                }.into_any()
-            }
             Notice::NewItem { folder } => {
                 name.set(String::new());
                 let submit = move || ctx.create(p, name.get_untracked(), folder);
@@ -132,6 +113,67 @@ pub(super) fn Notices(pane: Pane) -> impl IntoView {
     }
 }
 
+/// The name of `e`, or a field to rename it when it's being renamed. Enter or clicking elsewhere
+/// renames; Escape leaves it as it was.
+#[component]
+pub(super) fn Name(pane: Pane, entry: Entry) -> impl IntoView {
+    let p = pane;
+    let path = entry.path.clone();
+    let e = StoredValue::new(entry);
+    let editing = Memo::new(move |_| p.renaming.with(|r| r.as_deref() == Some(path.as_str())));
+    move || if editing.get() {
+        view! { <NameEdit pane=p entry=e.get_value()/> }.into_any()
+    } else {
+        e.with_value(|e| e.name.clone()).into_any()
+    }
+}
+
+#[component]
+fn NameEdit(pane: Pane, entry: Entry) -> impl IntoView {
+    let ctx = expect_context::<Ctx>();
+    let p = pane;
+    let input = NodeRef::<html::Input>::new();
+    let done = StoredValue::new(false);
+    // Select the name without its extension, as Finder does.
+    let stem = match (entry.dir, entry.name.rsplit_once('.')) {
+        (false, Some((s, _))) if !s.is_empty() => s.encode_utf16().count(),
+        _ => entry.name.encode_utf16().count(),
+    } as u32;
+    input.on_load(move |el| {
+        request_animation_frame(move || {
+            let _ = el.focus();
+            let _ = el.set_selection_range(0, stem);
+        });
+    });
+    let name = entry.name.clone();
+    let e = StoredValue::new(entry);
+    let finish = move |keep: bool| {
+        if done.get_value() {
+            return;
+        }
+        done.set_value(true);
+        let new = input.get_untracked().map(|el| el.value()).unwrap_or_default();
+        if keep {
+            ctx.rename(p, e.get_value(), new);
+        } else {
+            p.renaming.set(None);
+        }
+    };
+    view! {
+        <input class="rename" node_ref=input value=name spellcheck="false" autocomplete="off"
+            on:click=|ev| ev.stop_propagation()
+            on:dblclick=|ev| ev.stop_propagation()
+            on:mousedown=|ev| ev.stop_propagation()
+            on:contextmenu=|ev| ev.stop_propagation()
+            on:keydown=move |ev| match ev.key().as_str() {
+                "Enter" => { ev.prevent_default(); finish(true) }
+                "Escape" => { ev.prevent_default(); ev.stop_propagation(); finish(false) }
+                _ => {}
+            }
+            on:blur=move |_| finish(true)/>
+    }
+}
+
 /// One pane: its toolbar (phone or Mac, the folder path, the view), its files, and its status bar.
 /// New folder, new file, upload and copy are in the context menu.
 #[component]
@@ -141,7 +183,12 @@ pub(super) fn PaneView(pane: Pane) -> impl IntoView {
     let active = move || ctx.active.get() == p.id;
     let filter_ref = NodeRef::<html::Input>::new();
     view! {
-        <section class="pane" class:active=active data-pane=p.id.to_string() on:mousedown=move |_| ctx.active.set(p.id)>
+        <section class="pane" class:active=active data-pane=p.id.to_string() on:mousedown=move |_| ctx.active.set(p.id)
+            // The left pane keeps the width it was dragged to; the right one takes the rest.
+            style=move || match ctx.pane_w.get() {
+                w if w > 0.0 && p.id == 0 && ctx.split.get() => format!("flex: 0 1 {w}px"),
+                _ => String::new(),
+            }>
             <div class="bar">
                 <button class="btn" title="Up (⌘↑)" disabled=move || p.cwd.get() == "/" on:click=move |_| ctx.go_up(p)>"↑"</button>
                 <div class="seg" role="group" aria-label="Show files on">
@@ -204,11 +251,23 @@ pub(super) fn PaneView(pane: Pane) -> impl IntoView {
                         on:click=move |_| ctx.set_split(false)>"✕"</button>
                 })}
             </div>
-            {move || match p.view.get() {
-                ViewMode::List => view! { <ListView pane=p/> }.into_any(),
-                ViewMode::Thumbs => view! { <ThumbView pane=p/> }.into_any(),
-                ViewMode::Columns => view! { <ColumnView pane=p/> }.into_any(),
-            }}
+            <div class="body">
+                <div class="files" class:beside=move || p.preview.get()
+                    style=move || match p.view_w.get() {
+                        w if w > 0.0 && p.preview.get() => format!("flex-basis: {w}px"),
+                        _ => String::new(),
+                    }>
+                    {move || match p.view.get() {
+                        ViewMode::List => view! { <ListView pane=p/> }.into_any(),
+                        ViewMode::Thumbs => view! { <ThumbView pane=p/> }.into_any(),
+                        ViewMode::Columns => view! { <ColumnView pane=p/> }.into_any(),
+                    }}
+                </div>
+                {move || p.preview.get().then(|| view! {
+                    <Grip size=p.view_w key=format!("yomi-files.view-w.{}", p.id) min=200.0 room=500.0/>
+                    <Preview pane=p/>
+                })}
+            </div>
             // Messages and questions about this pane, above its status bar.
             <Notices pane=p/>
             <ListStatus pane=p/>
@@ -376,6 +435,15 @@ pub(super) fn ListStatus(pane: Pane) -> impl IntoView {
                         class:active=move || p.view.get() == m on:click=move |_| ctx.set_view(p, m)>{m.glyph()}</button>
                 })}
             </div>
+            <button class="btn small preview-toggle" class:active=move || p.preview.get()
+                title=move || if p.preview.get() { "Hide the preview" } else { "Show the preview" } aria-label="Preview"
+                on:click=move |_| {
+                    let on = !p.preview.get_untracked();
+                    p.preview.set(on);
+                    store(&format!("yomi-files.preview.{}", p.id), if on { "1" } else { "0" });
+                }>
+                <svg viewBox="0 0 16 16" aria-hidden="true"><rect x="1.5" y="2.5" width="13" height="11" rx="1.5"/><path d="M9.5 2.5v11"/></svg>
+            </button>
         </div>
     }
 }

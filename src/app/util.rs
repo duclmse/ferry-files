@@ -175,6 +175,8 @@ pub(super) const SPLIT_KEY: &str = "yomi-files.split";
 pub(super) const HIDDEN_KEY: &str = "yomi-files.hidden";
 pub(super) const PHONE_THUMBS_KEY: &str = "yomi-files.phone-thumbs";
 pub(super) const AUTO_CONNECT_KEY: &str = "yomi-files.auto-connect";
+pub(super) const SIDE_W_KEY: &str = "yomi-files.side-w";
+pub(super) const PANE_W_KEY: &str = "yomi-files.pane-w";
 
 /// A setting kept in localStorage as "1" or "0".
 pub(super) fn stored_flag(key: &str, default: bool) -> bool {

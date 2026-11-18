@@ -13,11 +13,23 @@ pub(super) fn ListView(pane: Pane) -> impl IntoView {
             on:click=move |_| p.select_only(None) on:contextmenu=move |ev| ctx.show_menu(p, &ev, None)
             on:dragover=over on:drop=drop>
             <table>
+                // The name takes what's left; the others have the widths dragged on their left edge.
+                <colgroup>
+                    <col/>
+                    {LIST_W.iter().enumerate().map(|(n, &default)| view! {
+                        <col style=move || format!("width: {}px", match p.list_w[n].get() { w if w > 0.0 => w, _ => default })/>
+                    }).collect_view()}
+                </colgroup>
                 <thead><tr>
-                    {SortKey::ALL.map(|k| {
+                    {SortKey::ALL.into_iter().enumerate().map(|(i, k)| {
                         let num = matches!(k, SortKey::Date | SortKey::Size);
                         view! {
-                            <th class:num=num><button class="sort" title=format!("Sort by {}", k.label().to_lowercase())
+                            <th class:num=num>
+                                {(i > 0).then(|| view! {
+                                    <Grip size=p.list_w[i - 1] key=format!("yomi-files.list-w.{}.{}", p.id, i - 1)
+                                        min=50.0 max=400.0 target=Target::ParentLeft class="grip col-grip"/>
+                                })}
+                                <button class="sort" title=format!("Sort by {}", k.label().to_lowercase())
                                 on:click=move |_| p.set_sort(k)>
                                 {k.label()}
                                 <span class="arrow">{move || match p.sort.get() {
@@ -26,24 +38,25 @@ pub(super) fn ListView(pane: Pane) -> impl IntoView {
                                 }}</span>
                             </button></th>
                         }
-                    })}
+                    }).collect_view()}
                 </tr></thead>
                 <tbody>
                     <For each=move || p.entries.get() key=|e| (e.path.clone(), e.size, e.mtime) let(e)>
                         {
                             let k = kind(&e);
                             let path = e.path.clone();
+                            let editing = renaming(p, &e);
                             let (click, dbl, menu) = row_events(ctx, p, &e);
                             let where_ = p.found.get_untracked().is_some().then(|| parent(&e.path));
                             let (dir, key) = (e.dir.then(|| e.path.clone()), format!("{}:{}", p.id, e.path));
                             let (over, drop) = drop_events(ctx, p, dir.clone());
                             view! {
                                 <tr class:selected=move || p.is_picked(&path) class:drop=move || ctx.drop_at.get().as_deref() == Some(key.as_str())
-                                    draggable="true" data-dir=dir
+                                    draggable=move || (!editing()).to_string() data-dir=dir
                                     on:dragstart=drag_start(ctx, p, e.path.clone()) on:dragend=drag_end(ctx)
                                     on:dragover=move |ev| if e.dir { over(ev) } on:drop=move |ev| if e.dir { drop(ev) }
                                     on:click=click on:dblclick=dbl on:contextmenu=menu>
-                                    <td class="name" title=e.path.clone()><span class="icon">{icon(k)}</span>{e.name.clone()}
+                                    <td class="name" title=e.path.clone()><span class="icon">{icon(k)}</span><Name pane=p entry=e.clone()/>
                                         {where_.map(|w| view! { <span class="where">{w}</span> })}</td>
                                     <td class="kindcol">{kind_label(&e)}</td>
                                     <td class="num">{when(e.mtime)}</td>
@@ -57,6 +70,15 @@ pub(super) fn ListView(pane: Pane) -> impl IntoView {
             {empty_note(p)}
         </div>
     }
+}
+
+/// Default widths of the list's kind, date and size columns.
+const LIST_W: [f64; 3] = [110.0, 150.0, 90.0];
+
+/// Whether `e` is being renamed (tracked).
+fn renaming(p: Pane, e: &Entry) -> impl Fn() -> bool + Copy + 'static {
+    let path = StoredValue::new(e.path.clone());
+    move || p.renaming.with(|r| path.with_value(|x| r.as_ref() == Some(x)))
 }
 
 /// The file's icon, replaced by its thumbnail (an image, or an EPUB's cover) once that has loaded.
@@ -94,6 +116,7 @@ pub(super) fn ThumbView(pane: Pane) -> impl IntoView {
                 <For each=move || p.entries.get() key=|e| (e.path.clone(), e.size, e.mtime) let(e)>
                     {
                         let path = e.path.clone();
+                        let editing = renaming(p, &e);
                         let (click, dbl, menu) = row_events(ctx, p, &e);
                         let sub = if e.dir { "Folder".to_string() } else { human_size(e.size) };
                         let (dir, key) = (e.dir.then(|| e.path.clone()), format!("{}:{}", p.id, e.path));
@@ -102,12 +125,12 @@ pub(super) fn ThumbView(pane: Pane) -> impl IntoView {
                         view! {
                             <div class="tile" title=e.name.clone()
                                 class:selected=move || p.is_picked(&path) class:drop=move || ctx.drop_at.get().as_deref() == Some(key.as_str())
-                                draggable="true" data-dir=dir
+                                draggable=move || (!editing()).to_string() data-dir=dir
                                 on:dragstart=drag_start(ctx, p, e.path.clone()) on:dragend=drag_end(ctx)
                                 on:dragover=move |ev| if is_dir { over(ev) } on:drop=move |ev| if is_dir { drop(ev) }
                                 on:click=click on:dblclick=dbl on:contextmenu=menu>
                                 <div class="pic"><Thumbnail src=p.src.get_untracked() entry=e.clone()/></div>
-                                <div class="label">{e.name.clone()}</div>
+                                <div class="label"><Name pane=p entry=e.clone()/></div>
                                 <div class="sub">{sub}</div>
                             </div>
                         }
@@ -164,14 +187,32 @@ pub(super) fn ColumnView(pane: Pane) -> impl IntoView {
             <For each=move || { let s = p.src.get(); chain.get().into_iter().map(move |d| (s, d)).collect::<Vec<_>>() }
                 key=|(s, d)| (s.key(), d.clone()) let((_s, dir))>
                 <Column pane=p dir chain/>
+                <Grip size=p.col_w key=format!("yomi-files.col-w.{}", p.id) min=140.0 max=600.0 class="grip col-grip"/>
             </For>
-            {move || p.selected_entry().map(|e| {
-                let k = kind(&e);
-                let what = match k {
-                    Kind::Folder => "Folder", Kind::Epub => "EPUB book", Kind::Text => "Text file", Kind::Other => "File",
-                };
-                view! {
-                    <div class="preview">
+        </div>
+    }
+}
+
+/// What's selected, to the right of the files: a bigger picture, the video or audio itself, and
+/// details. Shown in every view; the button at the end of the status bar hides it.
+#[component]
+pub(super) fn Preview(pane: Pane) -> impl IntoView {
+    let p = pane;
+    // Only a different item rebuilds it, so a reload doesn't restart a playing video.
+    let sel = Memo::new(move |_| p.selected_entry());
+    view! {
+        <div class="preview">
+            {move || match sel.get() {
+                None => view! { <span class="hint">{move || match p.marked.with(Vec::len) {
+                    0 | 1 => "Pick an item to see it here.".to_string(),
+                    n => format!("{n} items picked."),
+                }}</span> }.into_any(),
+                Some(e) => {
+                    let k = kind(&e);
+                    let what = match k {
+                        Kind::Folder => "Folder", Kind::Epub => "EPUB book", Kind::Text => "Text file", Kind::Other => "File",
+                    };
+                    view! {
                         {
                             let src = p.src.get_untracked();
                             match media(&e) {
@@ -196,10 +237,10 @@ pub(super) fn ColumnView(pane: Pane) -> impl IntoView {
                             <dt>"Modified"</dt><dd>{when(e.mtime)}</dd>
                             <dt>"Where"</dt><dd class="path">{parent(&e.path)}</dd>
                         </dl>
-                        <span class="hint">{if e.dir { "Double-click or → to open" } else { "Double-click to open · right-click for more" }}</span>
-                    </div>
+                        <span class="hint">{if e.dir { "Double-click to open" } else { "Double-click to open · right-click for more" }}</span>
+                    }.into_any()
                 }
-            })}
+            }}
         </div>
     }
 }
@@ -227,6 +268,7 @@ pub(super) fn Column(pane: Pane, dir: String, chain: Memo<Vec<String>>) -> impl 
     let data_dir = dir.clone();
     view! {
         <div class="col" class:current=current on:contextmenu=bg_menu data-dir=data_dir
+            style=move || match p.col_w.get() { w if w > 0.0 => format!("flex-basis: {w}px"), _ => String::new() }
             class:drop=move || ctx.drop_at.get().as_deref() == Some(key.as_str())
             on:dragover=over on:drop=drop>
             {move || match entries() {
@@ -251,19 +293,20 @@ pub(super) fn Column(pane: Pane, dir: String, chain: Memo<Vec<String>>) -> impl 
                     let (fdir, key) = (e.dir.then(|| e.path.clone()), format!("{}:{}", p.id, e.path));
                     let (over, drop) = drop_events(ctx, p, fdir.clone());
                     let is_dir = e.dir;
+                    let editing = renaming(p, &e);
                     view! {
                         <div class="row"
                             class:open=move || open_child.get().as_deref() == Some(p1.as_str())
                             class:selected=move || current.get() && p.is_picked(&p2)
                             class:drop=move || ctx.drop_at.get().as_deref() == Some(key.as_str())
-                            draggable="true" data-dir=fdir
+                            draggable=move || (!editing()).to_string() data-dir=fdir
                             on:dragstart=drag_start(ctx, p, e.path.clone()) on:dragend=drag_end(ctx)
                             on:dragover=move |ev| if is_dir { over(ev) } on:drop=move |ev| if is_dir { drop(ev) }
                             on:click=click
                             on:dblclick=move |_| if !e2.dir { ctx.open(p, e2.clone()) }
                             on:contextmenu=move |ev| ctx.show_menu(p, &ev, Some(e.clone()))>
                             <span class="icon">{icon(k)}</span>
-                            <span class="name">{e.name.clone()}</span>
+                            <span class="name"><Name pane=p entry=e.clone()/></span>
                             {e.dir.then(|| view! { <span class="chev">"›"</span> })}
                         </div>
                     }

@@ -112,7 +112,7 @@ impl Ctx {
             v.push(MenuItem::Do { label: self.to_label(p, "Move", 1), key: "F6", act: Act::Move, danger: false, enabled });
         }
         let renamable = !(p.cwd.get_untracked() == "/" && self.src_info(p.src.get_untracked()).is_some_and(|i| i.transport == "mtp"));
-        v.push(MenuItem::Do { label: "Rename…".into(), key: "F2", act: Act::Rename, danger: false, enabled: renamable });
+        v.push(MenuItem::Do { label: "Rename".into(), key: "F2", act: Act::Rename, danger: false, enabled: renamable });
         if e.dir {
             let fav = if self.is_fav(p.src.get_untracked(), &e.path) { "Remove from Favourites" } else { "Add to Favourites" };
             v.push(item(fav, "", Act::Favourite));
@@ -130,7 +130,7 @@ impl Ctx {
             (Act::Download, Some(e)) => self.download(p, e.path),
             (Act::Copy, Some(_)) => self.send_to_other(p, false),
             (Act::Move, Some(_)) => self.send_to_other(p, true),
-            (Act::Rename, Some(e)) => p.notice.set(Notice::Rename(e)),
+            (Act::Rename, Some(e)) => p.renaming.set(Some(e.path)),
             (Act::QuickLook, Some(_)) => self.quick_look(p),
             (Act::Favourite, Some(e)) => self.toggle_fav(p.src.get_untracked(), e.path),
             (Act::Favourite, None) => self.toggle_fav(p.src.get_untracked(), p.cwd.get_untracked()),

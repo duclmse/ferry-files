@@ -110,16 +110,15 @@ impl Ctx {
     }
 
     pub(super) fn rename(self, p: Pane, e: Entry, name: String) {
+        p.renaming.set(None);
         let name = name.trim().to_string();
-        if name == e.name {
-            p.notice.set(Notice::None);
+        if name == e.name || name.is_empty() {
             return;
         }
         let src = p.src.get_untracked();
         spawn_local(async move {
             match call::<String>("rename", json!({ "src": src.key(), "path": e.path, "name": name })).await {
                 Ok(new) => {
-                    p.notice.set(Notice::None);
                     self.log(format!("Renamed {} to {}", e.name, base(&new)));
                     p.select_only(Some(new));
                     self.changed(src, &parent(&e.path));

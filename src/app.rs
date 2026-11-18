@@ -14,6 +14,7 @@ mod books;
 mod devices;
 mod editor;
 mod files;
+mod layout;
 mod menu;
 mod nav;
 mod pane;
@@ -26,6 +27,7 @@ mod views;
 use books::*;
 use devices::*;
 use editor::*;
+use layout::*;
 use menu::*;
 use pane::*;
 use safety::*;
@@ -220,7 +222,6 @@ enum Notice {
     Error(String),
     Ok(String),
     ConfirmDelete(Vec<Entry>),
-    Rename(Entry),
     /// The result of comparing this pane's folder with the other pane's, before syncing.
     Sync { report: CompareReport, from: (Src, String), to: (Src, String) },
     /// Asking for a name; `folder` says whether it's a new folder or a new text file.
@@ -270,6 +271,15 @@ struct Pane {
     root: RwSignal<String>,
     /// Set before opening a sidebar place: that folder becomes the column view's first column.
     reroot: StoredValue<bool>,
+    /// The item whose name is being edited in place.
+    renaming: RwSignal<Option<String>>,
+    /// Whether the preview is shown to the right of the files.
+    preview: RwSignal<bool>,
+    /// Widths the user dragged (0: the default): the files beside the preview, the column view's
+    /// columns, and the list's kind, date and size columns.
+    view_w: RwSignal<f64>,
+    col_w: RwSignal<f64>,
+    list_w: [RwSignal<f64>; 3],
 }
 
 impl Pane {
@@ -292,6 +302,11 @@ impl Pane {
             last: StoredValue::new(HashMap::new()),
             root: RwSignal::new(String::new()),
             reroot: StoredValue::new(false),
+            renaming: RwSignal::new(None),
+            preview: RwSignal::new(stored_flag(&format!("yomi-files.preview.{id}"), true)),
+            view_w: stored_px(&format!("yomi-files.view-w.{id}")),
+            col_w: stored_px(&format!("yomi-files.col-w.{id}")),
+            list_w: [0, 1, 2].map(|n| stored_px(&format!("yomi-files.list-w.{id}.{n}"))),
         }
     }
 
@@ -449,6 +464,9 @@ struct Ctx {
     drag: StoredValue<Option<(Src, Vec<String>)>>,
     /// Where a drag would drop now ("pane:folder"), to highlight it.
     drop_at: RwSignal<Option<String>>,
+    /// Widths the user dragged (0: the default): the sidebar, and the left pane when there are two.
+    side_w: RwSignal<f64>,
+    pane_w: RwSignal<f64>,
 }
 
 impl Ctx {
@@ -484,6 +502,8 @@ impl Ctx {
             favs: RwSignal::new(stored(FAVS_KEY).and_then(|s| serde_json::from_str(&s).ok()).unwrap_or_default()),
             drag: StoredValue::new(None),
             drop_at: RwSignal::new(None),
+            side_w: stored_px(SIDE_W_KEY),
+            pane_w: stored_px(PANE_W_KEY),
         }
     }
 
@@ -676,7 +696,7 @@ pub fn App() -> impl IntoView {
             ("F2", _) => {
                 if let [x] = p.picked().as_slice() {
                     e.prevent_default();
-                    p.notice.set(Notice::Rename(x.clone()));
+                    p.renaming.set(Some(x.path.clone()));
                 }
             }
             ("a", true) => {
@@ -812,13 +832,20 @@ fn Browser() -> impl IntoView {
     let ctx = expect_context::<Ctx>();
     let ep = ctx.ep;
     move || if ep.book.with(|b| b.is_some()) { view! { <crate::epub::EpubEditor/> }.into_any() } else { view! {
-        <div class="app">
+        <div class="app browse" style=move || match ctx.side_w.get() {
+            w if w > 0.0 => format!("grid-template-columns: {w}px auto 1fr"),
+            _ => String::new(),
+        }>
             <Sidebar/>
+            <Grip size=ctx.side_w key=SIDE_W_KEY.into() min=160.0 max=480.0 room=480.0 class="grip side-grip"/>
             <div class="main">
                 {move || if ctx.editor.get().is_some() { view! { <TextEditor/> }.into_any() } else { view! {
                     <div class="panes">
                         <PaneView pane=ctx.panes[0]/>
-                        {move || ctx.split.get().then(|| view! { <PaneView pane=ctx.panes[1]/> })}
+                        {move || ctx.split.get().then(|| view! {
+                            <Grip size=ctx.pane_w key=PANE_W_KEY.into() min=240.0 room=240.0 class="grip pane-grip"/>
+                            <PaneView pane=ctx.panes[1]/>
+                        })}
                     </div>
                 }.into_any() }}
                 <TransferBar/>

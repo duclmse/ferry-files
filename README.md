@@ -10,10 +10,15 @@ copied between them.
   device (💻, then one 📱 per device, in its toolbar), as a list, as thumbnails
   (images and EPUB covers), or in columns (buttons at the right of the pane's
   status bar).
-- In columns, the preview plays videos and audio, and shows GIF, HEIC, AVIF
-  and SVG images, straight from the device without copying them first.
+- The preview, to the right of the files in every view (the last button in
+  the status bar shows or hides it), shows the selected item: a bigger
+  picture, details, and videos and audio that play straight from the device
+  without copying them first (GIF, HEIC, AVIF and SVG images too).
+- Drag the edges to resize the sidebar, the two panes, the files beside the
+  preview, the column view's columns and the list's columns; double-click an
+  edge for its default width. The sizes are remembered.
 - Right-click a file or folder for open, Quick Look, download, copy (F5) or move
-  (F6) to the other pane, rename (F2), favourites and delete; right-click empty
+  (F6) to the other pane, rename (F2, in place: Enter keeps it, Escape cancels), favourites and delete; right-click empty
   space for new folder, new file, upload, the books in the folder, sync to the
   other pane, favourites, refresh, the view options and the second pane. Each
   pane's status bar shows the folder's contents, the picked items and their

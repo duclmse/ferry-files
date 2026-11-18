@@ -79,3 +79,8 @@ textarea {
   grid-template-columns: 220px 1fr;
   height: 100vh;
 }
+
+/* The sidebar, its drag handle, and the panes. */
+.app.browse {
+  grid-template-columns: 220px auto 1fr;
+}

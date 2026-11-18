@@ -232,7 +232,8 @@
 }
 
 .preview {
-  flex: 0 0 260px;
+  flex: 1 1 0;
+  min-width: 500px;
   display: flex;
   flex-direction: column;
   align-items: center;
@@ -253,8 +254,8 @@
 }
 
 .preview .pic {
-  width: 200px;
-  height: 200px;
+  width: min(100%, 320px);
+  height: 280px;
 }
 
 .preview .pic img.full {
@@ -270,12 +271,16 @@
 }
 
 .preview video.play {
-  max-height: 240px;
+  max-height: 60vh;
   background: var(--line);
 }
 
 .preview .pic .glyph {
-  font-size: 96px;
+  font-size: 120px;
+}
+
+.preview .hint:only-child {
+  margin: auto;
 }
 
 .preview .name {
@@ -283,6 +288,7 @@
 }
 
 .preview dl {
+  max-width: 420px;
   display: grid;
   grid-template-columns: auto 1fr;
   gap: 4px 10px;
@@ -330,17 +336,13 @@
 
 .pane {
   flex: 1 1 0;
-  min-width: 0;
+  min-width: 240px;
   display: flex;
   flex-direction: column;
   border-top: 2px solid transparent;
 }
 
-.pane + .pane {
-  border-left: 1px solid var(--line);
-}
-
-.panes:has(.pane + .pane) .pane.active {
+.panes:has(.pane ~ .pane) .pane.active {
   border-top-color: var(--accent);
 }
 
@@ -361,4 +363,153 @@
 
 .bar .btn.active {
   background: var(--sel);
+}
+
+/* A pane's files, and the preview to their right taking the rest of the width. */
+.pane .body {
+  flex: 1;
+  display: flex;
+  min-height: 0;
+  overflow-x: auto;
+}
+
+.pane .files {
+  flex: 1 1 0;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+}
+
+.pane .files.beside {
+  flex: 0 1 45%;
+  min-width: 200px;
+}
+
+.pane .body > .grip {
+  border-left: 1px solid var(--line);
+}
+
+.statusbar .preview-toggle {
+  display: inline-flex;
+  align-items: center;
+  padding: 2px 6px;
+}
+
+.statusbar .preview-toggle svg {
+  width: 14px;
+  height: 14px;
+  fill: none;
+  stroke: currentColor;
+  stroke-width: 1.3;
+}
+
+.statusbar .preview-toggle.active {
+  background: var(--sel);
+  color: var(--accent);
+}
+
+/* Drag handles. A thin line with a wider area to grab. */
+.grip {
+  position: relative;
+  flex: 0 0 auto;
+  width: 0;
+  cursor: col-resize;
+  z-index: 2;
+}
+
+.grip::after {
+  content: "";
+  position: absolute;
+  inset: 0 -4px;
+}
+
+.grip:hover::before,
+body.resizing .grip:active::before {
+  content: "";
+  position: absolute;
+  inset: 0 -1px;
+  background: var(--accent);
+}
+
+/* The line between the two panes stands out, with a grab mark in the middle. */
+.grip.pane-grip {
+  width: 6px;
+  background: var(--line);
+  border-left: 1px solid color-mix(in srgb, var(--ink) 18%, transparent);
+  border-right: 1px solid color-mix(in srgb, var(--ink) 18%, transparent);
+}
+
+.grip.pane-grip::before {
+  content: "";
+  position: absolute;
+  left: 1px;
+  right: 1px;
+  top: calc(50% - 14px);
+  height: 28px;
+  border-radius: 2px;
+  background: var(--muted);
+  opacity: 0.6;
+}
+
+.grip.pane-grip:hover,
+body.resizing .grip.pane-grip:active {
+  background: var(--accent);
+  border-color: var(--accent);
+}
+
+.grip.pane-grip:hover::before {
+  inset: auto 1px;
+  top: calc(50% - 14px);
+  background: var(--accent-ink);
+}
+
+/* Inside a list header: on the cell's left edge. */
+.grip.col-grip {
+  align-self: stretch;
+}
+
+th .grip.col-grip {
+  position: absolute;
+  left: 0;
+  top: 0;
+  bottom: 0;
+}
+
+/* Between column view columns: their border is the line. */
+.columns .grip.col-grip {
+  margin-left: -1px;
+}
+
+body.resizing,
+body.resizing * {
+  cursor: col-resize !important;
+  user-select: none !important;
+}
+
+body.resizing iframe,
+body.resizing video {
+  pointer-events: none;
+}
+
+/* Renaming in place. */
+input.rename {
+  font: inherit;
+  width: 100%;
+  min-width: 60px;
+  padding: 1px 4px;
+  margin: -2px 0;
+  border: 1px solid var(--accent);
+  border-radius: 4px;
+  background: var(--panel);
+  color: var(--ink);
+  outline: 2px solid color-mix(in srgb, var(--accent) 30%, transparent);
+}
+
+td.name input.rename {
+  width: calc(100% - 24px);
+}
+
+.tile .label input.rename {
+  text-align: center;
+  font-size: 12px;
 }

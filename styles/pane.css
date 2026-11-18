@@ -132,10 +132,12 @@
 table {
   width: 100%;
   border-collapse: collapse;
+  table-layout: fixed;
 }
 
 thead th {
   position: sticky;
+  z-index: 1;
   top: 0;
   background: var(--bg);
   text-align: left;
@@ -150,6 +152,8 @@ td {
   padding: 6px 12px;
   border-bottom: 1px solid var(--line);
   white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
 }
 
 tbody tr {
@@ -165,7 +169,6 @@ tbody tr.selected td {
 }
 
 td.name {
-  width: 100%;
   white-space: normal;
   word-break: break-all;
 }
