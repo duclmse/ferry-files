@@ -178,38 +178,3 @@ td.name .where {
   padding: 0 8px;
   font-size: 11px;
 }
-
-/* Favourites in the sidebar. */
-.side .fav {
-  display: flex;
-  align-items: center;
-  min-width: 0;
-}
-
-.side .fav .item {
-  flex: 1;
-  min-width: 0;
-}
-
-.side .fav .item::before {
-  content: "★ ";
-  color: var(--muted);
-}
-
-.side .fav .item.off {
-  color: var(--muted);
-}
-
-.side .fav .unfav {
-  border: 0;
-  background: none;
-  color: var(--muted);
-  cursor: pointer;
-  padding: 0 6px;
-  visibility: hidden;
-  font-size: 11px;
-}
-
-.side .fav:hover .unfav {
-  visibility: visible;
-}

@@ -191,7 +191,7 @@ fn TreeNode(
     let fold_tip = move || if open.get() { "Hide folders" } else { "Show folders" };
     let title = tip.unwrap_or_else(|| path.clone());
     view! {
-        <div class=format!("tree-row {class}") style=format!("padding-left: {}px", depth * 14)>
+        <div class=format!("tree-row {class}") style=format!("--depth: {depth}")>
             <button class="twisty" class:none=leaf title=fold_tip aria-label=fold_tip
                 aria-expanded=move || open.get().to_string() on:click=toggle>
                 <span class="chev" class:open=move || open.get()>"▸"</span>

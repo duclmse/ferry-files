@@ -1,90 +1,157 @@
 .side {
+  --row: 26px;
+  --indent: 16px;
+  --twisty: 16px;
   background: var(--panel);
   border-right: 1px solid var(--line);
-  padding: 14px 10px;
+  padding: 8px 8px 12px;
   display: flex;
   flex-direction: column;
   gap: 1px;
   overflow: auto;
 }
 
+/* Every row lines up on one grid: a column for ▸, then the name, indented one step per level.
+   Section titles, devices and folders all start their text at the same place. */
+.side h2,
+.device,
+.tree-row {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  min-width: 0;
+  min-height: var(--row);
+  padding: 0 4px 0 calc(6px + var(--depth, 0) * var(--indent));
+  border-radius: 6px;
+}
+
+/* Section titles. */
 .side h2 {
+  margin: 12px 0 2px;
   font-size: 11px;
+  font-weight: 600;
   text-transform: uppercase;
   letter-spacing: 0.04em;
   color: var(--muted);
-  margin: 10px 8px 2px;
-  font-weight: 600;
 }
 
-.device {
-  display: flex;
-  align-items: center;
-  gap: 6px;
-  padding: 0 4px 2px 2px;
+.side h2:first-child {
+  margin-top: 0;
 }
 
-/* The chevron that folds a device's folders away. */
-.device .fold {
-  flex: none;
-  width: 18px;
-  height: 22px;
-  margin-right: -4px;
-  border: 0;
-  background: none;
-  padding: 0;
-  border-radius: 4px;
-  color: var(--muted);
-  cursor: pointer;
-}
-
-.device .fold:hover:not(:disabled) {
-  color: var(--ink);
-  background: var(--hover);
-}
-
-.device .fold.none {
-  visibility: hidden;
-}
-
-.device .chev {
-  display: inline-block;
-  font-size: 14px;
-  line-height: 1;
-  transition: transform 0.12s;
-}
-
-.device .chev.open {
-  transform: rotate(90deg);
-}
-
-.dev-dirs {
-  display: flex;
-  flex-direction: column;
-  gap: 1px;
-}
-
-.device .name {
+.side h2 .fold {
   flex: 1;
   min-width: 0;
   display: flex;
   align-items: center;
-  gap: 6px;
+  gap: 4px;
+  min-height: var(--row);
   border: 0;
   background: none;
-  padding: 3px 6px;
-  margin-left: -6px;
-  border-radius: 6px;
+  padding: 0;
+  font: inherit;
+  color: inherit;
+  text-transform: inherit;
+  letter-spacing: inherit;
   cursor: pointer;
   text-align: left;
 }
 
-.device .name:hover {
+.side h2 .fold:hover {
+  color: var(--ink);
+}
+
+/* ▸, turned when open. */
+.side .chev {
+  display: inline-block;
+  width: var(--twisty);
+  font-size: 13px;
+  line-height: 1;
+  text-align: center;
+  color: var(--muted);
+  transition: transform 0.12s;
+}
+
+.side .chev.open {
+  transform: rotate(90deg);
+}
+
+.device .fold,
+.tree-row .twisty {
+  flex: none;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: var(--twisty);
+  height: 20px;
+  border: 0;
+  background: none;
+  padding: 0;
+  border-radius: 4px;
+  cursor: pointer;
+}
+
+.device .fold:hover:not(:disabled) .chev,
+.tree-row .twisty:hover .chev {
+  color: var(--ink);
+}
+
+.device .fold.none,
+.tree-row .twisty.none {
+  visibility: hidden;
+}
+
+/* The whole row highlights, not only its name. */
+.device:hover,
+.tree-row:hover {
   background: var(--hover);
 }
 
-.device .name.active {
+.device:has(.name.active),
+.tree-row:has(.item.active) {
   background: var(--sel);
+}
+
+.device .name,
+.tree-row .item {
+  flex: 1;
+  min-width: 0;
+  min-height: var(--row);
+  border: 0;
+  background: none;
+  padding: 0;
+  color: var(--ink);
+  font: inherit;
+  text-align: left;
+  cursor: pointer;
+}
+
+.device .name {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.tree-row .item {
+  display: block;
+  line-height: var(--row);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.tree-row .item.active {
+  font-weight: 600;
+}
+
+.tree-row .item.off {
+  color: var(--muted);
+  cursor: default;
+}
+
+/* A device: a little room above it, its name bolder. */
+.device {
+  margin-top: 2px;
 }
 
 .device b {
@@ -96,25 +163,73 @@
 }
 
 .device .kind {
-  margin-left: 0;
   flex: none;
+  color: var(--muted);
   text-transform: uppercase;
   font-size: 10px;
   letter-spacing: 0.03em;
 }
 
-.device .eject {
-  border: 0;
-  background: none;
-  border-radius: 6px;
-  padding: 2px 6px;
-  cursor: pointer;
-  color: var(--muted);
-  font-size: 14px;
+.dev-dirs {
+  display: flex;
+  flex-direction: column;
+  gap: 1px;
 }
 
-.device .eject:hover {
-  background: var(--hover);
+/* Marks before favourites and disks, in a column of their own. */
+.side .fav .item::before,
+.side .drive .item::before {
+  display: inline-block;
+  width: 14px;
+  margin-right: 4px;
+  color: var(--muted);
+  text-align: center;
+}
+
+.side .fav .item::before {
+  content: "★";
+}
+
+.side .drive .item::before {
+  content: "⛁";
+}
+
+/* Buttons at the end of a row: ⏏ on a device always; eject and remove on hover. */
+.device .eject,
+.tree-row .act,
+.tree-row .unfav {
+  flex: none;
+  height: 20px;
+  border: 0;
+  background: none;
+  border-radius: 4px;
+  padding: 0 5px;
+  color: var(--muted);
+  cursor: pointer;
+}
+
+.tree-row .act,
+.tree-row .unfav {
+  visibility: hidden;
+}
+
+.tree-row:hover .act,
+.tree-row:hover .unfav {
+  visibility: visible;
+}
+
+.tree-row .unfav {
+  font-size: 11px;
+}
+
+.device .eject {
+  font-size: 13px;
+}
+
+.device .eject:hover,
+.tree-row .act:hover,
+.tree-row .unfav:hover {
+  background: var(--panel);
   color: var(--ink);
 }
 
@@ -142,13 +257,13 @@
 }
 
 .side .hint {
-  margin: 2px 8px 6px;
+  margin: 2px 6px 6px 26px;
   font-size: 12px;
   color: var(--muted);
 }
 
 .side .error {
-  margin: 2px 8px 6px;
+  margin: 2px 6px 6px 26px;
   font-size: 12px;
   color: var(--danger);
   -webkit-user-select: text;
@@ -160,7 +275,7 @@
   display: flex;
   flex-direction: column;
   gap: 6px;
-  padding: 2px 8px 6px;
+  padding: 2px 6px 6px 26px;
 }
 
 .found b {
@@ -194,145 +309,10 @@
   cursor: default;
 }
 
-.side .item {
-  text-align: left;
-  border: 0;
-  background: none;
-  padding: 3px 8px;
-  border-radius: 6px;
-  cursor: pointer;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-
-.side .item:hover {
-  background: var(--hover);
-}
-
-.side .drive {
-  display: flex;
-  align-items: center;
-  min-width: 0;
-}
-
-.side .drive .item {
-  flex: 1;
-  min-width: 0;
-}
-
-.side .drive .act {
-  border: 0;
-  background: none;
-  color: var(--muted);
-  cursor: pointer;
-  padding: 0 6px;
-  border-radius: 6px;
-  visibility: hidden;
-}
-
-.side .drive:hover .act {
-  visibility: visible;
-}
-
-.side .drive .act:hover {
-  background: var(--hover);
-  color: var(--ink);
-}
-
-.side .drive .item::before {
-  content: "⛁";
-  margin-right: 6px;
-  color: var(--muted);
-}
-
-.side .item.active {
-  background: var(--sel);
-  font-weight: 600;
-}
-
 .side .grow {
   flex: 1;
 }
 
-.side h2 .fold {
-  display: flex;
-  align-items: center;
-  gap: 5px;
-  width: 100%;
-  border: 0;
-  background: none;
-  padding: 2px 0;
-  margin-left: -2px;
-  font: inherit;
-  color: inherit;
-  text-transform: inherit;
-  letter-spacing: inherit;
-  cursor: pointer;
-  text-align: left;
-}
-
-.side h2 .fold:hover {
-  color: var(--ink);
-}
-
-.side h2 .chev {
-  display: inline-block;
-  width: 14px;
-  font-size: 14px;
-  line-height: 1;
-  text-align: center;
-  transition: transform 0.12s;
-}
-
-.side h2 .chev.open {
-  transform: rotate(90deg);
-}
-
 .side > .btn {
   margin-top: 4px;
-}
-
-/* A folder in the sidebar, indented by its depth, with ▸ to show the folders in it. */
-.tree-row {
-  display: flex;
-  align-items: center;
-  min-width: 0;
-}
-
-.tree-row .item {
-  flex: 1;
-  min-width: 0;
-}
-
-.tree-row .twisty {
-  flex: none;
-  width: 18px;
-  height: 22px;
-  border: 0;
-  background: none;
-  padding: 0;
-  border-radius: 4px;
-  color: var(--muted);
-  cursor: pointer;
-}
-
-.tree-row .twisty:hover {
-  color: var(--ink);
-  background: var(--hover);
-}
-
-.tree-row .twisty.none {
-  visibility: hidden;
-}
-
-.tree-row .chev {
-  display: inline-block;
-  font-size: 14px;
-  line-height: 1;
-  transition: transform 0.12s;
-}
-
-.tree-row .chev.open {
-  transform: rotate(90deg);
 }
