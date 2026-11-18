@@ -26,7 +26,7 @@
     "allow-quick-look",
     "allow-find",
     "allow-transfer",
-    "allow-cancel-transfer", "allow-compare", "allow-sync",
+    "allow-cancel-transfer", "allow-compare", "allow-sync", "allow-library", "allow-book-info", "allow-book-check", "allow-book-change", "allow-book-shrink",
     "allow-rename",
     "allow-space",
     "allow-open-file",

@@ -1,4 +1,5 @@
 pub mod adb;
+pub mod books;
 pub mod device;
 pub mod epub;
 pub mod local;
@@ -945,6 +946,97 @@ async fn clear_cache(which: String) -> Result<(), String> {
     .await
 }
 
+// ----- Books, many at a time -----
+
+/// Every EPUB under `dir`, nearest first.
+#[tauri::command(rename_all = "snake_case")]
+async fn library(state: State<'_, AppState>, src: String, dir: String, hidden: bool) -> Result<Matches, String> {
+    let dev = state.source(Some(&src))?;
+    blocking(move || {
+        let mut m = find_in(&dev, &dir, ".epub", hidden, 5000, std::time::Duration::from_secs(90));
+        m.entries.retain(|e| !e.dir && e.name.to_lowercase().ends_with(".epub"));
+        Ok(m)
+    })
+    .await
+}
+
+/// A book's title, authors and so on, for the library. Remembered on the Mac until the file changes.
+#[tauri::command(rename_all = "snake_case")]
+async fn book_info(state: State<'_, AppState>, src: String, path: String, size: u64, mtime: i64) -> Result<books::Info, String> {
+    if let Some(i) = books::cached(&src, &path, size, mtime) {
+        return Ok(i);
+    }
+    let dev = state.source(Some(&src))?;
+    blocking(move || {
+        let info = match dev.read(&path) {
+            Ok((data, _)) => books::info(&data, &path),
+            Err(e) => return Err(msg(e)),
+        };
+        books::remember(&src, &path, size, mtime, &info);
+        Ok(info)
+    })
+    .await
+}
+
+#[tauri::command(rename_all = "snake_case")]
+async fn book_check(state: State<'_, AppState>, src: String, path: String) -> Result<Vec<epub::Issue>, String> {
+    let dev = state.source(Some(&src))?;
+    blocking(move || {
+        let (data, _) = dev.read(&path).map_err(msg)?;
+        Ok(books::check(&data, &path))
+    })
+    .await
+}
+
+#[derive(Serialize)]
+struct Changed {
+    changed: bool,
+    backup: bool,
+}
+
+/// Changes a book's info (see `books::Change`) and writes it back, backing up the old file.
+#[tauri::command(rename_all = "snake_case")]
+async fn book_change(state: State<'_, AppState>, src: String, path: String, change: books::Change) -> Result<Changed, String> {
+    let dev = state.source(Some(&src))?;
+    blocking(move || {
+        let (data, version) = dev.read(&path).map_err(msg)?;
+        let Some(new) = books::change(&data, &path, &change)? else {
+            return Ok(Changed { changed: false, backup: false });
+        };
+        let r = dev.write(&path, &new, Some(&version), false).map_err(msg)?;
+        Ok(Changed { changed: true, backup: r.backup.is_some() })
+    })
+    .await
+}
+
+#[derive(Serialize)]
+struct ShrinkResult {
+    #[serde(flatten)]
+    shrunk: books::Shrunk,
+    /// The smaller copy, made next to the book; None when it wouldn't be smaller.
+    path: Option<String>,
+}
+
+/// Makes a smaller copy of a book next to it, named "… (smaller).epub". The book itself is left alone.
+#[tauri::command(rename_all = "snake_case")]
+async fn book_shrink(state: State<'_, AppState>, src: String, path: String, max_side: u32, quality: u8) -> Result<ShrinkResult, String> {
+    let dev = state.source(Some(&src))?;
+    blocking(move || {
+        let (data, _) = dev.read(&path).map_err(msg)?;
+        let (bytes, shrunk) = books::shrink(&data, &path, max_side.max(200), quality.clamp(30, 95))?;
+        if shrunk.after >= shrunk.before {
+            return Ok(ShrinkResult { shrunk, path: None });
+        }
+        let to = device::join(&device::dirname(&path), &books::smaller_name(device::basename(&path)));
+        dev.write(&to, &bytes, None, true).map_err(|e| match e {
+            DevError::Conflict(_) => format!("{} is already there. Delete or rename it first.", device::basename(&to)),
+            e => e.to_string(),
+        })?;
+        Ok(ShrinkResult { shrunk, path: Some(to) })
+    })
+    .await
+}
+
 // ----- EPUB editor -----
 // A book is read from the device once, edited in memory, and written back by epub_save.
 
@@ -1132,7 +1224,7 @@ pub fn run() {
         })
         .invoke_handler(tauri::generate_handler![
             devices, connect, disconnect, connections, info, list, refresh, read_text, write_text, mkdir, remove, download,
-            upload, backups, restore, eject, quick_look, find, transfer, cancel_transfer, compare, sync, rename, space, open_file, app_folders, open_folder, clear_cache, epub_open, epub_chapter, epub_set_source, epub_set_body, epub_set_meta, epub_cover, epub_find,
+            upload, backups, restore, eject, quick_look, find, transfer, cancel_transfer, compare, sync, library, book_info, book_check, book_change, book_shrink, rename, space, open_file, app_folders, open_folder, clear_cache, epub_open, epub_chapter, epub_set_source, epub_set_body, epub_set_meta, epub_cover, epub_find,
             epub_replace, epub_save, epub_export, epub_close
         ])
         .run(tauri::generate_context!())

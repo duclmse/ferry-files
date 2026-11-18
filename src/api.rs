@@ -43,6 +43,24 @@ pub struct TransferReport {
     pub backups: Vec<String>,
 }
 
+/// A book's info, for the library.
+#[derive(Clone, Debug, Default, PartialEq, Deserialize)]
+pub struct BookInfo {
+    pub title: String,
+    pub creators: Vec<String>,
+    pub language: String,
+    pub publisher: String,
+    pub subjects: Vec<String>,
+    pub problem: Option<String>,
+}
+
+/// Something wrong with a book.
+#[derive(Clone, Debug, PartialEq, Deserialize)]
+pub struct Issue {
+    pub serious: bool,
+    pub text: String,
+}
+
 /// What syncing one folder into another would copy.
 #[derive(Clone, Debug, PartialEq, Deserialize)]
 pub struct CompareReport {

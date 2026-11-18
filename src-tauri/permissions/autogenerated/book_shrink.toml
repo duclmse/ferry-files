@@ -1,0 +1,11 @@
+# Automatically generated - DO NOT EDIT!
+
+[[permission]]
+identifier = "allow-book-shrink"
+description = "Enables the book_shrink command without any pre-configured scope."
+commands.allow = ["book_shrink"]
+
+[[permission]]
+identifier = "deny-book-shrink"
+description = "Denies the book_shrink command without any pre-configured scope."
+commands.deny = ["book_shrink"]
