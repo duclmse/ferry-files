@@ -184,6 +184,8 @@ struct Menu {
     y: f64,
     pane: usize,
     entry: Option<Entry>,
+    /// The list's columns to show or hide, from a right-click on its header.
+    columns: bool,
 }
 
 #[derive(Clone, Copy, PartialEq)]
@@ -210,6 +212,9 @@ enum Act {
     CopyName,
     CopyPath,
     ShowAs(PeekAs),
+    /// Shows or hides one of the list's columns (an index into `LIST_COLS`).
+    Column(usize),
+    ResetColumns,
 }
 
 enum MenuItem {
@@ -286,6 +291,9 @@ struct Pane {
     /// Widths of the column view's columns, by folder, for this session.
     col_ws: StoredValue<HashMap<String, f64>>,
     list_w: [RwSignal<f64>; 3],
+    /// The list's columns after the name, in order (indexes into `LIST_COLS`); missing ones are
+    /// hidden.
+    list_cols: RwSignal<Vec<usize>>,
     /// A file the preview shows as text or bytes, whatever its type, from the context menu.
     peek_as: RwSignal<Option<(String, PeekAs)>>,
     /// Whether the path above the files is being typed in.
@@ -317,6 +325,7 @@ impl Pane {
             view_w: stored_px(&format!("yomi-files.view-w.{id}")),
             col_ws: StoredValue::new(HashMap::new()),
             list_w: [0, 1, 2].map(|n| stored_px(&format!("yomi-files.list-w.{id}.{n}"))),
+            list_cols: RwSignal::new(stored_cols(id)),
             peek_as: RwSignal::new(None),
             editing_path: RwSignal::new(false),
         }

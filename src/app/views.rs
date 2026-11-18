@@ -8,37 +8,101 @@ pub(super) fn ListView(pane: Pane) -> impl IntoView {
     let p = pane;
     let (over, drop) = drop_events(ctx, p, None);
     let here = format!("{}:", p.id);
+    // Dragging a column header to another place: the column, and where it would go (a position
+    // in `list_cols`, 0 being right after the name).
+    let moving = RwSignal::new(None::<(usize, usize)>);
+    // Set once a drag has moved, so the click that ends it doesn't also sort.
+    let dragged = StoredValue::new(false);
+    let head = NodeRef::<html::Tr>::new();
+    let listeners = StoredValue::new_local(None::<(WindowListenerHandle, WindowListenerHandle)>);
+    let stop = move || {
+        if let Some((a, b)) = listeners.try_update_value(Option::take).flatten() {
+            a.remove();
+            b.remove();
+        }
+    };
+    on_cleanup(stop);
+    let start_move = move |ev: web_sys::MouseEvent, col: usize| {
+        if ev.button() != 0 {
+            return;
+        }
+        let x0 = ev.client_x();
+        dragged.set_value(false);
+        let moved = window_event_listener(ev::mousemove, move |e| {
+            if !dragged.get_value() && (e.client_x() - x0).abs() < 5 {
+                return;
+            }
+            dragged.set_value(true);
+            // Before the first header (after the name) whose middle is right of the pointer.
+            let Some(tr) = head.get_untracked() else { return };
+            let ths = tr.query_selector_all("th[data-col]").ok();
+            let mut at = 0;
+            if let Some(ths) = ths {
+                for n in 0..ths.length() {
+                    let Some(th) = ths.item(n).and_then(|t| t.dyn_into::<web_sys::Element>().ok()) else { continue };
+                    let r = th.get_bounding_client_rect();
+                    if (e.client_x() as f64) > r.left() + r.width() / 2.0 {
+                        at = n as usize + 1;
+                    }
+                }
+            }
+            moving.set(Some((col, at)));
+        });
+        let up = window_event_listener(ev::mouseup, move |_| {
+            if let Some((col, at)) = moving.get_untracked() {
+                let mut v = p.list_cols.get_untracked();
+                if let Some(from) = v.iter().position(|&c| c == col) {
+                    v.remove(from);
+                    v.insert(if at > from { at - 1 } else { at }.min(v.len()), col);
+                    p.set_list_cols(v);
+                }
+            }
+            moving.set(None);
+            stop();
+        });
+        stop();
+        listeners.set_value(Some((moved, up)));
+    };
+    // The drop mark: on the left of the header at that position, or the right of the last.
+    let mark = move |pos: usize, last: bool| {
+        moving.with(|m| match *m {
+            Some((_, at)) if at == pos => "drop-before",
+            Some((_, at)) if last && at == pos + 1 => "drop-after",
+            _ => "",
+        })
+    };
     view! {
         <div class="list" class:drop=move || ctx.drop_at.get().as_deref() == Some(here.as_str())
             on:click=move |_| p.select_only(None) on:contextmenu=move |ev| ctx.show_menu(p, &ev, None)
             on:dragover=over on:drop=drop>
-            <table>
+            <table class:moving=move || moving.with(Option::is_some)>
                 // The name takes what's left; the others have the widths dragged on their left edge.
                 <colgroup>
                     <col/>
-                    {LIST_W.iter().enumerate().map(|(n, &default)| view! {
-                        <col style=move || format!("width: {}px", match p.list_w[n].get() { w if w > 0.0 => w, _ => default })/>
+                    {move || p.list_cols.get().into_iter().map(|c| view! {
+                        <col style=move || format!("width: {}px", match p.list_w[c].get() { w if w > 0.0 => w, _ => LIST_W[c] })/>
                     }).collect_view()}
                 </colgroup>
-                <thead><tr>
-                    {SortKey::ALL.into_iter().enumerate().map(|(i, k)| {
-                        let num = matches!(k, SortKey::Date | SortKey::Size);
-                        view! {
-                            <th class:num=num>
-                                {(i > 0).then(|| view! {
-                                    <Grip size=p.list_w[i - 1] key=format!("yomi-files.list-w.{}.{}", p.id, i - 1)
+                <thead on:contextmenu=move |ev| ctx.show_columns_menu(p, &ev)><tr node_ref=head>
+                    <th>{sort_button(p, SortKey::Name, dragged)}</th>
+                    {move || {
+                        let cols = p.list_cols.get();
+                        let n = cols.len();
+                        cols.into_iter().enumerate().map(|(pos, c)| {
+                            let k = LIST_COLS[c];
+                            let num = matches!(k, SortKey::Date | SortKey::Size);
+                            view! {
+                                <th class:num=num data-col=c.to_string() class=move || mark(pos, pos + 1 == n)
+                                    class:lifted=move || moving.with(|m| m.is_some_and(|(m, _)| m == c))
+                                    title="Drag to move this column; right-click to choose columns"
+                                    on:mousedown=move |ev| start_move(ev, c)>
+                                    <Grip size=p.list_w[c] key=format!("yomi-files.list-w.{}.{}", p.id, c)
                                         min=50.0 max=400.0 target=Target::ParentLeft class="grip col-grip"/>
-                                })}
-                                <button class="sort" title=format!("Sort by {}", k.label().to_lowercase())
-                                on:click=move |_| p.set_sort(k)>
-                                {k.label()}
-                                <span class="arrow">{move || match p.sort.get() {
-                                    Sort(s, asc) if s == k => if asc { "▲" } else { "▼" },
-                                    _ => "",
-                                }}</span>
-                            </button></th>
-                        }
-                    }).collect_view()}
+                                    {sort_button(p, k, dragged)}
+                                </th>
+                            }
+                        }).collect_view()
+                    }}
                 </tr></thead>
                 <tbody>
                     <For each=move || p.entries.get() key=|e| (e.path.clone(), e.size, e.mtime) let(e)>
@@ -50,6 +114,7 @@ pub(super) fn ListView(pane: Pane) -> impl IntoView {
                             let where_ = p.found.get_untracked().is_some().then(|| parent(&e.path));
                             let (dir, key) = (e.dir.then(|| e.path.clone()), format!("{}:{}", p.id, e.path));
                             let (over, drop) = drop_events(ctx, p, dir.clone());
+                            let cells = [kind_label(&e), when(e.mtime), if e.dir { String::new() } else { human_size(e.size) }];
                             view! {
                                 <tr class:selected=move || p.is_picked(&path) class:drop=move || ctx.drop_at.get().as_deref() == Some(key.as_str())
                                     draggable=move || (!editing()).to_string() data-dir=dir
@@ -58,9 +123,9 @@ pub(super) fn ListView(pane: Pane) -> impl IntoView {
                                     on:click=click on:dblclick=dbl on:contextmenu=menu>
                                     <td class="name" title=e.path.clone()><span class="icon">{icon(k)}</span><Name pane=p entry=e.clone()/>
                                         {where_.map(|w| view! { <span class="where">{w}</span> })}</td>
-                                    <td class="kindcol">{kind_label(&e)}</td>
-                                    <td class="num">{when(e.mtime)}</td>
-                                    <td class="num">{if e.dir { String::new() } else { human_size(e.size) }}</td>
+                                    {move || p.list_cols.get().into_iter().map(|c| {
+                                        view! { <td class=if c == 0 { "kindcol" } else { "num" }>{cells[c].clone()}</td> }
+                                    }).collect_view()}
                                 </tr>
                             }
                         }
@@ -72,8 +137,47 @@ pub(super) fn ListView(pane: Pane) -> impl IntoView {
     }
 }
 
-/// Default widths of the list's kind, date and size columns.
+/// A column header's button: sorts by it, or turns the order around when it's already sorted by
+/// it. Not when it was just dragged.
+fn sort_button(p: Pane, k: SortKey, dragged: StoredValue<bool>) -> impl IntoView {
+    view! {
+        <button class="sort" title=format!("Sort by {}", k.label().to_lowercase())
+            on:click=move |_| if !dragged.get_value() { p.set_sort(k) }>
+            {k.label()}
+            <span class="arrow">{move || match p.sort.get() {
+                Sort(s, asc) if s == k => if asc { "▲" } else { "▼" },
+                _ => "",
+            }}</span>
+        </button>
+    }
+}
+
+/// The list's columns after the name, by index, and their default widths.
+pub(super) const LIST_COLS: [SortKey; 3] = [SortKey::Kind, SortKey::Date, SortKey::Size];
 const LIST_W: [f64; 3] = [110.0, 150.0, 90.0];
+
+/// The list's columns as last arranged for pane `id`: all of them, in order, at first.
+pub(super) fn stored_cols(id: usize) -> Vec<usize> {
+    let mut v: Vec<usize> = Vec::new();
+    match stored(&format!("yomi-files.list-cols.{id}")) {
+        Some(s) => {
+            for c in s.split(',').filter_map(|c| c.trim().parse::<usize>().ok()) {
+                if c < LIST_COLS.len() && !v.contains(&c) {
+                    v.push(c);
+                }
+            }
+        }
+        None => v = (0..LIST_COLS.len()).collect(),
+    }
+    v
+}
+
+impl Pane {
+    pub(super) fn set_list_cols(self, v: Vec<usize>) {
+        store(&format!("yomi-files.list-cols.{}", self.id), &v.iter().map(usize::to_string).collect::<Vec<_>>().join(","));
+        self.list_cols.set(v);
+    }
+}
 
 /// Whether `e` is being renamed (tracked).
 fn renaming(p: Pane, e: &Entry) -> impl Fn() -> bool + Copy + 'static {

@@ -46,7 +46,8 @@ copied between them.
   Finder, dragging to the same device moves and to another device copies; hold ⌥
   to copy or ⌘ to move. Files dragged in from Finder are copied.
 - Sort by clicking the list's column headers (name, kind, date, size; folders
-  first). The filter box in the pane's bar narrows the folder by name; Enter
+  first). Drag a column's heading to move it; right-click the headings (or
+  empty space in the list) to show or hide Kind, Modified and Size. The filter box in the pane's bar narrows the folder by name; Enter
   searches all its subfolders too, and "Back to folder" ends the search. ⌘F, ⌘K
   or / goes to the filter box, which offers the last 10 searches.
 - Click the empty part of the path above the files (or press ⌘L) to type a

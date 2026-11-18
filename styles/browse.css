@@ -63,6 +63,29 @@ th .sort .arrow {
   font-size: 8px;
 }
 
+/* Moving a column by dragging its heading: the heading being moved fades, and a line marks where
+   it would go. */
+th[data-col] {
+  cursor: grab;
+}
+
+table.moving,
+table.moving th .sort {
+  cursor: grabbing;
+}
+
+th.lifted {
+  opacity: 0.45;
+}
+
+th.drop-before {
+  box-shadow: inset 2px 0 0 var(--accent);
+}
+
+th.drop-after {
+  box-shadow: inset -2px 0 0 var(--accent);
+}
+
 td.kindcol {
   color: var(--muted);
   font-size: 12px;

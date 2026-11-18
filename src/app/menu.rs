@@ -19,7 +19,32 @@ impl Ctx {
         let (vw, vh) = (size(window().inner_width()), size(window().inner_height()));
         let x = (ev.client_x() as f64).min(vw - w - 4.0).max(4.0);
         let y = (ev.client_y() as f64).min(vh - h - 4.0).max(4.0);
-        self.menu.set(Some(Menu { x, y, pane: p.id, entry }));
+        self.menu.set(Some(Menu { x, y, pane: p.id, entry, columns: false }));
+    }
+
+    /// The list's columns to show or hide, from a right-click on its header.
+    pub(super) fn show_columns_menu(self, p: Pane, ev: &web_sys::MouseEvent) {
+        ev.prevent_default();
+        ev.stop_propagation();
+        self.active.set(p.id);
+        let rows = self.column_items(p).len() as f64;
+        let (w, h) = (220.0, rows * 28.0 + 12.0);
+        let size = |v: Result<wasm_bindgen::JsValue, _>| v.ok().and_then(|v| v.as_f64()).unwrap_or(800.0);
+        let (vw, vh) = (size(window().inner_width()), size(window().inner_height()));
+        let x = (ev.client_x() as f64).min(vw - w - 4.0).max(4.0);
+        let y = (ev.client_y() as f64).min(vh - h - 4.0).max(4.0);
+        self.menu.set(Some(Menu { x, y, pane: p.id, entry: None, columns: true }));
+    }
+
+    /// ✓ beside each of the list's columns that's shown; Name is always shown.
+    pub(super) fn column_items(self, p: Pane) -> Vec<MenuItem> {
+        let shown = p.list_cols.get_untracked();
+        let mut v = vec![MenuItem::Do { label: "✓ Name".into(), key: "", act: Act::Column(usize::MAX), danger: false, enabled: false }];
+        v.extend(LIST_COLS.iter().enumerate().map(|(c, k)| {
+            item(format!("{} {}", if shown.contains(&c) { "✓" } else { "\u{2003}" }, k.label()), "", Act::Column(c))
+        }));
+        v.extend([MenuItem::Sep, item("Default columns", "", Act::ResetColumns)]);
+        v
     }
 
     /// "Copy to the Mac", "Move 3 items to <folder>" (when both panes are on the same side).
@@ -67,6 +92,10 @@ impl Ctx {
             v.extend(ViewMode::ALL.map(|m| {
                 item(format!("{} as {}", if m == now { "✓" } else { "\u{2003}" }, m.label()), "", Act::View(m))
             }));
+            if now == ViewMode::List {
+                v.push(MenuItem::Sep);
+                v.extend(self.column_items(p));
+            }
             v.push(MenuItem::Sep);
             v.push(item(if split { "Hide second pane" } else { "Show second pane" }, "⌘\\", Act::Split));
             return v;
@@ -153,6 +182,21 @@ impl Ctx {
             (Act::Split, _) => self.set_split(!self.split.get_untracked()),
             (Act::CopyName, Some(e)) => copy_text(p, e.name),
             (Act::CopyPath, Some(e)) => copy_text(p, e.path),
+            (Act::Column(c), _) if c < LIST_COLS.len() => {
+                let mut v = p.list_cols.get_untracked();
+                match v.iter().position(|&x| x == c) {
+                    Some(i) => {
+                        v.remove(i);
+                    }
+                    // Back where it is by default, among those shown.
+                    None => {
+                        let at = v.iter().position(|&x| x > c).unwrap_or(v.len());
+                        v.insert(at, c);
+                    }
+                }
+                p.set_list_cols(v);
+            }
+            (Act::ResetColumns, _) => p.set_list_cols((0..LIST_COLS.len()).collect()),
             (Act::ShowAs(how), Some(e)) => {
                 p.peek_as.set(Some((e.path, how)));
                 p.preview.set(true);
@@ -167,7 +211,7 @@ pub(super) fn ContextMenu() -> impl IntoView {
     let ctx = expect_context::<Ctx>();
     move || ctx.menu.get().map(|m| {
         let p = ctx.panes[m.pane];
-        let items = ctx.menu_items(p, m.entry.as_ref());
+        let items = if m.columns { ctx.column_items(p) } else { ctx.menu_items(p, m.entry.as_ref()) };
         view! {
             <div class="menu" role="menu" style=format!("left:{}px;top:{}px", m.x, m.y)
                 on:contextmenu=|e| { e.prevent_default(); e.stop_propagation(); }>
