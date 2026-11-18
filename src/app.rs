@@ -1,7 +1,7 @@
 //! The file browser UI: connect screen, one or two panes of folders (each on the phone or the Mac,
 //! in a list, thumbnail or column view, with a context menu), and a text editor.
 
-use crate::api::{call, Devices, Entry, Info, TextFile, WriteResult};
+use crate::api::{call, CompareReport, Devices, Entry, FileDrop, Info, Progress, TextFile, TransferReport, UsbDevice, WriteResult};
 use leptos::ev;
 use leptos::html;
 use leptos::prelude::*;
@@ -95,28 +95,24 @@ fn icon(k: Kind) -> &'static str {
     }
 }
 
-/// Where a pane's files are: on the phone or on the Mac.
+/// Where a pane's files are: on the Mac, or on connected device n (the backend's "dn").
 #[derive(Clone, Copy, PartialEq, Eq, Hash)]
 enum Src {
-    Device,
     Mac,
+    Dev(u32),
 }
 
 impl Src {
     /// The name the backend's commands use.
-    fn key(self) -> &'static str {
+    fn key(self) -> String {
         match self {
-            Src::Device => "device",
-            Src::Mac => "mac",
+            Src::Mac => "mac".into(),
+            Src::Dev(n) => format!("d{n}"),
         }
     }
 
-    /// For sentences: "Saved to the phone."
-    fn place(self) -> &'static str {
-        match self {
-            Src::Device => "the phone",
-            Src::Mac => "the Mac",
-        }
+    fn of(id: &str) -> Src {
+        id.strip_prefix('d').and_then(|n| n.parse().ok()).map_or(Src::Mac, Src::Dev)
     }
 }
 
@@ -132,11 +128,21 @@ fn thumb_url(src: Src, e: &Entry) -> Option<String> {
     })
 }
 
-/// Every folder from "/" down to `path`, e.g. "/a/b" gives ["/", "/a", "/a/b"].
-fn ancestors(path: &str) -> Vec<String> {
-    let mut out = vec!["/".to_string()];
-    let mut acc = String::new();
-    for part in path.split('/').filter(|p| !p.is_empty()) {
+/// Whether `path` is `dir` or inside it.
+fn within(path: &str, dir: &str) -> bool {
+    let dir = dir.trim_end_matches('/');
+    path == dir || dir.is_empty() || path.strip_prefix(dir).is_some_and(|rest| rest.starts_with('/'))
+}
+
+/// Every folder from `root` down to `path`, e.g. ("/a", "/a/b/c") gives ["/a", "/a/b", "/a/b/c"].
+/// Just `path` when it isn't inside `root`.
+fn chain_from(root: &str, path: &str) -> Vec<String> {
+    if root.is_empty() || !within(path, root) {
+        return vec![path.to_string()];
+    }
+    let mut out = vec![root.to_string()];
+    let mut acc = root.trim_end_matches('/').to_string();
+    for part in path[acc.len()..].split('/').filter(|p| !p.is_empty()) {
         acc = format!("{acc}/{part}");
         out.push(acc.clone());
     }
@@ -211,6 +217,91 @@ impl ViewMode {
     }
 }
 
+#[derive(Clone, Copy, PartialEq)]
+enum SortKey {
+    Name,
+    Kind,
+    Date,
+    Size,
+}
+
+impl SortKey {
+    const ALL: [SortKey; 4] = [SortKey::Name, SortKey::Kind, SortKey::Date, SortKey::Size];
+
+    fn key(self) -> &'static str {
+        match self {
+            SortKey::Name => "name",
+            SortKey::Kind => "kind",
+            SortKey::Date => "date",
+            SortKey::Size => "size",
+        }
+    }
+
+    fn label(self) -> &'static str {
+        match self {
+            SortKey::Name => "Name",
+            SortKey::Kind => "Kind",
+            SortKey::Date => "Modified",
+            SortKey::Size => "Size",
+        }
+    }
+}
+
+/// How a pane sorts: by what, and whether ascending. Stored as e.g. "date:0".
+#[derive(Clone, Copy, PartialEq)]
+struct Sort(SortKey, bool);
+
+impl Sort {
+    fn storage_key(pane: usize) -> String {
+        format!("yomi-files.sort.{pane}")
+    }
+
+    fn stored(pane: usize) -> Self {
+        let saved = stored(&Self::storage_key(pane)).unwrap_or_default();
+        let (k, asc) = saved.split_once(':').unwrap_or(("name", "1"));
+        Sort(SortKey::ALL.into_iter().find(|s| s.key() == k).unwrap_or(SortKey::Name), asc != "0")
+    }
+
+    /// Folders first, then by the key (ties by name).
+    fn apply(self, es: &mut [Entry]) {
+        let Sort(key, asc) = self;
+        es.sort_by(|a, b| {
+            let by_name = || a.name.to_lowercase().cmp(&b.name.to_lowercase());
+            let o = match key {
+                SortKey::Name => by_name(),
+                SortKey::Kind => kind_label(a).cmp(&kind_label(b)).then_with(by_name),
+                SortKey::Date => a.mtime.cmp(&b.mtime).then_with(by_name),
+                SortKey::Size => a.size.cmp(&b.size).then_with(by_name),
+            };
+            b.dir.cmp(&a.dir).then(if asc { o } else { o.reverse() })
+        });
+    }
+}
+
+/// "Folder", "EPUB book", "Text", or the file's extension ("PDF").
+fn kind_label(e: &Entry) -> String {
+    match kind(e) {
+        Kind::Folder => "Folder".into(),
+        Kind::Epub => "EPUB book".into(),
+        Kind::Text => "Text".into(),
+        Kind::Other => match ext(&e.name) {
+            x if x.is_empty() => "File".into(),
+            x => x.to_uppercase(),
+        },
+    }
+}
+
+/// A folder in the sidebar's Favourites. `place` is "mac" or the device's transport and name
+/// ("adb:Pixel 7"), so it's found again when the device is connected another time.
+#[derive(Clone, PartialEq, serde::Serialize, serde::Deserialize)]
+struct Fav {
+    place: String,
+    label: String,
+    path: String,
+}
+
+const FAVS_KEY: &str = "yomi-files.favs";
+
 /// An open context menu: where it is, which pane it's for, and the file or folder it's for
 /// (None: the folder's background).
 #[derive(Clone, PartialEq)]
@@ -227,7 +318,12 @@ enum Act {
     OpenInApp,
     Download,
     Copy,
+    Move,
+    Rename,
+    QuickLook,
+    Favourite,
     Delete,
+    Sync,
     NewFolder,
     NewFile,
     Upload,
@@ -250,7 +346,10 @@ enum Notice {
     None,
     Error(String),
     Ok(String),
-    ConfirmDelete(Entry),
+    ConfirmDelete(Vec<Entry>),
+    Rename(Entry),
+    /// The result of comparing this pane's folder with the other pane's, before syncing.
+    Sync { report: CompareReport, from: (Src, String), to: (Src, String) },
     /// Asking for a name; `folder` says whether it's a new folder or a new text file.
     NewItem { folder: bool },
 }
@@ -274,13 +373,30 @@ struct Pane {
     cwd: RwSignal<String>,
     entries: RwSignal<Vec<Entry>>,
     loading: RwSignal<bool>,
+    /// The item the keyboard is on.
     selected: RwSignal<Option<String>>,
+    /// Items picked with ⌘-click, Shift-click or ⌘A. When any are, they're what actions act on;
+    /// otherwise the selected item is.
+    marked: RwSignal<Vec<String>>,
+    /// The folder's listing (or search results), before the filter.
+    all: RwSignal<Vec<Entry>>,
+    /// Shows only names containing this.
+    filter: RwSignal<String>,
+    sort: RwSignal<Sort>,
+    /// Set while the pane shows search results instead of the folder: the search and whether it
+    /// found everything.
+    found: RwSignal<Option<(String, bool)>>,
     notice: RwSignal<Notice>,
     view: RwSignal<ViewMode>,
     /// Listings of other folders, for the column view's columns to the left of the current one.
     cols: RwSignal<HashMap<String, Vec<Entry>>>,
     /// The folder last shown on each side, so switching between phone and Mac goes back there.
     last: StoredValue<HashMap<Src, String>>,
+    /// The column view's first column. Reset to the current folder when the view switches to
+    /// columns, when a place in the sidebar is opened, and when the pane leaves it.
+    root: RwSignal<String>,
+    /// Set before opening a sidebar place: that folder becomes the column view's first column.
+    reroot: StoredValue<bool>,
 }
 
 impl Pane {
@@ -292,10 +408,17 @@ impl Pane {
             entries: RwSignal::new(vec![]),
             loading: RwSignal::new(false),
             selected: RwSignal::new(None),
+            marked: RwSignal::new(vec![]),
+            all: RwSignal::new(vec![]),
+            filter: RwSignal::new(String::new()),
+            sort: RwSignal::new(Sort::stored(id)),
+            found: RwSignal::new(None),
             notice: RwSignal::new(Notice::None),
             view: RwSignal::new(ViewMode::stored(id)),
             cols: RwSignal::new(HashMap::new()),
             last: StoredValue::new(HashMap::new()),
+            root: RwSignal::new(String::new()),
+            reroot: StoredValue::new(false),
         }
     }
 
@@ -307,12 +430,97 @@ impl Pane {
         let sel = self.selected.get()?;
         self.entries.with(|es| es.iter().find(|e| e.path == sel).cloned())
     }
+
+    /// Sorts and filters `all` into `entries`, dropping marks on items no longer shown.
+    fn arrange(self) {
+        let mut es = self.all.get_untracked();
+        self.sort.get_untracked().apply(&mut es);
+        let f = self.filter.get_untracked().to_lowercase();
+        if !f.is_empty() {
+            es.retain(|e| e.name.to_lowercase().contains(&f));
+        }
+        self.marked.update(|m| m.retain(|x| es.iter().any(|e| &e.path == x)));
+        self.entries.set(es);
+    }
+
+    fn set_sort(self, key: SortKey) {
+        let Sort(now, asc) = self.sort.get_untracked();
+        // Clicking the same column again reverses it; dates and sizes start biggest first.
+        let s = if now == key { Sort(key, !asc) } else { Sort(key, matches!(key, SortKey::Name | SortKey::Kind)) };
+        self.sort.set(s);
+        store(&Sort::storage_key(self.id), &format!("{}:{}", s.0.key(), if s.1 { 1 } else { 0 }));
+        self.cols.update(|c| c.values_mut().for_each(|es| s.apply(es)));
+        self.arrange();
+    }
+
+    /// Whether `path` is one of the items actions act on (tracked, for highlighting).
+    fn is_picked(self, path: &str) -> bool {
+        let marked = self.marked.with(|m| (!m.is_empty()).then(|| m.iter().any(|x| x == path)));
+        marked.unwrap_or_else(|| self.selected.get().as_deref() == Some(path))
+    }
+
+    /// The items actions act on: the marked ones, or else the selected one.
+    fn picked(self) -> Vec<Entry> {
+        let marked = self.marked.get_untracked();
+        let sel = self.selected.get_untracked();
+        self.entries.with_untracked(|es| {
+            es.iter()
+                .filter(|e| if marked.is_empty() { sel.as_deref() == Some(e.path.as_str()) } else { marked.contains(&e.path) })
+                .cloned()
+                .collect()
+        })
+    }
+
+    /// Selects one item, unmarking the rest.
+    fn select_only(self, path: Option<String>) {
+        self.marked.set(vec![]);
+        self.selected.set(path);
+    }
+
+    /// A click on an item: ⌘ adds or removes it, Shift picks everything from the selected item to it.
+    fn click(self, ev: &web_sys::MouseEvent, path: &str) {
+        if ev.meta_key() {
+            let sel = self.selected.get_untracked();
+            self.marked.update(|m| {
+                if m.is_empty() {
+                    m.extend(sel);
+                }
+                match m.iter().position(|x| x == path) {
+                    Some(i) => {
+                        m.remove(i);
+                    }
+                    None => m.push(path.to_string()),
+                }
+            });
+            self.selected.set(Some(path.to_string()));
+        } else if ev.shift_key() && self.selected.get_untracked().is_some() {
+            let anchor = self.selected.get_untracked().unwrap_or_default();
+            let range = self.entries.with_untracked(|es| {
+                let at = |p: &str| es.iter().position(|e| e.path == p);
+                match (at(&anchor), at(path)) {
+                    (Some(a), Some(b)) => es[a.min(b)..=a.max(b)].iter().map(|e| e.path.clone()).collect(),
+                    _ => vec![path.to_string()],
+                }
+            });
+            self.marked.set(range);
+        } else {
+            self.select_only(Some(path.to_string()));
+        }
+    }
+}
+
+/// The copy or move running now (one at a time).
+#[derive(Clone, PartialEq)]
+struct Job {
+    id: u32,
+    moving: bool,
+    progress: Option<Progress>,
 }
 
 #[derive(Clone, Copy)]
 struct Ctx {
-    /// The connected phone.
-    info: RwSignal<Option<Info>>,
+    /// The connected devices, oldest first.
+    phones: RwSignal<Vec<Info>>,
     /// The Mac's own files: label and places.
     mac: RwSignal<Option<Info>>,
     panes: [Pane; 2],
@@ -328,20 +536,29 @@ struct Ctx {
     ep: crate::epub::Ep,
     menu: RwSignal<Option<Menu>>,
     settings: RwSignal<bool>,
-    /// Phones seen over USB while none is connected (checked every few seconds).
+    /// Devices on USB that aren't connected, and the Mac's disks (checked every few seconds).
     devices: RwSignal<Option<Devices>>,
     scanning: StoredValue<bool>,
+    /// The device being connected (its `usb`).
+    connecting: RwSignal<Option<String>>,
     conn_error: RwSignal<Option<String>>,
     /// Settings: list names starting with a dot.
     show_hidden: RwSignal<bool>,
     /// Settings: make thumbnails of phone files (each one reads the whole file over USB).
     phone_thumbs: RwSignal<bool>,
+    job: RwSignal<Option<Job>>,
+    next_job: StoredValue<u32>,
+    favs: RwSignal<Vec<Fav>>,
+    /// What's being dragged from a pane: its side and paths.
+    drag: StoredValue<Option<(Src, Vec<String>)>>,
+    /// Where a drag would drop now ("pane:folder"), to highlight it.
+    drop_at: RwSignal<Option<String>>,
 }
 
 impl Ctx {
     fn new() -> Self {
         Ctx {
-            info: RwSignal::new(None),
+            phones: RwSignal::new(vec![]),
             mac: RwSignal::new(None),
             panes: [Pane::new(0), Pane::new(1)],
             active: RwSignal::new(0),
@@ -356,9 +573,15 @@ impl Ctx {
             settings: RwSignal::new(false),
             devices: RwSignal::new(None),
             scanning: StoredValue::new(false),
+            connecting: RwSignal::new(None),
             conn_error: RwSignal::new(None),
             show_hidden: RwSignal::new(stored_flag(HIDDEN_KEY, false)),
             phone_thumbs: RwSignal::new(stored_flag(PHONE_THUMBS_KEY, true)),
+            job: RwSignal::new(None),
+            next_job: StoredValue::new(1),
+            favs: RwSignal::new(stored(FAVS_KEY).and_then(|s| serde_json::from_str(&s).ok()).unwrap_or_default()),
+            drag: StoredValue::new(None),
+            drop_at: RwSignal::new(None),
         }
     }
 
@@ -406,8 +629,19 @@ impl Ctx {
 
     fn src_info(self, src: Src) -> Option<Info> {
         match src {
-            Src::Device => self.info.get(),
             Src::Mac => self.mac.get(),
+            Src::Dev(_) => {
+                let id = src.key();
+                self.phones.with(|ps| ps.iter().find(|i| i.id == id).cloned())
+            }
+        }
+    }
+
+    /// For sentences: "Saved to the Mac." or "Saved to Pixel 7."
+    fn place(self, src: Src) -> String {
+        match src {
+            Src::Mac => "the Mac".into(),
+            Src::Dev(_) => self.src_info(src).map_or_else(|| "the device".into(), |i| i.label),
         }
     }
 
@@ -418,14 +652,25 @@ impl Ctx {
     /// Lists `path` on `src` and makes it pane `p`'s folder, with `select` selected.
     /// Keeps the old listing (and side) if it fails.
     fn load_select(self, p: Pane, src: Src, path: String, select: Option<String>) {
+        self.load_or(p, src, path, select, None);
+    }
+
+    /// Like `load_select`, but if `path` can't be listed, lists `fallback` instead.
+    fn load_or(self, p: Pane, src: Src, path: String, select: Option<String>, fallback: Option<String>) {
         p.loading.set(true);
         spawn_local(async move {
             match call::<Vec<Entry>>("list", json!({ "src": src.key(), "path": path, "pane": p.id })).await {
                 Ok(entries) => {
-                    let entries = self.visible(entries);
-                    if p.src.get_untracked() != src {
+                    let mut entries = self.visible(entries);
+                    p.sort.get_untracked().apply(&mut entries);
+                    let new_src = p.src.get_untracked() != src;
+                    if new_src {
                         p.cols.set(HashMap::new());
                         p.src.set(src);
+                    }
+                    let reroot = std::mem::take(&mut *p.reroot.write_value());
+                    if reroot || new_src || !within(&path, &p.root.get_untracked()) {
+                        p.root.set(path.clone());
                     }
                     p.cols.update(|c| {
                         c.insert(path.clone(), entries.clone());
@@ -433,17 +678,127 @@ impl Ctx {
                     p.last.update_value(|l| {
                         l.insert(src, path.clone());
                     });
+                    store(&self.last_key(p, src), &path);
+                    if p.cwd.get_untracked() != path || new_src {
+                        p.marked.set(vec![]);
+                        p.filter.set(String::new());
+                    }
+                    p.found.set(None);
                     p.cwd.set(path);
-                    p.entries.set(entries);
+                    p.all.set(entries);
+                    p.arrange();
                     p.selected.set(select);
                     if matches!(p.notice.get_untracked(), Notice::Error(_)) {
                         p.notice.set(Notice::None);
                     }
                 }
+                Err(_) if fallback.as_ref().is_some_and(|f| *f != path) => {
+                    self.load_or(p, src, fallback.unwrap_or_default(), None, None);
+                }
                 Err(e) => p.error(e),
             }
             p.loading.set(false);
         });
+    }
+
+    /// Where the pane's last folder on `src` is kept across launches.
+    fn last_key(self, p: Pane, src: Src) -> String {
+        format!("yomi-files.last.{}.{}", p.id, self.place_key(src))
+    }
+
+    /// "mac", or a device's transport and name ("adb:Pixel 7"), which stay the same across connections.
+    fn place_key(self, src: Src) -> String {
+        match src {
+            Src::Mac => "mac".into(),
+            _ => self.src_info(src).map_or_else(String::new, |i| format!("{}:{}", i.transport, i.label)),
+        }
+    }
+
+    /// Shows `src` in pane `p`, in the folder the pane last showed there (this session or before),
+    /// or its default folder.
+    fn open_remembered(self, p: Pane, src: Src) {
+        let Some(info) = self.src_info(src) else { return };
+        let path = p.last.with_value(|l| l.get(&src).cloned()).or_else(|| stored(&self.last_key(p, src)));
+        match path {
+            Some(path) => self.load_or(p, src, path, None, Some(info.default_dir)),
+            None => self.load_select(p, src, info.default_dir, None),
+        }
+    }
+
+    /// Searches the pane's folder and its subfolders for names containing the filter's text.
+    fn find(self, p: Pane) {
+        let query = p.filter.get_untracked().trim().to_string();
+        if query.is_empty() {
+            return;
+        }
+        let (src, dir) = (p.src.get_untracked(), p.cwd.get_untracked());
+        p.loading.set(true);
+        spawn_local(async move {
+            #[derive(serde::Deserialize)]
+            struct Matches {
+                entries: Vec<Entry>,
+                complete: bool,
+            }
+            let args = json!({ "src": src.key(), "dir": dir, "query": query, "hidden": self.show_hidden.get_untracked() });
+            match call::<Matches>("find", args).await {
+                Ok(m) if p.cwd.get_untracked() == dir && p.src.get_untracked() == src => {
+                    p.all.set(m.entries);
+                    p.filter.set(String::new());
+                    p.found.set(Some((query, m.complete)));
+                    p.select_only(None);
+                    p.arrange();
+                }
+                Ok(_) => {}
+                Err(e) => p.error(e),
+            }
+            p.loading.set(false);
+        });
+    }
+
+    fn quick_look(self, p: Pane) {
+        let picked = p.picked();
+        let [e] = picked.as_slice() else { return };
+        if e.dir {
+            return;
+        }
+        let e = e.clone();
+        let src = p.src.get_untracked();
+        spawn_local(async move {
+            if let Err(err) = call::<()>("quick_look", json!({ "src": src.key(), "path": e.path })).await {
+                p.error(err);
+            }
+        });
+    }
+
+    fn set_favs(self, favs: Vec<Fav>) {
+        store(FAVS_KEY, &serde_json::to_string(&favs).unwrap_or_default());
+        self.favs.set(favs);
+    }
+
+    /// Adds a folder to Favourites (or removes it, if it's there).
+    fn toggle_fav(self, src: Src, path: String) {
+        let place = self.place_key(src);
+        let mut favs = self.favs.get_untracked();
+        if let Some(i) = favs.iter().position(|f| f.place == place && f.path == path) {
+            favs.remove(i);
+        } else {
+            let label = self.src_info(src).map_or_else(String::new, |i| i.label);
+            favs.push(Fav { place, label, path });
+        }
+        self.set_favs(favs);
+    }
+
+    fn is_fav(self, src: Src, path: &str) -> bool {
+        let place = self.place_key(src);
+        self.favs.with_untracked(|f| f.iter().any(|f| f.place == place && f.path == path))
+    }
+
+    /// The connected device (or the Mac) a favourite is on.
+    fn fav_src(self, f: &Fav) -> Option<Src> {
+        if f.place == "mac" {
+            return Some(Src::Mac);
+        }
+        self.phones.with(|ps| ps.iter().find(|i| format!("{}:{}", i.transport, i.label) == f.place).map(|i| Src::of(&i.id)))
     }
 
     /// Lists the pane's folder again, keeping the selection. Other folders' listings are dropped too.
@@ -501,8 +856,20 @@ impl Ctx {
         if p.src.get_untracked() == src {
             return;
         }
-        let Some(info) = self.src_info(src) else { return };
-        let path = p.last.with_value(|l| l.get(&src).cloned()).unwrap_or(info.default_dir);
+        if self.editor.get_untracked().is_some() {
+            if self.dirty() {
+                self.confirm_discard.set(true);
+                return;
+            }
+            self.editor.set(None);
+        }
+        self.open_remembered(p, src);
+    }
+
+    /// Opens a sidebar place in the active pane; the column view starts from it.
+    fn open_place(self, src: Src, path: String) {
+        let p = self.act();
+        p.reroot.set_value(true);
         self.navigate_select(p, src, path, None);
     }
 
@@ -515,6 +882,9 @@ impl Ctx {
     }
 
     fn set_view(self, p: Pane, v: ViewMode) {
+        if v == ViewMode::Columns && p.view.get_untracked() != v {
+            p.root.set(p.cwd.get_untracked());
+        }
         p.view.set(v);
         store(&ViewMode::storage_key(p.id), v.key());
     }
@@ -541,15 +911,12 @@ impl Ctx {
             src = Src::Mac;
             p.src.set(src);
         }
-        if let Some(info) = self.src_info(src) {
-            let path = p.last.with_value(|l| l.get(&src).cloned()).unwrap_or(info.default_dir);
-            self.load_select(p, src, path, None);
-        }
+        self.open_remembered(p, src);
     }
 
-    /// New files and folders can't go in "/" over MTP: it lists the phone's storages.
+    /// New files and folders can't go in "/" over MTP: it lists the device's storages.
     fn in_storage(self, p: Pane) -> bool {
-        p.src.get() == Src::Mac || p.cwd.get() != "/" || self.info.get().is_some_and(|i| i.transport == "adb")
+        p.cwd.get() != "/" || self.src_info(p.src.get()).is_some_and(|i| i.transport != "mtp")
     }
 
     fn show_menu(self, p: Pane, ev: &web_sys::MouseEvent, entry: Option<Entry>) {
@@ -557,7 +924,9 @@ impl Ctx {
         ev.stop_propagation();
         self.active.set(p.id);
         if let Some(e) = &entry {
-            p.selected.set(Some(e.path.clone()));
+            if !p.picked().iter().any(|x| x.path == e.path) {
+                p.select_only(Some(e.path.clone()));
+            }
         }
         // Keep the whole menu on screen: estimate its size from the number of rows.
         let rows = self.menu_items(p, entry.as_ref()).len() as f64;
@@ -569,19 +938,20 @@ impl Ctx {
         self.menu.set(Some(Menu { x, y, pane: p.id, entry }));
     }
 
-    /// "Copy to the Mac", or "Copy to <folder>" when both panes are on the same side.
-    fn copy_label(self, p: Pane) -> String {
+    /// "Copy to the Mac", "Move 3 items to <folder>" (when both panes are on the same side).
+    fn to_label(self, p: Pane, verb: &str, n: usize) -> String {
         let o = self.other(p);
         let (from, to) = (p.src.get_untracked(), o.src.get_untracked());
+        let what = if n > 1 { format!(" {n} items") } else { String::new() };
         if from != to {
-            format!("Copy to {}", to.place().trim_start_matches("the "))
+            format!("{verb}{what} to {}", self.place(to).trim_start_matches("the "))
         } else {
-            format!("Copy to “{}”", base(&o.cwd.get_untracked()))
+            format!("{verb}{what} to “{}”", base(&o.cwd.get_untracked()))
         }
     }
 
     fn menu_items(self, p: Pane, entry: Option<&Entry>) -> Vec<MenuItem> {
-        let device = p.src.get_untracked() == Src::Device;
+        let device = p.src.get_untracked() != Src::Mac;
         let split = self.split.get_untracked();
         let Some(e) = entry else {
             let here = self.in_storage(p);
@@ -592,7 +962,16 @@ impl Ctx {
             if device {
                 v.push(MenuItem::Do { label: "Upload files…".into(), key: "", act: Act::Upload, danger: false, enabled: here });
             }
-            v.extend([MenuItem::Sep, item("Refresh", "", Act::Refresh), MenuItem::Sep]);
+            let fav = if self.is_fav(p.src.get_untracked(), &p.cwd.get_untracked()) { "Remove this folder from Favourites" } else { "Add this folder to Favourites" };
+            v.extend([MenuItem::Sep, item(fav, "", Act::Favourite), item("Refresh", "", Act::Refresh)]);
+            v.push(MenuItem::Do {
+                label: "Sync to the other pane…".into(),
+                key: "",
+                act: Act::Sync,
+                danger: false,
+                enabled: split && !p.cwd.get_untracked().is_empty(),
+            });
+            v.push(MenuItem::Sep);
             let now = p.view.get_untracked();
             v.extend(ViewMode::ALL.map(|m| {
                 item(format!("{} as {}", if m == now { "✓" } else { "\u{2003}" }, m.label()), "", Act::View(m))
@@ -601,6 +980,18 @@ impl Ctx {
             v.push(item(if split { "Hide second pane" } else { "Show second pane" }, "⌘\\", Act::Split));
             return v;
         };
+        let picked = p.picked().len();
+        if picked > 1 {
+            let mut v = vec![];
+            if split {
+                let enabled = self.in_storage(self.other(p));
+                v.push(MenuItem::Do { label: self.to_label(p, "Copy", picked), key: "F5", act: Act::Copy, danger: false, enabled });
+                v.push(MenuItem::Do { label: self.to_label(p, "Move", picked), key: "F6", act: Act::Move, danger: false, enabled });
+                v.push(MenuItem::Sep);
+            }
+            v.push(MenuItem::Do { label: format!("Delete {picked} items…"), key: "⌘⌫", act: Act::Delete, danger: true, enabled: true });
+            return v;
+        }
         let mut v = vec![];
         let open = match kind(e) {
             Kind::Folder => "Open",
@@ -609,6 +1000,9 @@ impl Ctx {
             Kind::Other => "Open",
         };
         v.push(item(open, "↵", Act::Open));
+        if !e.dir {
+            v.push(item("Quick Look", "Space", Act::QuickLook));
+        }
         if !e.dir && kind(e) != Kind::Other {
             v.push(item("Open in default app", "", Act::OpenInApp));
         }
@@ -616,13 +1010,18 @@ impl Ctx {
             v.push(item("Download to Mac…", "", Act::Download));
         }
         if split {
-            let enabled = !e.dir && self.in_storage(self.other(p));
-            v.push(MenuItem::Do { label: self.copy_label(p), key: "F5", act: Act::Copy, danger: false, enabled });
+            let enabled = self.in_storage(self.other(p));
+            v.push(MenuItem::Do { label: self.to_label(p, "Copy", 1), key: "F5", act: Act::Copy, danger: false, enabled });
+            v.push(MenuItem::Do { label: self.to_label(p, "Move", 1), key: "F6", act: Act::Move, danger: false, enabled });
         }
-        if !v.is_empty() {
-            v.push(MenuItem::Sep);
+        let renamable = !(p.cwd.get_untracked() == "/" && self.src_info(p.src.get_untracked()).is_some_and(|i| i.transport == "mtp"));
+        v.push(MenuItem::Do { label: "Rename…".into(), key: "F2", act: Act::Rename, danger: false, enabled: renamable });
+        if e.dir {
+            let fav = if self.is_fav(p.src.get_untracked(), &e.path) { "Remove from Favourites" } else { "Add to Favourites" };
+            v.push(item(fav, "", Act::Favourite));
         }
-        let label = if e.dir { "Delete empty folder…" } else { "Delete…" };
+        v.extend([MenuItem::Sep, item("Refresh", "", Act::Refresh), MenuItem::Sep]);
+        let label = if e.dir { "Delete folder if empty…" } else { "Delete…" };
         v.push(MenuItem::Do { label: label.into(), key: "⌘⌫", act: Act::Delete, danger: true, enabled: true });
         v
     }
@@ -632,11 +1031,17 @@ impl Ctx {
             (Act::Open, Some(e)) => self.open(p, e),
             (Act::OpenInApp, Some(e)) => self.open_in_app(p, e.path),
             (Act::Download, Some(e)) => self.download(p, e.path),
-            (Act::Copy, Some(e)) => self.copy(p, e),
-            (Act::Delete, Some(e)) => p.notice.set(Notice::ConfirmDelete(e)),
+            (Act::Copy, Some(_)) => self.send_to_other(p, false),
+            (Act::Move, Some(_)) => self.send_to_other(p, true),
+            (Act::Rename, Some(e)) => p.notice.set(Notice::Rename(e)),
+            (Act::QuickLook, Some(_)) => self.quick_look(p),
+            (Act::Favourite, Some(e)) => self.toggle_fav(p.src.get_untracked(), e.path),
+            (Act::Favourite, None) => self.toggle_fav(p.src.get_untracked(), p.cwd.get_untracked()),
+            (Act::Delete, Some(_)) => self.ask_delete(p),
             (Act::NewFolder, _) => p.notice.set(Notice::NewItem { folder: true }),
             (Act::NewFile, _) => p.notice.set(Notice::NewItem { folder: false }),
             (Act::Upload, _) => self.upload(p),
+            (Act::Sync, _) => self.compare(p),
             (Act::Refresh, _) => self.refresh(p),
             (Act::View(v), _) => self.set_view(p, v),
             (Act::Split, _) => self.set_split(!self.split.get_untracked()),
@@ -652,7 +1057,7 @@ impl Ctx {
                 p.loading.set(true);
                 let ep = self.ep;
                 spawn_local(async move {
-                    if let Err(err) = ep.open(src.key(), e.path).await {
+                    if let Err(err) = ep.open(&src.key(), self.place(src), e.path).await {
                         p.error(err);
                     }
                     p.loading.set(false);
@@ -670,7 +1075,7 @@ impl Ctx {
         p.loading.set(true);
         spawn_local(async move {
             match call::<String>("open_file", json!({ "src": src.key(), "path": path })).await {
-                Ok(_) if src == Src::Device => {
+                Ok(_) if src != Src::Mac => {
                     p.notice.set(Notice::Ok(format!("Opened a copy of {}. Changes to it stay on the Mac.", base(&path))))
                 }
                 Ok(_) => {}
@@ -710,7 +1115,7 @@ impl Ctx {
             match call::<WriteResult>("write_text", args).await {
                 Ok(r) => {
                     let note = if r.backup.is_some() { " The old version is backed up on the Mac." } else { "" };
-                    self.status.set((format!("Saved to {}.{note}", ed.src.place()), "ok"));
+                    self.status.set((format!("Saved to {}.{note}", self.place(ed.src)), "ok"));
                     self.editor.set(Some(Editor { version: r.version, saved_text: text, ..ed }));
                     self.confirm_discard.set(false);
                 }
@@ -731,8 +1136,9 @@ impl Ctx {
     }
 
     fn download(self, p: Pane, path: String) {
+        let src = p.src.get_untracked();
         spawn_local(async move {
-            match call::<Option<String>>("download", json!({ "path": path })).await {
+            match call::<Option<String>>("download", json!({ "src": src.key(), "path": path })).await {
                 Ok(Some(dest)) => p.notice.set(Notice::Ok(format!("Saved to {dest}"))),
                 Ok(None) => {}
                 Err(e) => p.error(e),
@@ -741,14 +1147,14 @@ impl Ctx {
     }
 
     fn upload(self, p: Pane) {
-        let dir = p.cwd.get_untracked();
+        let (src, dir) = (p.src.get_untracked(), p.cwd.get_untracked());
         self.busy.set(true);
         spawn_local(async move {
-            match call::<Vec<String>>("upload", json!({ "dir": dir })).await {
+            match call::<Vec<String>>("upload", json!({ "src": src.key(), "dir": dir })).await {
                 Ok(lines) if lines.is_empty() => {}
                 Ok(lines) => {
                     p.notice.set(Notice::Ok(lines.join("\n")));
-                    self.changed(Src::Device, &dir);
+                    self.changed(src, &dir);
                 }
                 Err(e) => p.error(e),
             }
@@ -756,9 +1162,10 @@ impl Ctx {
         });
     }
 
-    /// Copies a file into the other pane's folder.
-    fn copy(self, p: Pane, e: Entry) {
-        if !self.split.get_untracked() || e.dir || self.busy.get_untracked() {
+    /// Copies or moves the picked items into the other pane's folder.
+    fn send_to_other(self, p: Pane, moving: bool) {
+        let items: Vec<String> = p.picked().into_iter().map(|e| e.path).collect();
+        if !self.split.get_untracked() || items.is_empty() {
             return;
         }
         let o = self.other(p);
@@ -767,29 +1174,184 @@ impl Ctx {
             p.error("Both panes show this folder. Open another folder in the other pane first.");
             return;
         }
-        self.busy.set(true);
-        p.notice.set(Notice::Ok(format!("Copying {}…", e.name)));
+        self.transfer(p, from_src, items, to_src, to_dir, moving);
+    }
+
+    /// Copies (or moves) files and folders into `to_dir`, with progress below the panes.
+    /// Files already there are skipped, never replaced. The report shows in pane `p`.
+    fn transfer(self, p: Pane, from_src: Src, items: Vec<String>, to_src: Src, to_dir: String, moving: bool) {
+        if self.job.with_untracked(|j| j.is_some()) {
+            p.error("Another copy is running. Wait for it to finish, or cancel it.");
+            return;
+        }
+        if to_dir == "/" && self.src_info(to_src).is_some_and(|i| i.transport == "mtp") {
+            p.error("Open a storage first: files can't go at the top level over MTP.");
+            return;
+        }
+        let id = self.next_job.get_value();
+        self.next_job.set_value(id + 1);
+        self.job.set(Some(Job { id, moving, progress: None }));
+        p.notice.set(Notice::None);
+        let froms: Vec<String> = items.iter().map(|x| parent(x)).collect();
         spawn_local(async move {
-            let args = json!({ "from_src": from_src.key(), "from": e.path, "to_src": to_src.key(), "to_dir": to_dir });
-            match call::<String>("copy", args).await {
-                Ok(target) => {
-                    p.notice.set(Notice::Ok(format!("Copied {} to {}.", e.name, parent(&target))));
-                    self.changed(to_src, &to_dir);
-                    o.selected.set(Some(target));
+            let args = json!({
+                "job": id, "from_src": from_src.key(), "paths": items, "to_src": to_src.key(), "to_dir": to_dir,
+                "mode": if moving { "move" } else { "copy" },
+            });
+            match call::<TransferReport>("transfer", args).await {
+                Ok(r) => {
+                    let n = |c: u32| format!("{c} {}", if c == 1 { "file" } else { "files" });
+                    let verb = if moving { "Moved" } else { "Copied" };
+                    let mut lines = vec![format!("{verb} {} to {}.", n(r.copied), to_dir)];
+                    if r.cancelled {
+                        lines.push("Cancelled: the rest wasn't copied.".into());
+                    }
+                    if moving && !r.backups.is_empty() {
+                        lines.push("The originals are backed up on the Mac.".into());
+                    }
+                    let shown = 5;
+                    for (name, why) in r.skipped.iter().take(shown) {
+                        lines.push(format!("Skipped {name}: {why}"));
+                    }
+                    if r.skipped.len() > shown {
+                        lines.push(format!("…and {} more skipped.", r.skipped.len() - shown));
+                    }
+                    let msg = lines.join("\n");
+                    p.notice.set(if r.skipped.is_empty() { Notice::Ok(msg) } else { Notice::Error(msg) });
                 }
-                Err(err) => p.error(err),
+                Err(e) => p.error(e),
             }
-            self.busy.set(false);
+            self.job.set(None);
+            self.changed(to_src, &to_dir);
+            if moving {
+                let mut seen = vec![];
+                for d in froms {
+                    if !seen.contains(&d) {
+                        self.changed(from_src, &d);
+                        seen.push(d);
+                    }
+                }
+            }
         });
     }
 
-    fn delete(self, p: Pane, e: Entry) {
+    /// Compares this pane's folder with the other pane's, and asks before copying what's missing.
+    fn compare(self, p: Pane) {
+        let o = self.other(p);
+        let from = (p.src.get_untracked(), p.cwd.get_untracked());
+        let to = (o.src.get_untracked(), o.cwd.get_untracked());
+        if to.1 == "/" && self.src_info(to.0).is_some_and(|i| i.transport == "mtp") {
+            p.error("Open a storage in the other pane first: files can't go at the top level over MTP.");
+            return;
+        }
+        p.notice.set(Notice::Ok("Comparing the two folders…".into()));
+        let hidden = self.show_hidden.get_untracked();
+        spawn_local(async move {
+            let args = json!({ "from_src": from.0.key(), "from_dir": from.1, "to_src": to.0.key(), "to_dir": to.1, "hidden": hidden });
+            match call::<CompareReport>("compare", args).await {
+                Ok(report) => p.notice.set(Notice::Sync { report, from, to }),
+                Err(e) => p.error(e),
+            }
+        });
+    }
+
+    /// Copies what `compare` found missing. Runs as a transfer, with progress and Cancel.
+    fn sync(self, p: Pane, from: (Src, String), to: (Src, String)) {
+        if self.job.with_untracked(|j| j.is_some()) {
+            p.error("Another copy is running. Wait for it to finish, or cancel it.");
+            return;
+        }
+        let id = self.next_job.get_value();
+        self.next_job.set_value(id + 1);
+        self.job.set(Some(Job { id, moving: false, progress: None }));
+        p.notice.set(Notice::None);
+        let hidden = self.show_hidden.get_untracked();
+        spawn_local(async move {
+            let args = json!({
+                "job": id, "from_src": from.0.key(), "from_dir": from.1, "to_src": to.0.key(), "to_dir": to.1, "hidden": hidden,
+            });
+            match call::<TransferReport>("sync", args).await {
+                Ok(r) => {
+                    let mut lines = vec![format!("Synced {} into {}: copied {} {}.", base(&from.1), to.1, r.copied, if r.copied == 1 { "file" } else { "files" })];
+                    if r.cancelled {
+                        lines.push("Cancelled: the rest wasn't copied.".into());
+                    }
+                    for (name, why) in r.skipped.iter().take(5) {
+                        lines.push(format!("Skipped {name}: {why}"));
+                    }
+                    if r.skipped.len() > 5 {
+                        lines.push(format!("…and {} more skipped.", r.skipped.len() - 5));
+                    }
+                    let msg = lines.join("\n");
+                    p.notice.set(if r.skipped.is_empty() { Notice::Ok(msg) } else { Notice::Error(msg) });
+                }
+                Err(e) => p.error(e),
+            }
+            self.job.set(None);
+            self.changed(to.0, &to.1);
+        });
+    }
+
+    fn cancel_transfer(self) {
+        if let Some(j) = self.job.get_untracked() {
+            spawn_local(async move {
+                let _ = call::<()>("cancel_transfer", json!({ "job": j.id })).await;
+            });
+        }
+    }
+
+    fn ask_delete(self, p: Pane) {
+        let items = p.picked();
+        if !items.is_empty() {
+            p.notice.set(Notice::ConfirmDelete(items));
+        }
+    }
+
+    /// Deletes each item in turn (folders only when empty), stopping at the first error.
+    fn delete(self, p: Pane, items: Vec<Entry>) {
+        let src = p.src.get_untracked();
+        p.notice.set(Notice::None);
+        spawn_local(async move {
+            let mut done = 0;
+            let mut backups = 0;
+            let mut error = None;
+            for e in &items {
+                match call::<Option<String>>("remove", json!({ "src": src.key(), "path": e.path })).await {
+                    Ok(b) => {
+                        done += 1;
+                        backups += b.is_some() as usize;
+                    }
+                    Err(err) => {
+                        error = Some(err);
+                        break;
+                    }
+                }
+            }
+            let what = if items.len() == 1 { items[0].name.clone() } else { format!("{done} items") };
+            let note = if backups > 0 { " Backups are kept on the Mac." } else { "" };
+            match error {
+                None => p.notice.set(Notice::Ok(format!("Deleted {what}.{note}"))),
+                Some(err) if done == 0 => p.error(err),
+                Some(err) => p.error(format!("Deleted {done} of {}, then: {err}", items.len())),
+            }
+            if let Some(e) = items.first() {
+                self.changed(src, &parent(&e.path));
+            }
+        });
+    }
+
+    fn rename(self, p: Pane, e: Entry, name: String) {
+        let name = name.trim().to_string();
+        if name == e.name {
+            p.notice.set(Notice::None);
+            return;
+        }
         let src = p.src.get_untracked();
         spawn_local(async move {
-            match call::<Option<String>>("remove", json!({ "src": src.key(), "path": e.path })).await {
-                Ok(backup) => {
-                    let note = backup.map(|b| format!(" Backup: {b}")).unwrap_or_default();
-                    p.notice.set(Notice::Ok(format!("Deleted {}.{note}", e.name)));
+            match call::<String>("rename", json!({ "src": src.key(), "path": e.path, "name": name })).await {
+                Ok(new) => {
+                    p.notice.set(Notice::None);
+                    p.select_only(Some(new));
                     self.changed(src, &parent(&e.path));
                 }
                 Err(err) => p.error(err),
@@ -823,26 +1385,23 @@ impl Ctx {
         });
     }
 
-    /// After connecting: the phone in the first pane, the Mac in the second.
-    /// A phone is connected. With `show`, the active pane goes to it.
+    /// A device is connected. With `show`, the active pane goes to it.
     fn connected(self, info: Info, show: bool) {
-        let dir = info.default_dir.clone();
-        self.info.set(Some(info));
+        let src = Src::of(&info.id);
+        self.phones.update(|ps| {
+            if !ps.iter().any(|i| i.id == info.id) {
+                ps.push(info);
+            }
+        });
         self.conn_error.set(None);
-        for p in self.panes {
-            // Folders remembered from another phone (or connection) don't apply.
-            p.last.update_value(|l| {
-                l.remove(&Src::Device);
-            });
-        }
         if show {
-            self.load_select(self.act(), Src::Device, dir, None);
+            self.open_remembered(self.act(), src);
         }
     }
 
-    /// Looks for phones on USB, unless one is connected or a look is already under way.
+    /// Looks for devices on USB and disks on the Mac, unless the app is busy or a look is under way.
     fn scan(self) {
-        if self.info.get_untracked().is_some() || self.busy.get_untracked() || self.scanning.get_value() {
+        if self.busy.get_untracked() || self.scanning.get_value() || self.job.with_untracked(|j| j.is_some()) {
             return;
         }
         self.scanning.set_value(true);
@@ -856,40 +1415,48 @@ impl Ctx {
         });
     }
 
-    fn connect(self, transport: &'static str) {
+    fn connect(self, f: UsbDevice) {
         self.busy.set(true);
+        self.connecting.set(Some(f.usb.clone()));
         self.conn_error.set(None);
         spawn_local(async move {
-            match call::<Info>("connect", json!({ "transport": transport, "serial": null })).await {
+            match call::<Info>("connect", json!({ "transport": f.transport, "which": f.which })).await {
                 Ok(info) => self.connected(info, true),
                 Err(e) => self.conn_error.set(Some(e)),
             }
             self.busy.set(false);
+            self.connecting.set(None);
+            self.scan();
         });
     }
 
-    /// Lets go of the phone. Panes showing it go back to the Mac.
-    fn disconnect(self) {
-        if self.dirty() {
+    /// Lets go of a device. Panes showing it go back to the Mac.
+    fn disconnect(self, src: Src) {
+        if self.editor.with_untracked(|e| e.as_ref().is_some_and(|e| e.src == src)) && self.dirty() {
             self.confirm_discard.set(true);
             return;
         }
         spawn_local(async move {
-            let _ = call::<()>("disconnect", json!({})).await;
-            self.info.set(None);
-            self.devices.set(None);
-            if self.editor.with_untracked(|e| e.as_ref().is_some_and(|e| e.src == Src::Device)) {
+            let _ = call::<()>("disconnect", json!({ "src": src.key() })).await;
+            let id = src.key();
+            self.phones.update(|ps| ps.retain(|i| i.id != id));
+            if self.editor.with_untracked(|e| e.as_ref().is_some_and(|e| e.src == src)) {
                 self.editor.set(None);
             }
-            for p in self.shown() {
-                if p.src.get_untracked() == Src::Device {
+            for p in self.panes {
+                p.last.update_value(|l| {
+                    l.remove(&src);
+                });
+                if p.src.get_untracked() == src {
                     p.entries.set(vec![]);
                     p.cols.set(HashMap::new());
                     p.cwd.set(String::new());
                     p.selected.set(None);
                     p.notice.set(Notice::None);
                     p.src.set(Src::Mac);
-                    self.start(p);
+                    if self.split.get_untracked() || p.id == 0 {
+                        self.start(p);
+                    }
                 }
             }
             self.scan();
@@ -912,12 +1479,12 @@ pub fn App() -> impl IntoView {
         open
     });
 
-    // Start on the Mac's files. Pick up an existing phone connection after a webview reload.
+    // Start on the Mac's files. Pick up existing device connections after a webview reload.
     spawn_local(async move {
         if let Ok(Some(mac)) = call::<Option<Info>>("info", json!({ "src": "mac" })).await {
             ctx.mac.set(Some(mac));
         }
-        if let Ok(Some(info)) = call::<Option<Info>>("info", json!({})).await {
+        for info in call::<Vec<Info>>("connections", json!({})).await.unwrap_or_default() {
             ctx.connected(info, false);
         }
         ctx.start(ctx.panes[0]);
@@ -925,13 +1492,14 @@ pub fn App() -> impl IntoView {
             ctx.start(ctx.panes[1]);
         }
     });
-    // Look for a phone now and every few seconds while none is connected.
+    // Look for devices and disks now and every few seconds.
     ctx.scan();
     let _ = set_interval_with_handle(move || ctx.scan(), std::time::Duration::from_secs(3));
 
     // Keyboard. ⌘S saves. In the panes: Tab switches pane, ⌘\ shows or hides the second one, arrows
     // move (←/→ also go up/in in the column view and move across in the thumbnail view), Enter or
-    // ⌘↓ opens, ⌘↑ or Backspace goes up, ⌘⌫ deletes, F5 copies to the other pane.
+    // ⌘↓ opens, ⌘↑ or Backspace goes up, ⌘⌫ deletes, F2 renames, F5 copies and F6 moves to the
+    // other pane, ⌘A picks everything, Escape unpicks.
     let _keys = window_event_listener(ev::keydown, move |e| {
         let meta = e.meta_key() || e.ctrl_key();
         if ctx.menu.get_untracked().is_some() {
@@ -968,6 +1536,14 @@ pub fn App() -> impl IntoView {
         if !matches!(p.notice.get_untracked(), Notice::None | Notice::Ok(_) | Notice::Error(_)) {
             return;
         }
+        // Typing in a field (the filter) is the field's.
+        let typing = e
+            .target()
+            .and_then(|t| t.dyn_into::<web_sys::Element>().ok())
+            .is_some_and(|el| el.closest("input, textarea").ok().flatten().is_some());
+        if typing {
+            return;
+        }
         let entries = p.entries.get_untracked();
         let idx = p.selected.get_untracked().and_then(|s| entries.iter().position(|x| x.path == s));
         let current = idx.and_then(|i| entries.get(i)).cloned();
@@ -979,7 +1555,7 @@ pub fn App() -> impl IntoView {
                 Some(i) => (i as isize + delta).clamp(0, last.max(0)),
             };
             if let Some(x) = entries.get(next as usize) {
-                p.selected.set(Some(x.path.clone()));
+                p.select_only(Some(x.path.clone()));
             }
         };
         // Tiles per row in the thumbnail view, from the grid's width (tiles are 128px plus an 8px gap).
@@ -999,17 +1575,34 @@ pub fn App() -> impl IntoView {
                 e.prevent_default();
                 ctx.set_split(!ctx.split.get_untracked());
             }
-            ("F5", _) => {
-                if let Some(x) = current {
+            ("F5", _) | ("F6", _) => {
+                e.prevent_default();
+                ctx.send_to_other(p, e.key() == "F6");
+            }
+            ("F2", _) => {
+                if let [x] = p.picked().as_slice() {
                     e.prevent_default();
-                    ctx.copy(p, x);
+                    p.notice.set(Notice::Rename(x.clone()));
+                }
+            }
+            ("a", true) => {
+                e.prevent_default();
+                p.marked.set(entries.iter().map(|x| x.path.clone()).collect());
+            }
+            ("Escape", false) => p.marked.set(vec![]),
+            (" ", false) => {
+                e.prevent_default();
+                ctx.quick_look(p);
+            }
+            ("f", true) => {
+                e.prevent_default();
+                if let Some(el) = document().query_selector(".pane.active .filter").ok().flatten() {
+                    let _ = el.unchecked_into::<web_sys::HtmlElement>().focus();
                 }
             }
             ("Backspace", true) => {
-                if let Some(x) = current {
-                    e.prevent_default();
-                    p.notice.set(Notice::ConfirmDelete(x));
-                }
+                e.prevent_default();
+                ctx.ask_delete(p);
             }
             ("ArrowDown", false) => {
                 e.prevent_default();
@@ -1074,6 +1667,24 @@ pub fn App() -> impl IntoView {
         }
     });
 
+    crate::api::listen("transfer", move |pr: Progress| {
+        ctx.job.update(|j| {
+            if let Some(j) = j.as_mut().filter(|j| j.id == pr.job) {
+                j.progress = Some(pr);
+            }
+        });
+    });
+    // Files dragged in from Finder are copied to the folder (or pane) they're dropped on.
+    crate::api::listen("tauri://drag-drop", move |d: FileDrop| {
+        let dpr = window().device_pixel_ratio().max(1.0);
+        let Some(el) = document().element_from_point((d.position.x / dpr) as f32, (d.position.y / dpr) as f32) else { return };
+        let Some(pane_el) = el.closest("[data-pane]").ok().flatten() else { return };
+        let Some(p) = pane_el.get_attribute("data-pane").and_then(|i| i.parse::<usize>().ok()).and_then(|i| ctx.panes.get(i).copied()) else { return };
+        let dir = el.closest("[data-dir]").ok().flatten().and_then(|f| f.get_attribute("data-dir")).unwrap_or_else(|| p.cwd.get_untracked());
+        ctx.active.set(p.id);
+        ctx.transfer(p, Src::Mac, d.paths, p.src.get_untracked(), dir, false);
+    });
+
     // Keep the selected item visible when the keyboard moves the selection.
     Effect::new(move |_| {
         let p = ctx.panes[ctx.active.get()];
@@ -1110,12 +1721,14 @@ fn Browser() -> impl IntoView {
                         {move || ctx.split.get().then(|| view! { <PaneView pane=ctx.panes[1]/> })}
                     </div>
                 }.into_any() }}
+                <TransferBar/>
             </div>
         </div>
     }.into_any() }
 }
 
-/// Places on the phone and on the Mac. Clicking one opens it in the active pane.
+/// Places on the Mac (and its disks) and on the connected devices. Clicking one opens it in the
+/// active pane.
 #[component]
 fn Sidebar() -> impl IntoView {
     let ctx = expect_context::<Ctx>();
@@ -1127,40 +1740,91 @@ fn Sidebar() -> impl IntoView {
         };
         view! {
             <button class="item" class:active=active title=path.clone()
-                on:click=move |_| ctx.navigate_select(ctx.act(), src, path.clone(), None)>{name}</button>
+                on:click=move |_| ctx.open_place(src, path.clone())>{name}</button>
+        }
+    };
+    // A section heading that folds its section away; remembered across launches.
+    let section = move |key: &'static str, title: &'static str| {
+        let storage_key = format!("yomi-files.fold.{key}");
+        let open = RwSignal::new(!stored_flag(&storage_key, false));
+        let heading = view! {
+            <h2><button class="fold" aria-expanded=move || open.get().to_string()
+                on:click=move |_| {
+                    let now = !open.get_untracked();
+                    open.set(now);
+                    store(&storage_key, if now { "0" } else { "1" });
+                }>
+                <span class="chev" class:open=move || open.get()>"▸"</span>{title}
+            </button></h2>
+        };
+        (heading, open)
+    };
+    let (fav_heading, fav_open) = section("favs", "Favourites");
+    let (mac_heading, mac_open) = section("mac", "Mac");
+    let (dev_heading, dev_open) = section("devices", "Devices");
+    // Disks mounted on the Mac: USB drives, SD cards, disk images.
+    let drives = Memo::new(move |_| ctx.devices.with(|d| d.as_ref().map(|d| d.drives.clone()).unwrap_or_default()));
+    let device = move |i: Info| {
+        let src = Src::of(&i.id);
+        view! {
+            <div class="device">
+                // The device's name shows all its storage ("/").
+                <button class="name" title=format!("All storage on {}", i.label)
+                    class:active=move || {
+                        let pane = ctx.panes[ctx.active.get()];
+                        pane.src.get() == src && pane.cwd.get() == "/"
+                    }
+                    on:click=move |_| ctx.open_place(src, "/".into())>
+                    <b>{i.label.clone()}</b>
+                    <span class="kind">{i.transport.clone()}</span>
+                </button>
+                <button class="eject" title=format!("Disconnect {}", i.label) aria-label="Disconnect"
+                    on:click=move |_| ctx.disconnect(src)>"⏏"</button>
+            </div>
+            {i.quick_dirs.into_iter().map(|(name, path)| place(src, name, path)).collect_view()}
         }
     };
     view! {
         <nav class="side">
-            <h2>"Mac"</h2>
-            {move || ctx.mac.get().map(|i| i.quick_dirs).unwrap_or_default().into_iter()
-                .map(|(name, path)| place(Src::Mac, name, path)).collect_view()}
-            <h2>"Phone"</h2>
-            {move || match ctx.info.get() {
-                Some(i) => view! {
-                    <div class="device">
-                        // The phone's name shows all its storage ("/").
-                        <button class="name" title="All storage on the phone"
-                            class:active=move || {
-                                let pane = ctx.panes[ctx.active.get()];
-                                pane.src.get() == Src::Device && pane.cwd.get() == "/"
-                            }
-                            on:click=move |_| ctx.navigate_select(ctx.act(), Src::Device, "/".into(), None)>
-                            <b>{i.label.clone()}</b>
-                            <span class="kind">{i.transport.clone()}</span>
-                        </button>
-                        <button class="eject" title="Disconnect" aria-label="Disconnect"
-                            on:click=move |_| ctx.disconnect()>"⏏"</button>
-                    </div>
-                    {i.quick_dirs.into_iter().map(|(name, path)| place(Src::Device, name, path)).collect_view()}
-                }.into_any(),
-                None => view! { <PhoneFinder/> }.into_any(),
-            }}
+            {move || (!ctx.favs.with(|f| f.is_empty())).then(|| view! {
+                {fav_heading.clone()}
+                {move || fav_open.get().then(|| ctx.favs.get().into_iter().map(|f| {
+                    let src = ctx.fav_src(&f);
+                    let name = base(&f.path);
+                    let on = if f.place == "mac" { "the Mac".to_string() } else { f.label.clone() };
+                    let tip = match src {
+                        Some(_) => format!("{} on {on}", f.path),
+                        None => format!("{} on {on}. Connect {on} to open it.", f.path),
+                    };
+                    let (f1, f2) = (f.clone(), f.clone());
+                    let active = move || src.is_some_and(|s| {
+                        let pane = ctx.panes[ctx.active.get()];
+                        pane.src.get() == s && pane.cwd.get() == f1.path
+                    });
+                    view! {
+                        <div class="fav">
+                            <button class="item" class:active=active class:off=src.is_none() title=tip
+                                on:click=move |_| if let Some(s) = src { ctx.open_place(s, f2.path.clone()) }>{name}</button>
+                            <button class="unfav" title="Remove from Favourites" aria-label="Remove from Favourites"
+                                on:click=move |_| ctx.set_favs(ctx.favs.get_untracked().into_iter().filter(|x| *x != f).collect())>"✕"</button>
+                        </div>
+                    }
+                }).collect_view())}
+            })}
+            {mac_heading}
+            {move || mac_open.get().then(|| view! {
+                {ctx.mac.get().map(|i| i.quick_dirs).unwrap_or_default().into_iter()
+                    .map(|(name, path)| place(Src::Mac, name, path)).collect_view()}
+                {drives.get().into_iter().map(|(name, path)| view! {
+                    <span class="drive">{place(Src::Mac, name, path)}</span>
+                }).collect_view()}
+            })}
+            {dev_heading}
+            {move || dev_open.get().then(|| view! {
+                {ctx.phones.get().into_iter().map(device).collect_view()}
+                <DeviceFinder/>
+            })}
             <span class="grow"></span>
-            <button class="btn" class:active=move || ctx.split.get() title="⌘\\"
-                on:click=move |_| ctx.set_split(!ctx.split.get_untracked())>
-                {move || if ctx.split.get() { "Hide second pane" } else { "Show second pane" }}
-            </button>
             <button class="btn" title="Copies of files from before they were replaced or deleted"
                 on:click=move |_| ctx.open_folder("backups")>"Open backup folder"</button>
             <button class="btn" on:click=move |_| ctx.settings.set(true)>"Settings"</button>
@@ -1168,18 +1832,21 @@ fn Sidebar() -> impl IntoView {
     }
 }
 
-/// While no phone is connected: the phone found on USB (if any), with a button per way to connect.
+/// Devices on USB that aren't connected yet, each with a button per way to connect. A phone with
+/// both USB debugging and File transfer on shows up once for adb and once for MTP; when exactly one
+/// of each is found they're taken to be the same phone and shown as one row.
 #[component]
-fn PhoneFinder() -> impl IntoView {
+fn DeviceFinder() -> impl IntoView {
     let ctx = expect_context::<Ctx>();
     move || {
-        let Some(d) = ctx.devices.get() else {
-            return view! { <p class="hint">"Looking for a phone…"</p> }.into_any();
-        };
-        let (adb, mtp) = (!d.adb.is_empty(), !d.mtp.is_empty());
-        let name = d.mtp.first().cloned().or_else(|| d.adb.first().map(|s| format!("Android phone ({s})")));
         let error = move || ctx.conn_error.get().map(|e| view! { <p class="error">{e}</p> });
-        let Some(name) = name else {
+        let Some(d) = ctx.devices.get() else {
+            return view! { <p class="hint">"Looking for devices…"</p> }.into_any();
+        };
+        if d.found.is_empty() {
+            if !ctx.phones.with(|p| p.is_empty()) {
+                return view! { {error} }.into_any();
+            }
             let mut notes = vec!["No phone found. Plug one in by USB, then allow USB debugging (for adb) or set the USB mode to File transfer (for MTP).".to_string()];
             if !d.adb_found {
                 notes.push("adb isn't installed: brew install --cask android-platform-tools".into());
@@ -1189,24 +1856,45 @@ fn PhoneFinder() -> impl IntoView {
                 {notes.into_iter().map(|n| view! { <p class="hint">{n}</p> }).collect_view()}
                 {error}
             }.into_any();
+        }
+        let adb: Vec<UsbDevice> = d.found.iter().filter(|f| f.transport == "adb").cloned().collect();
+        let mtp: Vec<UsbDevice> = d.found.iter().filter(|f| f.transport == "mtp").cloned().collect();
+        // (name, adb, mtp) per row.
+        let rows: Vec<(String, Option<UsbDevice>, Option<UsbDevice>)> = if adb.len() == 1 && mtp.len() == 1 {
+            vec![(mtp[0].name.clone(), Some(adb[0].clone()), Some(mtp[0].clone()))]
+        } else {
+            adb.into_iter().map(|f| (f.name.clone(), Some(f), None))
+                .chain(mtp.into_iter().map(|f| (f.name.clone(), None, Some(f))))
+                .collect()
         };
-        let tip = name.clone();
-        let adb_title = if adb { "Connect with adb (USB debugging): faster, and can create files at the top level" } else if d.adb_found { "Not available: allow USB debugging on the phone" } else { "Not available: adb isn't installed" };
-        let mtp_title = if mtp { "Connect with MTP (File transfer). Close Android File Transfer and yomi-files.py first: only one app can use it at a time." } else { "Not available: set the phone's USB mode to File transfer" };
+        let adb_off = if d.adb_found { "Not available: allow USB debugging on the phone" } else { "Not available: adb isn't installed" };
         view! {
-            <div class="found">
-                <b title=tip>{name}</b>
-                {move || if ctx.busy.get() {
-                    view! { <span class="hint"><span class="spin"></span>" Connecting…"</span> }.into_any()
-                } else {
-                    view! {
-                        <div class="seg connect-as" role="group" aria-label="Connect with">
-                            <button title=adb_title disabled=!adb class:pref=adb on:click=move |_| ctx.connect("adb")>"adb"</button>
-                            <button title=mtp_title disabled=!mtp class:pref=mtp && !adb on:click=move |_| ctx.connect("mtp")>"MTP"</button>
-                        </div>
-                    }.into_any()
-                }}
-            </div>
+            {rows.into_iter().map(|(name, a, m)| {
+                let ids: Vec<String> = a.iter().chain(m.iter()).map(|f| f.usb.clone()).collect();
+                let connecting = move || ctx.connecting.get().is_some_and(|u| ids.contains(&u));
+                let adb_title = if a.is_some() { "Connect with adb (USB debugging): faster, and can create files at the top level" } else { adb_off };
+                let mtp_title = if m.is_some() { "Connect with MTP (File transfer). Close Android File Transfer first: only one app can use a device's MTP at a time." } else { "Not available: set the phone's USB mode to File transfer" };
+                let (has_a, has_m) = (a.is_some(), m.is_some());
+                let tip = name.clone();
+                view! {
+                    <div class="found">
+                        <b title=tip>{name}</b>
+                        {move || if connecting() {
+                            view! { <span class="hint"><span class="spin"></span>" Connecting…"</span> }.into_any()
+                        } else {
+                            let (a, m) = (a.clone(), m.clone());
+                            view! {
+                                <div class="seg connect-as" role="group" aria-label="Connect with">
+                                    <button title=adb_title disabled=move || !has_a || ctx.busy.get() class:pref=has_a
+                                        on:click=move |_| if let Some(f) = a.clone() { ctx.connect(f) }>"adb"</button>
+                                    <button title=mtp_title disabled=move || !has_m || ctx.busy.get() class:pref=has_m && !has_a
+                                        on:click=move |_| if let Some(f) = m.clone() { ctx.connect(f) }>"MTP"</button>
+                                </div>
+                            }.into_any()
+                        }}
+                    </div>
+                }
+            }).collect_view()}
             {error}
         }.into_any()
     }
@@ -1330,14 +2018,69 @@ fn Notices(pane: Pane) -> impl IntoView {
                 <div class="notice ok"><span class="text">{m}</span>
                     <button class="btn" on:click=dismiss>"Dismiss"</button></div>
             }.into_any(),
-            Notice::ConfirmDelete(e) => {
-                let what = if e.dir { "the empty folder " } else { "" };
-                let label = format!("Delete {what}{} from {}?{}", e.name, p.src.get_untracked().place(),
-                    if e.dir { "" } else { " A backup is kept on the Mac." });
+            Notice::ConfirmDelete(items) => {
+                let place = ctx.place(p.src.get_untracked());
+                let label = match items.as_slice() {
+                    [e] if e.dir => format!("Delete the folder {} from {place}? Only an empty folder can be deleted.", e.name),
+                    [e] => format!("Delete {} from {place}? A backup is kept on the Mac.", e.name),
+                    _ => format!("Delete {} items from {place}? Files are backed up on the Mac; folders are deleted only when empty.", items.len()),
+                };
                 view! {
                     <div class="notice"><span class="text">{label}</span>
-                        <button class="btn danger solid" on:click=move |_| ctx.delete(p, e.clone())>"Delete"</button>
+                        <button class="btn danger solid" on:click=move |_| ctx.delete(p, items.clone())>"Delete"</button>
                         <button class="btn" on:click=dismiss>"Cancel"</button></div>
+                }.into_any()
+            }
+            Notice::Sync { report: r, from, to } => {
+                let list = |what: &str, v: &[String]| -> String {
+                    let mut s = v.iter().take(4).cloned().collect::<Vec<_>>().join(", ");
+                    if v.len() > 4 {
+                        s.push_str(&format!(", and {} more", v.len() - 4));
+                    }
+                    format!("{} {what}: {s}.", v.len())
+                };
+                let mut lines = vec![if r.files + r.folders == 0 {
+                    format!("Nothing to copy: everything in {} is already in {}.", base(&from.1), to.1)
+                } else {
+                    format!("Copy {} {} ({}){} from {} into {} on {}?",
+                        r.files, if r.files == 1 { "file" } else { "files" }, human_size(r.bytes),
+                        if r.folders > 0 { format!(" and {} {}", r.folders, if r.folders == 1 { "folder" } else { "folders" }) } else { String::new() },
+                        base(&from.1), to.1, ctx.place(to.0))
+                }];
+                if r.same > 0 {
+                    lines.push(format!("{} already there.", r.same));
+                }
+                if !r.differ.is_empty() {
+                    lines.push(format!("{} Left as they are.", list("differ in size", &r.differ)));
+                }
+                if !r.extra.is_empty() {
+                    lines.push(format!("{} Left as they are.", list("only in the other pane", &r.extra)));
+                }
+                let go = r.files + r.folders > 0;
+                let (f, t) = (StoredValue::new(from), StoredValue::new(to));
+                view! {
+                    <div class="notice"><span class="text">{lines.join("\n")}</span>
+                        {go.then(|| view! { <button class="btn primary" on:click=move |_| ctx.sync(p, f.get_value(), t.get_value())>"Copy"</button> })}
+                        <button class="btn" on:click=dismiss>{if go { "Cancel" } else { "Dismiss" }}</button></div>
+                }.into_any()
+            }
+            Notice::Rename(e) => {
+                name.set(e.name.clone());
+                let e = StoredValue::new(e);
+                let submit = move || ctx.rename(p, e.get_value(), name.get_untracked());
+                view! {
+                    <div class="notice">
+                        <span>"Rename to:"</span>
+                        <input autofocus prop:value=move || name.get()
+                            on:input=move |ev| name.set(event_target_value(&ev))
+                            on:keydown=move |ev| match ev.key().as_str() {
+                                "Enter" => submit(),
+                                "Escape" => p.notice.set(Notice::None),
+                                _ => {}
+                            }/>
+                        <button class="btn primary" on:click=move |_| submit()>"Rename"</button>
+                        <button class="btn" on:click=dismiss>"Cancel"</button>
+                    </div>
                 }.into_any()
             }
             Notice::NewItem { folder } => {
@@ -1371,19 +2114,46 @@ fn PaneView(pane: Pane) -> impl IntoView {
     let p = pane;
     let active = move || ctx.active.get() == p.id;
     view! {
-        <section class="pane" class:active=active on:mousedown=move |_| ctx.active.set(p.id)>
+        <section class="pane" class:active=active data-pane=p.id.to_string() on:mousedown=move |_| ctx.active.set(p.id)>
             <div class="bar">
                 <button class="btn" title="Up (⌘↑)" disabled=move || p.cwd.get() == "/" on:click=move |_| ctx.go_up(p)>"↑"</button>
                 <div class="seg" role="group" aria-label="Show files on">
-                    {[(Src::Device, "📱", "Phone"), (Src::Mac, "💻", "Mac")].map(|(src, glyph, label)| view! {
-                        <button title=format!("Files on the {label}") aria-label=label
-                            disabled=move || src == Src::Device && ctx.info.get().is_none()
-                            class:active=move || p.src.get() == src on:click=move |_| ctx.switch_src(p, src)>{glyph}</button>
-                    })}
+                    <button title="Files on the Mac" aria-label="Mac" class:active=move || p.src.get() == Src::Mac
+                        on:click=move |_| ctx.switch_src(p, Src::Mac)>"💻"</button>
+                    // One button per connected device.
+                    {move || {
+                        let phones = ctx.phones.get();
+                        if phones.is_empty() {
+                            return view! { <button title="No device connected" aria-label="Device" disabled=true>"📱"</button> }.into_any();
+                        }
+                        phones.into_iter().map(|i| {
+                            let src = Src::of(&i.id);
+                            view! {
+                                <button title=format!("Files on {} ({})", i.label, i.transport) aria-label=i.label.clone()
+                                    class:active=move || p.src.get() == src on:click=move |_| ctx.switch_src(p, src)>"📱"</button>
+                            }
+                        }).collect_view().into_any()
+                    }}
                 </div>
                 <Crumbs pane=p/>
                 {move || p.loading.get().then(|| view! { <span class="spin"></span> })}
-                <button class="btn" title="Refresh" aria-label="Refresh" on:click=move |_| ctx.refresh(p)>"⟳"</button>
+                <input class="filter" type="search" placeholder="Filter" title="Show names containing this (⌘F). Enter searches subfolders too."
+                    prop:value=move || p.filter.get()
+                    on:input=move |ev| { p.filter.set(event_target_value(&ev)); p.arrange(); }
+                    on:keydown=move |ev| match ev.key().as_str() {
+                        "Enter" => ctx.find(p),
+                        "Escape" => {
+                            p.filter.set(String::new());
+                            p.arrange();
+                            if let Some(t) = ev.target() { let _ = t.unchecked_into::<web_sys::HtmlElement>().blur(); }
+                        }
+                        _ => {}
+                    }/>
+                {(p.id == 0).then(|| view! {
+                    <button class="btn" class:active=move || ctx.split.get()
+                        title=move || if ctx.split.get() { "Hide the second pane (⌘\\)" } else { "Show a second pane (⌘\\)" }
+                        aria-label="Second pane" on:click=move |_| ctx.set_split(!ctx.split.get_untracked())>"◫"</button>
+                })}
                 {(p.id == 1).then(|| view! {
                     <button class="btn" title="Hide this pane (⌘\\)" aria-label="Hide this pane"
                         on:click=move |_| ctx.set_split(false)>"✕"</button>
@@ -1400,7 +2170,8 @@ fn PaneView(pane: Pane) -> impl IntoView {
     }
 }
 
-/// Selects on click, opens on double-click, and shows the context menu on right-click.
+/// Selects on click (⌘ and Shift pick several), opens on double-click, and shows the context menu
+/// on right-click.
 fn row_events(
     ctx: Ctx,
     p: Pane,
@@ -1410,11 +2181,87 @@ fn row_events(
     (
         move |ev: web_sys::MouseEvent| {
             ev.stop_propagation();
-            p.selected.set(Some(path.clone()));
+            p.click(&ev, &path);
         },
         move |_| ctx.open(p, e1.clone()),
         move |ev: web_sys::MouseEvent| ctx.show_menu(p, &ev, Some(e2.clone())),
     )
+}
+
+/// Starts dragging an item: the picked items if it's one of them, otherwise just it.
+fn drag_start(ctx: Ctx, p: Pane, path: String) -> impl Fn(web_sys::DragEvent) + 'static {
+    move |ev: web_sys::DragEvent| {
+        if !p.picked().iter().any(|e| e.path == path) {
+            p.select_only(Some(path.clone()));
+        }
+        let paths: Vec<String> = p.picked().into_iter().map(|e| e.path).collect();
+        if let Some(dt) = ev.data_transfer() {
+            let _ = dt.set_data("text/plain", &paths.join("\n"));
+            dt.set_effect_allowed("copyMove");
+        }
+        ctx.drag.set_value(Some((p.src.get_untracked(), paths)));
+    }
+}
+
+fn drag_end(ctx: Ctx) -> impl Fn(web_sys::DragEvent) + 'static {
+    move |_| {
+        ctx.drag.set_value(None);
+        ctx.drop_at.set(None);
+    }
+}
+
+/// Lets items dragged from a pane drop into folder `dir` (None: the pane's folder). Dropping moves
+/// within the same device and copies between devices, like Finder; ⌥ always copies, ⌘ always moves.
+fn drop_events(
+    ctx: Ctx,
+    p: Pane,
+    dir: Option<String>,
+) -> (impl Fn(web_sys::DragEvent) + 'static, impl Fn(web_sys::DragEvent) + 'static) {
+    let key = format!("{}:{}", p.id, dir.clone().unwrap_or_default());
+    let d = dir.clone();
+    let over = move |ev: web_sys::DragEvent| {
+        let Some((src, paths)) = ctx.drag.get_value() else { return };
+        let target = dir_or_cwd(p, &d);
+        // Not into one of the dragged folders, nor into the folder they're already in.
+        if src == p.src.get_untracked() && paths.iter().any(|x| *x == target || parent(x) == target) {
+            if ctx.drop_at.get_untracked().is_some() {
+                ctx.drop_at.set(None);
+            }
+            return;
+        }
+        ev.prevent_default();
+        ev.stop_propagation();
+        if let Some(dt) = ev.data_transfer() {
+            dt.set_drop_effect(if moves(&ev, src, p.src.get_untracked()) { "move" } else { "copy" });
+        }
+        if ctx.drop_at.get_untracked().as_deref() != Some(key.as_str()) {
+            ctx.drop_at.set(Some(key.clone()));
+        }
+    };
+    let drop = move |ev: web_sys::DragEvent| {
+        ev.prevent_default();
+        ev.stop_propagation();
+        ctx.drop_at.set(None);
+        let Some((src, paths)) = ctx.drag.write_value().take() else { return };
+        let to_src = p.src.get_untracked();
+        ctx.active.set(p.id);
+        ctx.transfer(p, src, paths, to_src, dir_or_cwd(p, &dir), moves(&ev, src, to_src));
+    };
+    (over, drop)
+}
+
+fn dir_or_cwd(p: Pane, dir: &Option<String>) -> String {
+    dir.clone().unwrap_or_else(|| p.cwd.get_untracked())
+}
+
+fn moves(ev: &web_sys::DragEvent, from: Src, to: Src) -> bool {
+    if ev.alt_key() {
+        false
+    } else if ev.meta_key() {
+        true
+    } else {
+        from == to
+    }
 }
 
 fn empty_note(p: Pane) -> impl IntoView {
@@ -1427,22 +2274,46 @@ fn empty_note(p: Pane) -> impl IntoView {
 fn ListView(pane: Pane) -> impl IntoView {
     let ctx = expect_context::<Ctx>();
     let p = pane;
+    let (over, drop) = drop_events(ctx, p, None);
+    let here = format!("{}:", p.id);
     view! {
-        <div class="list" on:click=move |_| p.selected.set(None) on:contextmenu=move |ev| ctx.show_menu(p, &ev, None)>
+        <div class="list" class:drop=move || ctx.drop_at.get().as_deref() == Some(here.as_str())
+            on:click=move |_| p.select_only(None) on:contextmenu=move |ev| ctx.show_menu(p, &ev, None)
+            on:dragover=over on:drop=drop>
             <table>
-                <thead><tr><th>"Name"</th><th class="num">"Modified"</th><th class="num">"Size"</th></tr></thead>
+                <thead><tr>
+                    {SortKey::ALL.map(|k| {
+                        let num = matches!(k, SortKey::Date | SortKey::Size);
+                        view! {
+                            <th class:num=num><button class="sort" title=format!("Sort by {}", k.label().to_lowercase())
+                                on:click=move |_| p.set_sort(k)>
+                                {k.label()}
+                                <span class="arrow">{move || match p.sort.get() {
+                                    Sort(s, asc) if s == k => if asc { "▲" } else { "▼" },
+                                    _ => "",
+                                }}</span>
+                            </button></th>
+                        }
+                    })}
+                </tr></thead>
                 <tbody>
                     <For each=move || p.entries.get() key=|e| (e.path.clone(), e.size, e.mtime) let(e)>
                         {
                             let k = kind(&e);
                             let path = e.path.clone();
                             let (click, dbl, menu) = row_events(ctx, p, &e);
-                            let tag = match k { Kind::Epub => "EPUB", Kind::Text => "text", _ => "" };
+                            let where_ = p.found.get_untracked().is_some().then(|| parent(&e.path));
+                            let (dir, key) = (e.dir.then(|| e.path.clone()), format!("{}:{}", p.id, e.path));
+                            let (over, drop) = drop_events(ctx, p, dir.clone());
                             view! {
-                                <tr class:selected=move || p.selected.get().as_deref() == Some(path.as_str())
+                                <tr class:selected=move || p.is_picked(&path) class:drop=move || ctx.drop_at.get().as_deref() == Some(key.as_str())
+                                    draggable="true" data-dir=dir
+                                    on:dragstart=drag_start(ctx, p, e.path.clone()) on:dragend=drag_end(ctx)
+                                    on:dragover=move |ev| if e.dir { over(ev) } on:drop=move |ev| if e.dir { drop(ev) }
                                     on:click=click on:dblclick=dbl on:contextmenu=menu>
-                                    <td class="name"><span class="icon">{icon(k)}</span>{e.name.clone()}
-                                        {(!tag.is_empty()).then(|| view! { <span class="kind">{tag}</span> })}</td>
+                                    <td class="name" title=e.path.clone()><span class="icon">{icon(k)}</span>{e.name.clone()}
+                                        {where_.map(|w| view! { <span class="where">{w}</span> })}</td>
+                                    <td class="kindcol">{kind_label(&e)}</td>
                                     <td class="num">{when(e.mtime)}</td>
                                     <td class="num">{if e.dir { String::new() } else { human_size(e.size) }}</td>
                                 </tr>
@@ -1481,17 +2352,27 @@ fn Thumbnail(src: Src, entry: Entry) -> impl IntoView {
 fn ThumbView(pane: Pane) -> impl IntoView {
     let ctx = expect_context::<Ctx>();
     let p = pane;
+    let (over, drop) = drop_events(ctx, p, None);
+    let here = format!("{}:", p.id);
     view! {
-        <div class="list" on:click=move |_| p.selected.set(None) on:contextmenu=move |ev| ctx.show_menu(p, &ev, None)>
+        <div class="list" class:drop=move || ctx.drop_at.get().as_deref() == Some(here.as_str())
+            on:click=move |_| p.select_only(None) on:contextmenu=move |ev| ctx.show_menu(p, &ev, None)
+            on:dragover=over on:drop=drop>
             <div class="thumbs">
                 <For each=move || p.entries.get() key=|e| (e.path.clone(), e.size, e.mtime) let(e)>
                     {
                         let path = e.path.clone();
                         let (click, dbl, menu) = row_events(ctx, p, &e);
                         let sub = if e.dir { "Folder".to_string() } else { human_size(e.size) };
+                        let (dir, key) = (e.dir.then(|| e.path.clone()), format!("{}:{}", p.id, e.path));
+                        let (over, drop) = drop_events(ctx, p, dir.clone());
+                        let is_dir = e.dir;
                         view! {
                             <div class="tile" title=e.name.clone()
-                                class:selected=move || p.selected.get().as_deref() == Some(path.as_str())
+                                class:selected=move || p.is_picked(&path) class:drop=move || ctx.drop_at.get().as_deref() == Some(key.as_str())
+                                draggable="true" data-dir=dir
+                                on:dragstart=drag_start(ctx, p, e.path.clone()) on:dragend=drag_end(ctx)
+                                on:dragover=move |ev| if is_dir { over(ev) } on:drop=move |ev| if is_dir { drop(ev) }
                                 on:click=click on:dblclick=dbl on:contextmenu=menu>
                                 <div class="pic"><Thumbnail src=p.src.get_untracked() entry=e.clone()/></div>
                                 <div class="label">{e.name.clone()}</div>
@@ -1512,7 +2393,7 @@ fn ThumbView(pane: Pane) -> impl IntoView {
 fn ColumnView(pane: Pane) -> impl IntoView {
     let ctx = expect_context::<Ctx>();
     let p = pane;
-    let chain = Memo::new(move |_| ancestors(&p.cwd.get()));
+    let chain = Memo::new(move |_| chain_from(&p.root.get(), &p.cwd.get()));
     // Fetch the folders to the left that aren't known yet (e.g. when starting deep in this view).
     Effect::new(move |_| {
         let cwd = p.cwd.get();
@@ -1525,7 +2406,8 @@ fn ColumnView(pane: Pane) -> impl IntoView {
                 let args = json!({ "src": src.key(), "path": dir, "current": false });
                 if let Ok(es) = call::<Vec<Entry>>("list", args).await {
                     if p.src.get_untracked() == src {
-                        let es = ctx.visible(es);
+                        let mut es = ctx.visible(es);
+                        p.sort.get_untracked().apply(&mut es);
                         p.cols.update(|c| {
                             c.insert(dir, es);
                         });
@@ -1591,8 +2473,13 @@ fn Column(pane: Pane, dir: String, chain: Memo<Vec<String>>) -> impl IntoView {
         }
         ctx.show_menu(p, &ev, None);
     };
+    let (over, drop) = drop_events(ctx, p, Some(dir.clone()));
+    let key = format!("{}:{}", p.id, dir);
+    let data_dir = dir.clone();
     view! {
-        <div class="col" class:current=current on:contextmenu=bg_menu>
+        <div class="col" class:current=current on:contextmenu=bg_menu data-dir=data_dir
+            class:drop=move || ctx.drop_at.get().as_deref() == Some(key.as_str())
+            on:dragover=over on:drop=drop>
             {move || match entries() {
                 None => view! { <div class="empty"><span class="spin"></span></div> }.into_any(),
                 Some(es) if es.is_empty() => view! { <div class="empty">"Empty"</div> }.into_any(),
@@ -1600,20 +2487,29 @@ fn Column(pane: Pane, dir: String, chain: Memo<Vec<String>>) -> impl IntoView {
                     let (p1, p2) = (e.path.clone(), e.path.clone());
                     let (e1, e2) = (e.clone(), e.clone());
                     let dir = dir.clone();
-                    let click = move |_| {
-                        if e1.dir {
+                    let click = move |ev: web_sys::MouseEvent| {
+                        if current.get_untracked() && (ev.meta_key() || ev.shift_key()) {
+                            p.click(&ev, &e1.path);
+                        } else if e1.dir {
                             ctx.navigate(p, e1.path.clone());
                         } else if current.get_untracked() {
-                            p.selected.set(Some(e1.path.clone()));
+                            p.select_only(Some(e1.path.clone()));
                         } else {
                             ctx.navigate_select(p, p.src.get_untracked(), dir.clone(), Some(e1.path.clone()));
                         }
                     };
                     let k = kind(&e);
+                    let (fdir, key) = (e.dir.then(|| e.path.clone()), format!("{}:{}", p.id, e.path));
+                    let (over, drop) = drop_events(ctx, p, fdir.clone());
+                    let is_dir = e.dir;
                     view! {
                         <div class="row"
                             class:open=move || open_child.get().as_deref() == Some(p1.as_str())
-                            class:selected=move || current.get() && p.selected.get().as_deref() == Some(p2.as_str())
+                            class:selected=move || current.get() && p.is_picked(&p2)
+                            class:drop=move || ctx.drop_at.get().as_deref() == Some(key.as_str())
+                            draggable="true" data-dir=fdir
+                            on:dragstart=drag_start(ctx, p, e.path.clone()) on:dragend=drag_end(ctx)
+                            on:dragover=move |ev| if is_dir { over(ev) } on:drop=move |ev| if is_dir { drop(ev) }
                             on:click=click
                             on:dblclick=move |_| if !e2.dir { ctx.open(p, e2.clone()) }
                             on:contextmenu=move |ev| ctx.show_menu(p, &ev, Some(e.clone()))>
@@ -1677,6 +2573,11 @@ fn ListStatus(pane: Pane) -> impl IntoView {
         })
     };
     let selection = move || {
+        let n = p.marked.with(|m| m.len());
+        if n > 1 {
+            let bytes: u64 = p.marked.with(|m| p.entries.with(|es| es.iter().filter(|e| m.contains(&e.path)).map(|e| e.size).sum()));
+            return Some(format!("{n} picked · {}", human_size(bytes)));
+        }
         p.selected_entry().map(|e| {
             let size = if e.dir { String::new() } else { format!(" · {}", human_size(e.size)) };
             let modified = if e.mtime > 0 { format!(" · modified {}", when(e.mtime)) } else { String::new() };
@@ -1684,11 +2585,20 @@ fn ListStatus(pane: Pane) -> impl IntoView {
         })
     };
     let place = move || match p.src.get() {
-        Src::Device => ctx.info.get().map(|i| format!("{} · {}", i.label, i.transport)).unwrap_or_default(),
         Src::Mac => ctx.mac.get().map(|i| i.label).unwrap_or_default(),
+        src => ctx.src_info(src).map(|i| format!("{} · {}", i.label, i.transport)).unwrap_or_default(),
     };
+    let search = move || p.found.get().map(|(q, complete)| {
+        let n = p.all.with(|a| a.len());
+        let more = if complete { "" } else { " (stopped early: open a smaller folder to see all)" };
+        view! {
+            <span class="search">{format!("{n} found for “{q}”{more}")}</span>
+            <button class="btn small" on:click=move |_| ctx.reload(p)>"Back to folder"</button>
+        }
+    });
     view! {
         <div class="statusbar">
+            {search}
             <span>{summary}</span>
             <span class="sel">{selection}</span>
             <span class="spacer"></span>
@@ -1703,6 +2613,33 @@ fn ListStatus(pane: Pane) -> impl IntoView {
     }
 }
 
+/// The copy or move under way: what it's on, how far it is, and Cancel.
+#[component]
+fn TransferBar() -> impl IntoView {
+    let ctx = expect_context::<Ctx>();
+    move || ctx.job.get().map(|j| {
+        let verb = if j.moving { "Moving" } else { "Copying" };
+        let (text, pct) = match &j.progress {
+            None => (format!("{verb}: looking at what to copy…"), 0.0),
+            Some(pr) => {
+                let pct = if pr.bytes_total > 0 { pr.bytes_done as f64 * 100.0 / pr.bytes_total as f64 } else { 0.0 };
+                let now = if pr.current.is_empty() { String::new() } else { format!(" {}", pr.current) };
+                (format!("{verb}{now} · {} of {} files · {} of {}", pr.files_done, pr.files_total,
+                    human_size(pr.bytes_done), human_size(pr.bytes_total)), pct)
+            }
+        };
+        view! {
+            <div class="transfer">
+                <span class="spin"></span>
+                <span class="text">{text}</span>
+                <div class="meter"><div style=format!("width:{pct:.1}%")></div></div>
+                <button class="btn" title="Stops after the file being copied now"
+                    on:click=move |_| ctx.cancel_transfer()>"Cancel"</button>
+            </div>
+        }
+    })
+}
+
 #[component]
 fn TextEditor() -> impl IntoView {
     let ctx = expect_context::<Ctx>();
@@ -1712,7 +2649,10 @@ fn TextEditor() -> impl IntoView {
         <div class="bar">
             <button class="btn" on:click=move |_| ctx.close_editor(false)>"← Files"</button>
             <span class="title">{path}{move || dirty.get().then_some(" •")}</span>
-            <span class="kind">{move || ctx.editor.get().map(|e| if e.src == Src::Mac { "Mac" } else { "Phone" })}</span>
+            <span class="kind">{move || ctx.editor.get().map(|e| match e.src {
+                Src::Mac => "Mac".to_string(),
+                src => ctx.src_info(src).map_or_else(|| "Device".into(), |i| i.label),
+            })}</span>
             <span class="spacer"></span>
             <button class="btn primary" title="⌘S" disabled=move || !dirty.get() || ctx.busy.get() on:click=move |_| ctx.save()>"Save"</button>
         </div>

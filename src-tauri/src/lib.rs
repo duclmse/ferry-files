@@ -19,8 +19,17 @@ use tauri_plugin_dialog::DialogExt;
 /// Text files bigger than this open as downloads instead of in the editor.
 const TEXT_MAX: u64 = 5 * 1024 * 1024;
 
+/// A connected device.
+struct Conn {
+    dev: Arc<Device>,
+    /// What it is on USB ("adb:SERIAL" or "mtp:BUS-DEV"), so it isn't offered or connected twice.
+    usb: Option<String>,
+}
+
 pub struct AppState {
-    dev: Mutex<Option<Arc<Device>>>,
+    /// Connected devices by id ("d1", "d2", ...). Several can be connected at once.
+    devs: Mutex<HashMap<String, Conn>>,
+    next_dev: AtomicU32,
     /// The Mac's own files, always available.
     mac: Arc<Device>,
     /// Open EPUBs by id. protocol.rs serves their files to the chapter view.
@@ -28,45 +37,50 @@ pub struct AppState {
     next_book: AtomicU32,
     /// Where each open book came from ("device" or "mac"), so it's saved back there.
     book_src: Mutex<HashMap<u32, String>>,
-    /// The device folder each pane is showing. Thumbnails for other device folders aren't made.
-    viewing: Mutex<HashMap<u32, String>>,
+    /// The device and folder each pane is showing. Thumbnails for other device folders aren't made.
+    viewing: Mutex<HashMap<u32, (String, String)>>,
     /// Held while a thumbnail is being made, so they're made one at a time.
     pub thumb_lock: Mutex<()>,
+    /// Cancel flags of running transfers, by job number (chosen by the frontend).
+    jobs: Mutex<HashMap<u32, Arc<std::sync::atomic::AtomicBool>>>,
 }
 
 impl Default for AppState {
     fn default() -> Self {
         AppState {
-            dev: Mutex::default(),
+            devs: Mutex::default(),
+            next_dev: AtomicU32::new(1),
             mac: Arc::new(Device::new(Box::new(local::Local))),
             books: Mutex::default(),
             next_book: AtomicU32::default(),
             book_src: Mutex::default(),
             viewing: Mutex::default(),
             thumb_lock: Mutex::default(),
+            jobs: Mutex::default(),
         }
     }
 }
 
 impl AppState {
-    /// The files to work on: "mac" for the Mac's own, anything else (or nothing) for the phone.
+    /// The files to work on: "mac" for the Mac's own, or a connected device's id.
     pub fn source(&self, src: Option<&str>) -> Result<Arc<Device>, String> {
         match src {
             Some("mac") => Ok(self.mac.clone()),
-            _ => self.device(),
+            Some(id) => self
+                .devs()
+                .get(id)
+                .map(|c| c.dev.clone())
+                .ok_or_else(|| "That device isn't connected any more.".to_string()),
+            None => Err("No device given.".into()),
         }
     }
 
-    pub fn device(&self) -> Result<Arc<Device>, String> {
-        self.dev
-            .lock()
-            .unwrap_or_else(|e| e.into_inner())
-            .clone()
-            .ok_or_else(|| "Not connected to a device.".to_string())
+    fn devs(&self) -> std::sync::MutexGuard<'_, HashMap<String, Conn>> {
+        self.devs.lock().unwrap_or_else(|e| e.into_inner())
     }
 
-    pub fn is_viewing(&self, dir: &str) -> bool {
-        self.viewing.lock().unwrap_or_else(|e| e.into_inner()).values().any(|v| v == dir)
+    pub fn is_viewing(&self, src: &str, dir: &str) -> bool {
+        self.viewing.lock().unwrap_or_else(|e| e.into_inner()).values().any(|(s, d)| s == src && d == dir)
     }
 }
 
@@ -79,16 +93,31 @@ async fn blocking<T: Send + 'static>(f: impl FnOnce() -> Result<T, String> + Sen
     tauri::async_runtime::spawn_blocking(f).await.map_err(|e| e.to_string())?
 }
 
+/// A device on USB that isn't connected yet.
+#[derive(Serialize)]
+struct Found {
+    /// "adb:SERIAL" or "mtp:BUS-DEV".
+    usb: String,
+    transport: &'static str,
+    /// What `connect` takes as `which`: the adb serial or the MTP location.
+    which: String,
+    name: String,
+}
+
 #[derive(Serialize)]
 struct Devices {
-    adb: Vec<String>,
+    found: Vec<Found>,
     adb_found: bool,
-    mtp: Vec<String>,
     mtp_error: Option<String>,
+    /// Disks mounted on the Mac (USB drives, SD cards, disk images), as (name, path).
+    drives: Vec<(String, String)>,
 }
 
 #[derive(Serialize)]
 struct Info {
+    /// "mac", or the id ("d1", ...) that commands take as `src`.
+    id: String,
+    usb: Option<String>,
     label: String,
     transport: &'static str,
     default_dir: String,
@@ -96,8 +125,10 @@ struct Info {
     backup_dir: String,
 }
 
-fn info_of(d: &Device) -> Info {
+fn info_of(id: &str, usb: Option<String>, d: &Device) -> Info {
     Info {
+        id: id.to_string(),
+        usb,
         label: d.label(),
         transport: d.kind(),
         default_dir: d.default_dir(),
@@ -106,37 +137,90 @@ fn info_of(d: &Device) -> Info {
     }
 }
 
+/// Mounted disks other than the Mac's own startup disk.
+fn drives() -> Vec<(String, String)> {
+    let root = std::fs::canonicalize("/").ok();
+    let mut out: Vec<(String, String)> = std::fs::read_dir("/Volumes")
+        .into_iter()
+        .flatten()
+        .flatten()
+        .filter_map(|e| {
+            let name = e.file_name().to_string_lossy().into_owned();
+            if name.starts_with('.') || name.starts_with("com.apple.") {
+                return None;
+            }
+            let path = e.path();
+            // The startup disk shows in /Volumes as a link to "/".
+            if std::fs::canonicalize(&path).ok() == root || !path.is_dir() {
+                return None;
+            }
+            Some((name, path.display().to_string()))
+        })
+        .collect();
+    out.sort();
+    out
+}
+
+/// Devices on USB that aren't connected yet, and the Mac's mounted disks.
 #[tauri::command(rename_all = "snake_case")]
-async fn devices() -> Result<Devices, String> {
-    blocking(|| {
-        let (mtp, mtp_error) = match mtp::detect() {
-            Ok(v) => (v, None),
-            Err(e) => (vec![], Some(e.to_string())),
+async fn devices(state: State<'_, AppState>) -> Result<Devices, String> {
+    let taken: Vec<String> = state.devs().values().filter_map(|c| c.usb.clone()).collect();
+    blocking(move || {
+        let mut found: Vec<Found> = adb::ready_devices()
+            .into_iter()
+            .map(|(serial, name)| Found { usb: format!("adb:{serial}"), transport: "adb", which: serial, name })
+            .collect();
+        let mtp_error = match mtp::detect() {
+            Ok(v) => {
+                found.extend(v.into_iter().map(|(loc, name)| Found { usb: format!("mtp:{loc}"), transport: "mtp", which: loc, name }));
+                None
+            }
+            Err(e) => Some(e.to_string()),
         };
-        Ok(Devices { adb: adb::ready_serials(), adb_found: adb::adb_path().is_some(), mtp, mtp_error })
+        found.retain(|f| !taken.contains(&f.usb));
+        Ok(Devices { found, adb_found: adb::adb_path().is_some(), mtp_error, drives: drives() })
     })
     .await
 }
 
+/// Connects a device found by `devices` (`which` is its adb serial or MTP location), alongside any
+/// already connected.
 #[tauri::command(rename_all = "snake_case")]
-async fn connect(state: State<'_, AppState>, transport: String, serial: Option<String>) -> Result<Info, String> {
-    // Release the old device first: MTP allows only one open session.
-    state.dev.lock().unwrap_or_else(|e| e.into_inner()).take();
-    let dev = blocking(move || device::connect(&transport, serial).map_err(msg)).await?;
-    let info = info_of(&dev);
-    *state.dev.lock().unwrap_or_else(|e| e.into_inner()) = Some(Arc::new(dev));
+async fn connect(state: State<'_, AppState>, transport: String, which: Option<String>) -> Result<Info, String> {
+    let usb = which.as_ref().map(|w| format!("{transport}:{w}"));
+    if usb.is_some() && state.devs().values().any(|c| c.usb == usb) {
+        return Err("That device is already connected.".into());
+    }
+    let dev = blocking(move || device::connect(&transport, which).map_err(msg)).await?;
+    let id = format!("d{}", state.next_dev.fetch_add(1, Ordering::Relaxed));
+    let info = info_of(&id, usb.clone(), &dev);
+    state.devs().insert(id, Conn { dev: Arc::new(dev), usb });
     Ok(info)
 }
 
 #[tauri::command(rename_all = "snake_case")]
-fn disconnect(state: State<'_, AppState>) {
-    state.dev.lock().unwrap_or_else(|e| e.into_inner()).take();
+fn disconnect(state: State<'_, AppState>, src: String) {
+    state.devs().remove(&src);
+    state.viewing.lock().unwrap_or_else(|e| e.into_inner()).retain(|_, (s, _)| *s != src);
 }
 
-/// The connected phone, or with `src: "mac"`, the Mac's own files.
+/// The connected devices, oldest first (a reloaded window picks them up from here).
+#[tauri::command(rename_all = "snake_case")]
+fn connections(state: State<'_, AppState>) -> Vec<Info> {
+    let devs = state.devs();
+    let mut out: Vec<Info> = devs.iter().map(|(id, c)| info_of(id, c.usb.clone(), &c.dev)).collect();
+    out.sort_by_key(|i| i.id[1..].parse::<u32>().unwrap_or(0));
+    out
+}
+
+/// A connected device, or with `src: "mac"`, the Mac's own files.
 #[tauri::command(rename_all = "snake_case")]
 fn info(state: State<'_, AppState>, src: Option<String>) -> Option<Info> {
-    state.source(src.as_deref()).ok().map(|d| info_of(&d))
+    match src.as_deref() {
+        Some("mac") => Some(info_of("mac", None, &state.mac)),
+        Some(id) => state.devs().get(id).map(|c| info_of(id, c.usb.clone(), &c.dev)),
+        None => None,
+    }
 }
 
 /// Lists a folder. `current` (default true) says it's the folder `pane` (default 0) now shows;
@@ -153,11 +237,10 @@ async fn list(
     if current.unwrap_or(true) {
         let mut viewing = state.viewing.lock().unwrap_or_else(|e| e.into_inner());
         let pane = pane.unwrap_or(0);
-        if src.as_deref() == Some("mac") {
-            viewing.remove(&pane);
-        } else {
-            viewing.insert(pane, device::norm(&path).map_err(msg)?);
-        }
+        match src.as_deref() {
+            Some("mac") | None => viewing.remove(&pane),
+            Some(s) => viewing.insert(pane, (s.to_string(), device::norm(&path).map_err(msg)?)),
+        };
     }
     blocking(move || dev.listdir(&path).map_err(msg)).await
 }
@@ -223,8 +306,8 @@ async fn remove(state: State<'_, AppState>, src: Option<String>, path: String) -
 
 /// Asks where to save, then copies the device file to the Mac. Returns the Mac path, or None if cancelled.
 #[tauri::command(rename_all = "snake_case")]
-async fn download(app: AppHandle, state: State<'_, AppState>, path: String) -> Result<Option<String>, String> {
-    let dev = state.device()?;
+async fn download(app: AppHandle, state: State<'_, AppState>, src: String, path: String) -> Result<Option<String>, String> {
+    let dev = state.source(Some(&src))?;
     blocking(move || {
         let Some(dest) = app.dialog().file().set_file_name(device::basename(&path)).blocking_save_file() else {
             return Ok(None);
@@ -240,8 +323,8 @@ async fn download(app: AppHandle, state: State<'_, AppState>, path: String) -> R
 /// Asks for Mac files and copies them into a device folder. Existing files are replaced
 /// (the old version is backed up first). Returns one line per file.
 #[tauri::command(rename_all = "snake_case")]
-async fn upload(app: AppHandle, state: State<'_, AppState>, dir: String) -> Result<Vec<String>, String> {
-    let dev = state.device()?;
+async fn upload(app: AppHandle, state: State<'_, AppState>, src: String, dir: String) -> Result<Vec<String>, String> {
+    let dev = state.source(Some(&src))?;
     blocking(move || {
         let Some(files) = app.dialog().file().blocking_pick_files() else { return Ok(vec![]) };
         let mut report = Vec::new();
@@ -268,53 +351,341 @@ async fn upload(app: AppHandle, state: State<'_, AppState>, dir: String) -> Resu
 
 /// Copies a file between the phone and the Mac (or within one) into folder `to_dir`, keeping its
 /// name. Refuses if a file of that name is already there. Returns the new file's path.
-#[tauri::command(rename_all = "snake_case")]
-async fn copy(
-    state: State<'_, AppState>,
-    from_src: String,
+/// Progress of a transfer, sent as the "transfer" event after each file.
+#[derive(Clone, Serialize)]
+struct Progress {
+    job: u32,
+    files_done: u32,
+    files_total: u32,
+    bytes_done: u64,
+    bytes_total: u64,
+    current: String,
+}
+
+#[derive(Serialize)]
+struct TransferReport {
+    copied: u32,
+    /// Name and reason, for each item that wasn't copied (or moved).
+    skipped: Vec<(String, String)>,
+    cancelled: bool,
+    /// Backups of moved files, made when their originals were removed.
+    backups: Vec<String>,
+}
+
+/// One file or folder to make at the target, found by walking the sources.
+struct Item {
     from: String,
+    to: String,
+    dir: bool,
+    size: u64,
+}
+
+/// Lists everything under `from` (itself first), with where it goes under `to_dir`.
+fn walk(dev: &Device, from: &str, to_dir: &str, out: &mut Vec<Item>) -> Result<(), String> {
+    let st = dev.stat(from).map_err(msg)?.ok_or_else(|| format!("No such file or folder: {from}"))?;
+    let to = device::join(to_dir, &st.name);
+    out.push(Item { from: from.to_string(), to: to.clone(), dir: st.dir, size: st.size });
+    if st.dir {
+        let mut kids = dev.listdir(from).map_err(msg)?;
+        kids.sort_by(|a, b| a.name.cmp(&b.name));
+        for k in kids {
+            walk(dev, &k.path, &to, out)?;
+        }
+    }
+    Ok(())
+}
+
+/// The work of `transfer`, apart from the app, so it can be tested.
+#[allow(clippy::too_many_arguments)]
+fn run_transfer(
+    a: &Device,
+    b: &Device,
+    same: bool,
+    job: u32,
+    paths: &[String],
+    to_dir: &str,
+    moving: bool,
+    stop: &std::sync::atomic::AtomicBool,
+    emit: impl Fn(Progress),
+) -> Result<TransferReport, String> {
+    let mut report = TransferReport { copied: 0, skipped: vec![], cancelled: false, backups: vec![] };
+    let mut items = vec![];
+    for p in paths {
+        if same && (device::dirname(p) == to_dir || to_dir == p || to_dir.starts_with(&format!("{p}/"))) {
+            let why = if device::dirname(p) == to_dir { "It's already in this folder." } else { "A folder can't go inside itself." };
+            report.skipped.push((device::basename(p).to_string(), why.into()));
+            continue;
+        }
+        walk(a, p, to_dir, &mut items)?;
+    }
+    run_items(a, b, job, &items, moving, stop, emit, report)
+}
+
+/// Copies (or moves) each item in turn: folders are made (or merged into), files are written
+/// only where nothing is there yet.
+#[allow(clippy::too_many_arguments)]
+fn run_items(
+    a: &Device,
+    b: &Device,
+    job: u32,
+    items: &[Item],
+    moving: bool,
+    stop: &std::sync::atomic::AtomicBool,
+    emit: impl Fn(Progress),
+    mut report: TransferReport,
+) -> Result<TransferReport, String> {
+    let files_total = items.iter().filter(|i| !i.dir).count() as u32;
+    let bytes_total: u64 = items.iter().map(|i| i.size).sum();
+    let mut p = Progress { job, files_done: 0, files_total, bytes_done: 0, bytes_total, current: String::new() };
+    // Folders that couldn't be made, so what's inside them is skipped too.
+    let mut failed: Vec<String> = vec![];
+    // Folders whose contents were all moved, removed afterwards (deepest first).
+    let mut emptied: Vec<String> = vec![];
+    for it in items {
+        if stop.load(Ordering::Relaxed) {
+            report.cancelled = true;
+            break;
+        }
+        let name = device::basename(&it.from).to_string();
+        if failed.iter().any(|f| it.from.starts_with(&format!("{f}/"))) {
+            continue;
+        }
+        p.current = name.clone();
+        emit(p.clone());
+        if it.dir {
+            match b.stat(&it.to).map_err(msg)? {
+                Some(e) if e.dir => {}
+                Some(_) => {
+                    report.skipped.push((name, "A file with that name is already there.".into()));
+                    failed.push(it.from.clone());
+                    continue;
+                }
+                None => {
+                    if let Err(e) = b.mkdir(&it.to) {
+                        report.skipped.push((name, e.to_string()));
+                        failed.push(it.from.clone());
+                        continue;
+                    }
+                }
+            }
+            if moving {
+                emptied.push(it.from.clone());
+            }
+            continue;
+        }
+        let done = (|| -> Result<(), String> {
+            let (data, _) = a.read(&it.from).map_err(msg)?;
+            b.write(&it.to, &data, None, true).map_err(|e| match e {
+                DevError::Conflict(_) => "Already there.".to_string(),
+                e => e.to_string(),
+            })?;
+            if moving {
+                if let Some(bk) = a.remove(&it.from).map_err(|e| format!("Copied, but the original wasn't removed: {e}"))? {
+                    report.backups.push(bk);
+                }
+            }
+            Ok(())
+        })();
+        match done {
+            Ok(()) => report.copied += 1,
+            Err(e) => {
+                report.skipped.push((name, e));
+                // The folders holding it aren't empty, so they stay.
+                emptied.retain(|d| !it.from.starts_with(&format!("{d}/")));
+            }
+        }
+        p.files_done += 1;
+        p.bytes_done += it.size;
+    }
+    if !report.cancelled {
+        for d in emptied.iter().rev() {
+            // Only empty folders are removed; anything left behind keeps its folder.
+            let _ = a.remove(d);
+        }
+    }
+    p.current = String::new();
+    emit(p);
+    Ok(report)
+}
+
+/// Copies (or moves) files and folders, folders with everything in them, into `to_dir`. A folder
+/// that already exists there is merged into; a file that already exists is skipped, never
+/// replaced. Moving copies each file, then removes the original (backed up, like any delete), then
+/// removes the folders it emptied. Sends "transfer" events; `cancel_transfer(job)` stops it after
+/// the current file.
+#[tauri::command(rename_all = "snake_case")]
+async fn transfer(
+    app: AppHandle,
+    state: State<'_, AppState>,
+    job: u32,
+    from_src: String,
+    paths: Vec<String>,
     to_src: String,
     to_dir: String,
-) -> Result<String, String> {
+    mode: String,
+) -> Result<TransferReport, String> {
+    use tauri::Emitter;
     let (a, b) = (state.source(Some(&from_src))?, state.source(Some(&to_src))?);
-    blocking(move || {
-        let st = a.stat(&from).map_err(msg)?.ok_or_else(|| format!("No such file: {from}"))?;
-        if st.dir {
-            return Err(format!("{} is a folder. Only files can be copied.", st.name));
+    let moving = mode == "move";
+    let stop = Arc::new(std::sync::atomic::AtomicBool::new(false));
+    state.jobs.lock().unwrap().insert(job, stop.clone());
+    let same = from_src == to_src;
+    let r = blocking(move || {
+        run_transfer(&a, &b, same, job, &paths, &to_dir, moving, &stop, |p| {
+            let _ = app.emit("transfer", p);
+        })
+    })
+    .await;
+    state.jobs.lock().unwrap().remove(&job);
+    r
+}
+
+/// How a folder differs from another, by relative path. Files are compared by size only (times
+/// aren't kept the same across devices).
+#[derive(Default)]
+struct Comparison {
+    /// What's missing from the target, ready to copy: whole missing folders, with their contents.
+    missing: Vec<Item>,
+    /// Files on both sides with different sizes, or a file on one side and a folder on the other.
+    differ: Vec<String>,
+    /// Only in the target.
+    extra: Vec<String>,
+    same: u32,
+}
+
+fn compare_dirs(a: &Device, a_dir: &str, b: &Device, b_dir: &str, rel: &str, hidden: bool, out: &mut Comparison) -> Result<(), String> {
+    let shown = |e: &device::Entry| hidden || !e.name.starts_with('.');
+    let mine: Vec<_> = a.listdir(a_dir).map_err(msg)?.into_iter().filter(shown).collect();
+    let theirs: HashMap<String, device::Entry> = b.listdir(b_dir).map_err(msg)?.into_iter().filter(shown).map(|e| (e.name.clone(), e)).collect();
+    let r = |name: &str| if rel.is_empty() { name.to_string() } else { format!("{rel}/{name}") };
+    for e in &mine {
+        match theirs.get(&e.name) {
+            None => walk(a, &e.path, b_dir, &mut out.missing)?,
+            Some(t) if t.dir && e.dir => compare_dirs(a, &e.path, b, &t.path, &r(&e.name), hidden, out)?,
+            Some(t) if !t.dir && !e.dir && t.size == e.size => out.same += 1,
+            Some(_) => out.differ.push(r(&e.name)),
         }
-        let target = device::join(&to_dir, &st.name);
-        let (data, _) = a.read(&from).map_err(msg)?;
-        b.write(&target, &data, None, true).map_err(|e| match e {
-            DevError::Conflict(_) => format!("{} already exists there. Nothing was copied.", st.name),
-            e => e.to_string(),
-        })?;
-        Ok(target)
+    }
+    let names: std::collections::HashSet<&str> = mine.iter().map(|e| e.name.as_str()).collect();
+    let mut extra: Vec<_> = theirs.keys().filter(|n| !names.contains(n.as_str())).map(|n| r(n)).collect();
+    extra.sort();
+    out.extra.extend(extra);
+    Ok(())
+}
+
+#[derive(Serialize)]
+struct CompareReport {
+    /// Files and folders to copy (counting everything in missing folders).
+    files: u32,
+    folders: u32,
+    bytes: u64,
+    differ: Vec<String>,
+    extra: Vec<String>,
+    same: u32,
+}
+
+fn refuse_nested(same: bool, from_dir: &str, to_dir: &str) -> Result<(), String> {
+    let inside = |x: &str, y: &str| x == y || x.starts_with(&format!("{}/", y.trim_end_matches('/')));
+    if same && (inside(from_dir, to_dir) || inside(to_dir, from_dir)) {
+        return Err("Pick two separate folders: one is inside the other.".into());
+    }
+    Ok(())
+}
+
+/// What `sync` would copy from `from_dir` to `to_dir`, and what differs.
+#[tauri::command(rename_all = "snake_case")]
+async fn compare(state: State<'_, AppState>, from_src: String, from_dir: String, to_src: String, to_dir: String, hidden: bool) -> Result<CompareReport, String> {
+    let (a, b) = (state.source(Some(&from_src))?, state.source(Some(&to_src))?);
+    refuse_nested(from_src == to_src, &from_dir, &to_dir)?;
+    blocking(move || {
+        let mut c = Comparison::default();
+        compare_dirs(&a, &from_dir, &b, &to_dir, "", hidden, &mut c)?;
+        Ok(CompareReport {
+            files: c.missing.iter().filter(|i| !i.dir).count() as u32,
+            folders: c.missing.iter().filter(|i| i.dir).count() as u32,
+            bytes: c.missing.iter().map(|i| i.size).sum(),
+            differ: c.differ,
+            extra: c.extra,
+            same: c.same,
+        })
     })
     .await
+}
+
+/// Copies what's missing from `to_dir`, at any depth, from `from_dir`. Never replaces or removes
+/// anything in `to_dir`. Sends "transfer" events like `transfer`.
+#[tauri::command(rename_all = "snake_case")]
+#[allow(clippy::too_many_arguments)]
+async fn sync(
+    app: AppHandle,
+    state: State<'_, AppState>,
+    job: u32,
+    from_src: String,
+    from_dir: String,
+    to_src: String,
+    to_dir: String,
+    hidden: bool,
+) -> Result<TransferReport, String> {
+    use tauri::Emitter;
+    let (a, b) = (state.source(Some(&from_src))?, state.source(Some(&to_src))?);
+    refuse_nested(from_src == to_src, &from_dir, &to_dir)?;
+    let stop = Arc::new(std::sync::atomic::AtomicBool::new(false));
+    state.jobs.lock().unwrap().insert(job, stop.clone());
+    let r = blocking(move || {
+        let mut c = Comparison::default();
+        compare_dirs(&a, &from_dir, &b, &to_dir, "", hidden, &mut c)?;
+        let report = TransferReport { copied: 0, skipped: vec![], cancelled: false, backups: vec![] };
+        run_items(&a, &b, job, &c.missing, false, &stop, |p| {
+            let _ = app.emit("transfer", p);
+        }, report)
+    })
+    .await;
+    state.jobs.lock().unwrap().remove(&job);
+    r
+}
+
+#[tauri::command(rename_all = "snake_case")]
+fn cancel_transfer(state: State<'_, AppState>, job: u32) {
+    if let Some(stop) = state.jobs.lock().unwrap().get(&job) {
+        stop.store(true, Ordering::Relaxed);
+    }
+}
+
+/// Renames a file or folder in its folder. Returns the new path.
+#[tauri::command(rename_all = "snake_case")]
+async fn rename(state: State<'_, AppState>, src: String, path: String, name: String) -> Result<String, String> {
+    let dev = state.source(Some(&src))?;
+    blocking(move || dev.rename(&path, &name).map_err(msg)).await
 }
 
 /// Opens a file in its default Mac app. Phone files are copied to the app's cache first
 /// (`~/Library/Caches/yomi-files/opened`), so changes made there don't go back to the phone.
 /// Returns the path that was opened.
+/// The file as a path on the Mac: itself for Mac files; device files are copied to the app's cache
+/// first (`~/Library/Caches/yomi-files/opened`), so changes made to them don't go back to the device.
+fn local_copy(dev: &Device, mac: bool, path: &str) -> Result<std::path::PathBuf, String> {
+    if mac {
+        return Ok(std::path::PathBuf::from(path));
+    }
+    use std::hash::{Hash, Hasher};
+    let mut h = std::collections::hash_map::DefaultHasher::new();
+    (dev.label(), path).hash(&mut h);
+    // One folder per device and path, so files with the same name don't overwrite each other.
+    let dir = opened_dir().join(format!("{:016x}", h.finish()));
+    std::fs::create_dir_all(&dir).map_err(|e| format!("Can't create {}: {e}", dir.display()))?;
+    let (data, _) = dev.read(path).map_err(msg)?;
+    let local = dir.join(device::basename(path));
+    std::fs::write(&local, data).map_err(|e| format!("Can't write {}: {e}", local.display()))?;
+    Ok(local)
+}
+
+/// Opens a file in its default Mac app (a device file: a copy of it). Returns the path opened.
 #[tauri::command(rename_all = "snake_case")]
 async fn open_file(state: State<'_, AppState>, src: Option<String>, path: String) -> Result<String, String> {
     let mac = src.as_deref() == Some("mac");
     let dev = state.source(src.as_deref())?;
     blocking(move || {
-        let local = if mac {
-            std::path::PathBuf::from(&path)
-        } else {
-            use std::hash::{Hash, Hasher};
-            let mut h = std::collections::hash_map::DefaultHasher::new();
-            path.hash(&mut h);
-            // One folder per phone path, so files with the same name don't overwrite each other.
-            let dir = opened_dir().join(format!("{:016x}", h.finish()));
-            std::fs::create_dir_all(&dir).map_err(|e| format!("Can't create {}: {e}", dir.display()))?;
-            let (data, _) = dev.read(&path).map_err(msg)?;
-            let local = dir.join(device::basename(&path));
-            std::fs::write(&local, data).map_err(|e| format!("Can't write {}: {e}", local.display()))?;
-            local
-        };
+        let local = local_copy(&dev, mac, &path)?;
         let status = std::process::Command::new("open").arg(&local).status().map_err(|e| format!("Can't open {}: {e}", local.display()))?;
         if !status.success() {
             return Err(format!("No app on this Mac opens {}.", device::basename(&path)));
@@ -322,6 +693,66 @@ async fn open_file(state: State<'_, AppState>, src: Option<String>, path: String
         Ok(local.display().to_string())
     })
     .await
+}
+
+/// Shows a file in Quick Look (`qlmanage -p`), in its own window. A device file is copied first.
+#[tauri::command(rename_all = "snake_case")]
+async fn quick_look(state: State<'_, AppState>, src: String, path: String) -> Result<(), String> {
+    let mac = src == "mac";
+    let dev = state.source(Some(&src))?;
+    blocking(move || {
+        let local = local_copy(&dev, mac, &path)?;
+        std::process::Command::new("qlmanage")
+            .arg("-p")
+            .arg(&local)
+            .stdout(std::process::Stdio::null())
+            .stderr(std::process::Stdio::null())
+            .spawn()
+            .map_err(|e| format!("Can't start Quick Look: {e}"))?;
+        Ok(())
+    })
+    .await
+}
+
+#[derive(Serialize)]
+struct Matches {
+    entries: Vec<Entry>,
+    /// False when the search stopped early (too many results, or too long).
+    complete: bool,
+}
+
+/// Files and folders under `dir` whose names contain `query` (any case), nearest first.
+/// Stops at 300 results or after 20 seconds. Folders starting with a dot are skipped unless `hidden`.
+#[tauri::command(rename_all = "snake_case")]
+async fn find(state: State<'_, AppState>, src: String, dir: String, query: String, hidden: bool) -> Result<Matches, String> {
+    let dev = state.source(Some(&src))?;
+    blocking(move || Ok(find_in(&dev, &dir, &query, hidden, 300, std::time::Duration::from_secs(20)))).await
+}
+
+fn find_in(dev: &Device, dir: &str, query: &str, hidden: bool, max: usize, time: std::time::Duration) -> Matches {
+    let q = query.trim().to_lowercase();
+    let start = std::time::Instant::now();
+    let mut out = vec![];
+    let mut queue = std::collections::VecDeque::from([dir.to_string()]);
+    while let Some(d) = queue.pop_front() {
+        if out.len() >= max || start.elapsed() > time {
+            return Matches { entries: out, complete: false };
+        }
+        let Ok(mut items) = dev.listdir(&d) else { continue };
+        items.sort_by(|a, b| a.name.to_lowercase().cmp(&b.name.to_lowercase()));
+        for e in items {
+            if !hidden && e.name.starts_with('.') {
+                continue;
+            }
+            if e.dir {
+                queue.push_back(e.path.clone());
+            }
+            if e.name.to_lowercase().contains(&q) && out.len() < max {
+                out.push(e);
+            }
+        }
+    }
+    Matches { entries: out, complete: true }
 }
 
 /// Where copies of phone files opened in Mac apps go.
@@ -415,7 +846,7 @@ async fn clear_cache(which: String) -> Result<(), String> {
 #[derive(Serialize)]
 struct BookView {
     id: u32,
-    /// "device" or "mac": where the book is saved back to.
+    /// "mac" or a device id: where the book is saved back to.
     src: String,
     path: String,
     name: String,
@@ -458,7 +889,8 @@ async fn epub_open(state: State<'_, AppState>, src: Option<String>, path: String
     })
     .await?;
     let id = state.next_book.fetch_add(1, Ordering::Relaxed);
-    let src = if src.as_deref() == Some("mac") { "mac" } else { "device" };
+    let src = src.unwrap_or_default();
+    let src = src.as_str();
     let view = book_view(id, src, &book)?;
     state.books.lock().unwrap_or_else(|e| e.into_inner()).insert(id, book);
     state.book_src.lock().unwrap_or_else(|e| e.into_inner()).insert(id, src.to_string());
@@ -594,8 +1026,8 @@ pub fn run() {
             std::thread::spawn(move || responder.respond(protocol::handle(&app, request)));
         })
         .invoke_handler(tauri::generate_handler![
-            devices, connect, disconnect, info, list, refresh, read_text, write_text, mkdir, remove, download,
-            upload, copy, open_file, app_folders, open_folder, clear_cache, epub_open, epub_chapter, epub_set_source, epub_set_body, epub_set_meta, epub_cover, epub_find,
+            devices, connect, disconnect, connections, info, list, refresh, read_text, write_text, mkdir, remove, download,
+            upload, quick_look, find, transfer, cancel_transfer, compare, sync, rename, open_file, app_folders, open_folder, clear_cache, epub_open, epub_chapter, epub_set_source, epub_set_body, epub_set_meta, epub_cover, epub_find,
             epub_replace, epub_save, epub_export, epub_close
         ])
         .run(tauri::generate_context!())
@@ -604,4 +1036,115 @@ pub fn run() {
 
 pub fn state(app: &AppHandle) -> tauri::State<'_, AppState> {
     app.state::<AppState>()
+}
+
+#[cfg(test)]
+mod tests {
+    #[test]
+    fn transfer_copies_and_moves_folders() {
+        use std::fs;
+        let root = std::env::temp_dir().join(format!("yomi-transfer-test-{}", std::process::id()));
+        let (src, dst) = (root.join("src"), root.join("dst"));
+        fs::create_dir_all(src.join("book/inner")).unwrap();
+        fs::create_dir_all(dst.join("book")).unwrap();
+        fs::write(src.join("book/a.txt"), b"a").unwrap();
+        fs::write(src.join("book/inner/b.txt"), b"bb").unwrap();
+        fs::write(dst.join("book/a.txt"), b"old").unwrap();
+        let mac = crate::Device::new(Box::new(crate::local::Local));
+        let s = |p: &std::path::Path| p.display().to_string();
+        let stop = std::sync::atomic::AtomicBool::new(false);
+        let paths = [s(&src.join("book"))];
+        let r = super::run_transfer(&mac, &mac, true, 1, &paths, &s(&dst), false, &stop, |_| {}).unwrap();
+        assert_eq!(r.copied, 1);
+        assert_eq!(r.skipped.len(), 1, "the existing a.txt is skipped");
+        assert_eq!(fs::read(dst.join("book/a.txt")).unwrap(), b"old");
+        assert_eq!(fs::read(dst.join("book/inner/b.txt")).unwrap(), b"bb");
+        // Into itself is refused.
+        let r = super::run_transfer(&mac, &mac, true, 1, &paths, &s(&src.join("book/inner")), false, &stop, |_| {}).unwrap();
+        assert_eq!((r.copied, r.skipped.len()), (0, 1));
+        // Move to a fresh folder: originals go (backed up), emptied folders too.
+        fs::create_dir(root.join("moved")).unwrap();
+        let r = super::run_transfer(&mac, &mac, true, 1, &paths, &s(&root.join("moved")), true, &stop, |_| {}).unwrap();
+        assert_eq!((r.copied, r.skipped.len(), r.backups.len()), (2, 0, 2));
+        assert!(!src.join("book").exists());
+        assert_eq!(fs::read(root.join("moved/book/inner/b.txt")).unwrap(), b"bb");
+        for b in r.backups {
+            fs::remove_file(b).unwrap();
+        }
+        // Cancelled before starting: nothing happens.
+        stop.store(true, std::sync::atomic::Ordering::Relaxed);
+        let r = super::run_transfer(&mac, &mac, true, 1, &[s(&dst.join("book"))], &s(&root.join("moved")), true, &stop, |_| {}).unwrap();
+        assert!(r.cancelled && r.copied == 0 && dst.join("book/a.txt").exists());
+        fs::remove_dir_all(&root).unwrap();
+    }
+
+    #[test]
+    fn sync_copies_only_what_is_missing() {
+        use std::fs;
+        let root = std::env::temp_dir().join(format!("yomi-sync-test-{}", std::process::id()));
+        let (a, b) = (root.join("a"), root.join("b"));
+        fs::create_dir_all(a.join("x/y")).unwrap();
+        fs::create_dir_all(b.join("x")).unwrap();
+        fs::write(a.join("same.txt"), b"1").unwrap();
+        fs::write(b.join("same.txt"), b"2").unwrap();
+        fs::write(a.join("big.txt"), b"long").unwrap();
+        fs::write(b.join("big.txt"), b"s").unwrap();
+        fs::write(a.join("x/new.txt"), b"n").unwrap();
+        fs::write(a.join("x/y/deep.txt"), b"dd").unwrap();
+        fs::write(a.join(".hid"), b"").unwrap();
+        fs::write(b.join("x/only-b.txt"), b"").unwrap();
+        let mac = crate::Device::new(Box::new(crate::local::Local));
+        let s = |p: &std::path::Path| p.display().to_string();
+        let mut c = super::Comparison::default();
+        super::compare_dirs(&mac, &s(&a), &mac, &s(&b), "", false, &mut c).unwrap();
+        let mut missing: Vec<_> = c.missing.iter().map(|i| i.to.strip_prefix(&s(&b)).unwrap().to_string()).collect();
+        missing.sort();
+        assert_eq!(missing, ["/x/new.txt", "/x/y", "/x/y/deep.txt"]);
+        assert_eq!((c.differ, c.extra, c.same), (vec!["big.txt".to_string()], vec!["x/only-b.txt".to_string()], 1));
+        let stop = std::sync::atomic::AtomicBool::new(false);
+        let report = super::TransferReport { copied: 0, skipped: vec![], cancelled: false, backups: vec![] };
+        let r = super::run_items(&mac, &mac, 1, &c.missing, false, &stop, |_| {}, report).unwrap();
+        assert_eq!((r.copied, r.skipped.len()), (2, 0));
+        assert_eq!(fs::read(b.join("x/y/deep.txt")).unwrap(), b"dd");
+        assert_eq!(fs::read(b.join("big.txt")).unwrap(), b"s", "different files are left alone");
+        assert!(!b.join(".hid").exists(), "hidden files only when asked");
+        assert!(super::refuse_nested(true, &s(&a), &s(&a.join("x"))).is_err());
+        fs::remove_dir_all(&root).unwrap();
+    }
+
+    #[test]
+    fn find_searches_subfolders_and_rename_refuses_taken_names() {
+        use std::fs;
+        let root = std::env::temp_dir().join(format!("yomi-find-test-{}", std::process::id()));
+        fs::create_dir_all(root.join("a/b")).unwrap();
+        fs::create_dir_all(root.join(".hid")).unwrap();
+        for f in ["Book one.epub", "a/b/book two.EPUB", "a/notes.txt", ".hid/book.epub"] {
+            fs::write(root.join(f), b"x").unwrap();
+        }
+        let mac = crate::Device::new(Box::new(crate::local::Local));
+        let r = root.display().to_string();
+        let names = |hidden| -> Vec<String> {
+            super::find_in(&mac, &r, "BOOK", hidden, 100, std::time::Duration::from_secs(5)).entries.into_iter().map(|e| e.name).collect()
+        };
+        assert_eq!(names(false), ["Book one.epub", "book two.EPUB"]);
+        assert_eq!(names(true).len(), 3);
+        let f = super::find_in(&mac, &r, "o", true, 2, std::time::Duration::from_secs(5));
+        assert!(!f.complete && f.entries.len() == 2);
+        // Rename.
+        assert!(mac.rename(&format!("{r}/a/notes.txt"), "Book one.epub").is_ok(), "other folder, free");
+        assert!(mac.rename(&format!("{r}/a/Book one.epub"), "b").is_err(), "taken by a folder");
+        assert!(mac.rename(&format!("{r}/a/Book one.epub"), "x/y").is_err());
+        let new = mac.rename(&format!("{r}/a/Book one.epub"), "BOOK ONE.epub").unwrap();
+        assert!(new.ends_with("/a/BOOK ONE.epub"), "a change of case is allowed");
+        fs::remove_dir_all(&root).unwrap();
+    }
+
+    #[test]
+    fn drives_skip_the_startup_disk() {
+        let root = std::fs::canonicalize("/").unwrap();
+        for (name, path) in super::drives() {
+            assert!(!name.starts_with('.'), "{name}");
+            assert_ne!(std::fs::canonicalize(&path).unwrap(), root, "{path}");
+        }
+    }
 }

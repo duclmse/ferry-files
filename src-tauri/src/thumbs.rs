@@ -32,7 +32,7 @@ pub fn cache_dir() -> PathBuf {
     dirs::cache_dir().unwrap_or_else(|| PathBuf::from("/tmp")).join("yomi-files/thumbs")
 }
 
-/// `src` ("device" or "mac") is part of the key: the same path can be on both.
+/// `src` ("mac" or names the device) is part of the key: the same path can be on several.
 fn key(src: &str, path: &str, size: u64, mtime: i64) -> String {
     format!("{:x}", md5::compute(format!("{src}\n{path}\n{size}\n{mtime}\n{SIZE}")))
 }

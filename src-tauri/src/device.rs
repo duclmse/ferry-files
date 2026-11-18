@@ -52,6 +52,8 @@ pub trait Transport: Send + Sync {
     fn replace(&self, path: &str, data: &[u8], exists: bool) -> Result<String>;
     fn delete(&self, path: &str, is_dir: bool) -> Result<()>;
     fn make_dir(&self, path: &str) -> Result<()>;
+    /// Renames a file or folder within its folder. The caller has checked the new name is free.
+    fn rename(&self, path: &str, new_name: &str) -> Result<()>;
     fn refresh(&self) {}
 }
 
@@ -206,6 +208,27 @@ impl Device {
         self.t.make_dir(&path)
     }
 
+    /// Renames a file or folder in place. Refuses if the new name is taken. Returns the new path.
+    pub fn rename(&self, path: &str, new_name: &str) -> Result<String> {
+        let path = norm(path)?;
+        let new_name = new_name.trim();
+        if new_name.is_empty() || new_name.contains('/') || new_name == "." || new_name == ".." {
+            return err("Enter a name without /.");
+        }
+        let target = join(&dirname(&path), new_name);
+        let _g = self.lock();
+        if self.t.stat(&path)?.is_none() {
+            return err(format!("No such file or folder: {path}"));
+        }
+        // A change of case only ("a.txt" to "A.txt") is the same file on the Mac's disk.
+        if target.to_lowercase() != path.to_lowercase() && self.t.stat(&target)?.is_some() {
+            return Err(DevError::Conflict(format!("{new_name} already exists there.")));
+        }
+        self.t.rename(&path, new_name)?;
+        self.t.refresh();
+        Ok(target)
+    }
+
     fn backup(&self, path: &str) -> Result<PathBuf> {
         let (data, _) = self.t.read(path)?;
         let dir = backup_dir();
@@ -223,16 +246,18 @@ impl Device {
     }
 }
 
-/// Connects like yomi-files.py: adb when a device is ready (or asked for), otherwise MTP.
-pub fn connect(transport: &str, serial: Option<String>) -> Result<Device> {
+/// Connects over "adb", "mtp" or "auto" (adb when a device is ready for it). `which` picks the
+/// device: an adb serial, or an MTP location from `mtp::detect`; None takes the first one.
+pub fn connect(transport: &str, which: Option<String>) -> Result<Device> {
+    let serial = which;
     let use_adb = transport == "adb"
         || (transport == "auto" && (serial.is_some() || !crate::adb::ready_serials().is_empty()));
     if use_adb {
         return Ok(Device::new(Box::new(crate::adb::Adb::open(serial)?)));
     }
     match transport {
-        "mtp" => Ok(Device::new(Box::new(crate::mtp::Mtp::open()?))),
-        "auto" => crate::mtp::Mtp::open().map(|d| Device::new(Box::new(d))).map_err(|e| {
+        "mtp" => Ok(Device::new(Box::new(crate::mtp::Mtp::open(serial.as_deref())?))),
+        "auto" => crate::mtp::Mtp::open(None).map(|d| Device::new(Box::new(d))).map_err(|e| {
             DevError::Msg(format!("No device found. For adb: turn on USB debugging. For MTP: {e}"))
         }),
         other => err(format!("Unknown transport {other:?}.")),

@@ -1,7 +1,7 @@
 //! The `yomi://` scheme:
 //!   GET yomi://localhost/book/{id}/{path inside the zip}
 //!       files from open EPUBs, so the chapter view can load the book's images, styles and fonts.
-//!   GET yomi://localhost/thumb?src={device|mac}&p={path}&s={size}&m={mtime}
+//!   GET yomi://localhost/thumb?src={mac|device id}&p={path}&s={size}&m={mtime}
 //!       a thumbnail of an image file or an EPUB's cover (see thumbs.rs).
 
 use percent_encoding::{percent_decode_str, utf8_percent_encode, AsciiSet, NON_ALPHANUMERIC};
@@ -87,21 +87,28 @@ fn thumb(app: &AppHandle, q: &str) -> Response<Vec<u8>> {
     let Some(path) = query_param(q, "p") else { return bad() };
     let Some(size) = query_param(q, "s").and_then(|s| s.parse::<u64>().ok()) else { return bad() };
     let Some(mtime) = query_param(q, "m").and_then(|s| s.parse::<i64>().ok()) else { return bad() };
-    let src = if query_param(q, "src").as_deref() == Some("mac") { "mac" } else { "device" };
-    if let Some(t) = thumbs::cached(src, &path, size, mtime) {
+    let Some(src) = query_param(q, "src") else { return bad() };
+    let state = crate::state(app);
+    let dev = match state.source(Some(&src)) {
+        Ok(d) => d,
+        Err(e) => return respond(StatusCode::NOT_FOUND, "text/plain", e.into_bytes()),
+    };
+    let phone = src != "mac";
+    // The cache key names the device rather than its id, which changes on every connection.
+    let key = if phone { format!("{}:{}", dev.kind(), dev.label()) } else { "mac".to_string() };
+    if let Some(t) = thumbs::cached(&key, &path, size, mtime) {
         return thumb_response(t);
     }
-    let state = crate::state(app);
-    let _one = (src == "device").then(|| state.thumb_lock.lock().unwrap_or_else(|e| e.into_inner()));
-    if src == "device" {
-        if let Some(t) = thumbs::cached(src, &path, size, mtime) {
+    let _one = phone.then(|| state.thumb_lock.lock().unwrap_or_else(|e| e.into_inner()));
+    if phone {
+        if let Some(t) = thumbs::cached(&key, &path, size, mtime) {
             return thumb_response(t);
         }
-        if !state.is_viewing(&crate::device::dirname(&path)) {
+        if !state.is_viewing(&src, &crate::device::dirname(&path)) {
             return respond(StatusCode::SERVICE_UNAVAILABLE, "text/plain", b"Folder no longer shown.".to_vec());
         }
     }
-    let made = state.source(Some(src)).and_then(|dev| thumbs::make(src, &dev, &path, size, mtime));
+    let made = thumbs::make(&key, &dev, &path, size, mtime);
     match made {
         Ok(t) => thumb_response(t),
         Err(e) => respond(StatusCode::INTERNAL_SERVER_ERROR, "text/plain", e.into_bytes()),

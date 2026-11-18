@@ -28,6 +28,8 @@ pub enum Mode {
 #[derive(Clone, Copy)]
 pub struct Ep {
     pub book: RwSignal<Option<Book>>,
+    /// Where the open book is saved back to, for sentences: "the Mac" or the device's name.
+    place: RwSignal<String>,
     view: RwSignal<View>,
     mode: RwSignal<Mode>,
     doc: RwSignal<Option<ChapterDoc>>,
@@ -57,10 +59,16 @@ fn human_size(n: u64) -> String {
     format!("{v:.1} TB")
 }
 
+/// Whether the open book is on the Mac.
+fn b_mac(ep: Ep) -> bool {
+    ep.book.with_untracked(|b| b.as_ref().is_some_and(|b| b.src == "mac"))
+}
+
 impl Ep {
     pub fn new() -> Self {
         Ep {
             book: RwSignal::new(None),
+            place: RwSignal::new(String::new()),
             view: RwSignal::new(View::Info),
             mode: RwSignal::new(Mode::Visual),
             doc: RwSignal::new(None),
@@ -79,9 +87,9 @@ impl Ep {
         self.book.with_untracked(|b| b.as_ref().map_or(0, |b| b.id))
     }
 
-    /// Where the book is saved back to, for sentences: "the phone" or "the Mac".
-    fn place(self) -> &'static str {
-        if self.book.with_untracked(|b| b.as_ref().is_some_and(|b| b.src == "mac")) { "the Mac" } else { "the phone" }
+    /// Where the book is saved back to, for sentences: "the Mac" or the device's name.
+    fn place(self) -> String {
+        self.place.get_untracked()
     }
 
     fn dirty(self) -> bool {
@@ -92,9 +100,10 @@ impl Ep {
         self.status.set((msg.into(), kind));
     }
 
-    /// Opens the book at `path` on `src` ("device" or "mac").
-    pub async fn open(self, src: &str, path: String) -> Result<(), String> {
+    /// Opens the book at `path` on `src` ("mac" or a device id); `place` names it for sentences.
+    pub async fn open(self, src: &str, place: String, path: String) -> Result<(), String> {
         let book = call::<Book>("epub_open", json!({ "src": src, "path": path })).await?;
+        self.place.set(place);
         self.view.set(View::Info);
         self.mode.set(Mode::Visual);
         self.doc.set(None);
@@ -354,7 +363,7 @@ pub fn EpubEditor() -> impl IntoView {
                     <button class="btn" disabled=move || ep.busy.get() on:click=move |_| ep.export()
                         title="Save the book, with your edits, to a file on the Mac">"Save copy on Mac…"</button>
                     <button class="btn primary" title="⌘S" disabled=move || !dirty.get() || ep.busy.get()
-                        on:click=move |_| ep.save()>{move || { ep.book.track(); if ep.place() == "the Mac" { "Save" } else { "Save to phone" } }}</button>
+                        on:click=move |_| ep.save()>{move || { ep.book.track(); if b_mac(ep) { "Save".to_string() } else { format!("Save to {}", ep.place()) } }}</button>
                 </div>
                 {move || ep.confirm_close.get().then(|| view! {
                     <div class="notice">
@@ -487,7 +496,7 @@ fn InfoView() -> impl IntoView {
                             <dt>"Images"</dt><dd>{s.images}</dd>
                             <dt>"Stylesheets"</dt><dd>{s.styles}</dd>
                             <dt>"Fonts"</dt><dd>{s.fonts}</dd>
-                            <dt>{if b.src == "mac" { "On the Mac" } else { "On the phone" }}</dt><dd class="path">{b.path}</dd>
+                            <dt>{format!("On {}", ep.place())}</dt><dd class="path">{b.path}</dd>
                         </dl>
                     }
                 })}

@@ -1,12 +1,18 @@
 # yomi-files
 
-A Mac desktop app (Tauri 2 + Leptos, all Rust) for browsing, reading and editing the files on an Android phone connected by USB, EPUB books in particular. It shows the Mac's own files too, so books can be copied between the two.
+A Mac desktop app (Tauri 2 + Leptos, all Rust) for browsing, reading and editing the files on Android phones (and other MTP devices) connected by USB, EPUB books in particular. It shows the Mac's own files and disks too, so books can be copied between them.
 
-- One or two panes (⌘\ shows or hides the second; Tab switches between them). Each pane shows the phone or the Mac (📱 / 💻 in its toolbar), as a list, as thumbnails (images and EPUB covers), or in columns (buttons at the right of the pane's status bar).
-- Right-click a file or folder for open, download, copy to the other pane (F5) and delete; right-click empty space for new folder, new file, upload, refresh, the view options and the second pane. Each pane's status bar shows the folder's contents and the selected item.
+- One or two panes (◫ in the left pane's toolbar or ⌘\ shows or hides the second; Tab switches between them). Each pane shows the Mac or a connected device (💻, then one 📱 per device, in its toolbar), as a list, as thumbnails (images and EPUB covers), or in columns (buttons at the right of the pane's status bar).
+- Right-click a file or folder for open, Quick Look, download, copy (F5) or move (F6) to the other pane, rename (F2), favourites and delete; right-click empty space for new folder, new file, upload, sync to the other pane, favourites, refresh, the view options and the second pane. Each pane's status bar shows the folder's contents, and the picked items and their size.
+- Pick several items with ⌘-click (one more) and Shift-click (a range), ⌘A (all) and Escape (none). Copy and move work on folders too, with everything in them: a folder already there is merged into, and a file already there is skipped, never replaced. Progress shows below the panes, with Cancel (it stops after the current file). Moving copies each file, then deletes the original (backed up, like any delete), so a move on the same device takes as long as a copy.
+- Drag items between panes, onto a folder, or onto a place in the sidebar. As in Finder, dragging to the same device moves and to another device copies; hold ⌥ to copy or ⌘ to move. Files dragged in from Finder are copied.
+- Sort by clicking the list's column headers (name, kind, date, size; folders first). The filter box in the pane's bar narrows the folder by name; Enter searches all its subfolders too, and "Back to folder" ends the search. ⌘F goes to the filter box.
+- Space opens Quick Look (phone files are copied to the Mac first).
+- Favourites (sidebar): any folder on the Mac or a device, added from the right-click menu. Each pane remembers its last folder for each device and the Mac.
+- Sync to the other pane: compares the two folders (files by size) and copies what's missing from the other pane, at any depth. Files that differ, and files only in the other pane, are listed but left alone.
 - Files on the Mac can be edited too (text and EPUB).
 - Double-click (or Enter) opens: folders go in, text files open in the editor, EPUBs in the EPUB editor, anything else in its default Mac app. A phone file is copied to `~/Library/Caches/yomi-files/opened` first, so changes made in the Mac app stay on the Mac. The context menu also has "Open in default app" for text files and EPUBs.
-- Settings (sidebar): show hidden files (names starting with a dot; off by default, on the phone and the Mac), turn phone thumbnails off, and see, open or clear the app's folders on the Mac. "Open backup folder" in the sidebar shows the backups in the Finder.
+- Settings (sidebar): show hidden files (names starting with a dot; off by default, on the phone and the Mac), turn phone thumbnails off, and see, open or clear the app's folders on the Mac.
 - Edit text files.
 - EPUB editor:
   - book info, cover, and package stats;
@@ -23,7 +29,7 @@ Two ways to reach the phone, over USB:
 - **adb**: turn on USB debugging on the phone and install adb (`brew install --cask android-platform-tools`). Fast; paths look like `/sdcard/Download`.
 - **MTP**: the phone's normal "File transfer" USB mode, so no developer options are needed. Needs libmtp (`brew install libmtp`), which is loaded at runtime. Paths start with the storage name, e.g. `/Internal storage/Download`.
 
-The app opens on the Mac's files. While no phone is connected it looks for one on USB every few seconds; a phone it finds shows in the sidebar with an **adb | MTP** button, one half per way to connect (a half is greyed out when that way isn't ready; the highlighted one is the suggested way, adb when both work). ⏏ next to the phone's name disconnects it, and panes showing it go back to the Mac. Only one program can use MTP at a time, so quit Android File Transfer, Image Capture and other MTP tools first. If MTP still won't connect, run `killall ptpcamerad`.
+The app opens on the Mac's files. Every few seconds it looks for devices on USB and disks mounted on the Mac (USB drives, SD cards, disk images; they're listed under Mac in the sidebar). Phones found show under Devices with an **adb | MTP** button, one half per way to connect (a half is greyed out when that way isn't available; the highlighted one is the suggested way, adb when both work). A phone with both USB debugging and File transfer on is seen both ways; when exactly one of each is found they're shown as one row. Several devices can be connected at once. ⏏ next to a device's name disconnects it, and panes showing it go back to the Mac. MTP devices share one libmtp lock, so a long transfer on one MTP device makes the others wait. Only one program can use MTP at a time, so quit Android File Transfer, Image Capture and other MTP tools first. If MTP still won't connect, run `killall ptpcamerad`.
 
 ## Safety
 
@@ -47,7 +53,7 @@ Requirements:
 ```sh
 cargo tauri dev                       # run in development
 cargo tauri build --debug             # build target/debug/bundle/macos/yomi-files.app
-cd src-tauri && cargo test --lib      # unit tests (XML tokenizer, EPUB editing)
+cd src-tauri && cargo test --lib      # unit tests (XML tokenizer, EPUB editing, copy, sync, search)
 ```
 
 Tests against a connected phone use scratch files only, and they delete those files and their backups afterwards:
@@ -61,7 +67,7 @@ cargo run --example epub_smoke    [-- adb|mtp]   # edits a copy of an .epub foun
 ## Layout
 
 - `src/`: the frontend (Leptos 0.8, client-side, built by Trunk into `dist/`).
-  - `app.rs`: sidebar (phone finder and places), panes and file views, context menu, text editor.
+  - `app.rs`: sidebar (devices, places, favourites), panes and file views, context menu, transfers, text editor.
   - `epub.rs`: EPUB editor screens.
   - `api.rs`: calls to the backend, and the types shared with it.
 - `src-tauri/`: the backend.
@@ -69,7 +75,7 @@ cargo run --example epub_smoke    [-- adb|mtp]   # edits a copy of an .epub foun
   - `xml.rs`, `epub.rs`: EPUB parsing and editing.
   - `protocol.rs`: the `yomi://` scheme that serves book images, styles and fonts, and thumbnails.
   - `thumbs.rs`: thumbnails and their cache.
-  - `lib.rs`: the commands the frontend calls.
+  - `lib.rs`: the commands the frontend calls, including copying, moving, syncing and searching.
 
 ## EPUB editor limits
 

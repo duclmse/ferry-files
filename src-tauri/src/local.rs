@@ -118,6 +118,10 @@ impl Transport for Local {
     fn make_dir(&self, path: &str) -> Result<()> {
         fs::create_dir(Path::new(path)).map_err(|e| io(path, e))
     }
+
+    fn rename(&self, path: &str, new_name: &str) -> Result<()> {
+        fs::rename(path, crate::device::join(&dirname(path), new_name)).map_err(|e| io(path, e))
+    }
 }
 
 #[cfg(test)]

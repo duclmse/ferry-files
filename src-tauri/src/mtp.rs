@@ -100,6 +100,33 @@ struct Lib {
     create_folder: unsafe extern "C" fn(Dev, *mut c_char, u32, u32) -> u32,
 }
 
+/// libmtp isn't thread-safe, and several devices can be open at once (each used from its own
+/// thread), so every libmtp call holds this one lock. Taking it again on the same thread is a
+/// no-op, so code that already holds it (e.g. `open` dropping a half-opened device) can't deadlock.
+struct LibLock(Option<std::sync::MutexGuard<'static, ()>>);
+
+thread_local! {
+    static HELD: std::cell::Cell<bool> = const { std::cell::Cell::new(false) };
+}
+
+fn lib_lock() -> LibLock {
+    static LOCK: Mutex<()> = Mutex::new(());
+    if HELD.with(|h| h.get()) {
+        return LibLock(None);
+    }
+    let g = LOCK.lock().unwrap_or_else(|e| e.into_inner());
+    HELD.with(|h| h.set(true));
+    LibLock(Some(g))
+}
+
+impl Drop for LibLock {
+    fn drop(&mut self) {
+        if self.0.is_some() {
+            HELD.with(|h| h.set(false));
+        }
+    }
+}
+
 fn lib() -> Result<&'static Lib> {
     static LIB: OnceLock<std::result::Result<Lib, String>> = OnceLock::new();
     LIB.get_or_init(load).as_ref().map_err(|e| DevError::Msg(e.clone()))
@@ -160,15 +187,22 @@ fn raw_devices(lib: &Lib) -> Result<Vec<*mut RawDevice>> {
     Ok((0..count as usize).map(|i| unsafe { raws.add(i) }).collect())
 }
 
-/// Names of MTP devices on USB, without opening them.
-pub fn detect() -> Result<Vec<String>> {
+/// Where a raw device is on USB ("bus-devnum"): tells two connected devices apart.
+fn location(r: *mut RawDevice) -> String {
+    unsafe { format!("{}-{}", (*r).bus_location, (*r).devnum) }
+}
+
+/// MTP devices on USB, as (location, name), without opening them.
+pub fn detect() -> Result<Vec<(String, String)>> {
     let lib = lib()?;
+    let _lib = lib_lock();
     Ok(raw_devices(lib)?
         .into_iter()
         .map(|r| {
             let e = unsafe { &(*r).device_entry };
             let name = format!("{} {}", cstr(e.vendor), cstr(e.product)).trim().to_string();
-            if name.is_empty() { format!("{:04x}:{:04x}", e.vendor_id, e.product_id) } else { name }
+            let name = if name.is_empty() { format!("{:04x}:{:04x}", e.vendor_id, e.product_id) } else { name };
+            (location(r), name)
         })
         .collect())
 }
@@ -305,6 +339,7 @@ impl Link {
 impl Drop for Link {
     fn drop(&mut self) {
         if !self.dev.is_null() {
+            let _lib = lib_lock();
             unsafe { (self.lib.release)(self.dev) };
         }
     }
@@ -325,6 +360,25 @@ struct Node {
     mtime: i64,
     name: String,
     path: String,
+}
+
+/// A device in use. Field order matters: the device's lock is released before the libmtp lock.
+struct Locked<'a> {
+    inner: std::sync::MutexGuard<'a, Inner>,
+    _lib: LibLock,
+}
+
+impl std::ops::Deref for Locked<'_> {
+    type Target = Inner;
+    fn deref(&self) -> &Inner {
+        &self.inner
+    }
+}
+
+impl std::ops::DerefMut for Locked<'_> {
+    fn deref_mut(&mut self) -> &mut Inner {
+        &mut self.inner
+    }
 }
 
 struct Inner {
@@ -356,10 +410,16 @@ pub struct Mtp {
 }
 
 impl Mtp {
-    pub fn open() -> Result<Mtp> {
+    /// Opens the MTP device at `location` (from `detect`), or the first one found.
+    pub fn open(location: Option<&str>) -> Result<Mtp> {
         let lib = lib()?;
+        let _lib = lib_lock();
         let raws = raw_devices(lib)?;
-        let Some(&raw) = raws.first() else {
+        let found = match location {
+            Some(loc) => raws.iter().copied().find(|&r| self::location(r) == loc),
+            None => raws.first().copied(),
+        };
+        let Some(raw) = found else {
             return err(format!("No MTP device found. {MAC_MTP_HINT}"));
         };
         // Uncached: don't enumerate the whole phone on connect (slow on Android).
@@ -397,8 +457,10 @@ impl Mtp {
         Ok(Mtp { inner: Mutex::new(Inner { link, cache: HashMap::new() }), storages, model })
     }
 
-    fn inner(&self) -> std::sync::MutexGuard<'_, Inner> {
-        self.inner.lock().unwrap_or_else(|e| e.into_inner())
+    /// The device, locked; also holds the libmtp lock while in use.
+    fn inner(&self) -> Locked<'_> {
+        let lib = lib_lock();
+        Locked { inner: self.inner.lock().unwrap_or_else(|e| e.into_inner()), _lib: lib }
     }
 
     fn storage_id(&self, name: &str) -> Option<u32> {
@@ -558,6 +620,18 @@ impl Transport for Mtp {
         let mut inner = self.inner();
         let (sid, pid) = self.parent_of(&mut inner, path)?;
         inner.link.mkdir(basename(path), sid, pid)?;
+        inner.invalidate(sid, pid);
+        Ok(())
+    }
+
+    fn rename(&self, path: &str, new_name: &str) -> Result<()> {
+        let mut inner = self.inner();
+        let node = match self.resolve(&mut inner, path) {
+            Some(n) if n.storage.is_some() && n.id != ROOT_ID => n,
+            _ => return err(format!("{path} can't be renamed.")),
+        };
+        let (sid, pid) = self.parent_of(&mut inner, path)?;
+        inner.link.rename(node.id, new_name)?;
         inner.invalidate(sid, pid);
         Ok(())
     }

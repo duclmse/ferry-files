@@ -7,6 +7,66 @@ use wasm_bindgen::prelude::*;
 extern "C" {
     #[wasm_bindgen(js_namespace = ["window", "__TAURI__", "core"], catch)]
     async fn invoke(cmd: &str, args: JsValue) -> Result<JsValue, JsValue>;
+
+    #[wasm_bindgen(js_namespace = ["window", "__TAURI__", "event"], js_name = listen)]
+    fn tauri_listen(event: &str, handler: &js_sys::Function) -> js_sys::Promise;
+}
+
+/// Calls `f` with the payload of each backend event named `event`, for as long as the app runs.
+pub fn listen<T: DeserializeOwned + 'static>(event: &str, f: impl Fn(T) + 'static) {
+    let cb = Closure::<dyn Fn(JsValue)>::new(move |e: JsValue| {
+        let payload = js_sys::Reflect::get(&e, &"payload".into()).unwrap_or(JsValue::NULL);
+        if let Ok(v) = serde_wasm_bindgen::from_value(payload) {
+            f(v);
+        }
+    });
+    let _ = tauri_listen(event, cb.as_ref().unchecked_ref());
+    cb.forget();
+}
+
+/// A copy or move under way: sent by the backend after each file.
+#[derive(Clone, Debug, PartialEq, Deserialize)]
+pub struct Progress {
+    pub job: u32,
+    pub files_done: u32,
+    pub files_total: u32,
+    pub bytes_done: u64,
+    pub bytes_total: u64,
+    pub current: String,
+}
+
+#[derive(Clone, Debug, PartialEq, Deserialize)]
+pub struct TransferReport {
+    pub copied: u32,
+    pub skipped: Vec<(String, String)>,
+    pub cancelled: bool,
+    pub backups: Vec<String>,
+}
+
+/// What syncing one folder into another would copy.
+#[derive(Clone, Debug, PartialEq, Deserialize)]
+pub struct CompareReport {
+    pub files: u32,
+    pub folders: u32,
+    pub bytes: u64,
+    /// Relative paths of files that are on both sides but differ in size.
+    pub differ: Vec<String>,
+    /// Relative paths only in the target.
+    pub extra: Vec<String>,
+    pub same: u32,
+}
+
+/// A file dropped on the window from Finder ("tauri://drag-drop"). The position is in physical pixels.
+#[derive(Clone, Debug, Deserialize)]
+pub struct FileDrop {
+    pub paths: Vec<String>,
+    pub position: Pos,
+}
+
+#[derive(Clone, Debug, Deserialize)]
+pub struct Pos {
+    pub x: f64,
+    pub y: f64,
 }
 
 pub async fn call<T: DeserializeOwned>(cmd: &str, args: serde_json::Value) -> Result<T, String> {
@@ -30,6 +90,9 @@ pub struct Entry {
 
 #[derive(Clone, Debug, PartialEq, Deserialize)]
 pub struct Info {
+    /// "mac", or the connected device's id ("d1", ...).
+    pub id: String,
+    pub usb: Option<String>,
     pub label: String,
     pub transport: String,
     pub default_dir: String,
@@ -39,10 +102,20 @@ pub struct Info {
 
 #[derive(Clone, Debug, PartialEq, Deserialize)]
 pub struct Devices {
-    pub adb: Vec<String>,
+    /// Devices on USB that aren't connected yet.
+    pub found: Vec<UsbDevice>,
     pub adb_found: bool,
-    pub mtp: Vec<String>,
     pub mtp_error: Option<String>,
+    /// Disks mounted on the Mac, as (name, path).
+    pub drives: Vec<(String, String)>,
+}
+
+#[derive(Clone, Debug, PartialEq, Deserialize)]
+pub struct UsbDevice {
+    pub usb: String,
+    pub transport: String,
+    pub which: String,
+    pub name: String,
 }
 
 #[derive(Clone, Debug, Deserialize)]

@@ -22,6 +22,26 @@ pub fn adb_path() -> Option<PathBuf> {
     candidates.into_iter().find(|p| p.is_file())
 }
 
+/// Devices ready for adb, as (serial, model), the model from `adb devices -l` ("Pixel 7").
+pub fn ready_devices() -> Vec<(String, String)> {
+    let Some(adb) = adb_path() else { return vec![] };
+    let Ok(out) = Command::new(adb).args(["devices", "-l"]).stdin(Stdio::null()).output() else { return vec![] };
+    String::from_utf8_lossy(&out.stdout)
+        .lines()
+        .skip(1)
+        .filter_map(|l| {
+            let mut words = l.split_whitespace();
+            let serial = words.next()?.to_string();
+            let words: Vec<&str> = words.collect();
+            if words.first() != Some(&"device") {
+                return None;
+            }
+            let model = words.iter().find_map(|w| w.strip_prefix("model:")).map(|m| m.replace('_', " "));
+            Some((serial.clone(), model.unwrap_or(serial)))
+        })
+        .collect()
+}
+
 pub fn ready_serials() -> Vec<String> {
     let Some(adb) = adb_path() else { return vec![] };
     let Ok(out) = Command::new(adb).arg("devices").stdin(Stdio::null()).output() else { return vec![] };
@@ -179,6 +199,11 @@ impl Transport for Adb {
 
     fn make_dir(&self, path: &str) -> Result<()> {
         self.shell(&format!("mkdir {}", q(path)))?;
+        Ok(())
+    }
+
+    fn rename(&self, path: &str, new_name: &str) -> Result<()> {
+        self.shell(&format!("mv -n {} {}", q(path), q(&join(&dirname(path), new_name))))?;
         Ok(())
     }
 }
