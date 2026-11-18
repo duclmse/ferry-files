@@ -257,6 +257,23 @@
   height: 200px;
 }
 
+.preview .pic img.full {
+  width: 100%;
+  height: 100%;
+  object-fit: contain;
+}
+
+/* Video and audio played from the device. */
+.preview .play {
+  width: 100%;
+  border-radius: 6px;
+}
+
+.preview video.play {
+  max-height: 240px;
+  background: var(--line);
+}
+
 .preview .pic .glyph {
   font-size: 96px;
 }

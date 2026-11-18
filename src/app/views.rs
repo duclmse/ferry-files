@@ -172,7 +172,24 @@ pub(super) fn ColumnView(pane: Pane) -> impl IntoView {
                 };
                 view! {
                     <div class="preview">
-                        <div class="pic"><Thumbnail src=p.src.get_untracked() entry=e.clone()/></div>
+                        {
+                            let src = p.src.get_untracked();
+                            match media(&e) {
+                                Some(Media::Image) => view! {
+                                    <div class="pic"><img class="full" src=stream_url(src, &e) alt=""/></div>
+                                }.into_any(),
+                                Some(Media::Video) => view! {
+                                    <video class="play" controls preload="metadata" src=stream_url(src, &e)></video>
+                                }.into_any(),
+                                Some(Media::Audio) => view! {
+                                    <div class="pic"><Thumbnail src=src entry=e.clone()/></div>
+                                    <audio class="play" controls preload="metadata" src=stream_url(src, &e)></audio>
+                                }.into_any(),
+                                None => view! {
+                                    <div class="pic"><Thumbnail src=src entry=e.clone()/></div>
+                                }.into_any(),
+                            }
+                        }
                         <b class="name">{e.name.clone()}</b>
                         <span class="sub">{what}{(!e.dir).then(|| format!(" · {}", human_size(e.size)))}</span>
                         <dl>

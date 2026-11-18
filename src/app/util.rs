@@ -91,6 +91,43 @@ pub(super) const THUMB_EXTS: &[&str] = &["jpg", "jpeg", "png", "gif", "webp", "b
 /// Same limit as the backend (src-tauri/src/thumbs.rs): bigger files aren't read for a thumbnail.
 pub(super) const THUMB_MAX: u64 = 60 * 1024 * 1024;
 
+/// Files the preview can show or play itself, streamed from the device (see `stream_url`).
+#[derive(Clone, Copy, PartialEq)]
+pub(super) enum Media {
+    /// Images a thumbnail can't show well: animated, or a type thumbs.rs doesn't read.
+    Image,
+    Video,
+    Audio,
+}
+
+const IMAGE_EXTS: &[&str] = &["gif", "heic", "heif", "avif", "svg"];
+const VIDEO_EXTS: &[&str] = &["mp4", "m4v", "mov", "webm", "3gp"];
+const AUDIO_EXTS: &[&str] = &["mp3", "m4a", "aac", "wav", "flac", "ogg", "oga", "opus"];
+/// Same as the backend's whole-file limit (protocol.rs): an `<img>` asks for the whole file.
+const IMAGE_MAX: u64 = 64 * 1024 * 1024;
+
+pub(super) fn media(e: &Entry) -> Option<Media> {
+    let x = ext(&e.name);
+    let x = x.as_str();
+    if e.dir {
+        None
+    } else if IMAGE_EXTS.contains(&x) && e.size <= IMAGE_MAX {
+        Some(Media::Image)
+    } else if VIDEO_EXTS.contains(&x) {
+        Some(Media::Video)
+    } else if AUDIO_EXTS.contains(&x) {
+        Some(Media::Audio)
+    } else {
+        None
+    }
+}
+
+/// URL of the file itself, read in parts as the player asks for them, without copying it first.
+pub(super) fn stream_url(src: Src, e: &Entry) -> String {
+    let p = String::from(js_sys::encode_uri_component(&e.path));
+    format!("yomi://localhost/file?src={}&p={p}&s={}&m={}", src.key(), e.size, e.mtime)
+}
+
 /// Thumbnail URL for images and EPUBs (their cover), served by the backend's `yomi://` scheme.
 pub(super) fn thumb_url(src: Src, e: &Entry) -> Option<String> {
     (!e.dir && e.size <= THUMB_MAX && THUMB_EXTS.contains(&ext(&e.name).as_str())).then(|| {
