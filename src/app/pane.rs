@@ -252,7 +252,7 @@ pub(super) fn PaneView(pane: Pane) -> impl IntoView {
                 })}
             </div>
             <div class="body">
-                <div class="files" class:beside=move || p.preview.get()
+                <div class="files" class:beside=move || p.preview.get() class:sized=move || { p.view_w.get() > 0.0 }
                     style=move || match p.view_w.get() {
                         w if w > 0.0 && p.preview.get() => format!("flex-basis: {w}px"),
                         _ => String::new(),

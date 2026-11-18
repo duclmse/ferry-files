@@ -277,6 +277,17 @@ pub(super) fn opened_dir() -> std::path::PathBuf {
     dirs::cache_dir().unwrap_or_else(std::env::temp_dir).join("yomi-files").join("opened")
 }
 
+/// Width, height and length of a picture, video or sound file, from its header.
+#[tauri::command(rename_all = "snake_case")]
+pub(super) async fn media_info(state: State<'_, AppState>, src: Option<String>, path: String) -> Result<crate::media::MediaInfo, String> {
+    let dev = state.source(src.as_deref())?;
+    blocking(move || {
+        let name = path.rsplit('/').next().unwrap_or_default().to_string();
+        crate::media::info(&name, &mut |at, len| dev.read_range(&path, at, len).map_err(msg))
+    })
+    .await
+}
+
 #[cfg(test)]
 mod tests {
     #[test]

@@ -1,7 +1,7 @@
 //! The file browser UI: connect screen, one or two panes of folders (each on the phone or the Mac,
 //! in a list, thumbnail or column view, with a context menu), and a text editor.
 
-use crate::api::{call, Backup, BookInfo, CompareReport, Issue, Devices, Space, Entry, FileDrop, Info, Peek, Progress, TextFile, TransferReport, UsbDevice, WriteResult};
+use crate::api::{call, Backup, BookInfo, CompareReport, Issue, Devices, Space, Entry, FileDrop, Info, MediaInfo, Peek, Progress, TextFile, TransferReport, UsbDevice, WriteResult};
 use leptos::ev;
 use leptos::html;
 use leptos::prelude::*;

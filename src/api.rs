@@ -287,3 +287,12 @@ pub struct Saved {
     pub book: Book,
     pub backup: bool,
 }
+
+/// Width, height and length of a picture, video or sound (`media_info`), each when known.
+#[derive(Clone, Debug, Default, PartialEq, Deserialize)]
+pub struct MediaInfo {
+    pub width: Option<u32>,
+    pub height: Option<u32>,
+    /// Seconds.
+    pub duration: Option<f64>,
+}

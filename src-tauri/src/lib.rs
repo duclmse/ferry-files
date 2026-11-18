@@ -3,6 +3,7 @@ pub mod books;
 pub mod device;
 pub mod epub;
 pub mod local;
+pub mod media;
 pub mod mtp;
 mod protocol;
 pub mod thumbs;
@@ -123,6 +124,7 @@ pub fn run() {
             files::refresh,
             files::read_text,
             files::peek_text,
+            files::media_info,
             files::write_text,
             files::mkdir,
             files::remove,

@@ -10,10 +10,12 @@ copied between them.
   device (💻, then one 📱 per device, in its toolbar), as a list, as thumbnails
   (images and EPUB covers), or in columns (buttons at the right of the pane's
   status bar).
-- The preview, to the right of the files in every view (the last button in
+- The preview, to the right of the files in every view (at its narrowest
+  until you drag the edge between them) (the last button in
   the status bar shows or hides it), shows the selected item: the picture
   itself, sized to the preview (its thumbnail shows while the file is read),
-  details (with the width × height of images and videos), videos and audio that play straight from the device
+  details (width × height of images and videos, read from the file's header,
+  and the length of videos and audio), videos and audio that play straight from the device
   without copying them first (GIF, HEIC, AVIF and SVG images too), and the
   text of text files, read a piece at a time as you scroll (up to 8 MB).
 - Drag the edges to resize the sidebar, the two panes, the files beside the

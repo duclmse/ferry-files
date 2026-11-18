@@ -223,17 +223,30 @@ pub(super) fn Preview(pane: Pane) -> impl IntoView {
                     let what = match k {
                         Kind::Folder => "Folder", Kind::Epub => "EPUB book", Kind::Text => "Text file", Kind::Other => "File",
                     };
-                    // Width × height of an image or video, once it has loaded.
-                    let dims = RwSignal::new(None::<(u32, u32)>);
+                    let src = p.src.get_untracked();
+                    // Width, height and length, from the file's header; the picture or player
+                    // fills in what the header didn't give (an SVG's size, an MP3's length).
+                    let info = RwSignal::new(MediaInfo::default());
+                    if media(&e).is_some() {
+                        let path = e.path.clone();
+                        spawn_local(async move {
+                            if let Ok(h) = call::<MediaInfo>("media_info", json!({ "src": src.key(), "path": path })).await {
+                                let _ = info.try_update(|i| {
+                                    i.width = h.width.or(i.width);
+                                    i.height = h.height.or(i.height);
+                                    i.duration = h.duration.or(i.duration);
+                                });
+                            }
+                        });
+                    }
                     view! {
                         {
-                            let src = p.src.get_untracked();
                             match media(&e) {
-                                Some(Media::Image) => view! { <FullImage src entry=e.clone() dims/> }.into_any(),
-                                Some(Media::Video) => view! { <Player url=stream_url(src, &e) video=true dims/> }.into_any(),
+                                Some(Media::Image) => view! { <FullImage src entry=e.clone() info/> }.into_any(),
+                                Some(Media::Video) => view! { <Player url=stream_url(src, &e) video=true info/> }.into_any(),
                                 Some(Media::Audio) => view! {
                                     <div class="pic"><Thumbnail src=src entry=e.clone()/></div>
-                                    <Player url=stream_url(src, &e) video=false/>
+                                    <Player url=stream_url(src, &e) video=false info/>
                                 }.into_any(),
                                 None if is_text(&e) => view! { <TextPeek src=src entry=e.clone()/> }.into_any(),
                             None => view! {
@@ -244,8 +257,11 @@ pub(super) fn Preview(pane: Pane) -> impl IntoView {
                         <b class="name">{e.name.clone()}</b>
                         <span class="sub">{what}{(!e.dir).then(|| format!(" · {}", human_size(e.size)))}</span>
                         <dl>
-                            {move || dims.get().map(|(w, h)| view! {
+                            {move || info.with(|i| i.width.zip(i.height)).map(|(w, h)| view! {
                                 <dt>"Dimensions"</dt><dd>{format!("{w} × {h}")}</dd>
+                            })}
+                            {move || info.with(|i| i.duration).map(|d| view! {
+                                <dt>"Length"</dt><dd>{length(d)}</dd>
                             })}
                             <dt>"Modified"</dt><dd>{when(e.mtime)}</dd>
                             <dt>"Where"</dt><dd class="path">{parent(&e.path)}</dd>
@@ -258,6 +274,13 @@ pub(super) fn Preview(pane: Pane) -> impl IntoView {
     }
 }
 
+/// A length in seconds as "1:02:03" or "2:03".
+fn length(secs: f64) -> String {
+    let s = secs.round() as u64;
+    let (h, m, s) = (s / 3600, s / 60 % 60, s % 60);
+    if h > 0 { format!("{h}:{m:02}:{s:02}") } else { format!("{m}:{s:02}") }
+}
+
 /// Text files the preview shows the start of: any size, as only the start is read.
 fn is_text(e: &Entry) -> bool {
     !e.dir && TEXT_EXTS.contains(&ext(&e.name).as_str())
@@ -266,7 +289,7 @@ fn is_text(e: &Entry) -> bool {
 /// A video or audio player streaming from the device. When the preview moves on, it stops and
 /// lets go of the file, so the web view drops what it buffered.
 #[component]
-fn Player(url: String, video: bool, #[prop(optional)] dims: Option<RwSignal<Option<(u32, u32)>>>) -> impl IntoView {
+fn Player(url: String, video: bool, info: RwSignal<MediaInfo>) -> impl IntoView {
     let el = StoredValue::new_local(None::<web_sys::HtmlMediaElement>);
     let keep = move |e: &web_sys::HtmlMediaElement| el.set_value(Some(e.clone()));
     on_cleanup(move || {
@@ -276,37 +299,49 @@ fn Player(url: String, video: bool, #[prop(optional)] dims: Option<RwSignal<Opti
             m.load();
         }
     });
+    // What the header didn't give, from the player once it has read the start of the file.
+    let meta = move |ev: web_sys::Event| {
+        let Some(m) = ev.target().and_then(|t| t.dyn_into::<web_sys::HtmlMediaElement>().ok()) else { return };
+        let d = m.duration();
+        let v = m.dyn_into::<web_sys::HtmlVideoElement>().ok();
+        let _ = info.try_update(|i| {
+            if i.duration.is_none() && d.is_finite() && d > 0.0 {
+                i.duration = Some(d);
+            }
+            // 0 × 0 for a file with sound only.
+            if let Some(v) = v.filter(|v| v.video_width() > 0) {
+                if i.width.is_none() {
+                    (i.width, i.height) = (Some(v.video_width()), Some(v.video_height()));
+                }
+            }
+        });
+    };
     let video_ref = NodeRef::<html::Video>::new();
     let audio_ref = NodeRef::<html::Audio>::new();
     video_ref.on_load(move |v| keep(&v));
     audio_ref.on_load(move |a| keep(&a));
     if video {
-        let meta = move |ev: web_sys::Event| {
-            let v = ev.target().and_then(|t| t.dyn_into::<web_sys::HtmlVideoElement>().ok());
-            if let (Some(v), Some(dims)) = (v, dims) {
-                // 0 × 0 for a file with sound only.
-                if v.video_width() > 0 {
-                    dims.set(Some((v.video_width(), v.video_height())));
-                }
-            }
-        };
         view! {
             <video class="play" controls preload="metadata" src=url node_ref=video_ref on:loadedmetadata=meta></video>
         }.into_any()
     } else {
-        view! { <audio class="play" controls preload="metadata" src=url node_ref=audio_ref></audio> }.into_any()
+        view! { <audio class="play" controls preload="metadata" src=url node_ref=audio_ref on:loadedmetadata=meta></audio> }.into_any()
     }
 }
 
 /// The image itself, as big as the preview allows (never bigger than it is). Its thumbnail shows
 /// while the whole file is read, which can take a while from a phone.
 #[component]
-fn FullImage(src: Src, entry: Entry, dims: RwSignal<Option<(u32, u32)>>) -> impl IntoView {
+fn FullImage(src: Src, entry: Entry, info: RwSignal<MediaInfo>) -> impl IntoView {
     let loaded = RwSignal::new(false);
     let url = stream_url(src, &entry);
     let load = move |ev: web_sys::Event| {
         if let Some(img) = ev.target().and_then(|t| t.dyn_into::<web_sys::HtmlImageElement>().ok()) {
-            dims.set(Some((img.natural_width(), img.natural_height())));
+            let _ = info.try_update(|i| {
+                if i.width.is_none() {
+                    (i.width, i.height) = (Some(img.natural_width()), Some(img.natural_height()));
+                }
+            });
         }
         loaded.set(true);
     };

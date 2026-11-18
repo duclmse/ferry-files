@@ -16,6 +16,7 @@
     "allow-refresh",
     "allow-read-text",
     "allow-peek-text",
+    "allow-media-info",
     "allow-write-text",
     "allow-mkdir",
     "allow-remove",
