@@ -147,9 +147,9 @@ fn finds_and_replaces_text_only() {
 fn visual_and_body() {
     let mut b = sample();
     let path = "OEBPS/text/ch 1.xhtml";
-    let html = b.visual_html(path, "yomi://localhost/book/1/OEBPS/text/").unwrap();
+    let html = b.visual_html(path, "ferry://localhost/book/1/OEBPS/text/").unwrap();
     assert!(html.starts_with("\n<!DOCTYPE html>"), "{html}");
-    assert!(html.contains(r#"<head><base href="yomi://localhost/book/1/OEBPS/text/"><title></title><link"#), "{html}");
+    assert!(html.contains(r#"<head><base href="ferry://localhost/book/1/OEBPS/text/"><title></title><link"#), "{html}");
     assert!(html.contains(r#"<a id="p1"></a>"#) && html.contains(r#"alt=""/>"#));
     assert!(b.body_inner(path).unwrap().starts_with("<p>The cat"));
     b.set_body(path, "<p>New</p>").unwrap();

@@ -125,14 +125,14 @@ pub(super) fn media(e: &Entry) -> Option<Media> {
 /// URL of the file itself, read in parts as the player asks for them, without copying it first.
 pub(super) fn stream_url(src: Src, e: &Entry) -> String {
     let p = String::from(js_sys::encode_uri_component(&e.path));
-    format!("yomi://localhost/file?src={}&p={p}&s={}&m={}", src.key(), e.size, e.mtime)
+    format!("ferry://localhost/file?src={}&p={p}&s={}&m={}", src.key(), e.size, e.mtime)
 }
 
-/// Thumbnail URL for images and EPUBs (their cover), served by the backend's `yomi://` scheme.
+/// Thumbnail URL for images and EPUBs (their cover), served by the backend's `ferry://` scheme.
 pub(super) fn thumb_url(src: Src, e: &Entry) -> Option<String> {
     (!e.dir && e.size <= THUMB_MAX && THUMB_EXTS.contains(&ext(&e.name).as_str())).then(|| {
         let p = String::from(js_sys::encode_uri_component(&e.path));
-        format!("yomi://localhost/thumb?src={}&p={p}&s={}&m={}", src.key(), e.size, e.mtime)
+        format!("ferry://localhost/thumb?src={}&p={p}&s={}&m={}", src.key(), e.size, e.mtime)
     })
 }
 
@@ -165,15 +165,32 @@ pub(super) fn stored(key: &str) -> Option<String> {
     storage().and_then(|s| s.get_item(key).ok().flatten())
 }
 
+/// Settings saved under the app's old name ("yomi-files.…") move to "ferry-files.…", unless the
+/// new name already has one. Runs before anything reads them.
+pub(super) fn rename_stored_keys() {
+    let Some(s) = storage() else { return };
+    let keys: Vec<String> = (0..s.length().unwrap_or(0)).filter_map(|i| s.key(i).ok().flatten()).collect();
+    for old in keys {
+        let Some(rest) = old.strip_prefix("yomi-files.") else { continue };
+        let new = format!("ferry-files.{rest}");
+        if let (Ok(Some(v)), Ok(None)) = (s.get_item(&old), s.get_item(&new)) {
+            if s.set_item(&new, &v).is_err() {
+                continue;
+            }
+        }
+        let _ = s.remove_item(&old);
+    }
+}
+
 pub(super) fn store(key: &str, value: &str) {
     if let Some(s) = storage() {
         let _ = s.set_item(key, value);
     }
 }
 
-pub(super) const SPLIT_KEY: &str = "yomi-files.split";
-pub(super) const SEARCHES_KEY: &str = "yomi-files.searches";
-pub(super) const THEME_KEY: &str = "yomi-files.theme";
+pub(super) const SPLIT_KEY: &str = "ferry-files.split";
+pub(super) const SEARCHES_KEY: &str = "ferry-files.searches";
+pub(super) const THEME_KEY: &str = "ferry-files.theme";
 
 /// Shows the app light, dark, or as the Mac is ("auto").
 pub(super) fn apply_theme(theme: &str) {
@@ -184,11 +201,11 @@ pub(super) fn apply_theme(theme: &str) {
         };
     }
 }
-pub(super) const HIDDEN_KEY: &str = "yomi-files.hidden";
-pub(super) const PHONE_THUMBS_KEY: &str = "yomi-files.phone-thumbs";
-pub(super) const AUTO_CONNECT_KEY: &str = "yomi-files.auto-connect";
-pub(super) const SIDE_W_KEY: &str = "yomi-files.side-w";
-pub(super) const PANE_W_KEY: &str = "yomi-files.pane-w";
+pub(super) const HIDDEN_KEY: &str = "ferry-files.hidden";
+pub(super) const PHONE_THUMBS_KEY: &str = "ferry-files.phone-thumbs";
+pub(super) const AUTO_CONNECT_KEY: &str = "ferry-files.auto-connect";
+pub(super) const SIDE_W_KEY: &str = "ferry-files.side-w";
+pub(super) const PANE_W_KEY: &str = "ferry-files.pane-w";
 
 /// A setting kept in localStorage as "1" or "0".
 pub(super) fn stored_flag(key: &str, default: bool) -> bool {

@@ -146,7 +146,7 @@ impl BackupNote {
 
 pub fn backup_dir() -> PathBuf {
     // Same folder as yomi-files.py, so backups from both tools are in one place.
-    dirs::home_dir().unwrap_or_else(|| PathBuf::from("/tmp")).join("Library/Caches/yomi-files/backups")
+    dirs::home_dir().unwrap_or_else(|| PathBuf::from("/tmp")).join("Library/Caches/ferry-files/backups")
 }
 
 #[derive(Serialize)]

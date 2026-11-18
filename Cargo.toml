@@ -1,5 +1,5 @@
 [package]
-name = "yomi-files-ui"
+name = "ferry-files-ui"
 version = "0.1.0"
 edition = "2021"
 

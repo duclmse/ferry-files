@@ -10,7 +10,7 @@ pub(super) fn Sidebar() -> impl IntoView {
     // A section heading that folds its section away; remembered across launches.
     // `refresh`: Devices has a button to look for devices again, at the right.
     let section = move |key: &'static str, title: &'static str, refresh: bool| {
-        let storage_key = format!("yomi-files.fold.{key}");
+        let storage_key = format!("ferry-files.fold.{key}");
         let open = RwSignal::new(!stored_flag(&storage_key, false));
         let heading = move || {
             let storage_key = storage_key.clone();
@@ -43,7 +43,7 @@ pub(super) fn Sidebar() -> impl IntoView {
     let device = move |i: Info| {
         let src = Src::of(&i.id);
         // Its folders fold away under its name; remembered for the device across launches.
-        let fold_key = format!("yomi-files.fold.dev.{}:{}", i.transport, i.label);
+        let fold_key = format!("ferry-files.fold.dev.{}:{}", i.transport, i.label);
         let open = RwSignal::new(!stored_flag(&fold_key, false));
         let dirs = i.quick_dirs.clone();
         let foldable = !dirs.is_empty();
@@ -321,7 +321,7 @@ pub(super) fn Settings() -> impl IntoView {
                     "Connect phones when they're plugged in (adb if allowed, else MTP)"
                 </label>
                 <h3>"On this Mac"</h3>
-                {folder("backups", "Backups", "Copies of files from before they were replaced or deleted. Never removed by the app.")}
+                {folder("backups", "Backups", "Copies of files from before they were replaced or deleted. Kept until you clear them in Backups, which moves them to the Trash.")}
                 {folder("thumbs", "Thumbnail cache", "Made again when needed, so it's safe to clear.")}
                 {folder("opened", "Opened phone files", "Copies made to open phone files in Mac apps. Changes to them don't go back to the phone.")}
                 {move || error.get().map(|e| view! { <p class="error">{e}</p> })}

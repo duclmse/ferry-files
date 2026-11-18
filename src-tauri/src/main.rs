@@ -2,5 +2,5 @@
 #![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
 
 fn main() {
-    yomi_files_app_lib::run()
+    ferry_files_lib::run()
 }

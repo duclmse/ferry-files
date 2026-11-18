@@ -66,7 +66,7 @@ pub(super) fn open_folder(which: String) -> Result<(), String> {
 }
 
 /// Empties the thumbnail cache (made again when shown) or the copies of opened phone files.
-/// Backups can't be cleared from the app.
+/// Backups are cleared from the Backups window instead (`safety::clear_backups`), to the Trash.
 #[tauri::command(rename_all = "snake_case")]
 pub(super) async fn clear_cache(which: String) -> Result<(), String> {
     blocking(move || {

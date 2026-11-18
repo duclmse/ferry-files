@@ -89,6 +89,28 @@ pub(super) async fn restore(state: State<'_, AppState>, file: String, src: Strin
     .await
 }
 
+/// Moves the whole backups folder to the Trash, so it can still be got back from there. The app
+/// starts a new one with the next backup.
+#[tauri::command(rename_all = "snake_case")]
+pub(super) async fn clear_backups() -> Result<(), String> {
+    blocking(|| {
+        let dir = device::backup_dir();
+        if !dir.exists() {
+            return Ok(());
+        }
+        #[allow(unused_mut)]
+        let mut trash = trash::TrashContext::default();
+        // The default asks the Finder through AppleScript, which can bring up a permission prompt.
+        #[cfg(target_os = "macos")]
+        {
+            use trash::macos::{DeleteMethod, TrashContextExtMacos};
+            trash.set_delete_method(DeleteMethod::NsFileManager);
+        }
+        trash.delete(&dir).map_err(|e| format!("Couldn't move the backups to the Trash: {e}"))
+    })
+    .await
+}
+
 /// Ejects a disk mounted on the Mac (`diskutil eject`).
 #[tauri::command(rename_all = "snake_case")]
 pub(super) async fn eject(path: String) -> Result<(), String> {
@@ -114,7 +136,7 @@ mod tests {
         assert_eq!(super::backup_name("20250101-120000-a-b.txt"), "a-b.txt");
         assert_eq!(super::backup_name("20250101-120000-2-a.txt"), "a.txt");
         assert_eq!(super::backup_name("odd.txt"), "odd.txt");
-        let dir = std::env::temp_dir().join(format!("yomi-backup-test-{}", std::process::id()));
+        let dir = std::env::temp_dir().join(format!("ferry-backup-test-{}", std::process::id()));
         std::fs::create_dir_all(&dir).unwrap();
         let mac = crate::Device::new(Box::new(crate::local::Local));
         let f = dir.join("note.txt").display().to_string();

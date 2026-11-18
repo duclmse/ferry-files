@@ -5,6 +5,7 @@ pub mod device;
 pub mod epub;
 pub mod local;
 pub mod media;
+mod migrate;
 pub mod mtp;
 mod protocol;
 pub mod thumbs;
@@ -127,10 +128,11 @@ async fn blocking<T: Send + 'static>(f: impl FnOnce() -> Result<T, String> + Sen
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
+    migrate::run();
     tauri::Builder::default()
         .plugin(tauri_plugin_dialog::init())
         .manage(AppState::default())
-        .register_asynchronous_uri_scheme_protocol("yomi", |ctx, request, responder| {
+        .register_asynchronous_uri_scheme_protocol("ferry", |ctx, request, responder| {
             let app = ctx.app_handle().clone();
             std::thread::spawn(move || responder.respond(protocol::handle(&app, request)));
         })
@@ -156,6 +158,7 @@ pub fn run() {
             files::upload,
             safety::backups,
             safety::restore,
+            safety::clear_backups,
             safety::eject,
             files::quick_look,
             files::find,
@@ -187,7 +190,7 @@ pub fn run() {
             editor::epub_close,
         ])
         .build(tauri::generate_context!())
-        .expect("error while running yomi-files")
+        .expect("error while running Ferry Files")
         .run(|app, event| {
             if let tauri::RunEvent::Exit = event {
                 state(app).close_all();

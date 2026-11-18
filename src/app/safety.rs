@@ -89,6 +89,30 @@ pub(super) fn Backups() -> impl IntoView {
             }
         });
     };
+    // Quick Look on the backup itself; it keeps the file's extension, so it shows like the original.
+    let preview = move |b: Backup| {
+        spawn_local(async move {
+            if let Err(e) = call::<()>("quick_look", json!({ "src": Src::Mac.key(), "path": b.file })).await {
+                message.set(Some((e, false)));
+            }
+        });
+    };
+    // Clearing asks first, in place of the button.
+    let confirming = RwSignal::new(false);
+    let count = move || list.with(|l| l.as_ref().and_then(|r| r.as_ref().ok()).map_or(0, Vec::len));
+    let clear = move || {
+        confirming.set(false);
+        spawn_local(async move {
+            match call::<()>("clear_backups", json!({})).await {
+                Ok(()) => {
+                    message.set(Some(("Moved the backups to the Trash. Put them back from there if you need them.".into(), true)));
+                    ctx.log("Moved the backups to the Trash");
+                }
+                Err(e) => message.set(Some((e, false))),
+            }
+            load();
+        });
+    };
     let close = move || ctx.panel.set(None);
     view! {
         <div class="overlay" on:click=move |_| close()>
@@ -112,7 +136,7 @@ pub(super) fn Backups() -> impl IntoView {
                                 }).unwrap_or_else(|| "Where it came from wasn't noted (an older backup).".into());
                                 let back = b.note.as_ref().and_then(|n| ctx.fav_src(&Fav { place: n.place.clone(), label: String::new(), path: n.path.clone() }).map(|s| (s, n.path.clone())));
                                 let back_tip = if back.is_some() { "Put it back where it was".to_string() } else if b.note.is_some() { "Connect that device to put it back where it was".into() } else { "Where it came from isn't known".into() };
-                                let (b1, b2) = (b.clone(), b.clone());
+                                let (b1, b2, b3) = (b.clone(), b.clone(), b.clone());
                                 let here_tip = "Restore into the folder open in the active pane";
                                 view! {
                                     <div class="backup">
@@ -121,6 +145,7 @@ pub(super) fn Backups() -> impl IntoView {
                                             <span class="about">{format!("{} · {}", when(b.mtime), human_size(b.size))}</span>
                                             <span class="path">{origin}</span>
                                         </div>
+                                        <button class="btn" title="Show it in Quick Look" on:click=move |_| preview(b3.clone())>"Preview"</button>
                                         <button class="btn" title=back_tip disabled=back.is_none()
                                             on:click=move |_| if let Some((s, path)) = back.clone() { restore(b1.clone(), s, path) }>"Restore"</button>
                                         <button class="btn" title=here_tip on:click=move |_| {
@@ -137,6 +162,19 @@ pub(super) fn Backups() -> impl IntoView {
                 </div>
                 <div class="actions">
                     <button class="btn" on:click=move |_| { let _ = spawn_local(async move { let _ = call::<()>("open_folder", json!({ "which": "backups" })).await; }); }>"Open in Finder"</button>
+                    {move || if confirming.get() {
+                        let n = count();
+                        view! {
+                            <span class="hint">{format!("Move {n} backup{} to the Trash?", if n == 1 { "" } else { "s" })}</span>
+                            <button class="btn" on:click=move |_| confirming.set(false)>"Cancel"</button>
+                            <button class="btn danger solid" on:click=move |_| clear()>"Move to Trash"</button>
+                        }.into_any()
+                    } else {
+                        view! {
+                            <button class="btn danger" title="Move every backup to the Trash" disabled=move || count() == 0
+                                on:click=move |_| confirming.set(true)>"Clear…"</button>
+                        }.into_any()
+                    }}
                     <span class="grow"></span>
                     <button class="btn primary" on:click=move |_| close()>"Done"</button>
                 </div>

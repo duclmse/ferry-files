@@ -188,7 +188,7 @@ fn BigCover(src: Src, entry: Entry) -> impl IntoView {
         }
     });
     let p = String::from(js_sys::encode_uri_component(&entry.path));
-    let url = format!("yomi://localhost/cover?src={}&p={p}&s={}&m={}", src.key(), entry.size, entry.mtime);
+    let url = format!("ferry://localhost/cover?src={}&p={p}&s={}&m={}", src.key(), entry.size, entry.mtime);
     view! {
         <div class="pic" class:whole=loaded node_ref=pic>
             {let e = entry.clone(); move || (!loaded.get()).then(|| view! { <Thumbnail src entry=e.clone()/> })}
@@ -426,7 +426,7 @@ fn Player(pane: Pane, entry: Entry, url: String, video: bool, info: RwSignal<Med
 #[component]
 fn FontSample(src: Src, entry: Entry) -> impl IntoView {
     // A name of its own for each preview, so a font shown earlier isn't reused.
-    let family = format!("yomi-peek-{}", js_sys::Date::now() as u64);
+    let family = format!("ferry-peek-{}", js_sys::Date::now() as u64);
     let css = format!("@font-face {{ font-family: \"{family}\"; src: url(\"{}\"); }}", stream_url(src, &entry));
     let face = format!("font-family: \"{family}\", system-ui");
     view! {
@@ -591,7 +591,7 @@ fn Zipped(pane: Pane, src: Src, zip: Entry, name: String, size: u64) -> impl Int
     let short = name.rsplit('/').next().unwrap_or(&name).to_string();
     let e = Entry { name: short.clone(), path: name.clone(), dir: false, size, mtime: 0 };
     let url = format!(
-        "yomi://localhost/zipped?src={}&p={}&s={}&m={}&e={}",
+        "ferry://localhost/zipped?src={}&p={}&s={}&m={}&e={}",
         src.key(),
         String::from(js_sys::encode_uri_component(&zip.path)),
         zip.size,

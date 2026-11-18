@@ -3,12 +3,12 @@
 //! copy, never to the original. Then it edits the info, finds and replaces, round-trips every
 //! chapter through the visual view's body, saves with the version check, reads the file back,
 //! and deletes the copy and the backups it made.
-use yomi_files_app_lib::device::{self, join, Device, Entry};
-use yomi_files_app_lib::epub::{Book, Query};
+use ferry_files_lib::device::{self, join, Device, Entry};
+use ferry_files_lib::epub::{Book, Query};
 
 fn find_epub(dev: &Device, dir: &str, depth: u32) -> Option<Entry> {
     let entries = dev.listdir(dir).ok()?;
-    if let Some(e) = entries.iter().find(|e| !e.dir && e.name.to_lowercase().ends_with(".epub") && !e.name.starts_with("yomi-epub-smoke")) {
+    if let Some(e) = entries.iter().find(|e| !e.dir && e.name.to_lowercase().ends_with(".epub") && !e.name.starts_with("ferry-epub-smoke")) {
         return Some(e.clone());
     }
     if depth == 0 {
@@ -27,7 +27,7 @@ fn main() {
     println!("using {} ({} bytes) — only a copy is edited", src.path, src.size);
     let (data, _) = dev.read(&src.path).expect("read original");
 
-    let scratch = join(&join(&start, "Download"), &format!("yomi-epub-smoke-{}.epub", std::process::id()));
+    let scratch = join(&join(&start, "Download"), &format!("ferry-epub-smoke-{}.epub", std::process::id()));
     let created = dev.write(&scratch, &data, None, true).expect("create copy");
     let mut backups = vec![];
     let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
@@ -44,7 +44,7 @@ fn main() {
         // Every chapter: build the visual page, then put its body back unchanged.
         let (mut shown, mut broken) = (0, vec![]);
         for c in &chapters {
-            match book.visual_html(&c.path, "yomi://localhost/book/1/") {
+            match book.visual_html(&c.path, "ferry://localhost/book/1/") {
                 Ok(_) => {
                     let before = book.text(&c.path).unwrap();
                     let inner = book.body_inner(&c.path).unwrap();
@@ -59,8 +59,8 @@ fn main() {
 
         let mut meta = book.meta().expect("meta");
         println!("meta: {:?} by {:?}, lang {}", meta.title, meta.creators, meta.language);
-        meta.title = format!("{} [yomi smoke]", meta.title);
-        meta.subjects.push("yomi-smoke-subject".into());
+        meta.title = format!("{} [ferry smoke]", meta.title);
+        meta.subjects.push("ferry-smoke-subject".into());
         book.set_meta(&meta).expect("set meta");
 
         // Replace a common word with a marker, if the book has one.
@@ -69,7 +69,7 @@ fn main() {
         });
         let mut replaced = 0;
         if let Some(w) = word {
-            let q = Query { find: w.to_string(), replace: "YOMISMOKE".into(), match_case: false, whole_word: true };
+            let q = Query { find: w.to_string(), replace: "FERRYSMOKE".into(), match_case: false, whole_word: true };
             let f = book.find(&q).unwrap();
             replaced = book.replace_all(&q).expect("replace");
             println!("replaced {replaced} of {} matches of {w:?} in {} chapters", f.total, f.hits.len());
@@ -91,9 +91,9 @@ fn main() {
         let again = Book::open(&back, scratch.clone(), saved.version).expect("reopen");
         let m2 = again.meta().unwrap();
         assert_eq!(m2.title, meta.title);
-        assert!(m2.subjects.contains(&"yomi-smoke-subject".to_string()));
+        assert!(m2.subjects.contains(&"ferry-smoke-subject".to_string()));
         if replaced > 0 {
-            let q = Query { find: "YOMISMOKE".into(), replace: String::new(), match_case: true, whole_word: false };
+            let q = Query { find: "FERRYSMOKE".into(), replace: String::new(), match_case: true, whole_word: false };
             assert_eq!(again.find(&q).unwrap().total, replaced);
         }
         assert_eq!(again.chapters().unwrap().len(), chapters.len());

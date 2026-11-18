@@ -15,38 +15,42 @@ pub(super) fn Crumbs(pane: Pane) -> impl IntoView {
         }
     };
     let el = NodeRef::<html::Div>::new();
-    // How many folders (after "/") are folded into "…".
+    // How many folders (after "/") are folded into "…". Every folder stays in the page; folded
+    // ones are only hidden, so changing this toggles classes instead of rebuilding the path.
     let fold = RwSignal::new(0usize);
-    // With every folder shown, measures them and folds as many as it takes to fit.
+    // Shows everything for a moment, measures, and folds as many folders as it takes to fit. It
+    // all happens before the browser paints, so nothing flickers.
     let fit = move || {
-        fold.set(0);
-        request_animation_frame(move || {
-            let Some(el) = el.get_untracked() else { return };
-            let (need, room) = (el.scroll_width(), el.client_width());
-            if need <= room {
-                return;
-            }
-            let Ok(parts) = el.query_selector_all(".part") else { return };
-            let n = parts.length() as usize;
-            // "…" and the "/" after it take about this much.
-            let mut over = need - room + 32;
-            let mut k = 0;
-            // The last folder always shows.
-            while over > 0 && k + 1 < n {
-                let w = parts.item(k as u32).and_then(|e| e.dyn_into::<web_sys::HtmlElement>().ok()).map_or(0, |e| e.offset_width());
-                over -= w;
+        let Some(el) = el.get_untracked() else { return };
+        let classes = el.class_list();
+        let _ = classes.add_1("measuring");
+        let (need, room) = (el.scroll_width(), el.client_width());
+        let width = |e: Option<web_sys::Element>| e.and_then(|e| e.dyn_into::<web_sys::HtmlElement>().ok()).map_or(0, |e| e.offset_width());
+        // "…" is shown while measuring; "+ 1" is the gap beside each item.
+        let more = width(el.query_selector(".part.more").ok().flatten()) + 1;
+        let parts: Vec<i32> = el.query_selector_all(".part.dir").map_or(vec![], |ps| (0..ps.length()).map(|i| width(ps.item(i).and_then(|n| n.dyn_into().ok())) + 1).collect());
+        let _ = classes.remove_1("measuring");
+        let mut k = 0;
+        if need - more > room {
+            let mut over = need - room;
+            // The last folder always shows; it's cut short if it alone doesn't fit.
+            while over > 0 && k + 1 < parts.len() {
+                over -= parts[k];
                 k += 1;
             }
+        }
+        if fold.get_untracked() != k {
             fold.set(k);
-        });
+        }
     };
+    // After the path changes and is drawn (an animation frame comes before the next paint).
     Effect::new(move |_| {
         p.cwd.track();
         if !p.editing_path.get() {
-            fit();
+            request_animation_frame(fit);
         }
     });
-    // Again when the path's room changes.
+    // Right away when the path's room changes: resize observers run between layout and paint.
     let watcher = StoredValue::new_local(None::<(web_sys::ResizeObserver, wasm_bindgen::closure::Closure<dyn Fn()>)>);
     let width = StoredValue::new(0);
     Effect::new(move |_| {
@@ -74,26 +78,23 @@ pub(super) fn Crumbs(pane: Pane) -> impl IntoView {
                 view! { <PathEdit pane=p/> }.into_any()
             } else {
                 let cwd = p.cwd.get();
-                let k = fold.get();
                 let mut paths = Vec::new();
                 let mut acc = String::new();
                 for part in cwd.split('/').filter(|s| !s.is_empty()) {
                     acc = format!("{acc}/{part}");
                     paths.push((part.to_string(), acc.clone()));
                 }
-                let folded: Vec<String> = paths.iter().take(k).map(|(_, path)| path.clone()).collect();
                 let last = paths.len().saturating_sub(1);
+                let all = StoredValue::new(paths.iter().map(|(_, path)| path.clone()).collect::<Vec<_>>());
+                let folded = move || all.with_value(|a| a[..fold.get().min(a.len())].to_vec());
                 view! {
                     <button on:click=move |_| ctx.navigate(p, "/".into())>"/"</button>
-                    {(k > 0).then(|| {
-                        let tip = folded.last().cloned().unwrap_or_default();
-                        view! {
-                            <span class="part"><button class="more" title=tip
-                                on:click=move |ev| ctx.show_folders_menu(p, &ev, folded.clone())>"…"</button></span>
-                        }
-                    })}
-                    {paths.into_iter().enumerate().skip(k).map(|(i, (name, path))| view! {
-                        <span class="part" class:last=i == last>
+                    <span class="part more" class:folded=move || fold.get() == 0>
+                        <button class="more" title=move || folded().last().cloned().unwrap_or_default()
+                            on:click=move |ev| ctx.show_folders_menu(p, &ev, folded())>"…"</button>
+                    </span>
+                    {paths.into_iter().enumerate().map(|(i, (name, path))| view! {
+                        <span class="part dir" class:last=i == last class:folded=move || i < fold.get()>
                             {(i > 0).then(|| view! { <span class="sep">"/"</span> })}
                             <button title=path.clone() on:click=move |_| ctx.navigate(p, path.clone())>{name}</button>
                         </span>
@@ -363,7 +364,7 @@ pub(super) fn PaneView(pane: Pane) -> impl IntoView {
                     }}
                 </div>
                 {move || p.preview.get().then(|| view! {
-                    <Grip size=p.view_w key=format!("yomi-files.view-w.{}", p.id) min=200.0 room=360.0/>
+                    <Grip size=p.view_w key=format!("ferry-files.view-w.{}", p.id) min=200.0 room=360.0/>
                     <Preview pane=p/>
                 })}
             </div>
@@ -517,7 +518,7 @@ pub(super) fn ListStatus(pane: Pane) -> impl IntoView {
         let more = if complete { "" } else { " (stopped early: open a smaller folder to see all)" };
         view! {
             <span class="search">{format!("{n} found for “{q}”{more}")}</span>
-            <button class="btn small" on:click=move |_| ctx.reload(p)>"Back to folder"</button>
+            <button class="btn small back" title="Back to folder" aria-label="Back to folder" on:click=move |_| ctx.reload(p)><svg class="back-icon" viewBox="0 0 16 16" aria-hidden="true"><path d="M13 8H3M7.5 3.5 3 8l4.5 4.5"/></svg></button>
         }
     });
     view! {
@@ -540,7 +541,7 @@ pub(super) fn ListStatus(pane: Pane) -> impl IntoView {
                 on:click=move |_| {
                     let on = !p.preview.get_untracked();
                     p.preview.set(on);
-                    store(&format!("yomi-files.preview.{}", p.id), if on { "1" } else { "0" });
+                    store(&format!("ferry-files.preview.{}", p.id), if on { "1" } else { "0" });
                 }>
                 <svg viewBox="0 0 16 16" aria-hidden="true"><rect x="1.5" y="2.5" width="13" height="11" rx="1.5"/><path d="M9.5 2.5v11"/></svg>
             </button>

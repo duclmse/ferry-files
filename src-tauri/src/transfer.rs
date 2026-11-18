@@ -310,7 +310,7 @@ mod tests {
     #[test]
     fn transfer_copies_and_moves_folders() {
         use std::fs;
-        let root = std::env::temp_dir().join(format!("yomi-transfer-test-{}", std::process::id()));
+        let root = std::env::temp_dir().join(format!("ferry-transfer-test-{}", std::process::id()));
         let (src, dst) = (root.join("src"), root.join("dst"));
         fs::create_dir_all(src.join("book/inner")).unwrap();
         fs::create_dir_all(dst.join("book")).unwrap();
@@ -348,7 +348,7 @@ mod tests {
     #[test]
     fn sync_copies_only_what_is_missing() {
         use std::fs;
-        let root = std::env::temp_dir().join(format!("yomi-sync-test-{}", std::process::id()));
+        let root = std::env::temp_dir().join(format!("ferry-sync-test-{}", std::process::id()));
         let (a, b) = (root.join("a"), root.join("b"));
         fs::create_dir_all(a.join("x/y")).unwrap();
         fs::create_dir_all(b.join("x")).unwrap();

@@ -414,7 +414,7 @@ impl Drop for Link {
 fn temp_path(tag: &str) -> std::path::PathBuf {
     use std::sync::atomic::{AtomicU64, Ordering};
     static N: AtomicU64 = AtomicU64::new(0);
-    std::env::temp_dir().join(format!("yomi-files-mtp-{}-{tag}-{}", std::process::id(), N.fetch_add(1, Ordering::Relaxed)))
+    std::env::temp_dir().join(format!("ferry-files-mtp-{}-{tag}-{}", std::process::id(), N.fetch_add(1, Ordering::Relaxed)))
 }
 
 #[derive(Clone)]
@@ -691,7 +691,7 @@ impl Transport for Mtp {
         let new_id = match old {
             None => inner.link.upload(data, &name, sid, pid)?,
             Some(old) => {
-                let tmp_name = format!(".{name}.yomi-tmp");
+                let tmp_name = format!(".{name}.ferry-tmp");
                 inner.invalidate(sid, pid);
                 if let Some(stale) = inner.children(sid, pid).into_iter().find(|k| k.name == tmp_name) {
                     inner.link.delete(stale.id)?;

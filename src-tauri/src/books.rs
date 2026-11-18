@@ -23,7 +23,7 @@ pub struct Info {
 pub fn cache_dir() -> PathBuf {
     dirs::cache_dir()
         .unwrap_or_else(|| PathBuf::from("/tmp"))
-        .join("yomi-files/library")
+        .join("ferry-files/library")
 }
 
 fn key(src: &str, path: &str, size: u64, mtime: i64) -> PathBuf {

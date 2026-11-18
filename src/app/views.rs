@@ -97,7 +97,7 @@ pub(super) fn ListView(pane: Pane) -> impl IntoView {
                                     class:lifted=move || moving.with(|m| m.is_some_and(|(m, _)| m == c))
                                     title="Drag to move this column; right-click to choose columns"
                                     on:mousedown=move |ev| start_move(ev, c)>
-                                    <Grip size=p.list_w[c] key=format!("yomi-files.list-w.{}.{}", p.id, c)
+                                    <Grip size=p.list_w[c] key=format!("ferry-files.list-w.{}.{}", p.id, c)
                                         min=50.0 max=400.0 target=Target::ParentLeft class="grip col-grip"/>
                                     {sort_button(p, k, dragged)}
                                 </th>
@@ -160,7 +160,7 @@ const LIST_W: [f64; 3] = [110.0, 150.0, 90.0];
 /// The list's columns as last arranged for pane `id`: all of them, in order, at first.
 pub(super) fn stored_cols(id: usize) -> Vec<usize> {
     let mut v: Vec<usize> = Vec::new();
-    match stored(&format!("yomi-files.list-cols.{id}")) {
+    match stored(&format!("ferry-files.list-cols.{id}")) {
         Some(s) => {
             for c in s.split(',').filter_map(|c| c.trim().parse::<usize>().ok()) {
                 if c < LIST_COLS.len() && !v.contains(&c) {
@@ -175,7 +175,7 @@ pub(super) fn stored_cols(id: usize) -> Vec<usize> {
 
 impl Pane {
     pub(super) fn set_list_cols(self, v: Vec<usize>) {
-        store(&format!("yomi-files.list-cols.{}", self.id), &v.iter().map(usize::to_string).collect::<Vec<_>>().join(","));
+        store(&format!("ferry-files.list-cols.{}", self.id), &v.iter().map(usize::to_string).collect::<Vec<_>>().join(","));
         self.list_cols.set(v);
     }
 }

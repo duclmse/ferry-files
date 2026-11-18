@@ -1,7 +1,7 @@
 //! Smoke test against a real phone: cargo run --example smoke [-- adb|mtp]
 //! Lists the start folder and Download, reads one text file, then writes, re-reads, overwrites
 //! (with a version check), checks conflict detection, and deletes a scratch file it creates.
-use yomi_files_app_lib::device::{self, join};
+use ferry_files_lib::device::{self, join};
 
 fn main() {
     let transport = std::env::args().nth(1).unwrap_or_else(|| "auto".into());
@@ -19,11 +19,11 @@ fn main() {
         println!("read {} ({} bytes, version {v})", f.name, data.len());
     }
 
-    let scratch = join(&dl, &format!("yomi-files-smoke-{}.txt", std::process::id()));
-    let r1 = dev.write(&scratch, b"hello from yomi-files\n", None, true).expect("create");
+    let scratch = join(&dl, &format!("ferry-files-smoke-{}.txt", std::process::id()));
+    let r1 = dev.write(&scratch, b"hello from Ferry Files\n", None, true).expect("create");
     println!("created {scratch} version {} backup {:?}", r1.version, r1.backup);
     let (data, v) = dev.read(&scratch).expect("read back");
-    assert_eq!(data, b"hello from yomi-files\n");
+    assert_eq!(data, b"hello from Ferry Files\n");
     assert_eq!(v, r1.version, "version after read should match version after write");
     let r2 = dev.write(&scratch, b"edited\n", Some(&v), false).expect("overwrite");
     println!("overwrote, version {} backup {:?}", r2.version, r2.backup);

@@ -94,7 +94,7 @@ impl ViewMode {
     }
 
     fn storage_key(pane: usize) -> String {
-        format!("yomi-files.view.{pane}")
+        format!("ferry-files.view.{pane}")
     }
 
     /// The view the pane had last time. Storage can be missing or blocked; then it's the list.
@@ -140,7 +140,7 @@ struct Sort(SortKey, bool);
 
 impl Sort {
     fn storage_key(pane: usize) -> String {
-        format!("yomi-files.sort.{pane}")
+        format!("ferry-files.sort.{pane}")
     }
 
     fn stored(pane: usize) -> Self {
@@ -174,7 +174,7 @@ struct Fav {
     path: String,
 }
 
-const FAVS_KEY: &str = "yomi-files.favs";
+const FAVS_KEY: &str = "ferry-files.favs";
 
 /// An open context menu: where it is, which pane it's for, and the file or folder it's for
 /// (None: the folder's background).
@@ -283,8 +283,9 @@ struct Pane {
     /// The column view's first column. Reset to the current folder when the view switches to
     /// columns, when a place in the sidebar is opened, and when the pane leaves it.
     root: RwSignal<String>,
-    /// Set before opening a sidebar place: that folder becomes the column view's first column.
-    reroot: StoredValue<bool>,
+    /// Set before opening a sidebar place: when that folder loads, it becomes the column view's
+    /// first column.
+    reroot: StoredValue<Option<String>>,
     /// The item whose name is being edited in place.
     renaming: RwSignal<Option<String>>,
     /// Whether the preview is shown to the right of the files.
@@ -326,12 +327,12 @@ impl Pane {
             cols: RwSignal::new(HashMap::new()),
             last: StoredValue::new(HashMap::new()),
             root: RwSignal::new(String::new()),
-            reroot: StoredValue::new(false),
+            reroot: StoredValue::new(None),
             renaming: RwSignal::new(None),
-            preview: RwSignal::new(stored_flag(&format!("yomi-files.preview.{id}"), true)),
-            view_w: stored_px(&format!("yomi-files.view-w.{id}")),
+            preview: RwSignal::new(stored_flag(&format!("ferry-files.preview.{id}"), true)),
+            view_w: stored_px(&format!("ferry-files.view-w.{id}")),
             col_ws: StoredValue::new(HashMap::new()),
-            list_w: [0, 1, 2].map(|n| stored_px(&format!("yomi-files.list-w.{id}.{n}"))),
+            list_w: [0, 1, 2].map(|n| stored_px(&format!("ferry-files.list-w.{id}.{n}"))),
             list_cols: RwSignal::new(stored_cols(id)),
             peek_as: RwSignal::new(None),
             zip_pick: RwSignal::new(None),
@@ -621,6 +622,7 @@ impl Ctx {
 
 #[component]
 pub fn App() -> impl IntoView {
+    rename_stored_keys();
     let ctx = Ctx::new();
     apply_theme(&ctx.theme.get_untracked());
     provide_context(ctx);

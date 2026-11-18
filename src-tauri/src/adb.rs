@@ -203,8 +203,8 @@ impl Transport for Adb {
     }
 
     fn replace(&self, path: &str, data: &[u8], _exists: bool) -> Result<String> {
-        let tmp_remote = join(&dirname(path), &format!(".{}.yomi-tmp", basename(path)));
-        let tmp_local = std::env::temp_dir().join(format!("yomi-files-{}-{}", std::process::id(), md5_hex(path.as_bytes())));
+        let tmp_remote = join(&dirname(path), &format!(".{}.ferry-tmp", basename(path)));
+        let tmp_local = std::env::temp_dir().join(format!("ferry-files-{}-{}", std::process::id(), md5_hex(path.as_bytes())));
         std::fs::write(&tmp_local, data).map_err(|e| DevError::Msg(format!("Can't write temp file: {e}")))?;
         let pushed = self.run(&["push", &tmp_local.to_string_lossy(), &tmp_remote]);
         let _ = std::fs::remove_file(&tmp_local);

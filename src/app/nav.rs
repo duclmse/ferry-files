@@ -25,8 +25,16 @@ impl Ctx {
                     if new_src || !self.space.with_untracked(|m| m.contains_key(&src.key())) {
                         self.load_space(src);
                     }
-                    let reroot = std::mem::take(&mut *p.reroot.write_value());
-                    if reroot || new_src || !within(&path, &p.root.get_untracked()) {
+                    // Only the load the sidebar asked for re-roots; another load that finishes
+                    // first leaves the request for it.
+                    let reroot = p.reroot.with_value(|r| r.as_deref() == Some(path.as_str()));
+                    if reroot {
+                        p.reroot.set_value(None);
+                    }
+                    // An empty root (nothing set yet, e.g. a launch straight into column view)
+                    // counts as containing everything, so it has to be set here.
+                    let root = p.root.get_untracked();
+                    if reroot || new_src || root.is_empty() || !within(&path, &root) {
                         p.root.set(path.clone());
                     }
                     p.cols.update(|c| {
@@ -52,7 +60,14 @@ impl Ctx {
                 Err(_) if fallback.as_ref().is_some_and(|f| *f != path) => {
                     self.load_or(p, src, fallback.unwrap_or_default(), None, None);
                 }
-                Err(e) => p.error(e),
+                Err(e) => {
+                    p.reroot.update_value(|r| {
+                        if r.as_deref() == Some(path.as_str()) {
+                            *r = None;
+                        }
+                    });
+                    p.error(e)
+                }
             }
             p.loading.set(false);
         });
@@ -60,7 +75,7 @@ impl Ctx {
 
     /// Where the pane's last folder on `src` is kept across launches.
     pub(super) fn last_key(self, p: Pane, src: Src) -> String {
-        format!("yomi-files.last.{}.{}", p.id, self.place_key(src))
+        format!("ferry-files.last.{}.{}", p.id, self.place_key(src))
     }
 
     /// "mac", or a device's transport and name ("adb:Pixel 7"), which stay the same across connections.
@@ -215,6 +230,8 @@ impl Ctx {
     pub(super) fn navigate_select(self, p: Pane, src: Src, path: String, select: Option<String>) {
         if self.editor.get_untracked().is_some() {
             if self.dirty() {
+                // This navigation is dropped, so a sidebar place's re-root must not carry over.
+                p.reroot.set_value(None);
                 self.confirm_discard.set(true);
                 return;
             }
@@ -226,7 +243,7 @@ impl Ctx {
     /// Opens a sidebar place in the active pane; the column view starts from it.
     pub(super) fn open_place(self, src: Src, path: String) {
         let p = self.act();
-        p.reroot.set_value(true);
+        p.reroot.set_value(Some(path.clone()));
         self.navigate_select(p, src, path, None);
     }
 

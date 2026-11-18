@@ -1,9 +1,9 @@
-//! The `yomi://` scheme:
-//!   GET yomi://localhost/book/{id}/{path inside the zip}
+//! The `ferry://` scheme:
+//!   GET ferry://localhost/book/{id}/{path inside the zip}
 //!       files from open EPUBs, so the chapter view can load the book's images, styles and fonts.
-//!   GET yomi://localhost/thumb?src={mac|device id}&p={path}&s={size}&m={mtime}
+//!   GET ferry://localhost/thumb?src={mac|device id}&p={path}&s={size}&m={mtime}
 //!       a thumbnail of an image file or an EPUB's cover (see thumbs.rs).
-//!   GET yomi://localhost/file?src={mac|device id}&p={path}&s={size}&m={mtime}
+//!   GET ferry://localhost/file?src={mac|device id}&p={path}&s={size}&m={mtime}
 //!       a file itself, for the preview's image, video and audio. Honours Range, and reads only the
 //!       part asked for, so a video starts and seeks without copying the file to the Mac.
 
@@ -21,13 +21,13 @@ fn encode_path(p: &str) -> String {
 
 /// URL of a file in an open book. `rev` changes whenever the book does, so edits show up.
 pub fn book_url(id: u32, path: &str, rev: u32) -> String {
-    format!("yomi://localhost/book/{id}/{}?v={rev}", encode_path(path))
+    format!("ferry://localhost/book/{id}/{}?v={rev}", encode_path(path))
 }
 
 /// Base URL for relative links in a chapter: the chapter's folder, with a trailing slash.
 pub fn book_base(id: u32, chapter: &str) -> String {
     let dir = chapter.rfind('/').map_or("", |k| &chapter[..=k]);
-    format!("yomi://localhost/book/{id}/{}", encode_path(dir))
+    format!("ferry://localhost/book/{id}/{}", encode_path(dir))
 }
 
 fn respond(status: StatusCode, ctype: &str, body: Vec<u8>) -> Response<Vec<u8>> {
@@ -39,7 +39,7 @@ fn respond_with(status: StatusCode, ctype: &str, cache: &str, body: Vec<u8>) -> 
         .status(status)
         .header("Content-Type", ctype)
         .header("Cache-Control", cache)
-        // Fonts are fetched with CORS; the chapter view's origin is the app's, not yomi://.
+        // Fonts are fetched with CORS; the chapter view's origin is the app's, not ferry://.
         .header("Access-Control-Allow-Origin", "*")
         .body(body)
         .unwrap_or_else(|_| Response::new(Vec::new()))
@@ -303,7 +303,7 @@ mod tests {
 
     #[test]
     fn mac_files_are_read_in_parts() {
-        let f = std::env::temp_dir().join(format!("yomi-range-test-{}", std::process::id()));
+        let f = std::env::temp_dir().join(format!("ferry-range-test-{}", std::process::id()));
         std::fs::write(&f, b"0123456789").unwrap();
         let mac = crate::Device::new(Box::new(crate::local::Local));
         let p = f.display().to_string();

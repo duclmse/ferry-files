@@ -121,7 +121,7 @@ impl Transport for Local {
 
     /// Writes next to the file, then renames over it, so a failed write leaves the old file intact.
     fn replace(&self, path: &str, data: &[u8], _exists: bool) -> Result<String> {
-        let tmp = crate::device::join(&dirname(path), &format!(".{}.yomi-tmp", basename(path)));
+        let tmp = crate::device::join(&dirname(path), &format!(".{}.ferry-tmp", basename(path)));
         fs::write(&tmp, data).map_err(|e| io(&tmp, e))?;
         if let Err(e) = fs::rename(&tmp, path) {
             let _ = fs::remove_file(&tmp);
@@ -167,7 +167,7 @@ mod tests {
 
     #[test]
     fn mac_files_follow_the_device_rules() {
-        let dir = std::env::temp_dir().join(format!("yomi-local-test-{}", std::process::id()));
+        let dir = std::env::temp_dir().join(format!("ferry-local-test-{}", std::process::id()));
         std::fs::create_dir_all(&dir).unwrap();
         let root = dir.display().to_string();
         let dev = Device::new(Box::new(super::Local));

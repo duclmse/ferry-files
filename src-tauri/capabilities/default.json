@@ -26,6 +26,7 @@
     "allow-upload",
     "allow-backups",
     "allow-restore",
+    "allow-clear-backups",
     "allow-eject",
     "allow-quick-look",
     "allow-find",

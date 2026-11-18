@@ -40,6 +40,20 @@
   flex: 0 1 auto;
 }
 
+/* Folders folded into "…", and "…" when nothing is folded. */
+.crumbs .part.folded {
+  display: none;
+}
+
+/* While pane.rs measures the path: everything shown, at full width. */
+.crumbs.measuring .part.folded {
+  display: flex;
+}
+
+.crumbs.measuring .part.last {
+  flex: none;
+}
+
 .crumbs button {
   border: 0;
   background: none;

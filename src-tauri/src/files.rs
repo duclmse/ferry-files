@@ -184,10 +184,10 @@ pub(super) async fn rename(state: State<'_, AppState>, src: String, path: String
 }
 
 /// Opens a file in its default Mac app. Phone files are copied to the app's cache first
-/// (`~/Library/Caches/yomi-files/opened`), so changes made there don't go back to the phone.
+/// (`~/Library/Caches/ferry-files/opened`), so changes made there don't go back to the phone.
 /// Returns the path that was opened.
 /// The file as a path on the Mac: itself for Mac files; device files are copied to the app's cache
-/// first (`~/Library/Caches/yomi-files/opened`), so changes made to them don't go back to the device.
+/// first (`~/Library/Caches/ferry-files/opened`), so changes made to them don't go back to the device.
 pub(super) fn local_copy(dev: &Device, mac: bool, path: &str) -> Result<std::path::PathBuf, String> {
     if mac {
         return Ok(std::path::PathBuf::from(path));
@@ -282,7 +282,7 @@ pub(super) fn find_in(dev: &Device, dir: &str, query: &str, hidden: bool, max: u
 
 /// Where copies of phone files opened in Mac apps go.
 pub(super) fn opened_dir() -> std::path::PathBuf {
-    dirs::cache_dir().unwrap_or_else(std::env::temp_dir).join("yomi-files").join("opened")
+    dirs::cache_dir().unwrap_or_else(std::env::temp_dir).join("ferry-files").join("opened")
 }
 
 /// Width, height and length of a picture, video or sound file, from its header.
@@ -394,7 +394,7 @@ mod tests {
     #[test]
     fn find_searches_subfolders_and_rename_refuses_taken_names() {
         use std::fs;
-        let root = std::env::temp_dir().join(format!("yomi-find-test-{}", std::process::id()));
+        let root = std::env::temp_dir().join(format!("ferry-find-test-{}", std::process::id()));
         fs::create_dir_all(root.join("a/b")).unwrap();
         fs::create_dir_all(root.join(".hid")).unwrap();
         for f in ["Book one.epub", "a/b/book two.EPUB", "a/notes.txt", ".hid/book.epub"] {

@@ -1,4 +1,4 @@
-# yomi-files
+# Ferry Files
 
 A Mac desktop app (Tauri 2 + Leptos, all Rust) for browsing, reading and editing
 the files on Android phones (and other MTP devices) connected by USB, EPUB books
@@ -73,12 +73,13 @@ copied between them.
 - Backups (sidebar): every file the app replaced or deleted, with where it came
   from. Restore puts it back where it was (when that device is connected);
   Restore here puts it in the active pane's folder. A file already there is
-  backed up first.
+  backed up first. Preview shows a backup in Quick Look; Clear… (after asking)
+  moves the whole backups folder to the Trash.
 - History (sidebar): what was done since the app started.
 - Files on the Mac can be edited too (text and EPUB).
 - Double-click (or Enter) opens: folders go in, text files open in the editor,
   EPUBs in the EPUB editor, anything else in its default Mac app. A phone file
-  is copied to `~/Library/Caches/yomi-files/opened` first, so changes made in
+  is copied to `~/Library/Caches/ferry-files/opened` first, so changes made in
   the Mac app stay on the Mac. The context menu also has "Open in default app"
   for text files and EPUBs.
 - Settings (sidebar): show hidden files (names starting with a dot; off by
@@ -87,7 +88,7 @@ copied between them.
 - Edit text files.
 - Books in this folder (right-click empty space): every EPUB in the folder and
   its subfolders, with cover, title, authors and language (read once, then
-  remembered in `~/Library/Caches/yomi-files/library` until the file changes).
+  remembered in `~/Library/Caches/ferry-files/library` until the file changes).
   Pick books, then:
   - Check: looks for what makes readers refuse or misshow a book (the zip's
     `mimetype`, missing title, language or identifier, files listed but missing,
@@ -163,18 +164,18 @@ The same rules apply to files on the phone and on the Mac. Every write or
 delete:
 
 1. refuses if the file changed on the phone since it was opened,
-2. backs up the old version to `~/Library/Caches/yomi-files/backups` (see
+2. backs up the old version to `~/Library/Caches/ferry-files/backups` (see
    Backups in the sidebar; `index.tsv` there notes where each backup came from),
 3. writes the new version and checks it.
 
 Thumbnails need the whole file read (slow from the phone over MTP), so phone
 thumbnails are made one at a time and only for folders on screen. Files over 60
-MB get none. They are cached in `~/Library/Caches/yomi-files/thumbs`; Settings
-shows its size and can clear it (backups are never cleared by the app). Phone
+MB get none. They are cached in `~/Library/Caches/ferry-files/thumbs`; Settings
+shows its size and can clear it (backups are cleared from Backups, to the Trash). Phone
 thumbnails can be turned off in Settings.
 
 The preview's videos and audio are streamed: the player asks for parts of the
-file (HTTP Range on `yomi://localhost/file`) and only those parts are read. Over
+file (HTTP Range on `ferry://localhost/file`) and only those parts are read. Over
 adb each part is read with `dd`. Over MTP it uses libmtp's
 `LIBMTP_GetPartialObject`; when the phone or libmtp doesn't support it, the
 file is copied once to the app's temporary folder (only the latest one is kept)
@@ -192,7 +193,7 @@ Requirements:
 
 ```sh
 cargo tauri dev                       # run in development
-cargo tauri build --debug             # build target/debug/bundle/macos/yomi-files.app
+cargo tauri build --debug             # build target/debug/bundle/macos/Ferry Files.app
 cd src-tauri && cargo test --lib      # unit tests (XML tokenizer, EPUB editing, copy, sync, search, book tools)
 ```
 
@@ -222,7 +223,7 @@ cargo run --example epub_smoke    [-- adb|mtp]   # edits a copy of an .epub foun
   - `xml.rs`, `epub.rs` (and `epub/`: info, chapter text, find and replace,
     checks): EPUB parsing, editing and checks.
   - `books.rs`: library info, checks, info changes and shrinking for many books.
-  - `protocol.rs`: the `yomi://` scheme that serves book images, styles and
+  - `protocol.rs`: the `ferry://` scheme that serves book images, styles and
     fonts, thumbnails, and files in parts for the preview's media.
   - `thumbs.rs`: thumbnails and their cache.
   - `lib.rs`: the app's state and the command list. The commands are grouped in

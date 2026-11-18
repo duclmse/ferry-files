@@ -29,7 +29,7 @@ pub fn supported(path: &str) -> bool {
 }
 
 pub fn cache_dir() -> PathBuf {
-    dirs::cache_dir().unwrap_or_else(|| PathBuf::from("/tmp")).join("yomi-files/thumbs")
+    dirs::cache_dir().unwrap_or_else(|| PathBuf::from("/tmp")).join("ferry-files/thumbs")
 }
 
 /// `src` ("mac" or names the device) is part of the key: the same path can be on several.
