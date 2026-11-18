@@ -1,7 +1,7 @@
 //! The `yomi://` scheme:
 //!   GET yomi://localhost/book/{id}/{path inside the zip}
 //!       files from open EPUBs, so the chapter view can load the book's images, styles and fonts.
-//!   GET yomi://localhost/thumb?p={device path}&s={size}&m={mtime}
+//!   GET yomi://localhost/thumb?src={device|mac}&p={path}&s={size}&m={mtime}
 //!       a thumbnail of an image file or an EPUB's cover (see thumbs.rs).
 
 use percent_encoding::{percent_decode_str, utf8_percent_encode, AsciiSet, NON_ALPHANUMERIC};
@@ -79,25 +79,29 @@ fn thumb_response(t: Thumb) -> Response<Vec<u8>> {
     }
 }
 
-/// Thumbnails are made one at a time, so at most one of them waits for the device alongside the
-/// user's own actions. Requests for a folder the user has left are dropped instead of read.
+/// Phone thumbnails are made one at a time, so at most one of them waits for the device alongside
+/// the user's own actions, and requests for a folder no pane shows any more are dropped instead of
+/// read. Mac files are quick to read, so their thumbnails skip both.
 fn thumb(app: &AppHandle, q: &str) -> Response<Vec<u8>> {
     let bad = || respond(StatusCode::BAD_REQUEST, "text/plain", b"Bad thumbnail request.".to_vec());
     let Some(path) = query_param(q, "p") else { return bad() };
     let Some(size) = query_param(q, "s").and_then(|s| s.parse::<u64>().ok()) else { return bad() };
     let Some(mtime) = query_param(q, "m").and_then(|s| s.parse::<i64>().ok()) else { return bad() };
-    if let Some(t) = thumbs::cached(&path, size, mtime) {
+    let src = if query_param(q, "src").as_deref() == Some("mac") { "mac" } else { "device" };
+    if let Some(t) = thumbs::cached(src, &path, size, mtime) {
         return thumb_response(t);
     }
     let state = crate::state(app);
-    let _one = state.thumb_lock.lock().unwrap_or_else(|e| e.into_inner());
-    if let Some(t) = thumbs::cached(&path, size, mtime) {
-        return thumb_response(t);
+    let _one = (src == "device").then(|| state.thumb_lock.lock().unwrap_or_else(|e| e.into_inner()));
+    if src == "device" {
+        if let Some(t) = thumbs::cached(src, &path, size, mtime) {
+            return thumb_response(t);
+        }
+        if !state.is_viewing(&crate::device::dirname(&path)) {
+            return respond(StatusCode::SERVICE_UNAVAILABLE, "text/plain", b"Folder no longer shown.".to_vec());
+        }
     }
-    if !state.is_viewing(&crate::device::dirname(&path)) {
-        return respond(StatusCode::SERVICE_UNAVAILABLE, "text/plain", b"Folder no longer shown.".to_vec());
-    }
-    let made = state.device().and_then(|dev| thumbs::make(&dev, &path, size, mtime));
+    let made = state.source(Some(src)).and_then(|dev| thumbs::make(src, &dev, &path, size, mtime));
     match made {
         Ok(t) => thumb_response(t),
         Err(e) => respond(StatusCode::INTERNAL_SERVER_ERROR, "text/plain", e.into_bytes()),

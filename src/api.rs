@@ -91,6 +91,8 @@ pub struct Stats {
 #[derive(Clone, Debug, PartialEq, Deserialize)]
 pub struct Book {
     pub id: u32,
+    /// "device" or "mac": where the book is saved back to.
+    pub src: String,
     pub path: String,
     pub name: String,
     pub dirty: bool,

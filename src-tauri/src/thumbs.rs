@@ -32,8 +32,9 @@ pub fn cache_dir() -> PathBuf {
     dirs::cache_dir().unwrap_or_else(|| PathBuf::from("/tmp")).join("yomi-files/thumbs")
 }
 
-fn key(path: &str, size: u64, mtime: i64) -> String {
-    format!("{:x}", md5::compute(format!("{path}\n{size}\n{mtime}\n{SIZE}")))
+/// `src` ("device" or "mac") is part of the key: the same path can be on both.
+fn key(src: &str, path: &str, size: u64, mtime: i64) -> String {
+    format!("{:x}", md5::compute(format!("{src}\n{path}\n{size}\n{mtime}\n{SIZE}")))
 }
 
 pub enum Thumb {
@@ -43,8 +44,8 @@ pub enum Thumb {
 }
 
 /// The cached thumbnail, if there is one.
-pub fn cached(path: &str, size: u64, mtime: i64) -> Option<Thumb> {
-    let base = cache_dir().join(key(path, size, mtime));
+pub fn cached(src: &str, path: &str, size: u64, mtime: i64) -> Option<Thumb> {
+    let base = cache_dir().join(key(src, path, size, mtime));
     for (ext, mime) in [("jpg", "image/jpeg"), ("png", "image/png")] {
         if let Ok(data) = std::fs::read(base.with_extension(ext)) {
             return Some(Thumb::Image(data, mime));
@@ -76,12 +77,12 @@ fn picture(path: &str, data: &[u8]) -> Option<DynamicImage> {
     }
 }
 
-/// Reads the file from the phone, makes the thumbnail and caches it.
+/// Reads the file (from `dev`, the phone or the Mac), makes the thumbnail and caches it.
 /// `size` and `mtime` are what the listing showed; they're only used for the cache key.
-pub fn make(dev: &Device, path: &str, size: u64, mtime: i64) -> Result<Thumb, String> {
+pub fn make(src: &str, dev: &Device, path: &str, size: u64, mtime: i64) -> Result<Thumb, String> {
     let dir = cache_dir();
     std::fs::create_dir_all(&dir).map_err(|e| e.to_string())?;
-    let base = dir.join(key(path, size, mtime));
+    let base = dir.join(key(src, path, size, mtime));
     let thumb = if !supported(path) || size > MAX_SOURCE {
         None
     } else {

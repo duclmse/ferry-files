@@ -1,6 +1,7 @@
 pub mod adb;
 pub mod device;
 pub mod epub;
+pub mod local;
 pub mod mtp;
 mod protocol;
 pub mod thumbs;
@@ -18,19 +19,44 @@ use tauri_plugin_dialog::DialogExt;
 /// Text files bigger than this open as downloads instead of in the editor.
 const TEXT_MAX: u64 = 5 * 1024 * 1024;
 
-#[derive(Default)]
 pub struct AppState {
     dev: Mutex<Option<Arc<Device>>>,
+    /// The Mac's own files, always available.
+    mac: Arc<Device>,
     /// Open EPUBs by id. protocol.rs serves their files to the chapter view.
     pub books: Mutex<HashMap<u32, Book>>,
     next_book: AtomicU32,
-    /// The folder the user is looking at. Thumbnails for other folders aren't made.
-    viewing: Mutex<String>,
+    /// Where each open book came from ("device" or "mac"), so it's saved back there.
+    book_src: Mutex<HashMap<u32, String>>,
+    /// The device folder each pane is showing. Thumbnails for other device folders aren't made.
+    viewing: Mutex<HashMap<u32, String>>,
     /// Held while a thumbnail is being made, so they're made one at a time.
     pub thumb_lock: Mutex<()>,
 }
 
+impl Default for AppState {
+    fn default() -> Self {
+        AppState {
+            dev: Mutex::default(),
+            mac: Arc::new(Device::new(Box::new(local::Local))),
+            books: Mutex::default(),
+            next_book: AtomicU32::default(),
+            book_src: Mutex::default(),
+            viewing: Mutex::default(),
+            thumb_lock: Mutex::default(),
+        }
+    }
+}
+
 impl AppState {
+    /// The files to work on: "mac" for the Mac's own, anything else (or nothing) for the phone.
+    pub fn source(&self, src: Option<&str>) -> Result<Arc<Device>, String> {
+        match src {
+            Some("mac") => Ok(self.mac.clone()),
+            _ => self.device(),
+        }
+    }
+
     pub fn device(&self) -> Result<Arc<Device>, String> {
         self.dev
             .lock()
@@ -40,7 +66,7 @@ impl AppState {
     }
 
     pub fn is_viewing(&self, dir: &str) -> bool {
-        *self.viewing.lock().unwrap_or_else(|e| e.into_inner()) == dir
+        self.viewing.lock().unwrap_or_else(|e| e.into_inner()).values().any(|v| v == dir)
     }
 }
 
@@ -107,25 +133,38 @@ fn disconnect(state: State<'_, AppState>) {
     state.dev.lock().unwrap_or_else(|e| e.into_inner()).take();
 }
 
+/// The connected phone, or with `src: "mac"`, the Mac's own files.
 #[tauri::command(rename_all = "snake_case")]
-fn info(state: State<'_, AppState>) -> Option<Info> {
-    state.device().ok().map(|d| info_of(&d))
+fn info(state: State<'_, AppState>, src: Option<String>) -> Option<Info> {
+    state.source(src.as_deref()).ok().map(|d| info_of(&d))
 }
 
-#[tauri::command(rename_all = "snake_case")]
-/// Lists a folder. `current` (default true) says it's the folder the user is now looking at;
+/// Lists a folder. `current` (default true) says it's the folder `pane` (default 0) now shows;
 /// the column view passes false for the folders to its left.
-async fn list(state: State<'_, AppState>, path: String, current: Option<bool>) -> Result<Vec<Entry>, String> {
-    let dev = state.device()?;
+#[tauri::command(rename_all = "snake_case")]
+async fn list(
+    state: State<'_, AppState>,
+    src: Option<String>,
+    path: String,
+    current: Option<bool>,
+    pane: Option<u32>,
+) -> Result<Vec<Entry>, String> {
+    let dev = state.source(src.as_deref())?;
     if current.unwrap_or(true) {
-        *state.viewing.lock().unwrap_or_else(|e| e.into_inner()) = device::norm(&path).map_err(msg)?;
+        let mut viewing = state.viewing.lock().unwrap_or_else(|e| e.into_inner());
+        let pane = pane.unwrap_or(0);
+        if src.as_deref() == Some("mac") {
+            viewing.remove(&pane);
+        } else {
+            viewing.insert(pane, device::norm(&path).map_err(msg)?);
+        }
     }
     blocking(move || dev.listdir(&path).map_err(msg)).await
 }
 
 #[tauri::command(rename_all = "snake_case")]
-async fn refresh(state: State<'_, AppState>) -> Result<(), String> {
-    let dev = state.device()?;
+async fn refresh(state: State<'_, AppState>, src: Option<String>) -> Result<(), String> {
+    let dev = state.source(src.as_deref())?;
     blocking(move || {
         dev.refresh();
         Ok(())
@@ -140,8 +179,8 @@ struct TextFile {
 }
 
 #[tauri::command(rename_all = "snake_case")]
-async fn read_text(state: State<'_, AppState>, path: String) -> Result<TextFile, String> {
-    let dev = state.device()?;
+async fn read_text(state: State<'_, AppState>, src: Option<String>, path: String) -> Result<TextFile, String> {
+    let dev = state.source(src.as_deref())?;
     blocking(move || {
         let st = dev.stat(&path).map_err(msg)?.ok_or_else(|| format!("No such file: {path}"))?;
         if st.dir {
@@ -160,24 +199,25 @@ async fn read_text(state: State<'_, AppState>, path: String) -> Result<TextFile,
 #[tauri::command(rename_all = "snake_case")]
 async fn write_text(
     state: State<'_, AppState>,
+    src: Option<String>,
     path: String,
     text: String,
     base_version: Option<String>,
     create: bool,
 ) -> Result<WriteResult, String> {
-    let dev = state.device()?;
+    let dev = state.source(src.as_deref())?;
     blocking(move || dev.write(&path, text.as_bytes(), base_version.as_deref(), create).map_err(msg)).await
 }
 
 #[tauri::command(rename_all = "snake_case")]
-async fn mkdir(state: State<'_, AppState>, path: String) -> Result<(), String> {
-    let dev = state.device()?;
+async fn mkdir(state: State<'_, AppState>, src: Option<String>, path: String) -> Result<(), String> {
+    let dev = state.source(src.as_deref())?;
     blocking(move || dev.mkdir(&path).map_err(msg)).await
 }
 
 #[tauri::command(rename_all = "snake_case")]
-async fn remove(state: State<'_, AppState>, path: String) -> Result<Option<String>, String> {
-    let dev = state.device()?;
+async fn remove(state: State<'_, AppState>, src: Option<String>, path: String) -> Result<Option<String>, String> {
+    let dev = state.source(src.as_deref())?;
     blocking(move || dev.remove(&path).map_err(msg)).await
 }
 
@@ -226,12 +266,41 @@ async fn upload(app: AppHandle, state: State<'_, AppState>, dir: String) -> Resu
     .await
 }
 
+/// Copies a file between the phone and the Mac (or within one) into folder `to_dir`, keeping its
+/// name. Refuses if a file of that name is already there. Returns the new file's path.
+#[tauri::command(rename_all = "snake_case")]
+async fn copy(
+    state: State<'_, AppState>,
+    from_src: String,
+    from: String,
+    to_src: String,
+    to_dir: String,
+) -> Result<String, String> {
+    let (a, b) = (state.source(Some(&from_src))?, state.source(Some(&to_src))?);
+    blocking(move || {
+        let st = a.stat(&from).map_err(msg)?.ok_or_else(|| format!("No such file: {from}"))?;
+        if st.dir {
+            return Err(format!("{} is a folder. Only files can be copied.", st.name));
+        }
+        let target = device::join(&to_dir, &st.name);
+        let (data, _) = a.read(&from).map_err(msg)?;
+        b.write(&target, &data, None, true).map_err(|e| match e {
+            DevError::Conflict(_) => format!("{} already exists there. Nothing was copied.", st.name),
+            e => e.to_string(),
+        })?;
+        Ok(target)
+    })
+    .await
+}
+
 // ----- EPUB editor -----
 // A book is read from the device once, edited in memory, and written back by epub_save.
 
 #[derive(Serialize)]
 struct BookView {
     id: u32,
+    /// "device" or "mac": where the book is saved back to.
+    src: String,
     path: String,
     name: String,
     dirty: bool,
@@ -241,9 +310,10 @@ struct BookView {
     stats: epub::Stats,
 }
 
-fn book_view(id: u32, b: &Book) -> Result<BookView, String> {
+fn book_view(id: u32, src: &str, b: &Book) -> Result<BookView, String> {
     Ok(BookView {
         id,
+        src: src.to_string(),
         path: b.source.clone(),
         name: device::basename(&b.source).to_string(),
         dirty: b.dirty,
@@ -256,23 +326,26 @@ fn book_view(id: u32, b: &Book) -> Result<BookView, String> {
 
 /// Runs `f` on open book `id`, then returns the refreshed view of the book.
 fn with_book<T>(state: &AppState, id: u32, f: impl FnOnce(&mut Book) -> Result<T, String>) -> Result<(T, BookView), String> {
+    let src = state.book_src.lock().unwrap_or_else(|e| e.into_inner()).get(&id).cloned().unwrap_or_default();
     let mut books = state.books.lock().unwrap_or_else(|e| e.into_inner());
     let book = books.get_mut(&id).ok_or("This book is no longer open.")?;
     let out = f(book)?;
-    Ok((out, book_view(id, book)?))
+    Ok((out, book_view(id, &src, book)?))
 }
 
 #[tauri::command(rename_all = "snake_case")]
-async fn epub_open(state: State<'_, AppState>, path: String) -> Result<BookView, String> {
-    let dev = state.device()?;
+async fn epub_open(state: State<'_, AppState>, src: Option<String>, path: String) -> Result<BookView, String> {
+    let dev = state.source(src.as_deref())?;
     let book = blocking(move || {
         let (data, version) = dev.read(&path).map_err(msg)?;
         Book::open(&data, path, version)
     })
     .await?;
     let id = state.next_book.fetch_add(1, Ordering::Relaxed);
-    let view = book_view(id, &book)?;
+    let src = if src.as_deref() == Some("mac") { "mac" } else { "device" };
+    let view = book_view(id, src, &book)?;
     state.books.lock().unwrap_or_else(|e| e.into_inner()).insert(id, book);
+    state.book_src.lock().unwrap_or_else(|e| e.into_inner()).insert(id, src.to_string());
     Ok(view)
 }
 
@@ -357,10 +430,11 @@ struct Saved {
     backup: bool,
 }
 
-/// Writes the book back to the device. Refuses if the device copy changed since it was opened.
+/// Writes the book back where it came from. Refuses if that copy changed since it was opened.
 #[tauri::command(rename_all = "snake_case")]
 async fn epub_save(state: State<'_, AppState>, id: u32) -> Result<Saved, String> {
-    let dev = state.device()?;
+    let src = state.book_src.lock().unwrap_or_else(|e| e.into_inner()).get(&id).cloned();
+    let dev = state.source(src.as_deref())?;
     let (bytes, path, version) = with_book(&state, id, |b| {
         b.touch_modified();
         Ok((b.to_bytes()?, b.source.clone(), b.version.clone()))
@@ -391,6 +465,7 @@ async fn epub_export(app: AppHandle, state: State<'_, AppState>, id: u32) -> Res
 #[tauri::command(rename_all = "snake_case")]
 fn epub_close(state: State<'_, AppState>, id: u32) {
     state.books.lock().unwrap_or_else(|e| e.into_inner()).remove(&id);
+    state.book_src.lock().unwrap_or_else(|e| e.into_inner()).remove(&id);
 }
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
@@ -404,7 +479,7 @@ pub fn run() {
         })
         .invoke_handler(tauri::generate_handler![
             devices, connect, disconnect, info, list, refresh, read_text, write_text, mkdir, remove, download,
-            upload, epub_open, epub_chapter, epub_set_source, epub_set_body, epub_set_meta, epub_cover, epub_find,
+            upload, copy, epub_open, epub_chapter, epub_set_source, epub_set_body, epub_set_meta, epub_cover, epub_find,
             epub_replace, epub_save, epub_export, epub_close
         ])
         .run(tauri::generate_context!())

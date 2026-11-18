@@ -19,6 +19,7 @@
     "allow-remove",
     "allow-download",
     "allow-upload",
+    "allow-copy",
     "allow-epub-open",
     "allow-epub-chapter",
     "allow-epub-set-source",

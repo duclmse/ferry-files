@@ -79,6 +79,11 @@ impl Ep {
         self.book.with_untracked(|b| b.as_ref().map_or(0, |b| b.id))
     }
 
+    /// Where the book is saved back to, for sentences: "the phone" or "the Mac".
+    fn place(self) -> &'static str {
+        if self.book.with_untracked(|b| b.as_ref().is_some_and(|b| b.src == "mac")) { "the Mac" } else { "the phone" }
+    }
+
     fn dirty(self) -> bool {
         self.chapter_dirty.get() || self.book.with(|b| b.as_ref().is_some_and(|b| b.dirty))
     }
@@ -87,8 +92,9 @@ impl Ep {
         self.status.set((msg.into(), kind));
     }
 
-    pub async fn open(self, path: String) -> Result<(), String> {
-        let book = call::<Book>("epub_open", json!({ "path": path })).await?;
+    /// Opens the book at `path` on `src` ("device" or "mac").
+    pub async fn open(self, src: &str, path: String) -> Result<(), String> {
+        let book = call::<Book>("epub_open", json!({ "src": src, "path": path })).await?;
         self.view.set(View::Info);
         self.mode.set(Mode::Visual);
         self.doc.set(None);
@@ -181,12 +187,12 @@ impl Ep {
 
     pub fn save(self) {
         self.act(move || async move {
-            self.say("Saving to the phone…", "");
+            self.say(format!("Saving to {}…", self.place()), "");
             let s = call::<Saved>("epub_save", json!({ "id": self.id() })).await?;
             self.book.set(Some(s.book));
             self.confirm_close.set(false);
             let note = if s.backup { " The old version is backed up on the Mac." } else { "" };
-            self.say(format!("Saved to the phone.{note}"), "ok");
+            self.say(format!("Saved to {}.{note}", self.place()), "ok");
             Ok(())
         });
     }
@@ -219,7 +225,7 @@ impl Ep {
         self.act(move || async move {
             let b = call::<Book>("epub_set_meta", json!({ "id": self.id(), "meta": meta })).await?;
             self.book.set(Some(b));
-            self.say("Book info updated. Save to write it to the phone.", "ok");
+            self.say(format!("Book info updated. Save to write it to {}.", self.place()), "ok");
             Ok(())
         });
     }
@@ -228,7 +234,7 @@ impl Ep {
         self.act(move || async move {
             if let Some(b) = call::<Option<Book>>("epub_cover", json!({ "id": self.id() })).await? {
                 self.book.set(Some(b));
-                self.say("Cover changed. Save to write it to the phone.", "ok");
+                self.say(format!("Cover changed. Save to write it to {}.", self.place()), "ok");
             }
             Ok(())
         });
@@ -252,7 +258,7 @@ impl Ep {
             self.book.set(Some(r.book));
             self.search().await?;
             self.say(
-                format!("Replaced {}. Save to write the book to the phone.", plural(r.count, "match", "matches")),
+                format!("Replaced {}. Save to write the book to {}.", plural(r.count, "match", "matches"), self.place()),
                 "ok",
             );
             Ok(())
@@ -348,11 +354,11 @@ pub fn EpubEditor() -> impl IntoView {
                     <button class="btn" disabled=move || ep.busy.get() on:click=move |_| ep.export()
                         title="Save the book, with your edits, to a file on the Mac">"Save copy on Mac…"</button>
                     <button class="btn primary" title="⌘S" disabled=move || !dirty.get() || ep.busy.get()
-                        on:click=move |_| ep.save()>"Save to phone"</button>
+                        on:click=move |_| ep.save()>{move || { ep.book.track(); if ep.place() == "the Mac" { "Save" } else { "Save to phone" } }}</button>
                 </div>
                 {move || ep.confirm_close.get().then(|| view! {
                     <div class="notice">
-                        <span class="text">"This book has changes that aren't saved to the phone."</span>
+                        <span class="text">{format!("This book has changes that aren't saved to {}.", ep.place())}</span>
                         <button class="btn primary" on:click=move |_| ep.save()>"Save"</button>
                         <button class="btn danger" on:click=move |_| ep.close(true)>"Discard changes"</button>
                         <button class="btn" on:click=move |_| ep.confirm_close.set(false)>"Keep editing"</button>
@@ -387,7 +393,7 @@ pub fn EpubEditor() -> impl IntoView {
                         }
                     }}</span>
                     <span class="spacer"></span>
-                    <span class:unsaved=move || dirty.get()>{move || if dirty.get() { "Not saved to the phone" } else { "Saved" }}</span>
+                    <span class:unsaved=move || dirty.get()>{move || if dirty.get() { format!("Not saved to {}", ep.place()) } else { "Saved".to_string() }}</span>
                 </div>
             </div>
         </div>
@@ -437,7 +443,7 @@ fn InfoView() -> impl IntoView {
         <div class="scroll">
             <form class="card" on:submit=move |e| { e.prevent_default(); ep.set_meta(form.get_untracked()); }>
                 <h2>"Book info"</h2>
-                <p class="sub">"Changes stay in the app until you save the book to the phone."</p>
+                <p class="sub">{move || { ep.book.track(); format!("Changes stay in the app until you save the book to {}.", ep.place()) }}</p>
                 <div class="grid">
                     {field(form, "Title *", true, 1, |m| m.title.clone(), |m, v| m.title = v)}
                     {field(form, "Authors (one per line)", true, 2, |m| lines(&m.creators), |m, v| m.creators = split_lines(v))}
@@ -481,7 +487,7 @@ fn InfoView() -> impl IntoView {
                             <dt>"Images"</dt><dd>{s.images}</dd>
                             <dt>"Stylesheets"</dt><dd>{s.styles}</dd>
                             <dt>"Fonts"</dt><dd>{s.fonts}</dd>
-                            <dt>"On the phone"</dt><dd class="path">{b.path}</dd>
+                            <dt>{if b.src == "mac" { "On the Mac" } else { "On the phone" }}</dt><dd class="path">{b.path}</dd>
                         </dl>
                     }
                 })}
