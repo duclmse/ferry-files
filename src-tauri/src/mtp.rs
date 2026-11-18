@@ -458,9 +458,7 @@ impl Transport for Mtp {
     fn default_dir(&self) -> String { format!("/{}", self.storages[0].0) }
 
     fn quick_dirs(&self) -> Vec<(String, String)> {
-        let mut dirs: Vec<(String, String)> = self.storages.iter().map(|(n, _)| (n.clone(), format!("/{n}"))).collect();
-        dirs.push(("Download".into(), format!("{}/Download", self.default_dir())));
-        dirs
+        self.storages.iter().map(|(n, _)| (n.clone(), format!("/{n}"))).collect()
     }
 
     fn refresh(&self) {

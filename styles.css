@@ -26,14 +26,30 @@ body {
 button, input, textarea { font: inherit; color: inherit; }
 
 .app { display: grid; grid-template-columns: 220px 1fr; height: 100vh; }
-.side { background: var(--panel); border-right: 1px solid var(--line); padding: 14px 10px; display: flex; flex-direction: column; gap: 4px; overflow: auto; }
-.side h2 { font-size: 11px; text-transform: uppercase; letter-spacing: .04em; color: var(--muted); margin: 12px 8px 4px; font-weight: 600; }
-.device { padding: 6px 8px 10px; border-bottom: 1px solid var(--line); margin-bottom: 4px; }
-.device b { display: block; font-size: 14px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.side .item { text-align: left; border: 0; background: none; padding: 6px 8px; border-radius: 6px; cursor: pointer; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.side { background: var(--panel); border-right: 1px solid var(--line); padding: 14px 10px; display: flex; flex-direction: column; gap: 1px; overflow: auto; }
+.side h2 { font-size: 11px; text-transform: uppercase; letter-spacing: .04em; color: var(--muted); margin: 10px 8px 2px; font-weight: 600; }
+.device { display: flex; align-items: center; gap: 6px; padding: 0 4px 2px 8px; }
+.device .name { flex: 1; min-width: 0; display: flex; align-items: center; gap: 6px; border: 0; background: none; padding: 3px 6px; margin-left: -6px; border-radius: 6px; cursor: pointer; text-align: left; }
+.device .name:hover { background: var(--hover); }
+.device .name.active { background: var(--sel); }
+.device b { min-width: 0; font-size: 14px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.device .kind { margin-left: 0; flex: none; text-transform: uppercase; font-size: 10px; letter-spacing: .03em; }
+.device .eject { border: 0; background: none; border-radius: 6px; padding: 2px 6px; cursor: pointer; color: var(--muted); font-size: 14px; }
+.device .eject:hover { background: var(--hover); color: var(--ink); }
+.side .hint { margin: 2px 8px 6px; font-size: 12px; color: var(--muted); }
+.side .error { margin: 2px 8px 6px; font-size: 12px; color: var(--danger); -webkit-user-select: text; user-select: text; word-break: break-word; }
+.found { display: flex; flex-direction: column; gap: 6px; padding: 2px 8px 6px; }
+.found b { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.connect-as { display: flex; }
+.connect-as button { flex: 1; padding: 5px 0; }
+.connect-as button.pref { background: var(--accent); color: var(--accent-ink); font-weight: 600; }
+.connect-as button:disabled { opacity: .45; cursor: default; }
+.bar .seg button:disabled { opacity: .35; cursor: default; }
+.side .item { text-align: left; border: 0; background: none; padding: 3px 8px; border-radius: 6px; cursor: pointer; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .side .item:hover { background: var(--hover); }
 .side .item.active { background: var(--sel); font-weight: 600; }
 .side .grow { flex: 1; }
+.side > .btn { margin-top: 4px; }
 
 .main { display: flex; flex-direction: column; min-width: 0; min-height: 0; }
 .bar { display: flex; align-items: center; gap: 8px; padding: 8px 12px; background: var(--panel); border-bottom: 1px solid var(--line); min-height: 48px; }
@@ -77,14 +93,6 @@ td.num, th.num { text-align: right; color: var(--muted); font-variant-numeric: t
 .spacer { flex: 1; }
 .title { font-weight: 600; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; min-width: 0; }
 
-.connect { max-width: 520px; margin: 64px auto; padding: 24px; background: var(--panel); border: 1px solid var(--line); border-radius: 14px; display: flex; flex-direction: column; gap: 14px; }
-.connect h1 { margin: 0; font-size: 20px; }
-.connect p { margin: 0; color: var(--muted); }
-.connect .row { display: flex; gap: 8px; flex-wrap: wrap; }
-.connect dl { display: grid; grid-template-columns: 48px 1fr; gap: 4px 10px; margin: 0; }
-.connect dt { font-weight: 600; }
-.connect dd { margin: 0; color: var(--muted); -webkit-user-select: text; user-select: text; }
-.connect .error { color: var(--danger); -webkit-user-select: text; user-select: text; }
 .spin { display: inline-block; width: 12px; height: 12px; border: 2px solid var(--line); border-top-color: var(--accent); border-radius: 50%; animation: spin .8s linear infinite; }
 @keyframes spin { to { transform: rotate(360deg); } }
 

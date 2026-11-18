@@ -23,7 +23,7 @@ Two ways to reach the phone, over USB:
 - **adb**: turn on USB debugging on the phone and install adb (`brew install --cask android-platform-tools`). Fast; paths look like `/sdcard/Download`.
 - **MTP**: the phone's normal "File transfer" USB mode, so no developer options are needed. Needs libmtp (`brew install libmtp`), which is loaded at runtime. Paths start with the storage name, e.g. `/Internal storage/Download`.
 
-When both work, adb is used. Only one program can use MTP at a time, so quit Android File Transfer, Image Capture and other MTP tools first. If MTP still won't connect, run `killall ptpcamerad`.
+The app opens on the Mac's files. While no phone is connected it looks for one on USB every few seconds; a phone it finds shows in the sidebar with an **adb | MTP** button, one half per way to connect (a half is greyed out when that way isn't ready; the highlighted one is the suggested way, adb when both work). ⏏ next to the phone's name disconnects it, and panes showing it go back to the Mac. Only one program can use MTP at a time, so quit Android File Transfer, Image Capture and other MTP tools first. If MTP still won't connect, run `killall ptpcamerad`.
 
 ## Safety
 
@@ -61,7 +61,7 @@ cargo run --example epub_smoke    [-- adb|mtp]   # edits a copy of an .epub foun
 ## Layout
 
 - `src/`: the frontend (Leptos 0.8, client-side, built by Trunk into `dist/`).
-  - `app.rs`: connect screen, panes and file views, context menu, text editor.
+  - `app.rs`: sidebar (phone finder and places), panes and file views, context menu, text editor.
   - `epub.rs`: EPUB editor screens.
   - `api.rs`: calls to the backend, and the types shared with it.
 - `src-tauri/`: the backend.

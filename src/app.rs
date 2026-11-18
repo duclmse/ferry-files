@@ -287,7 +287,7 @@ impl Pane {
     fn new(id: usize) -> Self {
         Pane {
             id,
-            src: RwSignal::new(if id == 0 { Src::Device } else { Src::Mac }),
+            src: RwSignal::new(Src::Mac),
             cwd: RwSignal::new(String::new()),
             entries: RwSignal::new(vec![]),
             loading: RwSignal::new(false),
@@ -328,6 +328,10 @@ struct Ctx {
     ep: crate::epub::Ep,
     menu: RwSignal<Option<Menu>>,
     settings: RwSignal<bool>,
+    /// Phones seen over USB while none is connected (checked every few seconds).
+    devices: RwSignal<Option<Devices>>,
+    scanning: StoredValue<bool>,
+    conn_error: RwSignal<Option<String>>,
     /// Settings: list names starting with a dot.
     show_hidden: RwSignal<bool>,
     /// Settings: make thumbnails of phone files (each one reads the whole file over USB).
@@ -350,6 +354,9 @@ impl Ctx {
             ep: crate::epub::Ep::new(),
             menu: RwSignal::new(None),
             settings: RwSignal::new(false),
+            devices: RwSignal::new(None),
+            scanning: StoredValue::new(false),
+            conn_error: RwSignal::new(None),
             show_hidden: RwSignal::new(stored_flag(HIDDEN_KEY, false)),
             phone_thumbs: RwSignal::new(stored_flag(PHONE_THUMBS_KEY, true)),
         }
@@ -527,11 +534,16 @@ impl Ctx {
         }
     }
 
-    /// Shows the pane's starting folder: the phone's for the first pane, the Mac's home for the second.
+    /// Shows the pane's starting folder on its side (the Mac when there's no phone).
     fn start(self, p: Pane) {
-        let src = p.src.get_untracked();
+        let mut src = p.src.get_untracked();
+        if self.src_info(src).is_none() {
+            src = Src::Mac;
+            p.src.set(src);
+        }
         if let Some(info) = self.src_info(src) {
-            self.load_select(p, src, info.default_dir, None);
+            let path = p.last.with_value(|l| l.get(&src).cloned()).unwrap_or(info.default_dir);
+            self.load_select(p, src, path, None);
         }
     }
 
@@ -812,35 +824,51 @@ impl Ctx {
     }
 
     /// After connecting: the phone in the first pane, the Mac in the second.
-    fn connected(self, info: Info) {
+    /// A phone is connected. With `show`, the active pane goes to it.
+    fn connected(self, info: Info, show: bool) {
+        let dir = info.default_dir.clone();
         self.info.set(Some(info));
+        self.conn_error.set(None);
         for p in self.panes {
-            p.src.set(if p.id == 0 { Src::Device } else { Src::Mac });
-            p.last.set_value(HashMap::new());
+            // Folders remembered from another phone (or connection) don't apply.
+            p.last.update_value(|l| {
+                l.remove(&Src::Device);
+            });
         }
+        if show {
+            self.load_select(self.act(), Src::Device, dir, None);
+        }
+    }
+
+    /// Looks for phones on USB, unless one is connected or a look is already under way.
+    fn scan(self) {
+        if self.info.get_untracked().is_some() || self.busy.get_untracked() || self.scanning.get_value() {
+            return;
+        }
+        self.scanning.set_value(true);
         spawn_local(async move {
-            if let Ok(Some(mac)) = call::<Option<Info>>("info", json!({ "src": "mac" })).await {
-                self.mac.set(Some(mac));
+            if let Ok(d) = call::<Devices>("devices", json!({})).await {
+                if self.devices.get_untracked().as_ref() != Some(&d) {
+                    self.devices.set(Some(d));
+                }
             }
-            self.start(self.panes[0]);
-            if self.split.get_untracked() {
-                self.start(self.panes[1]);
-            }
+            self.scanning.set_value(false);
         });
     }
 
-    fn connect(self, transport: &'static str, conn_error: RwSignal<Option<String>>) {
+    fn connect(self, transport: &'static str) {
         self.busy.set(true);
-        conn_error.set(None);
+        self.conn_error.set(None);
         spawn_local(async move {
             match call::<Info>("connect", json!({ "transport": transport, "serial": null })).await {
-                Ok(info) => self.connected(info),
-                Err(e) => conn_error.set(Some(e)),
+                Ok(info) => self.connected(info, true),
+                Err(e) => self.conn_error.set(Some(e)),
             }
             self.busy.set(false);
         });
     }
 
+    /// Lets go of the phone. Panes showing it go back to the Mac.
     fn disconnect(self) {
         if self.dirty() {
             self.confirm_discard.set(true);
@@ -849,13 +877,22 @@ impl Ctx {
         spawn_local(async move {
             let _ = call::<()>("disconnect", json!({})).await;
             self.info.set(None);
-            self.editor.set(None);
-            for p in self.panes {
-                p.entries.set(vec![]);
-                p.cwd.set(String::new());
-                p.cols.set(HashMap::new());
-                p.notice.set(Notice::None);
+            self.devices.set(None);
+            if self.editor.with_untracked(|e| e.as_ref().is_some_and(|e| e.src == Src::Device)) {
+                self.editor.set(None);
             }
+            for p in self.shown() {
+                if p.src.get_untracked() == Src::Device {
+                    p.entries.set(vec![]);
+                    p.cols.set(HashMap::new());
+                    p.cwd.set(String::new());
+                    p.selected.set(None);
+                    p.notice.set(Notice::None);
+                    p.src.set(Src::Mac);
+                    self.start(p);
+                }
+            }
+            self.scan();
         });
     }
 }
@@ -875,12 +912,22 @@ pub fn App() -> impl IntoView {
         open
     });
 
-    // Pick up an existing connection after a webview reload.
+    // Start on the Mac's files. Pick up an existing phone connection after a webview reload.
     spawn_local(async move {
+        if let Ok(Some(mac)) = call::<Option<Info>>("info", json!({ "src": "mac" })).await {
+            ctx.mac.set(Some(mac));
+        }
         if let Ok(Some(info)) = call::<Option<Info>>("info", json!({})).await {
-            ctx.connected(info);
+            ctx.connected(info, false);
+        }
+        ctx.start(ctx.panes[0]);
+        if ctx.split.get_untracked() {
+            ctx.start(ctx.panes[1]);
         }
     });
+    // Look for a phone now and every few seconds while none is connected.
+    ctx.scan();
+    let _ = set_interval_with_handle(move || ctx.scan(), std::time::Duration::from_secs(3));
 
     // Keyboard. ⌘S saves. In the panes: Tab switches pane, ⌘\ shows or hides the second one, arrows
     // move (←/→ also go up/in in the column view and move across in the thumbnail view), Enter or
@@ -918,7 +965,7 @@ pub fn App() -> impl IntoView {
             return;
         }
         let p = ctx.act();
-        if ctx.info.get_untracked().is_none() || !matches!(p.notice.get_untracked(), Notice::None | Notice::Ok(_) | Notice::Error(_)) {
+        if !matches!(p.notice.get_untracked(), Notice::None | Notice::Ok(_) | Notice::Error(_)) {
             return;
         }
         let entries = p.entries.get_untracked();
@@ -1043,60 +1090,9 @@ pub fn App() -> impl IntoView {
     });
 
     view! {
-        {move || if ctx.info.get().is_some() { view! { <Browser/> }.into_any() } else { view! { <Connect/> }.into_any() }}
+        <Browser/>
         <ContextMenu/>
         {move || ctx.settings.get().then(|| view! { <Settings/> })}
-    }
-}
-
-#[component]
-fn Connect() -> impl IntoView {
-    let ctx = expect_context::<Ctx>();
-    let devices = RwSignal::new(None::<Devices>);
-    let conn_error = RwSignal::new(None::<String>);
-    let scan = move || {
-        devices.set(None);
-        spawn_local(async move {
-            match call::<Devices>("devices", json!({})).await {
-                Ok(d) => devices.set(Some(d)),
-                Err(e) => conn_error.set(Some(e)),
-            }
-        });
-    };
-    scan();
-
-    view! {
-        <div class="connect">
-            <h1>"yomi-files"</h1>
-            <p>"Browse, read and edit files on an Android phone connected by USB."</p>
-            <dl>
-                <dt>"adb"</dt>
-                <dd>{move || match devices.get() {
-                    None => "Looking…".to_string(),
-                    Some(d) if !d.adb_found => "adb isn't installed (brew install --cask android-platform-tools).".into(),
-                    Some(d) if d.adb.is_empty() => "No device. Needs USB debugging, authorised on the phone.".into(),
-                    Some(d) => d.adb.join(", "),
-                }}</dd>
-                <dt>"MTP"</dt>
-                <dd>{move || match devices.get() {
-                    None => "Looking…".to_string(),
-                    Some(Devices { mtp_error: Some(e), .. }) => e,
-                    Some(d) if d.mtp.is_empty() => "No device. Set the phone's USB mode to \"File transfer\".".into(),
-                    Some(d) => d.mtp.join(", "),
-                }}</dd>
-            </dl>
-            <div class="row">
-                <button class="btn primary" disabled=move || ctx.busy.get() on:click=move |_| ctx.connect("auto", conn_error)>
-                    {move || if ctx.busy.get() { view! { <span class="spin"></span>" Connecting…" }.into_any() } else { "Connect".into_any() }}
-                </button>
-                <button class="btn" disabled=move || ctx.busy.get() on:click=move |_| ctx.connect("adb", conn_error)>"Use adb"</button>
-                <button class="btn" disabled=move || ctx.busy.get() on:click=move |_| ctx.connect("mtp", conn_error)>"Use MTP"</button>
-                <span class="spacer"></span>
-                <button class="btn" on:click=move |_| scan()>"Scan again"</button>
-            </div>
-            {move || conn_error.get().map(|e| view! { <p class="error">{e}</p> })}
-            <p>"Connect uses adb when a device is ready, otherwise MTP. Over MTP, close Android File Transfer and yomi-files.py first: only one app can use the phone at a time."</p>
-        </div>
     }
 }
 
@@ -1134,20 +1130,32 @@ fn Sidebar() -> impl IntoView {
                 on:click=move |_| ctx.navigate_select(ctx.act(), src, path.clone(), None)>{name}</button>
         }
     };
-    let phone = move || ctx.info.get();
     view! {
         <nav class="side">
-            <div class="device">
-                <b>{move || phone().map(|i| i.label).unwrap_or_default()}</b>
-                <span class="kind">{move || phone().map(|i| i.transport).unwrap_or_default()}</span>
-            </div>
-            <h2>"Phone"</h2>
-            {move || phone().map(|i| i.quick_dirs).unwrap_or_default().into_iter()
-                .map(|(name, path)| place(Src::Device, name, path)).collect_view()}
-            {move || place(Src::Device, "/ (all storage)".into(), "/".into())}
             <h2>"Mac"</h2>
             {move || ctx.mac.get().map(|i| i.quick_dirs).unwrap_or_default().into_iter()
                 .map(|(name, path)| place(Src::Mac, name, path)).collect_view()}
+            <h2>"Phone"</h2>
+            {move || match ctx.info.get() {
+                Some(i) => view! {
+                    <div class="device">
+                        // The phone's name shows all its storage ("/").
+                        <button class="name" title="All storage on the phone"
+                            class:active=move || {
+                                let pane = ctx.panes[ctx.active.get()];
+                                pane.src.get() == Src::Device && pane.cwd.get() == "/"
+                            }
+                            on:click=move |_| ctx.navigate_select(ctx.act(), Src::Device, "/".into(), None)>
+                            <b>{i.label.clone()}</b>
+                            <span class="kind">{i.transport.clone()}</span>
+                        </button>
+                        <button class="eject" title="Disconnect" aria-label="Disconnect"
+                            on:click=move |_| ctx.disconnect()>"⏏"</button>
+                    </div>
+                    {i.quick_dirs.into_iter().map(|(name, path)| place(Src::Device, name, path)).collect_view()}
+                }.into_any(),
+                None => view! { <PhoneFinder/> }.into_any(),
+            }}
             <span class="grow"></span>
             <button class="btn" class:active=move || ctx.split.get() title="⌘\\"
                 on:click=move |_| ctx.set_split(!ctx.split.get_untracked())>
@@ -1156,8 +1164,51 @@ fn Sidebar() -> impl IntoView {
             <button class="btn" title="Copies of files from before they were replaced or deleted"
                 on:click=move |_| ctx.open_folder("backups")>"Open backup folder"</button>
             <button class="btn" on:click=move |_| ctx.settings.set(true)>"Settings"</button>
-            <button class="btn" on:click=move |_| ctx.disconnect()>"Disconnect"</button>
         </nav>
+    }
+}
+
+/// While no phone is connected: the phone found on USB (if any), with a button per way to connect.
+#[component]
+fn PhoneFinder() -> impl IntoView {
+    let ctx = expect_context::<Ctx>();
+    move || {
+        let Some(d) = ctx.devices.get() else {
+            return view! { <p class="hint">"Looking for a phone…"</p> }.into_any();
+        };
+        let (adb, mtp) = (!d.adb.is_empty(), !d.mtp.is_empty());
+        let name = d.mtp.first().cloned().or_else(|| d.adb.first().map(|s| format!("Android phone ({s})")));
+        let error = move || ctx.conn_error.get().map(|e| view! { <p class="error">{e}</p> });
+        let Some(name) = name else {
+            let mut notes = vec!["No phone found. Plug one in by USB, then allow USB debugging (for adb) or set the USB mode to File transfer (for MTP).".to_string()];
+            if !d.adb_found {
+                notes.push("adb isn't installed: brew install --cask android-platform-tools".into());
+            }
+            notes.extend(d.mtp_error.clone());
+            return view! {
+                {notes.into_iter().map(|n| view! { <p class="hint">{n}</p> }).collect_view()}
+                {error}
+            }.into_any();
+        };
+        let tip = name.clone();
+        let adb_title = if adb { "Connect with adb (USB debugging): faster, and can create files at the top level" } else if d.adb_found { "Not available: allow USB debugging on the phone" } else { "Not available: adb isn't installed" };
+        let mtp_title = if mtp { "Connect with MTP (File transfer). Close Android File Transfer and yomi-files.py first: only one app can use it at a time." } else { "Not available: set the phone's USB mode to File transfer" };
+        view! {
+            <div class="found">
+                <b title=tip>{name}</b>
+                {move || if ctx.busy.get() {
+                    view! { <span class="hint"><span class="spin"></span>" Connecting…"</span> }.into_any()
+                } else {
+                    view! {
+                        <div class="seg connect-as" role="group" aria-label="Connect with">
+                            <button title=adb_title disabled=!adb class:pref=adb on:click=move |_| ctx.connect("adb")>"adb"</button>
+                            <button title=mtp_title disabled=!mtp class:pref=mtp && !adb on:click=move |_| ctx.connect("mtp")>"MTP"</button>
+                        </div>
+                    }.into_any()
+                }}
+            </div>
+            {error}
+        }.into_any()
     }
 }
 
@@ -1326,6 +1377,7 @@ fn PaneView(pane: Pane) -> impl IntoView {
                 <div class="seg" role="group" aria-label="Show files on">
                     {[(Src::Device, "📱", "Phone"), (Src::Mac, "💻", "Mac")].map(|(src, glyph, label)| view! {
                         <button title=format!("Files on the {label}") aria-label=label
+                            disabled=move || src == Src::Device && ctx.info.get().is_none()
                             class:active=move || p.src.get() == src on:click=move |_| ctx.switch_src(p, src)>{glyph}</button>
                     })}
                 </div>

@@ -109,7 +109,7 @@ impl Transport for Adb {
     fn default_dir(&self) -> String { "/sdcard".into() }
 
     fn quick_dirs(&self) -> Vec<(String, String)> {
-        [("Storage", "/sdcard"), ("Download", "/sdcard/Download"), ("Documents", "/sdcard/Documents"), ("Books", "/sdcard/Books")]
+        [("Storage", "/sdcard"), ("Documents", "/sdcard/Documents"), ("Books", "/sdcard/Books")]
             .iter()
             .map(|(a, b)| (a.to_string(), b.to_string()))
             .collect()
