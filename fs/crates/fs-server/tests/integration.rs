@@ -131,8 +131,8 @@ impl TestDaemon {
 
         let shutdown = CancellationToken::new();
         let shutdown_c = shutdown.clone();
-        tokio::spawn(async move {
-            let _ = fs_server::daemon::run_with_shutdown(config_path, shutdown_c).await;
+        let daemon = tokio::spawn(async move {
+            fs_server::daemon::run_with_shutdown(config_path, shutdown_c).await
         });
 
         let rest_base = format!("http://127.0.0.1:{rest_port}");
@@ -142,6 +142,10 @@ impl TestDaemon {
         let deadline = std::time::Instant::now() + Duration::from_secs(30);
         loop {
             tokio::time::sleep(Duration::from_millis(100)).await;
+            if daemon.is_finished() {
+                let outcome = daemon.await;
+                panic!("daemon exited during startup: {outcome:?}");
+            }
             assert!(
                 std::time::Instant::now() < deadline,
                 "daemon did not start within 30 s"

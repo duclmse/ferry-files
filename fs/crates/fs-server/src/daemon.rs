@@ -31,6 +31,21 @@ use tonic::codegen::InterceptedService;
 // Windows single-instance guard via named mutex
 // ---------------------------------------------------------------------------
 
+/// The Windows instance mutex for `data_dir`. One daemon per data folder,
+/// as the PID file gives on Unix: what must not be shared is the index and
+/// its Tantivy writer. A single machine-wide name refused a daemon for any
+/// other folder, and a test daemon still shutting down blocked the next one.
+/// Lowercased because Windows paths ignore case.
+#[cfg_attr(not(windows), allow(dead_code))]
+fn instance_mutex_name(data_dir: &std::path::Path) -> String {
+    let dir = data_dir
+        .canonicalize()
+        .unwrap_or_else(|_| data_dir.to_path_buf());
+    let key = dir.to_string_lossy().to_lowercase();
+    let hash = blake3::hash(key.as_bytes()).to_hex();
+    format!("Global\\fs_daemon_{}", &hash[..16])
+}
+
 #[cfg(windows)]
 mod win_guard {
     use super::AppError;
@@ -50,15 +65,21 @@ mod win_guard {
         }
     }
 
-    pub fn acquire() -> Result<InstanceGuard, AppError> {
-        let name: Vec<u16> = "Global\\fs_daemon\0".encode_utf16().collect();
+    pub fn acquire(data_dir: &std::path::Path) -> Result<InstanceGuard, AppError> {
+        let name: Vec<u16> = super::instance_mutex_name(data_dir)
+            .encode_utf16()
+            .chain(std::iter::once(0))
+            .collect();
         unsafe {
             let handle = CreateMutexW(None, BOOL(1), PCWSTR(name.as_ptr()))
                 .map_err(|e| AppError::Config(format!("CreateMutexW: {e}")))?;
             // A valid handle with ERROR_ALREADY_EXISTS means another instance owns the mutex.
             if GetLastError() == ERROR_ALREADY_EXISTS {
                 let _ = CloseHandle(handle);
-                return Err(AppError::Config("fs daemon is already running".into()));
+                return Err(AppError::Config(format!(
+                    "fs daemon is already running for {}",
+                    data_dir.display()
+                )));
             }
             Ok(InstanceGuard(handle))
         }
@@ -126,7 +147,7 @@ pub async fn run_with_shutdown(
     #[cfg(unix)]
     write_pid_file(&pid_path)?;
     #[cfg(windows)]
-    let _instance_guard = win_guard::acquire()?;
+    let _instance_guard = win_guard::acquire(&cfg.data_dir)?;
 
     // ── 4-5. Stores ────────────────────────────────────────────────────────
     tracing::info!("store mode: {:?}", cfg.store.mode);
@@ -790,4 +811,23 @@ fn write_pid_file(path: &std::path::Path) -> Result<(), AppError> {
     writeln!(f, "{pid}").map_err(AppError::Io)?;
     tracing::debug!("PID file written: {}", path.display());
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::instance_mutex_name;
+
+    #[test]
+    fn instance_mutex_is_per_data_folder() {
+        let a = tempfile::tempdir().unwrap();
+        let b = tempfile::tempdir().unwrap();
+        let name = instance_mutex_name(a.path());
+        assert!(name.starts_with(r"Global\fs_daemon_"), "{name}");
+        assert!(
+            !name[7..].contains('\\'),
+            "only the namespace may hold a backslash"
+        );
+        assert_eq!(name, instance_mutex_name(a.path()));
+        assert_ne!(name, instance_mutex_name(b.path()));
+    }
 }
