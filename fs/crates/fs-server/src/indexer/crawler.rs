@@ -390,6 +390,40 @@ pub async fn full_crawl(
 // process_event - incremental update from watcher
 // ---------------------------------------------------------------------------
 
+/// Whether a Created/Modified event under `parent` should sweep its
+/// siblings. The sweep stats every indexed sibling, thousands per event in a
+/// folder like System32, and it exists for FSEvents' lost rename sides, so
+/// macOS sweeps on every event. Elsewhere renames are reported in full and
+/// the sweep is only a backstop for lost notifications, so each folder is
+/// swept at most once per `SWEEP_EVERY`.
+fn sweep_due(parent: &str) -> bool {
+    use std::collections::HashMap;
+    use std::sync::{LazyLock, Mutex};
+    use std::time::{Duration, Instant};
+
+    const SWEEP_EVERY: Duration = Duration::from_secs(30);
+    static SWEPT: LazyLock<Mutex<HashMap<String, Instant>>> =
+        LazyLock::new(|| Mutex::new(HashMap::new()));
+
+    if cfg!(target_os = "macos") {
+        return true;
+    }
+    let Ok(mut swept) = SWEPT.lock() else {
+        return true;
+    };
+    let now = Instant::now();
+    if swept.len() > 4096 {
+        swept.retain(|_, at| now.duration_since(*at) < SWEEP_EVERY);
+    }
+    match swept.get(parent) {
+        Some(at) if now.duration_since(*at) < SWEEP_EVERY => false,
+        _ => {
+            swept.insert(parent.to_owned(), now);
+            true
+        }
+    }
+}
+
 pub async fn process_event(
     event: IndexEvent,
     config: Arc<RwLock<Config>>,
@@ -433,7 +467,12 @@ pub async fn process_event(
                 // on disk, using the existing indexed `parent` column.
                 if let Some(parent) = path_b.parent() {
                     let parent_str = parent.to_string_lossy().into_owned();
-                    if let Ok(siblings) = sqlite_b.children_of(&parent_str) {
+                    let siblings = if sweep_due(&parent_str) {
+                        sqlite_b.children_of(&parent_str)
+                    } else {
+                        Ok(Vec::new())
+                    };
+                    if let Ok(siblings) = siblings {
                         for sibling in siblings {
                             if sibling == record_b.path {
                                 continue;
@@ -469,7 +508,14 @@ pub async fn process_event(
                 tokio::spawn(async move {
                     if let Ok(Some(text)) = extract_content(&path, max_bytes).await {
                         r.content_indexed = true;
-                        if tantivy.upsert(&r, Some(&text)).is_ok() {
+                        // The writer's mutex is held for the length of a
+                        // commit; waiting on it here held a runtime worker.
+                        let indexed = tokio::task::spawn_blocking(move || {
+                            tantivy.upsert(&r, Some(&text)).is_ok()
+                        })
+                        .await
+                        .unwrap_or(false);
+                        if indexed {
                             metrics.content_indexed.fetch_add(1, Ordering::Relaxed);
                         }
                     }
