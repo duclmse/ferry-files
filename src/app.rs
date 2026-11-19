@@ -343,6 +343,8 @@ struct Pane {
     search_size: RwSignal<usize>,
     search_time: RwSignal<usize>,
     filters_open: RwSignal<bool>,
+    /// What a search looks for: the search box in the search options row, filled from the filter.
+    query: RwSignal<String>,
     /// While comparing with the other pane: each item's mark by name (see `Marks`), and whether
     /// only the differences are shown.
     cmp: RwSignal<Option<HashMap<String, String>>>,
@@ -426,6 +428,7 @@ impl Pane {
             search_size: RwSignal::new(0),
             search_time: RwSignal::new(0),
             filters_open: RwSignal::new(false),
+            query: RwSignal::new(String::new()),
             cmp: RwSignal::new(None),
             diff_only: RwSignal::new(false),
             notice: RwSignal::new(Notice::None),

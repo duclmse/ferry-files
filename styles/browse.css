@@ -276,6 +276,13 @@ td.name .where {
   background: var(--panel);
 }
 
+.search-filters .search-box {
+  margin-left: 0;
+  flex: 1 1 220px;
+  max-width: 360px;
+  width: auto;
+}
+
 .search-filters select {
   font: inherit;
   padding: 2px 4px;

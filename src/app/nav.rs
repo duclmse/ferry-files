@@ -121,10 +121,10 @@ impl Ctx {
         }
     }
 
-    /// Searches the pane's folder and its subfolders for names containing the filter's text (or
-    /// fitting it, with * and ?), with the pane's search filters.
+    /// Searches the pane's folder and its subfolders for names containing the search text (or
+    /// fitting it, with * and ?, or matching it with regex on), with the pane's search filters.
     pub(super) fn find(self, p: Pane) {
-        let query = p.filter.get_untracked().trim().to_string();
+        let query = p.query.get_untracked().trim().to_string();
         let (k, s, t) = (p.search_kind.get_untracked(), p.search_size.get_untracked(), p.search_time.get_untracked());
         let filtered = k + s + t > 0;
         if query.is_empty() && !filtered {

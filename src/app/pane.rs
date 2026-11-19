@@ -363,11 +363,6 @@ pub(super) fn PaneView(pane: Pane) -> impl IntoView {
             }>
             <Tabs pane=p/>
             <div class="bar">
-                {(p.id == 0).then(|| view! {
-                    <button class="btn icon-only" class:active=move || ctx.side.get()
-                        title=move || ctx.with_key(&format!("{} the {}", if ctx.side.get() { "Hide" } else { "Show" }, crate::os::sidebar()), "sidebar")
-                        aria-label="Sidebar" on:click=move |_| ctx.set_side(!ctx.side.get_untracked())>{ico(Icon::Sidebar)}</button>
-                })}
                 <button class="btn icon-only" title=move || ctx.with_key("Up", "up") aria-label="Up" disabled=move || p.cwd.get() == "/" on:click=move |_| ctx.go_up(p)>{ico(Icon::Up)}</button>
                 <Crumbs pane=p/>
                 {move || p.loading.get().then(|| view! { <span class="spin"></span> })}
@@ -388,7 +383,10 @@ pub(super) fn PaneView(pane: Pane) -> impl IntoView {
                         prop:value=move || p.filter.get()
                         on:input=move |ev| { p.filter.set(event_target_value(&ev)); p.arrange(); }
                         on:keydown=move |ev| match ev.key().as_str() {
-                            "Enter" => ctx.find(p),
+                            "Enter" => {
+                                p.query.set(p.filter.get_untracked());
+                                ctx.find(p);
+                            }
                             "Escape" => {
                                 p.filter.set(String::new());
                                 p.arrange();
@@ -419,17 +417,16 @@ pub(super) fn PaneView(pane: Pane) -> impl IntoView {
                     <button class="filter-opt" class:on=move || p.filters_open.get() || p.filtering()
                         title="Search subfolders, by kind, size and date" aria-label="Search options" aria-expanded=move || p.filters_open.get().to_string()
                         on:mousedown=|ev| ev.prevent_default()
-                        on:click=move |ev| { ev.stop_propagation(); p.filters_open.update(|o| *o = !*o) }>{ico(Icon::Funnel)}</button>
+                        on:click=move |ev| {
+                            ev.stop_propagation();
+                            let open = !p.filters_open.get_untracked();
+                            // The search box starts from what's in the filter.
+                            if open && !p.filter.with_untracked(String::is_empty) {
+                                p.query.set(p.filter.get_untracked());
+                            }
+                            p.filters_open.set(open);
+                        }>{ico(Icon::Funnel)}</button>
                 </div>
-                {(p.id == 0).then(|| view! {
-                    <button class="btn icon-only" class:active=move || ctx.split.get()
-                        title=move || ctx.with_key(if ctx.split.get() { "Hide the second pane" } else { "Show a second pane" }, "split")
-                        aria-label="Second pane" on:click=move |_| ctx.set_split(!ctx.split.get_untracked())>{ico(Icon::Split)}</button>
-                })}
-                {(p.id == 1).then(|| view! {
-                    <button class="btn icon-only" title=move || ctx.with_key("Hide this pane", "split") aria-label="Hide this pane"
-                        on:click=move |_| ctx.set_split(false)>{ico(Icon::Close)}</button>
-                })}
             </div>
             {move || p.filters_open.get().then(|| {
                 let pick = |label: &'static str, sig: RwSignal<usize>, names: Vec<&'static str>| view! {
@@ -438,22 +435,45 @@ pub(super) fn PaneView(pane: Pane) -> impl IntoView {
                         {names.into_iter().enumerate().map(|(i, n)| view! { <option value=i.to_string()>{n}</option> }).collect_view()}
                     </select>
                 };
+                let search_ref = NodeRef::<html::Input>::new();
+                // Focused when the row opens.
+                Effect::new(move || if let Some(el) = search_ref.get() { let _ = el.focus(); });
                 view! {
                     <div class="search-filters">
+                        <div class="filter-box search-box" class:has=true on:click=move |_| if let Some(el) = search_ref.get_untracked() { let _ = el.focus(); }>
+                            <svg class="filter-icon" viewBox="0 0 16 16" aria-hidden="true">
+                                <circle cx="7" cy="7" r="4.5"/><path d="M10.5 10.5 14 14"/>
+                            </svg>
+                            <input class="filter" type="search" node_ref=search_ref list=format!("searches-{}", p.id) aria-label="Search for"
+                                placeholder=move || if p.regex.get() { "Search subfolders (regex)" } else { "Search subfolders: text, or * and ?" }
+                                prop:value=move || p.query.get()
+                                on:input=move |ev| p.query.set(event_target_value(&ev))
+                                on:keydown=move |ev| match ev.key().as_str() {
+                                    "Enter" => ctx.find(p),
+                                    "Escape" => p.filters_open.set(false),
+                                    _ => {}
+                                }/>
+                            <button class="filter-opt regex" class:on=move || p.regex.get() aria-pressed=move || p.regex.get().to_string()
+                                title=move || if p.regex.get() { "Regular expression: on" } else { "Regular expression: off" } aria-label="Regular expression"
+                                on:mousedown=|ev| ev.prevent_default()
+                                on:click=move |ev| {
+                                    ev.stop_propagation();
+                                    let on = !p.regex.get_untracked();
+                                    p.regex.set(on);
+                                    store(&format!("{REGEX_KEY}.{}", p.id), if on { "1" } else { "0" });
+                                    p.arrange();
+                                }>".*"</button>
+                        </div>
                         {pick("Kind", p.search_kind, SEARCH_KINDS.iter().map(|x| x.0).collect())}
                         {pick("Size", p.search_size, SEARCH_SIZES.iter().map(|x| x.0).collect())}
                         {pick("Modified", p.search_time, SEARCH_TIMES.iter().map(|x| x.0).collect())}
                         <button class="btn small primary" on:click=move |_| ctx.find(p)>"Search"</button>
-                        <button class="btn small" title="Back to any kind, size and time" on:click=move |_| {
+                        <button class="btn small" title="Clear the search text, and back to any kind, size and time" on:click=move |_| {
+                            p.query.set(String::new());
                             p.search_kind.set(0);
                             p.search_size.set(0);
                             p.search_time.set(0);
                         }>"Clear"</button>
-                        <span class="hint">{move || if p.regex.get() {
-                            "Searches this folder and its subfolders for names matching the regular expression, like ^IMG_\\d+\\.jpe?g$."
-                        } else {
-                            "Searches this folder and its subfolders, with the text in Filter if any. Use * and ? for patterns, like IMG_*.jpg."
-                        }}</span>
                     </div>
                 }
             })}
@@ -666,6 +686,11 @@ fn Tabs(pane: Pane) -> impl IntoView {
     let n = move || p.tabs.with(Vec::len);
     view! {
         <div class="tabs" role="tablist">
+            {(p.id == 0).then(|| view! {
+                <button class="btn icon-only tab-tool" class:active=move || ctx.side.get()
+                    title=move || ctx.with_key(&format!("{} the {}", if ctx.side.get() { "Hide" } else { "Show" }, crate::os::sidebar()), "sidebar")
+                    aria-label="Sidebar" on:click=move |_| ctx.set_side(!ctx.side.get_untracked())>{ico(Icon::Sidebar)}</button>
+            })}
             {move || (0..n()).map(|i| {
                 let shown = move || p.tab.get() == i;
                 // The shown tab follows the pane; the others are where they were left.
@@ -703,6 +728,16 @@ fn Tabs(pane: Pane) -> impl IntoView {
             }).collect_view()}
             <button class="add" title=move || ctx.with_key("New tab", "new_tab") aria-label="New tab"
                 on:click=move |_| ctx.new_tab(p, p.src.get_untracked(), p.cwd.get_untracked())>"+"</button>
+            <span class="tabs-gap"></span>
+            {(p.id == 0).then(|| view! {
+                <button class="btn icon-only tab-tool" class:active=move || ctx.split.get()
+                    title=move || ctx.with_key(if ctx.split.get() { "Hide the second pane" } else { "Show a second pane" }, "split")
+                    aria-label="Second pane" on:click=move |_| ctx.set_split(!ctx.split.get_untracked())>{ico(Icon::Split)}</button>
+            })}
+            {(p.id == 1).then(|| view! {
+                <button class="btn icon-only tab-tool" title=move || ctx.with_key("Hide this pane", "split") aria-label="Hide this pane"
+                    on:click=move |_| ctx.set_split(false)>{ico(Icon::Close)}</button>
+            })}
         </div>
     }
 }
