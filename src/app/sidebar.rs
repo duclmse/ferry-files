@@ -4,11 +4,12 @@ use super::*;
 use super::everything::everything_base;
 
 /// The sidebar's sections, top to bottom: (key, title). The computer's title is its name.
-pub(super) const SECTIONS: [(&str, &str); 6] = [
+pub(super) const SECTIONS: [(&str, &str); 7] = [
     ("workspaces", "Workspaces"),
     ("favs", "Favourites"),
     ("pairs", "Sync pairs"),
     ("everything", "Everything"),
+    ("servers", "Servers"),
     ("mac", ""),
     ("devices", "Devices"),
 ];
@@ -76,6 +77,11 @@ pub(super) fn Sidebar() -> impl IntoView {
             on:click=move |_| { ev_error.set(None); ev_adding.set(Some(String::new())) }>{ico(Icon::Plus)}</button>
     });
     let (ev_heading, ev_open) = section("everything", "Everything", Some(ev_buttons));
+    let srv_buttons = ViewFn::from(move || view! {
+        <button class="refresh" title="Add an SFTP server or SMB share" aria-label="Add a server"
+            on:click=move |_| { ctx.settings_tab.set("connections"); ctx.settings.set(true) }>{ico(Icon::Plus)}</button>
+    });
+    let (srv_heading, srv_open) = section("servers", "Servers", Some(srv_buttons));
     // A section hidden with a right-click shows nothing, not even its title.
     let shown = move |key: &str| ctx.hidden_sections.with(|h| !h.iter().any(|x| x == key));
     // Disks mounted on the Mac: USB drives, SD cards, disk images.
@@ -110,7 +116,7 @@ pub(super) fn Sidebar() -> impl IntoView {
                     on:contextmenu=move |ev| ctx.show_place_menu(&ev, src, "/".into())>
                     <b>{i.label.clone()}</b>
                 </button>
-                {(i.transport != "everything").then(|| {
+                {i.is_phone().then(|| {
                     // The badge says how it's connected; when the same phone is also found the
                     // other way, clicking it reconnects that way.
                     let wireless = i.wireless();
@@ -137,14 +143,24 @@ pub(super) fn Sidebar() -> impl IntoView {
                         </button>
                     }
                 })}
-                {match i.usb.as_deref().and_then(|u| u.strip_prefix("everything:")).map(String::from) {
-                    Some(base) => view! {
-                        <button class="eject" title=format!("Search all drives on {}", i.label) aria-label="Search all drives"
-                            on:click=move |_| ctx.search_all(src)>{ico(Icon::Search)}</button>
-                        <button class="eject" title=format!("Remove {} from the sidebar", i.label) aria-label="Remove"
-                            on:click=move |_| ctx.remove_everything(&base)>{ico(Icon::Close)}</button>
-                    }.into_any(),
-                    None => view! {
+                {match (i.transport.as_str(), i.usb.clone().unwrap_or_default()) {
+                    ("sftp", usb) => {
+                        let addr = usb.trim_start_matches("sftp:").to_string();
+                        view! {
+                            <button class="eject" title=format!("Remove {} from the sidebar", i.label) aria-label="Remove"
+                                on:click=move |_| ctx.remove_sftp(&addr)>{ico(Icon::Close)}</button>
+                        }.into_any()
+                    }
+                    ("everything", usb) => {
+                        let base = usb.trim_start_matches("everything:").to_string();
+                        view! {
+                            <button class="eject" title=format!("Search all drives on {}", i.label) aria-label="Search all drives"
+                                on:click=move |_| ctx.search_all(src)>{ico(Icon::Search)}</button>
+                            <button class="eject" title=format!("Remove {} from the sidebar", i.label) aria-label="Remove"
+                                on:click=move |_| ctx.remove_everything(&base)>{ico(Icon::Close)}</button>
+                        }.into_any()
+                    }
+                    _ => view! {
                         <button class="eject" title=format!("Disconnect {}", i.label) aria-label="Disconnect"
                             on:click=move |_| ctx.disconnect(src)>{ico(Icon::Eject)}</button>
                     }.into_any(),
@@ -329,6 +345,68 @@ pub(super) fn Sidebar() -> impl IntoView {
                 }
             })}
     });
+    let sec_servers = move || shown("servers").then(|| view! {
+        {srv_heading()}
+        {move || srv_open.get().then(|| view! {
+            {move || ctx.sftp.get().into_iter().map(|addr| {
+                let on = ctx.phones.with(|ps| ps.iter().find(|i| i.usb.as_deref() == Some(&format!("sftp:{addr}"))).cloned());
+                match on {
+                    Some(i) => device(i).into_any(),
+                    // Not connected: tried again every so often, or now with a click.
+                    None => {
+                        let (a1, a2) = (addr.clone(), addr.clone());
+                        let tip = move || ctx.server_errors.with(|e| e.get(&a1).cloned())
+                            .unwrap_or_else(|| "Connecting…".into()) + " Click to try again.";
+                        view! {
+                            <div class="device">
+                                <span class="fold none"></span>
+                                <button class="name off" title=tip on:click=move |_| ctx.check_servers()><b>{addr}</b></button>
+                                <button class="eject" title="Remove from the sidebar" aria-label="Remove"
+                                    on:click=move |_| ctx.remove_sftp(&a2)>{ico(Icon::Close)}</button>
+                            </div>
+                        }.into_any()
+                    }
+                }
+            }).collect_view()}
+            {move || ctx.smb.get().into_iter().map(|share| {
+                let name = share.trim_start_matches("smb://").to_string();
+                match ctx.smb_path(&share) {
+                    // Mounted: a folder on the computer.
+                    Some(path) => {
+                        let tip = format!("Disconnect {name}");
+                        let extra = ViewFn::from(move || {
+                            let (tip, share) = (tip.clone(), share.clone());
+                            view! { <button class="act" title=tip aria-label="Disconnect" on:click=move |_| ctx.unmount_smb(&share)>{ico(Icon::Eject)}</button> }
+                        });
+                        view! { <TreeNode src=Src::Mac name path depth=1 class="drive" extra/> }.into_any()
+                    }
+                    None => {
+                        let (s1, s2, s3) = (share.clone(), share.clone(), share.clone());
+                        let tip = move || ctx.server_errors.with(|e| e.get(&s1).cloned())
+                            .map_or_else(|| "Click to connect. The system asks for the password when it needs one.".to_string(), |e| e + " Click to try again.");
+                        view! {
+                            <div class="device">
+                                <span class="fold none"></span>
+                                <button class="name off" title=tip on:click=move |_| {
+                                    let share = s2.clone();
+                                    spawn_local(async move { let _ = ctx.mount_smb(share).await; });
+                                }><b>{name}</b></button>
+                                <button class="eject" title="Remove from the sidebar" aria-label="Remove"
+                                    on:click=move |_| ctx.remove_smb(&s3)>{ico(Icon::Close)}</button>
+                            </div>
+                        }.into_any()
+                    }
+                }
+            }).collect_view()}
+            {move || (ctx.sftp.with(Vec::is_empty) && ctx.smb.with(Vec::is_empty)).then(|| view! {
+                <div class="tree-row" style="--depth: 1">
+                    <span class="twisty none"></span>
+                    <button class="item add" title="Add an SFTP server or an SMB share (Windows sharing, NAS)"
+                        on:click=move |_| { ctx.settings_tab.set("connections"); ctx.settings.set(true) }>"Add a server…"</button>
+                </div>
+            })}
+        })}
+    });
     let sec_mac = move || shown("mac").then(|| view! {
         {mac_heading()}
         {move || mac_open.get().then(|| view! {
@@ -347,7 +425,7 @@ pub(super) fn Sidebar() -> impl IntoView {
     let sec_devices = move || shown("devices").then(|| view! {
         {dev_heading()}
         {move || dev_open.get().then(|| view! {
-            {ctx.phones.get().into_iter().filter(|i| i.transport != "everything").map(device).collect_view()}
+            {ctx.phones.get().into_iter().filter(Info::is_phone).map(device).collect_view()}
             <DeviceFinder/>
         })}
     });
@@ -358,6 +436,7 @@ pub(super) fn Sidebar() -> impl IntoView {
                 "favs" => sec_favs().into_any(),
                 "pairs" => sec_pairs().into_any(),
                 "everything" => sec_everything().into_any(),
+                "servers" => sec_servers().into_any(),
                 "mac" => sec_mac().into_any(),
                 "devices" => sec_devices().into_any(),
                 _ => ().into_any(),

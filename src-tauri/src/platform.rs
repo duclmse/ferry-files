@@ -291,6 +291,110 @@ pub fn eject(path: &str) -> Result<(), String> {
     }
 }
 
+/// The SMB shares mounted now, as (what `smb_share_mounts` read: "//[user@]host/share", the
+/// app path it's at).
+pub fn smb_mounted() -> Vec<(String, String)> {
+    #[cfg(target_os = "macos")]
+    {
+        let out = command("mount").output().map(|o| String::from_utf8_lossy(&o.stdout).into_owned()).unwrap_or_default();
+        smb_in_mount(&out)
+    }
+    #[cfg(all(unix, not(target_os = "macos")))]
+    {
+        // gvfs (what `gio mount` uses) keeps each share at smb-share:server=host,share=name.
+        let run = std::env::var("XDG_RUNTIME_DIR").unwrap_or_default();
+        let dir = Path::new(&run).join("gvfs");
+        std::fs::read_dir(&dir)
+            .into_iter()
+            .flatten()
+            .flatten()
+            .filter_map(|e| {
+                let name = e.file_name().to_string_lossy().into_owned();
+                let spec = name.strip_prefix("smb-share:")?;
+                let field = |k: &str| spec.split(',').find_map(|f| f.strip_prefix(k)).map(String::from);
+                let user = field("user=").map(|u| format!("{u}@")).unwrap_or_default();
+                Some((format!("//{user}{}/{}", field("server=")?, field("share=")?), e.path().display().to_string()))
+            })
+            .collect()
+    }
+    #[cfg(windows)]
+    {
+        let out = command("net").arg("use").output().map(|o| String::from_utf8_lossy(&o.stdout).into_owned()).unwrap_or_default();
+        smb_in_net_use(&out)
+    }
+}
+
+/// SMB mounts in `mount`'s output: "//me@nas/Share on /Volumes/Share (smbfs, ...)".
+#[cfg(any(target_os = "macos", test))]
+pub(crate) fn smb_in_mount(out: &str) -> Vec<(String, String)> {
+    out.lines()
+        .filter(|l| l.contains("(smbfs"))
+        .filter_map(|l| {
+            let (what, rest) = l.split_once(" on ")?;
+            let at = rest.rsplit_once(" (")?.0;
+            Some((what.to_string(), at.to_string()))
+        })
+        .collect()
+}
+
+/// Connected shares in `net use`'s output: "OK  Z:  \\nas\Share  Microsoft Windows Network".
+#[cfg(any(windows, test))]
+pub(crate) fn smb_in_net_use(out: &str) -> Vec<(String, String)> {
+    out.lines()
+        .filter_map(|l| {
+            let words: Vec<&str> = l.split_whitespace().collect();
+            let unc = words.iter().position(|w| w.starts_with(r"\\"))?;
+            let letter = words[..unc].iter().find(|w| w.len() == 2 && w.ends_with(':'))?;
+            Some((unc_to_slashes(words[unc]), format!("/{}", letter.to_uppercase())))
+        })
+        .collect()
+}
+
+#[cfg(any(windows, test))]
+fn unc_to_slashes(unc: &str) -> String {
+    unc.replace('\\', "/")
+}
+
+/// Mounts the SMB share at `url` ("smb://[user@]host/share"); the system asks for the password
+/// (and keeps it in the keychain) when the share needs one.
+pub fn smb_mount(url: &str) -> Result<(), String> {
+    #[cfg(target_os = "macos")]
+    let out = command("osascript").args(["-e", &format!("mount volume \"{}\"", url.replace('"', ""))]).output();
+    #[cfg(all(unix, not(target_os = "macos")))]
+    let out = command("gio").args(["mount", url]).stdin(std::process::Stdio::null()).output();
+    #[cfg(windows)]
+    let out = {
+        let unc = url.trim_start_matches("smb:").replace('/', "\\");
+        command("net").args(["use", "*", &unc, "/persistent:no"]).stdin(std::process::Stdio::null()).output()
+    };
+    let out = out.map_err(|e| format!("Couldn't mount {url}: {e}"))?;
+    if out.status.success() {
+        return Ok(());
+    }
+    let why = String::from_utf8_lossy(if out.stderr.is_empty() { &out.stdout } else { &out.stderr }).trim().to_string();
+    // osascript: "execution error: ... (-128)" is the password dialog's Cancel.
+    if why.contains("(-128)") {
+        return Err("Cancelled.".into());
+    }
+    Err(if why.is_empty() { format!("Couldn't mount {url}.") } else { format!("Couldn't mount {url}: {why}") })
+}
+
+/// Unmounts the SMB share mounted at `path` (an app path from `smb_mounted`).
+pub fn smb_unmount(path: &str) -> Result<(), String> {
+    #[cfg(target_os = "macos")]
+    let out = command("diskutil").args(["unmount", path]).output();
+    #[cfg(all(unix, not(target_os = "macos")))]
+    let out = command("gio").args(["mount", "-u", path]).output();
+    #[cfg(windows)]
+    let out = command("net").args(["use", path.trim_start_matches('/'), "/delete", "/y"]).output();
+    let out = out.map_err(|e| format!("Couldn't unmount {path}: {e}"))?;
+    if out.status.success() {
+        return Ok(());
+    }
+    let why = String::from_utf8_lossy(if out.stderr.is_empty() { &out.stdout } else { &out.stderr }).trim().to_string();
+    Err(format!("Couldn't unmount {path}: {}. Close files open on it and try again.", if why.is_empty() { "it's in use" } else { &why }))
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -316,6 +420,14 @@ mod tests {
         assert_eq!(native("/C:"), PathBuf::from(r"C:\"));
         assert_eq!(app_path(Path::new(r"C:\Users\me")), "/C:/Users/me");
         assert_eq!(app_path(Path::new(r"\\?\D:\x\")), "/D:/x");
+    }
+
+    #[test]
+    fn reads_smb_mounts() {
+        let mount = "/dev/disk3s1s1 on / (apfs, sealed, local)\n//me@nas._smb._tcp.local/Photos on /Volumes/Photos 1 (smbfs, nodev, nosuid, mounted by me)\n";
+        assert_eq!(smb_in_mount(mount), vec![("//me@nas._smb._tcp.local/Photos".to_string(), "/Volumes/Photos 1".to_string())]);
+        let net = "Status       Local     Remote                    Network\n-----\nOK           Z:        \\\\nas\\Photos              Microsoft Windows Network\nThe command completed successfully.\n";
+        assert_eq!(smb_in_net_use(net), vec![("//nas/Photos".to_string(), "/Z:".to_string())]);
     }
 
     #[cfg(all(unix, not(target_os = "macos")))]

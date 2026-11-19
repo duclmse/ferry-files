@@ -194,6 +194,15 @@ pub struct Info {
     pub backup_dir: String,
 }
 
+/// An SMB share mounted on the computer.
+#[derive(Clone, Debug, PartialEq, Deserialize)]
+pub struct SmbMount {
+    /// "smb://[user@]host/share".
+    pub share: String,
+    /// Where it's mounted (a path on the computer).
+    pub path: String,
+}
+
 #[derive(Clone, Debug, PartialEq, Deserialize)]
 pub struct Devices {
     /// Devices on USB that aren't connected yet.
@@ -235,6 +244,11 @@ pub fn wireless(serial: &str) -> bool {
 }
 
 impl Info {
+    /// A phone (over adb or MTP), not a server.
+    pub fn is_phone(&self) -> bool {
+        matches!(self.transport.as_str(), "adb" | "mtp")
+    }
+
     pub fn wireless(&self) -> bool {
         self.transport == "adb" && self.serial.as_deref().is_some_and(wireless)
     }

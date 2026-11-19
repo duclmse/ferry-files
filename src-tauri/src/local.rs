@@ -146,6 +146,22 @@ impl Transport for Local {
         fs::rename(native(path), native(&crate::device::join(&dirname(path), new_name))).map_err(|e| io(path, e))
     }
 
+    /// In the user's shell (a login shell, so PATH is as in a terminal), or cmd on Windows.
+    fn run(&self, dir: &str, command: &str) -> Option<Result<crate::terminal::Ran>> {
+        let mut c = if cfg!(windows) {
+            let mut c = crate::platform::command("cmd");
+            c.args(["/C", command]);
+            c
+        } else {
+            let shell = std::env::var("SHELL").ok().filter(|s| !s.is_empty()).unwrap_or_else(|| "/bin/sh".into());
+            let mut c = crate::platform::command(shell);
+            c.args(["-l", "-c", command]);
+            c
+        };
+        c.current_dir(native(dir));
+        Some(crate::terminal::run(c))
+    }
+
     /// The disk holding the home folder (named after the computer), and each other disk.
     fn space(&self) -> Vec<crate::device::Space> {
         let mut dirs = vec![(crate::platform::COMPUTER.to_string(), self.default_dir())];

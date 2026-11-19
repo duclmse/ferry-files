@@ -106,6 +106,14 @@ files and disks too, so books can be copied between them.
   Servers come back at launch; every 30 seconds offline ones are tried again and
   disks that came or went are picked up. × removes one. Settings > Connections
   lists, adds and removes them too.
+- Servers (sidebar, + or Settings > Connections): SFTP servers and SMB shares.
+  An SFTP server (`me@server` or `me@server:2222`) is reached with this
+  computer's ssh, its keys, agent and ~/.ssh/config; the app never asks for or
+  keeps a password, so a server that only takes passwords can't be added. It
+  works like a phone: browse, copy both ways, rename, delete. An SMB share
+  (`smb://nas/Photos` or `\\nas\Photos`) is mounted by the system, which asks for
+  the password and can keep it in its keychain; it then opens as a folder on
+  this computer. ⏏ disconnects it, × takes it out of the sidebar.
 - Backups (sidebar): every file the app replaced or deleted, with where it came
   from. Restore puts it back where it was (when that device is connected);
   Restore here puts it in the active pane's folder. A file already there is

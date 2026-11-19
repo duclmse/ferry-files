@@ -327,6 +327,10 @@ pub(super) const HIDDEN_SECTIONS_KEY: &str = "ferry-files.hidden-sections";
 pub(super) const SECTION_ORDER_KEY: &str = "ferry-files.section-order";
 /// The Everything servers added in the sidebar (a JSON list of addresses).
 pub(super) const EVERYTHING_KEY: &str = "ferry-files.everything-servers";
+/// The SFTP servers added in the sidebar (a JSON list of addresses, like "me@box:2222").
+pub(super) const SFTP_KEY: &str = "ferry-files.sftp-servers";
+/// The SMB shares added in the sidebar (a JSON list, like "smb://nas/Photos").
+pub(super) const SMB_KEY: &str = "ferry-files.smb-shares";
 pub(super) const PHONE_THUMBS_KEY: &str = "ferry-files.phone-thumbs";
 pub(super) const AUTO_CONNECT_KEY: &str = "ferry-files.auto-connect";
 pub(super) const VERIFY_KEY: &str = "ferry-files.verify";

@@ -155,6 +155,15 @@ impl Adb {
 }
 
 impl Transport for Adb {
+    fn run(&self, dir: &str, command: &str) -> Option<Result<crate::terminal::Ran>> {
+        let mut c = crate::platform::command(&self.adb);
+        if let Some(s) = &self.serial {
+            c.args(["-s", s]);
+        }
+        c.args(["shell", &format!("cd {} && {command}", crate::sftp::sh_quote(dir))]);
+        Some(crate::terminal::run(c))
+    }
+
     fn kind(&self) -> &'static str { "adb" }
     fn label(&self) -> String { self.model.clone() }
     fn default_dir(&self) -> String { "/sdcard".into() }

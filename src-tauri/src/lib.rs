@@ -21,6 +21,9 @@ pub mod xml;
 mod connect;
 mod dupes;
 mod everything;
+mod sftp;
+mod smb;
+mod terminal;
 mod import;
 mod editor;
 mod files;
@@ -228,6 +231,11 @@ pub fn run() {
             settings::open_folder,
             settings::clear_cache,
             everything::everything_connect,
+            sftp::sftp_connect,
+            smb::smb_mount,
+            smb::smb_mounts,
+            smb::smb_unmount,
+            terminal::run_command,
             editor::epub_open,
             editor::epub_chapter,
             editor::epub_set_source,

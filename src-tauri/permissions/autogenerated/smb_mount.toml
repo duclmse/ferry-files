@@ -1,0 +1,11 @@
+# Automatically generated - DO NOT EDIT!
+
+[[permission]]
+identifier = "allow-smb-mount"
+description = "Enables the smb_mount command without any pre-configured scope."
+commands.allow = ["smb_mount"]
+
+[[permission]]
+identifier = "deny-smb-mount"
+description = "Denies the smb_mount command without any pre-configured scope."
+commands.deny = ["smb_mount"]

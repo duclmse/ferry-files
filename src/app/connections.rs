@@ -57,6 +57,22 @@ pub(super) fn ConnectionsSettings() -> impl IntoView {
             trying.set(false);
         })
     };
+    let add_sftp = move |server: String, error: RwSignal<Option<String>>, trying: RwSignal<bool>| {
+        spawn_local(async move {
+            if let Err(e) = ctx.add_sftp(server).await {
+                error.set(Some(e));
+            }
+            trying.set(false);
+        })
+    };
+    let add_smb = move |share: String, error: RwSignal<Option<String>>, trying: RwSignal<bool>| {
+        spawn_local(async move {
+            if let Err(e) = ctx.add_smb(share).await {
+                error.set(Some(e));
+            }
+            trying.set(false);
+        })
+    };
     view! {
         <h3>"Everything"</h3>
         <p class="hint flush">"Windows computers' disks, through the HTTP server of Everything (voidtools). Read-only."</p>
@@ -71,6 +87,32 @@ pub(super) fn ConnectionsSettings() -> impl IntoView {
         }).collect_view()}
         {move || ctx.everything.with(Vec::is_empty).then(|| view! { <p class="hint flush">"None added."</p> })}
         {add_box("Address, like pc:8080", add_ev)}
+
+        <h3>"SFTP"</h3>
+        <p class="hint flush">"Servers you can reach with ssh. The app uses this computer's ssh keys and settings; it can't use passwords."</p>
+        {move || ctx.sftp.get().into_iter().map(|addr| {
+            let a = addr.clone();
+            let status = Signal::derive(move || match ctx.sftp_src(&a) {
+                Some(_) => (true, "Connected".to_string()),
+                None => (false, ctx.server_errors.with(|e| e.get(&a).cloned()).unwrap_or_else(|| "Connecting…".into())),
+            });
+            server_row(addr.clone(), status, move || ctx.remove_sftp(&addr))
+        }).collect_view()}
+        {move || ctx.sftp.with(Vec::is_empty).then(|| view! { <p class="hint flush">"None added."</p> })}
+        {add_box("Address, like me@server or me@server:2222", add_sftp)}
+
+        <h3>"SMB"</h3>
+        <p class="hint flush">"Shared folders on Windows computers and NAS boxes. The system asks for the password and can keep it in its keychain."</p>
+        {move || ctx.smb.get().into_iter().map(|share| {
+            let s = share.clone();
+            let status = Signal::derive(move || match ctx.smb_path(&s) {
+                Some(path) => (true, format!("Connected at {path}")),
+                None => (false, ctx.server_errors.with(|e| e.get(&s).cloned()).unwrap_or_else(|| "Not connected. Click it in the sidebar to connect.".into())),
+            });
+            server_row(share.trim_start_matches("smb://").to_string(), status, move || ctx.remove_smb(&share))
+        }).collect_view()}
+        {move || ctx.smb.with(Vec::is_empty).then(|| view! { <p class="hint flush">"None added."</p> })}
+        {add_box("Share, like smb://nas/Photos", add_smb)}
     }
 }
 

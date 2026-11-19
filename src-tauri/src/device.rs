@@ -75,6 +75,10 @@ pub trait Transport: Send + Sync {
     fn listdir_page(&self, _path: &str, _offset: u64, _count: u64) -> Option<Result<Vec<Entry>>> {
         None
     }
+    /// Runs a shell command in `dir`, for the terminal. None when the device has no command line.
+    fn run(&self, _dir: &str, _command: &str) -> Option<Result<crate::terminal::Ran>> {
+        None
+    }
 }
 
 #[derive(Clone, Debug, Serialize)]
@@ -220,6 +224,15 @@ impl Device {
             Some(r) => r,
             None if offset == 0 => self.listdir(path),
             None => Ok(vec![]),
+        }
+    }
+
+    /// See `Transport::run`. Without the device's lock: a command can take a while, and doesn't
+    /// go through the app's file operations.
+    pub fn run(&self, dir: &str, command: &str) -> Option<Result<crate::terminal::Ran>> {
+        match norm(dir) {
+            Ok(dir) => self.t.run(&dir, command),
+            Err(e) => Some(Err(e)),
         }
     }
 

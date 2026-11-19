@@ -24,9 +24,9 @@ impl Ctx {
         self.phones.with(|ps| ps.iter().find(|i| base_of(i) == Some(base)).map(|i| Src::of(&i.id)))
     }
 
-    /// Whether a phone (not an Everything server) is connected.
+    /// Whether a phone (not a server) is connected.
     pub(super) fn has_phone(self) -> bool {
-        self.phones.with_untracked(|ps| ps.iter().any(|i| i.transport != "everything"))
+        self.phones.with_untracked(|ps| ps.iter().any(Info::is_phone))
     }
 
     /// Whether `src`'s files can only be read: an Everything server.

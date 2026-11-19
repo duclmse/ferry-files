@@ -1,7 +1,7 @@
 //! The file browser UI: connect screen, one or two panes of folders (each on the phone or the Mac,
 //! in a list, thumbnail or column view, with a context menu), and a text editor.
 
-use crate::api::{call, Backup, BookInfo, CompareReport, DupeProgress, Dupes, Marks, Issue, Devices, Space, Entry, FileDrop, Info, Progress, TextFile, TransferReport, UsbDevice, WriteResult};
+use crate::api::{call, Backup, BookInfo, CompareReport, DupeProgress, Dupes, Marks, Issue, Devices, Space, Entry, FileDrop, Info, Progress, SmbMount, TextFile, TransferReport, UsbDevice, WriteResult};
 use leptos::ev;
 use leptos::html;
 use leptos::prelude::*;
@@ -16,6 +16,7 @@ mod books;
 mod compare;
 mod devices;
 mod everything;
+mod servers;
 mod dupes;
 mod editor;
 mod files;
@@ -773,6 +774,14 @@ struct Ctx {
     everything: RwSignal<Vec<String>>,
     /// Why each Everything server that isn't connected couldn't be, by address.
     everything_errors: RwSignal<HashMap<String, String>>,
+    /// The SFTP servers added in the sidebar, by address ("me@box:2222").
+    sftp: RwSignal<Vec<String>>,
+    /// The SMB shares added in the sidebar ("smb://nas/Photos").
+    smb: RwSignal<Vec<String>>,
+    /// Those of them mounted now, and where.
+    smb_mounts: RwSignal<Vec<SmbMount>>,
+    /// Why each SFTP server or SMB share couldn't be connected, by address.
+    server_errors: RwSignal<HashMap<String, String>>,
     /// The transfer queue: running, waiting, and stopped ones to retry.
     jobs: RwSignal<Vec<Job>>,
     next_job: StoredValue<u32>,
@@ -848,6 +857,10 @@ impl Ctx {
             hidden_sections: RwSignal::new(stored(HIDDEN_SECTIONS_KEY).and_then(|s| serde_json::from_str(&s).ok()).unwrap_or_default()),
             everything: RwSignal::new(stored(EVERYTHING_KEY).and_then(|s| serde_json::from_str(&s).ok()).unwrap_or_default()),
             everything_errors: RwSignal::new(HashMap::new()),
+            sftp: RwSignal::new(stored(SFTP_KEY).and_then(|s| serde_json::from_str(&s).ok()).unwrap_or_default()),
+            smb: RwSignal::new(stored(SMB_KEY).and_then(|s| serde_json::from_str(&s).ok()).unwrap_or_default()),
+            smb_mounts: RwSignal::new(vec![]),
+            server_errors: RwSignal::new(HashMap::new()),
             auto_connect: RwSignal::new(stored_flag(AUTO_CONNECT_KEY, true)),
             verify: RwSignal::new(stored_flag(VERIFY_KEY, false)),
             comparing: RwSignal::new(false),
@@ -1013,6 +1026,7 @@ pub fn App() -> impl IntoView {
         }
         ctx.restore_session();
         ctx.check_everything();
+        ctx.check_servers();
     });
     ctx.keep_session();
     // Look for devices and disks now, then when the backend says something was plugged in or taken
@@ -1039,7 +1053,13 @@ pub fn App() -> impl IntoView {
         },
         std::time::Duration::from_secs(3),
     );
-    let _ = set_interval_with_handle(move || ctx.check_everything(), everything::EVERYTHING_EVERY);
+    let _ = set_interval_with_handle(
+        move || {
+            ctx.check_everything();
+            ctx.check_servers();
+        },
+        everything::EVERYTHING_EVERY,
+    );
 
     // Keyboard. ⌘S saves in the editors. Elsewhere the shortcuts are the user's (keymap.rs), but
     // for arrows, which move (←/→ also go up/in in the column view and move across in the
