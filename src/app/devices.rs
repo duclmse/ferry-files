@@ -169,7 +169,7 @@ pub(super) fn DeviceFinder() -> impl IntoView {
                         <p class="error">{e}</p>
                         {again.map(|f| view! {
                             <button class="btn small" disabled=move || ctx.busy.get()
-                                on:click=move |_| ctx.connect(f.clone(), true)>"Try again"</button>
+                                on:click=move |_| ctx.connect(f.clone(), true)>{ico(Icon::Refresh)}"Try again"</button>
                         })}
                         <button class="btn small" on:click=move |_| ctx.conn_error.set(None)>"Dismiss"</button>
                     </div>

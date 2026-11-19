@@ -273,9 +273,9 @@ pub(super) fn Library(src: Src, dir: String) -> impl IntoView {
                     }>{move || if n_picked() > 0 { "Pick none" } else { "Pick all" }}</button>
                     <span class="grow"></span>
                     <span class="about">{move || match n_picked() { 0 => "Pick books to work on".to_string(), n => format!("{n} picked") }}</span>
-                    <button class="btn" disabled=move || n_picked() == 0 || busy.get().is_some() on:click=move |_| check()>"Check"</button>
+                    <button class="btn" disabled=move || n_picked() == 0 || busy.get().is_some() on:click=move |_| check()>{ico(Icon::Check)}"Check"</button>
                     <button class="btn" disabled=move || n_picked() == 0 || busy.get().is_some()
-                        on:click=move |_| form.set(if form.get_untracked() == Some(BookForm::Info) { None } else { Some(BookForm::Info) })>"Change info…"</button>
+                        on:click=move |_| form.set(if form.get_untracked() == Some(BookForm::Info) { None } else { Some(BookForm::Info) })>{ico(Icon::Edit)}"Change info…"</button>
                     <button class="btn" disabled=move || n_picked() == 0 || busy.get().is_some()
                         on:click=move |_| form.set(if form.get_untracked() == Some(BookForm::Shrink) { None } else { Some(BookForm::Shrink) })>"Make smaller…"</button>
                 </div>
@@ -305,7 +305,7 @@ pub(super) fn Library(src: Src, dir: String) -> impl IntoView {
                 })}
                 {move || busy.get().map(|b| view! {
                     <div class="lib-busy"><span class="text">{b}</span>
-                        <button class="btn small" on:click=move |_| stop.set_value(true)>"Stop"</button></div>
+                        <button class="btn small" on:click=move |_| stop.set_value(true)>{ico(Icon::Stop)}"Stop"</button></div>
                 })}
                 {move || message.get().map(|(m, ok)| view! { <p class:ok=ok class:error=!ok>{m}</p> })}
                 <div class="books">
@@ -369,7 +369,7 @@ pub(super) fn Library(src: Src, dir: String) -> impl IntoView {
                                             </div>
                                             <button class="btn" title="Read the book" on:click=move |_| {
                                                 ctx.panel.set(Some(Panel::Reader(src, e.get_value().path, Some(dir.get_value()))));
-                                            }>"Read"</button>
+                                            }>{ico(Icon::Book)}"Read"</button>
                                             <button class="btn" title="Open in the EPUB editor" on:click=move |_| {
                                                 let path = e.get_value().path;
                                                 ctx.panel.set(None);
@@ -378,7 +378,7 @@ pub(super) fn Library(src: Src, dir: String) -> impl IntoView {
                                                         ctx.act().error(err);
                                                     }
                                                 });
-                                            }>"Edit"</button>
+                                            }>{ico(Icon::Edit)}"Edit"</button>
                                         </div>
                                     }
                                 }
@@ -490,14 +490,14 @@ pub(super) fn Reader(src: Src, path: String, back: Option<String>) -> impl IntoV
                         Some(Ok(b)) => if b.meta.title.is_empty() { b.name.clone() } else { b.meta.title.clone() },
                         _ => base(&path.get_value()),
                     })}</b>
-                    <button class="btn" title="Previous chapter (←)" disabled=move || at.get() == 0 on:click=move |_| go(-1)>"‹"</button>
+                    <button class="btn" title="Previous chapter (←)" aria-label="Previous chapter" disabled=move || at.get() == 0 on:click=move |_| go(-1)>{ico(Icon::Prev)}</button>
                     <select prop:value=move || at.get().to_string() on:change=move |ev| at.set(event_target_value(&ev).parse().unwrap_or(0))>
                         {move || book.with(|b| match b {
                             Some(Ok(b)) => b.chapters.iter().enumerate().map(|(k, c)| view! { <option value=k.to_string()>{c.label.clone()}</option> }).collect_view().into_any(),
                             _ => ().into_any(),
                         })}
                     </select>
-                    <button class="btn" title="Next chapter (→)" disabled=move || at.get() + 1 >= count() on:click=move |_| go(1)>"›"</button>
+                    <button class="btn" title="Next chapter (→)" aria-label="Next chapter" disabled=move || at.get() + 1 >= count() on:click=move |_| go(1)>{ico(Icon::Next)}</button>
                     <button class="btn" title="Smaller text" on:click=move |_| size.update(|s| *s = (*s).saturating_sub(1).max(12))>"A−"</button>
                     <button class="btn" title="Bigger text" on:click=move |_| size.update(|s| *s = (*s + 1).min(32))>"A+"</button>
                     <span class="grow"></span>
@@ -509,7 +509,7 @@ pub(super) fn Reader(src: Src, path: String, back: Option<String>) -> impl IntoV
                                 ctx.act().error(err);
                             }
                         });
-                    }>"Edit"</button>
+                    }>{ico(Icon::Edit)}"Edit"</button>
                     {if back.get_value().is_some() {
                         view! { <button class="btn back" title="Back" aria-label="Back" on:click=move |_| close()><svg class="back-icon" viewBox="0 0 16 16" aria-hidden="true"><path d="M13 8H3M7.5 3.5 3 8l4.5 4.5"/></svg></button> }.into_any()
                     } else {

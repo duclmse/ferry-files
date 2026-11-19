@@ -142,15 +142,15 @@ pub(super) fn Backups() -> impl IntoView {
                                             <span class="about">{format!("{} · {}", when(b.mtime), human_size(b.size))}</span>
                                             <span class="path">{origin}</span>
                                         </div>
-                                        <button class="btn" title=if crate::os::is_mac() { "Show it in Quick Look" } else { "Open it in its app" } on:click=move |_| preview(b3.clone())>"Preview"</button>
+                                        <button class="btn" title=if crate::os::is_mac() { "Show it in Quick Look" } else { "Open it in its app" } on:click=move |_| preview(b3.clone())>{ico(Icon::Eye)}"Preview"</button>
                                         <button class="btn" title=back_tip disabled=back.is_none()
-                                            on:click=move |_| if let Some((s, path)) = back.clone() { restore(b1.clone(), s, path) }>"Restore"</button>
+                                            on:click=move |_| if let Some((s, path)) = back.clone() { restore(b1.clone(), s, path) }>{ico(Icon::Restore)}"Restore"</button>
                                         <button class="btn" title=here_tip on:click=move |_| {
                                             let p = ctx.act();
                                             let dir = p.cwd.get_untracked();
                                             if dir.is_empty() { return }
                                             restore(b2.clone(), p.src.get_untracked(), join(&dir, &b2.name));
-                                        }>"Restore here"</button>
+                                        }>{ico(Icon::Restore)}"Restore here"</button>
                                     </div>
                                 }
                             }).collect_view().into_any()
@@ -158,18 +158,18 @@ pub(super) fn Backups() -> impl IntoView {
                     }}
                 </div>
                 <div class="actions">
-                    <button class="btn" on:click=move |_| { let _ = spawn_local(async move { let _ = call::<()>("open_folder", json!({ "which": "backups" })).await; }); }>{format!("Open in {}", crate::os::file_manager())}</button>
+                    <button class="btn" on:click=move |_| { let _ = spawn_local(async move { let _ = call::<()>("open_folder", json!({ "which": "backups" })).await; }); }>{ico(Icon::Folder)}{format!("Open in {}", crate::os::file_manager())}</button>
                     {move || if confirming.get() {
                         let n = count();
                         view! {
                             <span class="hint">{format!("Move {n} backup{} to the Trash?", if n == 1 { "" } else { "s" })}</span>
                             <button class="btn" on:click=move |_| confirming.set(false)>"Cancel"</button>
-                            <button class="btn danger solid" on:click=move |_| clear()>"Move to Trash"</button>
+                            <button class="btn danger solid" on:click=move |_| clear()>{ico(Icon::Trash)}"Move to Trash"</button>
                         }.into_any()
                     } else {
                         view! {
                             <button class="btn danger" title="Move every backup to the Trash" disabled=move || count() == 0
-                                on:click=move |_| confirming.set(true)>"Clear…"</button>
+                                on:click=move |_| confirming.set(true)>{ico(Icon::Trash)}"Clear…"</button>
                         }.into_any()
                     }}
                     <span class="grow"></span>
@@ -202,7 +202,7 @@ pub(super) fn History() -> impl IntoView {
                     }}
                 </div>
                 <div class="actions">
-                    <button class="btn" on:click=move |_| ctx.panel.set(Some(Panel::Backups))>"Backups…"</button>
+                    <button class="btn" on:click=move |_| ctx.panel.set(Some(Panel::Backups))>{ico(Icon::Backups)}"Backups…"</button>
                     <span class="grow"></span>
                     <button class="btn primary" on:click=move |_| close()>"Done"</button>
                 </div>

@@ -75,13 +75,13 @@ pub(super) fn TextEditor() -> impl IntoView {
                 src => ctx.src_info(src).map_or_else(|| "Device".into(), |i| i.label),
             })}</span>
             <span class="spacer"></span>
-            <button class="btn primary" title=crate::os::keys("⌘S") disabled=move || !dirty.get() || ctx.busy.get() on:click=move |_| ctx.save()>"Save"</button>
+            <button class="btn primary" title=crate::os::keys("⌘S") disabled=move || !dirty.get() || ctx.busy.get() on:click=move |_| ctx.save()>{ico(Icon::Save)}"Save"</button>
         </div>
         {move || ctx.confirm_discard.get().then(|| view! {
             <div class="notice">
                 <span class="text">"You have unsaved changes."</span>
-                <button class="btn primary" on:click=move |_| ctx.save()>"Save"</button>
-                <button class="btn danger" on:click=move |_| ctx.close_editor(true)>"Discard changes"</button>
+                <button class="btn primary" on:click=move |_| ctx.save()>{ico(Icon::Save)}"Save"</button>
+                <button class="btn danger" on:click=move |_| ctx.close_editor(true)>{ico(Icon::Trash)}"Discard changes"</button>
                 <button class="btn" on:click=move |_| ctx.confirm_discard.set(false)>"Keep editing"</button>
             </div>
         })}

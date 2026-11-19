@@ -273,6 +273,12 @@ impl Ctx {
         store(&ViewMode::storage_key(p.id), v.key());
     }
 
+    /// Shows or hides the sidebar; remembered across launches.
+    pub(super) fn set_side(self, on: bool) {
+        self.side.set(on);
+        store(SIDE_KEY, if on { "1" } else { "0" });
+    }
+
     pub(super) fn set_split(self, on: bool) {
         self.split.set(on);
         store(SPLIT_KEY, if on { "1" } else { "0" });

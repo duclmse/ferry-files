@@ -82,5 +82,22 @@ textarea {
 
 /* The sidebar, its drag handle, and the panes. */
 .app.browse {
-  grid-template-columns: 220px auto 1fr;
+  grid-template-columns: 250px auto 1fr;
+}
+
+/* The sidebar hidden (⌥⌘S): only the panes. */
+.app.browse.no-side {
+  grid-template-columns: 1fr;
+}
+
+/* Button icons (icons.rs): line drawings in the text's colour. */
+.ico {
+  width: 14px;
+  height: 14px;
+  flex: none;
+  fill: none;
+  stroke: currentColor;
+  stroke-width: 1.6;
+  stroke-linecap: round;
+  stroke-linejoin: round;
 }

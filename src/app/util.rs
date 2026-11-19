@@ -189,6 +189,7 @@ pub(super) fn store(key: &str, value: &str) {
 }
 
 pub(super) const SPLIT_KEY: &str = "ferry-files.split";
+pub(super) const SIDE_KEY: &str = "ferry-files.sidebar";
 pub(super) const SEARCHES_KEY: &str = "ferry-files.searches";
 pub(super) const THEME_KEY: &str = "ferry-files.theme";
 
@@ -205,7 +206,11 @@ pub(super) const HIDDEN_KEY: &str = "ferry-files.hidden";
 pub(super) const PHONE_THUMBS_KEY: &str = "ferry-files.phone-thumbs";
 pub(super) const AUTO_CONNECT_KEY: &str = "ferry-files.auto-connect";
 pub(super) const SIDE_W_KEY: &str = "ferry-files.side-w";
+/// The narrowest the sidebar may be dragged; a narrower saved width is widened to it.
+pub(super) const SIDE_MIN: f64 = 250.0;
 pub(super) const PANE_W_KEY: &str = "ferry-files.pane-w";
+/// The narrowest the right pane may be; also `.pane[data-pane="1"]` in views.css.
+pub(super) const RIGHT_PANE_MIN: f64 = 360.0;
 
 /// A setting kept in localStorage as "1" or "0".
 pub(super) fn stored_flag(key: &str, default: bool) -> bool {

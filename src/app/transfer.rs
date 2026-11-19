@@ -165,7 +165,7 @@ pub(super) fn TransferBar() -> impl IntoView {
                 <span class="text">{text}</span>
                 <div class="meter"><div style=format!("width:{pct:.1}%")></div></div>
                 <button class="btn" title="Stops after the file being copied now"
-                    on:click=move |_| ctx.cancel_transfer()>"Cancel"</button>
+                    on:click=move |_| ctx.cancel_transfer()>{ico(Icon::Stop)}"Cancel"</button>
             </div>
         }
     })

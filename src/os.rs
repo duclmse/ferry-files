@@ -61,6 +61,11 @@ pub fn this_computer() -> &'static str {
     }
 }
 
+/// "sidebar" on the Mac, "navigation pane" elsewhere.
+pub fn sidebar() -> &'static str {
+    if is_mac() { "sidebar" } else { "navigation pane" }
+}
+
 /// How to install adb, as a sentence.
 pub fn adb_install() -> &'static str {
     match os() {

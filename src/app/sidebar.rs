@@ -65,7 +65,9 @@ pub(super) fn Sidebar() -> impl IntoView {
                         let pane = ctx.panes[ctx.active.get()];
                         pane.src.get() == src && pane.cwd.get() == "/"
                     }
-                    on:click=move |_| ctx.open_place(src, "/".into())>
+                    on:click=move |_| ctx.open_place(src, "/".into())
+                    on:auxclick=move |ev| if ev.button() == 1 { ev.prevent_default(); ctx.new_tab(ctx.act(), src, "/".into()) }
+                    on:contextmenu=move |ev| ctx.show_place_menu(&ev, src, "/".into())>
                     <b>{i.label.clone()}</b>
                 </button>
                 {
@@ -157,11 +159,11 @@ pub(super) fn Sidebar() -> impl IntoView {
             <span class="grow"></span>
             <div class="side-buttons">
                 <button class="btn" title="Files replaced or deleted by the app, which can be put back"
-                    on:click=move |_| ctx.panel.set(Some(Panel::Backups))>"Backups"</button>
+                    on:click=move |_| ctx.panel.set(Some(Panel::Backups))>{ico(Icon::Backups)}"Backups"</button>
                 <button class="btn" title="What was done since the app started"
-                    on:click=move |_| ctx.panel.set(Some(Panel::History))>"History"</button>
+                    on:click=move |_| ctx.panel.set(Some(Panel::History))>{ico(Icon::History)}"History"</button>
             </div>
-            <button class="btn" on:click=move |_| ctx.settings.set(true)>"Settings"</button>
+            <button class="btn" on:click=move |_| ctx.settings.set(true)>{ico(Icon::Settings)}"Settings"</button>
         </nav>
     }
 }
@@ -221,8 +223,11 @@ fn TreeNode(
                 aria-expanded=move || open.get().to_string() on:click=toggle>
                 {chev(open)}
             </button>
+            // A middle click opens it in a new tab; right-click for a menu.
             <button class="item" class:active=active title=title
-                on:click=move |_| ctx.open_place(src, at.get_value())>{name}</button>
+                on:click=move |_| ctx.open_place(src, at.get_value())
+                on:auxclick=move |ev| if ev.button() == 1 { ev.prevent_default(); ctx.new_tab(ctx.act(), src, at.get_value()) }
+                on:contextmenu=move |ev| ctx.show_place_menu(&ev, src, at.get_value())>{name}</button>
             {extra.map(|f| f.run())}
         </div>
         {move || open.get().then(|| kids.get().map(|k| k.into_iter().map(|(name, path)| {
@@ -282,8 +287,8 @@ pub(super) fn Settings() -> impl IntoView {
                         Some(Ok(f)) => f.get(which).map(|f| format!("{} · {} files, {}", f.path, f.files, human_size(f.bytes))).unwrap_or_default(),
                     }}</span>
                 </div>
-                <button class="btn" on:click=move |_| open(which)>"Open"</button>
-                {(which != "backups").then(|| view! { <button class="btn" on:click=move |_| clear(which)>"Clear"</button> })}
+                <button class="btn" on:click=move |_| open(which)>{ico(Icon::Folder)}"Open"</button>
+                {(which != "backups").then(|| view! { <button class="btn" on:click=move |_| clear(which)>{ico(Icon::Trash)}"Clear"</button> })}
             </div>
         }
     };
@@ -326,7 +331,7 @@ pub(super) fn Settings() -> impl IntoView {
                 {folder("opened", "Opened phone files", "Copies made to open phone files in other apps. Changes to them don't go back to the phone.")}
                 {move || error.get().map(|e| view! { <p class="error">{e}</p> })}
                 <div class="actions">
-                    <button class="btn" on:click=move |_| { ctx.settings.set(false); ctx.help.set(true); }>"Keyboard shortcuts"</button>
+                    <button class="btn" on:click=move |_| { ctx.settings.set(false); ctx.help.set(true); }>{ico(Icon::Keyboard)}"Keyboard shortcuts"</button>
                     <span class="grow"></span>
                     <button class="btn primary" on:click=move |_| ctx.settings.set(false)>"Done"</button>
                 </div>
@@ -355,6 +360,8 @@ pub(super) fn Shortcuts() -> impl IntoView {
         ("Esc", "Unpick, or close"),
         ("Tab", "The other pane"),
         ("⌘\\", "Show or hide the second pane"),
+        ("⌥⌘S", "Show or hide the sidebar"),
+        ("Middle-click", "Open a sidebar folder in a new tab"),
         ("⌘T", "New tab"),
         ("⌘W", "Close tab"),
         ("⌘⇧] / ⌘⇧[", "Next or previous tab"),
@@ -366,7 +373,12 @@ pub(super) fn Shortcuts() -> impl IntoView {
             <div class="dialog shortcuts" on:click=|e| e.stop_propagation()>
                 <h2>"Keyboard shortcuts"</h2>
                 <dl>
-                    {KEYS.iter().map(|(k, what)| view! { <dt><kbd>{crate::os::keys(k)}</kbd></dt><dd>{if *what == "Quick Look" { crate::os::quick_look() } else { *what }}</dd> }).collect_view()}
+                    {KEYS.iter().map(|(k, what)| view! { <dt><kbd>{crate::os::keys(k)}</kbd></dt><dd>{match *what {
+                        "Quick Look" => crate::os::quick_look().to_string(),
+                        "Show or hide the sidebar" => format!("Show or hide the {}", crate::os::sidebar()),
+                        "Open a sidebar folder in a new tab" => format!("Open a {} folder in a new tab", crate::os::sidebar()),
+                        w => w.to_string(),
+                    }}</dd> }).collect_view()}
                 </dl>
                 <div class="actions">
                     <span class="grow"></span>

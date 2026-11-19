@@ -404,6 +404,11 @@
   border-top: 2px solid transparent;
 }
 
+/* The right pane: RIGHT_PANE_MIN in util.rs. */
+.pane[data-pane="1"] {
+  min-width: 360px;
+}
+
 .panes:has(.pane ~ .pane) .pane.active {
   border-top-color: var(--accent);
 }

@@ -90,8 +90,8 @@ pub(super) fn Preview(pane: Pane) -> impl IntoView {
                             view! {
                                 {thumb(&e)}
                                 <div class="viewer-bar">
-                                    <button class="btn" on:click=move |_| p.peek_as.set(Some((a.clone(), PeekAs::Text)))>"Open as text"</button>
-                                    <button class="btn" on:click=move |_| p.peek_as.set(Some((b.clone(), PeekAs::Hex)))>"Open as binary"</button>
+                                    <button class="btn" on:click=move |_| p.peek_as.set(Some((a.clone(), PeekAs::Text)))>{ico(Icon::Text)}"Open as text"</button>
+                                    <button class="btn" on:click=move |_| p.peek_as.set(Some((b.clone(), PeekAs::Hex)))>{ico(Icon::Binary)}"Open as binary"</button>
                                 </div>
                             }.into_any()
                         }
@@ -155,8 +155,8 @@ pub(super) fn step_media(p: Pane, e: &Entry, delta: isize) {
 fn neighbours(p: Pane, e: &Entry) -> impl IntoView {
     let a = StoredValue::new(e.clone());
     view! {
-        <button class="btn" title="Previous (←)" on:click=move |_| step_media(p, &a.get_value(), -1)>"‹"</button>
-        <button class="btn" title="Next (→)" on:click=move |_| step_media(p, &a.get_value(), 1)>"›"</button>
+        <button class="btn" title="Previous (←)" aria-label="Previous" on:click=move |_| step_media(p, &a.get_value(), -1)>{ico(Icon::Prev)}</button>
+        <button class="btn" title="Next (→)" aria-label="Next" on:click=move |_| step_media(p, &a.get_value(), 1)>{ico(Icon::Next)}</button>
     }
 }
 
@@ -317,15 +317,15 @@ fn FullImage(pane: Pane, src: Src, entry: Entry, info: RwSignal<MediaInfo>, #[pr
         </div>
         <div class="viewer-bar">
             {(!alone).then(|| view! { {neighbours(pane, &entry)} <span class="gap"></span> })}
-            <button class="btn" title="Zoom out" on:click=move |_| set_zoom(zoom.get_untracked() / 1.25)>"−"</button>
+            <button class="btn" title="Zoom out" aria-label="Zoom out" on:click=move |_| set_zoom(zoom.get_untracked() / 1.25)>{ico(Icon::ZoomOut)}</button>
             <button class="btn zoom" title="Of the picture's own size. Click (or double-click the picture) for 100% or to fit."
                 on:click=move |_| fit_or_actual()>
                 {move || format!("{:.0}%", zoom.get() * base() * 100.0)}
             </button>
-            <button class="btn" title="Zoom in (or pinch)" on:click=move |_| set_zoom(zoom.get_untracked() * 1.25)>"+"</button>
+            <button class="btn" title="Zoom in (or pinch)" aria-label="Zoom in" on:click=move |_| set_zoom(zoom.get_untracked() * 1.25)>{ico(Icon::ZoomIn)}</button>
             <span class="gap"></span>
-            <button class="btn" title="Turn left" on:click=move |_| turn.update(|t| *t = (*t + 3) % 4)>"⟲"</button>
-            <button class="btn" title="Turn right" on:click=move |_| turn.update(|t| *t = (*t + 1) % 4)>"⟳"</button>
+            <button class="btn" title="Turn left" aria-label="Turn left" on:click=move |_| turn.update(|t| *t = (*t + 3) % 4)>{ico(Icon::TurnLeft)}</button>
+            <button class="btn" title="Turn right" aria-label="Turn right" on:click=move |_| turn.update(|t| *t = (*t + 1) % 4)>{ico(Icon::TurnRight)}</button>
         </div>
     }
 }
@@ -416,7 +416,7 @@ fn Player(pane: Pane, entry: Entry, url: String, video: bool, info: RwSignal<Med
             </span>
             {video.then(|| view! {
                 <span class="gap"></span>
-                <button class="btn" title="Turn" on:click=move |_| turn.update(|t| *t = (*t + 1) % 4)>"⟳"</button>
+                <button class="btn" title="Turn" aria-label="Turn" on:click=move |_| turn.update(|t| *t = (*t + 1) % 4)>{ico(Icon::TurnRight)}</button>
             })}
         </div>
     }
@@ -616,8 +616,8 @@ fn Zipped(pane: Pane, src: Src, zip: Entry, name: String, size: u64) -> impl Int
             _ if is_text(&e) => view! { <TextPeek src entry=e inner/> }.into_any(),
             _ => view! {
                 <div class="viewer-bar">
-                    <button class="btn" on:click=move |_| forced.set(Some(PeekAs::Text))>"Open as text"</button>
-                    <button class="btn" on:click=move |_| forced.set(Some(PeekAs::Hex))>"Open as binary"</button>
+                    <button class="btn" on:click=move |_| forced.set(Some(PeekAs::Text))>{ico(Icon::Text)}"Open as text"</button>
+                    <button class="btn" on:click=move |_| forced.set(Some(PeekAs::Hex))>{ico(Icon::Binary)}"Open as binary"</button>
                 </div>
             }.into_any(),
         }

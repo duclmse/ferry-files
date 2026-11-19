@@ -14,6 +14,7 @@ mod books;
 mod devices;
 mod editor;
 mod files;
+mod icons;
 mod layout;
 mod menu;
 mod nav;
@@ -28,6 +29,7 @@ mod views;
 use books::*;
 use devices::*;
 use editor::*;
+use icons::{ico, Icon};
 use layout::*;
 use menu::*;
 use pane::*;
@@ -188,6 +190,8 @@ struct Menu {
     columns: bool,
     /// Folders to go to: the path's folders folded into "…".
     folders: Vec<String>,
+    /// A folder in the sidebar, from a right-click on it.
+    place: Option<(Src, String)>,
 }
 
 #[derive(Clone, Copy, PartialEq)]
@@ -221,6 +225,8 @@ enum Act {
     Go(usize),
     /// Opens the folder (or the pane's folder) in a new tab.
     NewTab,
+    /// Shows or hides the sidebar.
+    Sidebar,
 }
 
 enum MenuItem {
@@ -482,6 +488,8 @@ struct Ctx {
     active: RwSignal<usize>,
     /// Whether the second pane is shown.
     split: RwSignal<bool>,
+    /// Whether the sidebar is shown.
+    side: RwSignal<bool>,
     editor: RwSignal<Option<Editor>>,
     text: RwSignal<String>,
     status: RwSignal<(String, &'static str)>,
@@ -546,6 +554,7 @@ impl Ctx {
             panes: [Pane::new(0), Pane::new(1)],
             active: RwSignal::new(0),
             split: RwSignal::new(stored(SPLIT_KEY).as_deref() == Some("1")),
+            side: RwSignal::new(stored_flag(SIDE_KEY, true)),
             editor: RwSignal::new(None),
             text: RwSignal::new(String::new()),
             status: RwSignal::new((String::new(), "")),
@@ -765,6 +774,11 @@ pub fn App() -> impl IntoView {
         if let Some(d) = tab_step {
             e.prevent_default();
             ctx.step_tab(p, d);
+            return;
+        }
+        if cmd && e.alt_key() && !e.shift_key() && e.code() == "KeyS" {
+            e.prevent_default();
+            ctx.set_side(!ctx.side.get_untracked());
             return;
         }
         if cmd && !e.shift_key() && !e.alt_key() {
@@ -993,18 +1007,20 @@ fn Browser() -> impl IntoView {
     let ctx = expect_context::<Ctx>();
     let ep = ctx.ep;
     move || if ep.book.with(|b| b.is_some()) { view! { <crate::epub::EpubEditor/> }.into_any() } else { view! {
-        <div class="app browse" style=move || match ctx.side_w.get() {
-            w if w > 0.0 => format!("grid-template-columns: {w}px auto 1fr"),
+        <div class="app browse" class:no-side=move || !ctx.side.get() style=move || match ctx.side_w.get() {
+            w if w > 0.0 && ctx.side.get() => format!("grid-template-columns: {}px auto 1fr", w.max(SIDE_MIN)),
             _ => String::new(),
         }>
-            <Sidebar/>
-            <Grip size=ctx.side_w key=SIDE_W_KEY.into() min=160.0 max=480.0 room=480.0 class="grip side-grip"/>
+            {move || ctx.side.get().then(|| view! {
+                <Sidebar/>
+                <Grip size=ctx.side_w key=SIDE_W_KEY.into() min=SIDE_MIN max=480.0 room=480.0 class="grip side-grip"/>
+            })}
             <div class="main">
                 {move || if ctx.editor.get().is_some() { view! { <TextEditor/> }.into_any() } else { view! {
                     <div class="panes">
                         <PaneView pane=ctx.panes[0]/>
                         {move || ctx.split.get().then(|| view! {
-                            <Grip size=ctx.pane_w key=PANE_W_KEY.into() min=240.0 room=240.0 class="grip pane-grip"/>
+                            <Grip size=ctx.pane_w key=PANE_W_KEY.into() min=240.0 room=RIGHT_PANE_MIN class="grip pane-grip"/>
                             <PaneView pane=ctx.panes[1]/>
                         })}
                     </div>

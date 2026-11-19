@@ -2,6 +2,16 @@
 
 use super::*;
 
+/// Where a menu of `rows` rows opens for a click at `ev`, kept whole on screen.
+fn menu_at(ev: &web_sys::MouseEvent, w: f64, rows: usize) -> (f64, f64) {
+    let h = rows as f64 * 28.0 + 12.0;
+    let size = |v: Result<wasm_bindgen::JsValue, _>| v.ok().and_then(|v| v.as_f64()).unwrap_or(800.0);
+    let (vw, vh) = (size(window().inner_width()), size(window().inner_height()));
+    let x = (ev.client_x() as f64).min(vw - w - 4.0).max(4.0);
+    let y = (ev.client_y() as f64).min(vh - h - 4.0).max(4.0);
+    (x, y)
+}
+
 impl Ctx {
     pub(super) fn show_menu(self, p: Pane, ev: &web_sys::MouseEvent, entry: Option<Entry>) {
         ev.prevent_default();
@@ -12,14 +22,8 @@ impl Ctx {
                 p.select_only(Some(e.path.clone()));
             }
         }
-        // Keep the whole menu on screen: estimate its size from the number of rows.
-        let rows = self.menu_items(p, entry.as_ref()).len() as f64;
-        let (w, h) = (240.0, rows * 28.0 + 12.0);
-        let size = |v: Result<wasm_bindgen::JsValue, _>| v.ok().and_then(|v| v.as_f64()).unwrap_or(800.0);
-        let (vw, vh) = (size(window().inner_width()), size(window().inner_height()));
-        let x = (ev.client_x() as f64).min(vw - w - 4.0).max(4.0);
-        let y = (ev.client_y() as f64).min(vh - h - 4.0).max(4.0);
-        self.menu.set(Some(Menu { x, y, pane: p.id, entry, columns: false, folders: vec![] }));
+        let (x, y) = menu_at(ev, 240.0, self.menu_items(p, entry.as_ref()).len());
+        self.menu.set(Some(Menu { x, y, pane: p.id, entry, columns: false, folders: vec![], place: None }));
     }
 
     /// The list's columns to show or hide, from a right-click on its header.
@@ -27,13 +31,32 @@ impl Ctx {
         ev.prevent_default();
         ev.stop_propagation();
         self.active.set(p.id);
-        let rows = self.column_items(p).len() as f64;
-        let (w, h) = (220.0, rows * 28.0 + 12.0);
-        let size = |v: Result<wasm_bindgen::JsValue, _>| v.ok().and_then(|v| v.as_f64()).unwrap_or(800.0);
-        let (vw, vh) = (size(window().inner_width()), size(window().inner_height()));
-        let x = (ev.client_x() as f64).min(vw - w - 4.0).max(4.0);
-        let y = (ev.client_y() as f64).min(vh - h - 4.0).max(4.0);
-        self.menu.set(Some(Menu { x, y, pane: p.id, entry: None, columns: true, folders: vec![] }));
+        let (x, y) = menu_at(ev, 220.0, self.column_items(p).len());
+        self.menu.set(Some(Menu { x, y, pane: p.id, entry: None, columns: true, folders: vec![], place: None }));
+    }
+
+    /// A folder in the sidebar: open it here or in a new tab, or (un)favourite it.
+    pub(super) fn show_place_menu(self, ev: &web_sys::MouseEvent, src: Src, path: String) {
+        ev.prevent_default();
+        ev.stop_propagation();
+        let p = self.act();
+        let (x, y) = menu_at(ev, 220.0, self.place_items(src, &path).len());
+        self.menu.set(Some(Menu { x, y, pane: p.id, entry: None, columns: false, folders: vec![], place: Some((src, path)) }));
+    }
+
+    pub(super) fn place_items(self, src: Src, path: &str) -> Vec<MenuItem> {
+        let fav = if self.is_fav(src, path) { "Remove from Favourites" } else { "Add to Favourites" };
+        vec![item("Open", "", Act::Open), item("Open in new tab", "", Act::NewTab), MenuItem::Sep, item(fav, "", Act::Favourite)]
+    }
+
+    /// What a sidebar menu's item does with its folder.
+    fn run_place(self, act: Act, src: Src, path: String) {
+        match act {
+            Act::Open => self.open_place(src, path),
+            Act::NewTab => self.new_tab(self.act(), src, path),
+            Act::Favourite => self.toggle_fav(src, path),
+            _ => {}
+        }
     }
 
     /// The path's folders folded into "…", under it.
@@ -45,7 +68,7 @@ impl Ctx {
             let r = el.get_bounding_client_rect();
             (x, y) = (r.left(), r.bottom() + 2.0);
         }
-        self.menu.set(Some(Menu { x, y, pane: p.id, entry: None, columns: false, folders }));
+        self.menu.set(Some(Menu { x, y, pane: p.id, entry: None, columns: false, folders, place: None }));
     }
 
     /// ✓ beside each of the list's columns that's shown; Name is always shown.
@@ -110,6 +133,8 @@ impl Ctx {
             }
             v.push(MenuItem::Sep);
             v.push(item(if split { "Hide second pane" } else { "Show second pane" }, "⌘\\", Act::Split));
+            let side = if self.side.get_untracked() { "Hide" } else { "Show" };
+            v.push(item(format!("{side} {}", crate::os::sidebar()), "⌥⌘S", Act::Sidebar));
             return v;
         };
         let picked = p.picked().len();
@@ -198,6 +223,7 @@ impl Ctx {
             (Act::Refresh, _) => self.refresh(p),
             (Act::View(v), _) => self.set_view(p, v),
             (Act::Split, _) => self.set_split(!self.split.get_untracked()),
+            (Act::Sidebar, _) => self.set_side(!self.side.get_untracked()),
             (Act::CopyName, Some(e)) => copy_text(p, e.name),
             (Act::CopyPath, Some(e)) => copy_text(p, if p.src.get_untracked() == Src::Mac { crate::os::native_path(&e.path) } else { e.path }),
             (Act::Column(c), _) if c < LIST_COLS.len() => {
@@ -229,7 +255,9 @@ pub(super) fn ContextMenu() -> impl IntoView {
     let ctx = expect_context::<Ctx>();
     move || ctx.menu.get().map(|m| {
         let p = ctx.panes[m.pane];
-        let items = if !m.folders.is_empty() {
+        let items = if let Some((src, path)) = &m.place {
+            ctx.place_items(*src, path)
+        } else if !m.folders.is_empty() {
             m.folders.iter().enumerate().map(|(i, f)| item(base(f), "", Act::Go(i))).collect()
         } else if m.columns {
             ctx.column_items(p)
@@ -237,6 +265,7 @@ pub(super) fn ContextMenu() -> impl IntoView {
             ctx.menu_items(p, m.entry.as_ref())
         };
         let folders = StoredValue::new(m.folders.clone());
+        let place = StoredValue::new(m.place.clone());
         view! {
             <div class="menu" role="menu" style=format!("left:{}px;top:{}px", m.x, m.y)
                 on:contextmenu=|e| { e.prevent_default(); e.stop_propagation(); }>
@@ -248,6 +277,10 @@ pub(super) fn ContextMenu() -> impl IntoView {
                             <button role="menuitem" class:danger=danger disabled=!enabled
                                 on:click=move |_| {
                                     ctx.menu.set(None);
+                                    if let Some((src, path)) = place.get_value() {
+                                        ctx.run_place(act, src, path);
+                                        return;
+                                    }
                                     match act {
                                         Act::Go(i) => if let Some(f) = folders.with_value(|f| f.get(i).cloned()) { ctx.navigate(p, f) },
                                         _ => ctx.run(p, act, entry.clone()),

@@ -177,7 +177,8 @@
   font-weight: 600;
 }
 
-/* Back buttons: only an arrow. */
+/* Back buttons and toolbar buttons: only an icon. */
+.btn.icon-only,
 .btn.back {
   padding-inline: 8px;
 }
