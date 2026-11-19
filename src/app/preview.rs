@@ -12,6 +12,21 @@ pub(super) enum PeekAs {
     Hex,
 }
 
+/// Under a file shown as text or binary: back to how its type shows, or the other way.
+fn peek_as_buttons(now: PeekAs, set: impl Fn(Option<PeekAs>) + Clone + Send + Sync + 'static) -> impl IntoView {
+    let set2 = set.clone();
+    let (other, icon, label) = match now {
+        PeekAs::Text => (PeekAs::Hex, Icon::Binary, "Show as binary"),
+        PeekAs::Hex => (PeekAs::Text, Icon::Text, "Show as text"),
+    };
+    view! {
+        <div class="peek-as">
+            <button class="btn small" on:click=move |_| set(None)>"Show normally"</button>
+            <button class="btn small" on:click=move |_| set2(Some(other))>{ico(icon)}{label}</button>
+        </div>
+    }
+}
+
 const PDF_EXTS: &[&str] = &["pdf"];
 const FONT_EXTS: &[&str] = &["ttf", "otf", "woff", "woff2"];
 pub(super) const ZIP_EXTS: &[&str] = &["zip", "apk", "jar", "cbz", "xapk"];
@@ -117,8 +132,9 @@ pub(super) fn Preview(pane: Pane) -> impl IntoView {
                             <span class="sub">{facts}</span>
                             {(e.mtime > 0).then(|| view! { <span class="sub">{format!("Modified {}", when(e.mtime))}</span> })}
                             <span class="sub path" title=e.path.clone()>{parent(&e.path)}</span>
-                            {forced.map(|_| view! {
-                                <button class="btn small" on:click=move |_| p.peek_as.set(None)>"Show normally"</button>
+                            {forced.map(|now| {
+                                let path = e.path.clone();
+                                peek_as_buttons(now, move |how| p.peek_as.set(how.map(|h| (path.clone(), h))))
                             })}
                         </div>
                     }.into_any()
@@ -642,9 +658,7 @@ fn Zipped(pane: Pane, src: Src, zip: Entry, name: String, size: u64) -> impl Int
             <b class="name" title=short.clone()>{short.clone()}</b>
             <span class="sub">{facts}</span>
             <span class="sub path" title=format!("{}/{name}", zip.path)>{match name.rfind('/') { Some(at) => format!("{}/{}", zip.name, &name[..at]), None => zip.name.clone() }}</span>
-            {move || forced.get().map(|_| view! {
-                <button class="btn small" on:click=move |_| forced.set(None)>"Show normally"</button>
-            })}
+            {move || forced.get().map(|now| peek_as_buttons(now, move |how| forced.set(how)))}
         </div>
     }
 }

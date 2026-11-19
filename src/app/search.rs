@@ -155,8 +155,8 @@ pub(super) fn SearchPane(pane: Pane) -> impl IntoView {
     };
 
     // A grid: the chevron (beside both boxes while Replace with shows), the search and Replace
-    // with boxes one above the other (so always as wide as each other), then the buttons; the
-    // options take the row under them. A box with something wrong is outlined in red, and says
+    // with boxes one above the other (so always as wide as each other), then the buttons, and
+    // Close at the right end; the options take the row under them. A box with something wrong is outlined in red, and says
     // what in its tooltip.
     move || p.filters_open.get().then(|| view! {
         <div class="search-filters">
@@ -186,16 +186,23 @@ pub(super) fn SearchPane(pane: Pane) -> impl IntoView {
                         "Escape" => { cancel(); ctx.close_search(p); }
                         _ => {}
                     }/>
-                {move || (!p.filter.with(String::is_empty)).then(|| view! {
-                    <button class="filter-clear" title="Clear" aria-label="Clear the filter"
-                        on:mousedown=|ev| ev.prevent_default()
-                        on:click=move |_| { cancel(); p.filter.set(String::new()); p.arrange(); }>"✕"</button>
-                })}
                 <button class="filter-opt regex" class:on=move || p.regex.get() aria-pressed=move || p.regex.get().to_string()
                     title=move || if p.regex.get() { "Regular expression: on" } else { "Regular expression: off" } aria-label="Regular expression"
                     on:mousedown=|ev| ev.prevent_default() on:click=toggle_regex>".*"</button>
             </div>
             <div class="tools">
+                <button class="btn icon-only small" title="Search this folder and its subfolders (Enter in the box)" aria-label="Search subfolders"
+                    on:click=move |_| ctx.find(p)>{ico(Icon::Search)}</button>
+                <button class="btn icon-only small clear" class:lit=move || { narrowed() || !p.filter.with(String::is_empty) }
+                    title="Clear the text, and back to any kind, size and time" aria-label="Clear"
+                    on:click=move |_| {
+                        cancel();
+                        p.filter.set(String::new());
+                        p.search_kind.set(0);
+                        p.search_size.set(0);
+                        p.search_time.set(0);
+                        p.arrange();
+                    }>{ico(Icon::Close)}</button>
                 <button class="btn icon-only small options" class:active=move || p.search_options.get() class:narrowed=move || { narrowed() && !p.search_options.get() }
                     aria-pressed=move || p.search_options.get().to_string() aria-label="Kind, size and time"
                     title=move || match (p.search_options.get(), narrowed()) {
@@ -204,10 +211,9 @@ pub(super) fn SearchPane(pane: Pane) -> impl IntoView {
                         (false, false) => "Show kind, size and time",
                     }
                     on:click=toggle_options>{ico(Icon::Settings)}</button>
-                <span class="grow"></span>
-                <button class="btn icon-only small" title="Close" aria-label="Close filter and search"
-                    on:click=move |_| { cancel(); ctx.close_search(p); }>{ico(Icon::Close)}</button>
             </div>
+            <button class="btn icon-only small close-filters" title="Close" aria-label="Close filter and search"
+                on:click=move |_| { cancel(); ctx.close_search(p); }>{ico(Icon::Close)}</button>
             {move || p.replacing.get().then(|| view! {
                 <div class="filter-box replace-box" class:bad=move || { problems() > 0 }>
                     <span class="replace-icon" aria-hidden="true">"⇄"</span>
@@ -242,15 +248,6 @@ pub(super) fn SearchPane(pane: Pane) -> impl IntoView {
                     {pick("Kind", p.search_kind, SEARCH_KINDS.iter().map(|x| x.0).collect())}
                     {pick("Size", p.search_size, SEARCH_SIZES.iter().map(|x| x.0).collect())}
                     {pick("Modified", p.search_time, SEARCH_TIMES.iter().map(|x| x.0).collect())}
-                    <button class="btn small primary" title="Search this folder and its subfolders" on:click=move |_| ctx.find(p)>"Search"</button>
-                    <button class="btn small" title="Clear the text, and back to any kind, size and time" on:click=move |_| {
-                        cancel();
-                        p.filter.set(String::new());
-                        p.search_kind.set(0);
-                        p.search_size.set(0);
-                        p.search_time.set(0);
-                        p.arrange();
-                    }>"Clear"</button>
                 </div>
             })}
         </div>

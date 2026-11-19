@@ -160,24 +160,6 @@ td.name .where {
   display: none;
 }
 
-.filter-clear {
-  flex: none;
-  width: 18px;
-  height: 18px;
-  padding: 0;
-  border: 0;
-  border-radius: 50%;
-  background: var(--hover);
-  color: var(--muted);
-  font-size: 10px;
-  line-height: 18px;
-  cursor: pointer;
-}
-
-.filter-clear:hover {
-  color: var(--ink);
-}
-
 /* Toggles inside the field: regular expression, and the search options row. */
 .filter-opt {
   flex: none;
@@ -255,7 +237,9 @@ td.name .where {
    choices take the row under them. Fits a narrow pane without wrapping. */
 .search-filters {
   display: grid;
-  grid-template-columns: 22px minmax(90px, 400px) 1fr;
+  /* The box and the buttons share what room there is (the buttons wrap when it's short); what's
+     left after both are full goes before Close. */
+  grid-template-columns: 22px minmax(90px, 400px) minmax(min-content, max-content) minmax(min-content, 1fr);
   align-items: center;
   gap: 6px;
   padding: 6px 10px;
@@ -269,14 +253,19 @@ td.name .where {
   min-width: 0;
 }
 
+/* Wraps onto a second line in a pane too narrow for them beside the box. */
 .search-filters .tools {
+  grid-column: 3;
   display: flex;
+  flex-wrap: wrap;
   align-items: center;
   gap: 6px;
 }
 
-.search-filters .tools .grow {
-  flex: 1;
+.search-filters .close-filters {
+  grid-column: 4;
+  grid-row: 1;
+  justify-self: end;
 }
 
 /* Under the boxes, as wide as the space after the chevron. */
@@ -293,8 +282,16 @@ td.name .where {
 }
 
 /* Some kind, size or time is chosen while they're hidden. */
+/* Clear while there's something to clear, and the options button while some are chosen but
+   hidden. */
+.search-filters .clear.lit,
 .search-filters .options.narrowed {
   color: var(--accent);
+}
+
+/* The options button while they show. */
+.search-filters .options.active {
+  background: var(--sel);
 }
 
 /* Before the search box: opens Replace with under it, and points down while it's open. */
