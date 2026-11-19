@@ -498,8 +498,9 @@
   inset: 0 -4px;
 }
 
-.grip:hover::before,
-body.resizing .grip:active::before {
+/* (Not the pane separator's: its grab mark has its own place, below.) */
+.grip:not(.pane-grip):hover::before,
+body.resizing .grip:not(.pane-grip):active::before {
   content: "";
   position: absolute;
   inset: 0 -1px;
@@ -512,13 +513,15 @@ body.resizing .grip:active::before {
   background: color-mix(in srgb, var(--ink) 16%, transparent);
 }
 
+/* The grab mark: always centred on the line, whether hovered, pressed or dragged. */
 .grip.pane-grip::before {
   content: "";
   position: absolute;
   left: 0;
   right: 0;
-  top: calc(50% - 12px);
+  top: 50%;
   height: 24px;
+  transform: translateY(-50%);
   border-radius: 2px;
   background: var(--muted);
   opacity: 0.6;
@@ -529,14 +532,10 @@ body.resizing .grip.pane-grip:active {
   background: var(--accent);
 }
 
-/* Hovered or being dragged, the grab mark stays in the middle (the general rule above would
-   stretch it from the top). */
 .grip.pane-grip:hover::before,
 body.resizing .grip.pane-grip:active::before {
-  inset: auto 0;
-  top: calc(50% - 12px);
-  height: 24px;
   background: var(--accent-ink);
+  opacity: 1;
 }
 
 /* Inside a list header: on the cell's left edge. */
