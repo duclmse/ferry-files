@@ -172,6 +172,22 @@ pub mod windows {
         }
     }
 
+    /// Remove the service from the Windows SCM.
+    pub fn uninstall() -> Result<()> {
+        let manager = ServiceManager::local_computer(None::<&str>, ServiceManagerAccess::CONNECT)
+            .map_err(|e| AppError::Config(format!("open service manager: {e}")))?;
+
+        let svc = manager
+            .open_service(SERVICE_NAME, ServiceAccess::DELETE)
+            .map_err(|e| AppError::Config(format!("open service: {e}")))?;
+
+        svc.delete()
+            .map_err(|e| AppError::Config(format!("delete service: {e}")))?;
+
+        tracing::info!("service '{}' uninstalled", SERVICE_NAME);
+        Ok(())
+    }
+
     #[cfg(test)]
     mod tests {
         use super::*;
@@ -197,22 +213,6 @@ pub mod windows {
                 .map(OsString::from)
             );
         }
-    }
-
-    /// Remove the service from the Windows SCM.
-    pub fn uninstall() -> Result<()> {
-        let manager = ServiceManager::local_computer(None::<&str>, ServiceManagerAccess::CONNECT)
-            .map_err(|e| AppError::Config(format!("open service manager: {e}")))?;
-
-        let svc = manager
-            .open_service(SERVICE_NAME, ServiceAccess::DELETE)
-            .map_err(|e| AppError::Config(format!("open service: {e}")))?;
-
-        svc.delete()
-            .map_err(|e| AppError::Config(format!("delete service: {e}")))?;
-
-        tracing::info!("service '{}' uninstalled", SERVICE_NAME);
-        Ok(())
     }
 }
 

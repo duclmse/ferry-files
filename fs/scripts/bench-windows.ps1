@@ -264,7 +264,7 @@ function Search([string]$q, [int]$limit = 100) {
 $latencyQueries = @(
     "*.rs", "*.toml", "size:>1mb", "dm:today", "ext:rs", "fuzzy:main",
     "!ext:rs size:>100kb", "ext:md | ext:toml",
-    "zzqx", "readme", "depth:99", "dupe:name count:10",
+    "zzqx", "readme", "depth:99", "dupe: count:10",
     "parent:$TargetDir", "path:$TargetDir\zzqx"
 )
 $loadQueries = @("*.rs", "*.toml", "size:>1mb", "dm:today", "ext:rs", "fuzzy:main", "!ext:rs size:>100kb", "ext:md | ext:toml")
