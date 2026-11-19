@@ -25,6 +25,7 @@ mod sidebar;
 mod transfer;
 mod util;
 mod views;
+mod wifi;
 
 use books::*;
 use devices::*;
@@ -39,6 +40,7 @@ use sidebar::*;
 use transfer::*;
 use util::*;
 use views::*;
+use wifi::*;
 
 /// Where a pane's files are: on the Mac, or on connected device n (the backend's "dn").
 #[derive(Clone, Copy, PartialEq, Eq, Hash)]
@@ -544,6 +546,8 @@ struct Ctx {
     theme: RwSignal<String>,
     /// Whether the list of keyboard shortcuts is shown.
     help: RwSignal<bool>,
+    /// Whether the Connect over Wi-Fi dialog is shown.
+    wifi: RwSignal<bool>,
 }
 
 impl Ctx {
@@ -588,6 +592,7 @@ impl Ctx {
             searches: RwSignal::new(stored(SEARCHES_KEY).and_then(|s| serde_json::from_str(&s).ok()).unwrap_or_default()),
             theme: RwSignal::new(stored(THEME_KEY).unwrap_or_else(|| "auto".into())),
             help: RwSignal::new(false),
+            wifi: RwSignal::new(false),
         }
     }
 
@@ -690,6 +695,7 @@ pub fn App() -> impl IntoView {
     // not a USB change), after a look that couldn't start, and, when USB can't be watched, while
     // no phone is connected.
     ctx.scan();
+    ctx.reconnect_wifi();
     let watching = StoredValue::new(false);
     spawn_local(async move {
         if let Ok(on) = call::<bool>("watch_devices", json!({})).await {
@@ -993,6 +999,7 @@ pub fn App() -> impl IntoView {
         <ContextMenu/>
         {move || ctx.settings.get().then(|| view! { <Settings/> })}
         {move || ctx.help.get().then(|| view! { <Shortcuts/> })}
+        {move || ctx.wifi.get().then(|| view! { <WifiDialog/> })}
         {move || ctx.panel.get().map(|w| match w {
             Panel::Backups => view! { <Backups/> }.into_any(),
             Panel::History => view! { <History/> }.into_any(),

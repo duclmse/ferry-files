@@ -73,7 +73,8 @@ pub(super) fn Sidebar() -> impl IntoView {
                 {
                     // The badge says how it's connected; when the same phone is also found the
                     // other way, clicking it reconnects that way.
-                    let now = if i.transport == "adb" { "adb" } else { "MTP" };
+                    let wireless = i.wireless();
+                    let now = if wireless { "Wi-Fi" } else if i.transport == "adb" { "adb" } else { "MTP" };
                     let label = i.label.clone();
                     let serial = i.serial.clone();
                     let other = Memo::new(move |_| {
@@ -84,6 +85,7 @@ pub(super) fn Sidebar() -> impl IntoView {
                     let title = move || match to() {
                         Some(to) => format!("Connected with {now}. Click to connect with {to} instead."),
                         None if now == "MTP" => format!("Connected with MTP. To use adb, turn on USB debugging on {label} and allow {}.", crate::os::this_computer()),
+                        None if wireless => "Connected with adb over Wi-Fi.".to_string(),
                         None => "Connected with adb.".to_string(),
                     };
                     view! {
@@ -155,6 +157,8 @@ pub(super) fn Sidebar() -> impl IntoView {
             {move || dev_open.get().then(|| view! {
                 {ctx.phones.get().into_iter().map(device).collect_view()}
                 <DeviceFinder/>
+                <button class="btn small wifi-open" title="Pair or connect a phone over Wi-Fi (adb Wireless debugging)"
+                    on:click=move |_| ctx.wifi.set(true)>{ico(Icon::Wifi)}"Connect over Wi-Fi…"</button>
             })}
             <span class="grow"></span>
             <div class="side-buttons">

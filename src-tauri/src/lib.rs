@@ -26,6 +26,7 @@ mod safety;
 mod settings;
 mod transfer;
 mod watch;
+mod wifi;
 
 use device::{DevError, Device, Entry, WriteResult};
 use serde::Serialize;
@@ -151,6 +152,9 @@ pub fn run() {
             connect::connections,
             connect::info,
             connect::watch_devices,
+            wifi::adb_pair,
+            wifi::adb_connect,
+            wifi::adb_discover,
             files::list,
             files::refresh,
             files::read_text,

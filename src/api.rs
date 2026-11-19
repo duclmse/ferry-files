@@ -170,6 +170,27 @@ pub struct UsbDevice {
     pub serial: Option<String>,
 }
 
+/// A phone with Wireless debugging open, found on the network (`adb_discover`).
+#[derive(Clone, Debug, PartialEq, Deserialize)]
+pub struct WifiService {
+    pub name: String,
+    /// "pair" (waiting for a pairing code) or "connect" (paired).
+    pub kind: String,
+    pub address: String,
+}
+
+/// Whether an adb serial is a phone reached over Wi-Fi: "host:port", or the name adb gives one
+/// it connected to by itself ("adb-…._adb-tls-connect._tcp").
+pub fn wireless(serial: &str) -> bool {
+    serial.contains(':') || serial.contains("._adb-tls-connect.")
+}
+
+impl Info {
+    pub fn wireless(&self) -> bool {
+        self.transport == "adb" && self.serial.as_deref().is_some_and(wireless)
+    }
+}
+
 impl UsbDevice {
     /// Tells phones apart: the serial, or where it is on USB.
     pub fn key(&self) -> String {

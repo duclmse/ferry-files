@@ -190,6 +190,8 @@ pub(super) fn store(key: &str, value: &str) {
 
 pub(super) const SPLIT_KEY: &str = "ferry-files.split";
 pub(super) const SIDE_KEY: &str = "ferry-files.sidebar";
+/// Phones connected over Wi-Fi before: [(name, address)].
+pub(super) const WIFI_KEY: &str = "ferry-files.wifi";
 pub(super) const SEARCHES_KEY: &str = "ferry-files.searches";
 pub(super) const THEME_KEY: &str = "ferry-files.theme";
 
