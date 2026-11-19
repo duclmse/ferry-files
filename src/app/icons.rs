@@ -34,6 +34,7 @@ pub(super) enum Icon {
     Text,
     Binary,
     Wifi,
+    Funnel,
 }
 
 impl Icon {
@@ -68,6 +69,7 @@ impl Icon {
             Icon::Refresh => r#"<path d="M13 8a5 5 0 1 1-1.5-3.6"/><path d="M13 2.5v3h-3"/>"#,
             Icon::Text => r#"<path d="M3 3.5h10M8 3.5v9.5"/>"#,
             Icon::Wifi => r#"<path d="M1.5 6a9.5 9.5 0 0 1 13 0M3.8 8.6a6.2 6.2 0 0 1 8.4 0M6.1 11.1a2.9 2.9 0 0 1 3.8 0M8 13.5h.01"/>"#,
+            Icon::Funnel => r#"<path d="M2 3h12l-4.5 5.5v4.5l-3 1.5v-6z"/>"#,
             Icon::Binary => r#"<rect x="2" y="3.5" width="4" height="9" rx="2"/><path d="M10 5l2-1.5v9"/>"#,
         }
     }

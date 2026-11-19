@@ -210,6 +210,36 @@ pub(super) const HIDDEN_KEY: &str = "ferry-files.hidden";
 pub(super) const PHONE_THUMBS_KEY: &str = "ferry-files.phone-thumbs";
 pub(super) const AUTO_CONNECT_KEY: &str = "ferry-files.auto-connect";
 pub(super) const VERIFY_KEY: &str = "ferry-files.verify";
+
+/// The search's kind filter: (label, what the backend calls it).
+pub(super) const SEARCH_KINDS: &[(&str, &str)] = &[
+    ("Any kind", ""),
+    ("Folders", "folder"),
+    ("Pictures", "picture"),
+    ("Videos", "video"),
+    ("Audio", "audio"),
+    ("Documents", "document"),
+    ("Books", "book"),
+    ("Archives", "archive"),
+];
+const MB: u64 = 1024 * 1024;
+/// The search's size filter: (label, at least, under).
+pub(super) const SEARCH_SIZES: &[(&str, Option<u64>, Option<u64>)] = &[
+    ("Any size", None, None),
+    ("Under 1 MB", None, Some(MB)),
+    ("1 to 100 MB", Some(MB), Some(100 * MB)),
+    ("Over 100 MB", Some(100 * MB), None),
+    ("Over 1 GB", Some(1024 * MB), None),
+];
+/// The search's modified filter: (label, days back; negative: older than that).
+pub(super) const SEARCH_TIMES: &[(&str, i64)] = &[
+    ("Any time", 0),
+    ("Today", 1),
+    ("Past week", 7),
+    ("Past month", 30),
+    ("Past year", 365),
+    ("Over a year ago", -365),
+];
 pub(super) const SIDE_W_KEY: &str = "ferry-files.side-w";
 /// The narrowest the sidebar may be dragged; a narrower saved width is widened to it.
 pub(super) const SIDE_MIN: f64 = 250.0;

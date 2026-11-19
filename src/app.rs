@@ -288,6 +288,12 @@ struct Pane {
     /// Set while the pane shows search results instead of the folder: the search and whether it
     /// found everything.
     found: RwSignal<Option<(String, bool)>>,
+    /// The search's filters (`SEARCH_KINDS`, `SEARCH_SIZES`, `SEARCH_TIMES` indexes) and
+    /// whether their row is shown.
+    search_kind: RwSignal<usize>,
+    search_size: RwSignal<usize>,
+    search_time: RwSignal<usize>,
+    filters_open: RwSignal<bool>,
     notice: RwSignal<Notice>,
     view: RwSignal<ViewMode>,
     /// Listings of other folders, for the column view's columns to the left of the current one.
@@ -343,6 +349,11 @@ struct Tab {
 }
 
 impl Pane {
+    /// Whether any search filter is set.
+    fn filtering(self) -> bool {
+        self.search_kind.get() + self.search_size.get() + self.search_time.get() > 0
+    }
+
     fn new(id: usize) -> Self {
         Pane {
             id,
@@ -356,6 +367,10 @@ impl Pane {
             filter: RwSignal::new(String::new()),
             sort: RwSignal::new(Sort::stored(id)),
             found: RwSignal::new(None),
+            search_kind: RwSignal::new(0),
+            search_size: RwSignal::new(0),
+            search_time: RwSignal::new(0),
+            filters_open: RwSignal::new(false),
             notice: RwSignal::new(Notice::None),
             view: RwSignal::new(ViewMode::stored(id)),
             cols: RwSignal::new(HashMap::new()),

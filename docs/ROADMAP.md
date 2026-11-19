@@ -104,12 +104,17 @@ Built (`src/app/undo.rs`):
 - ⌘Z in the panes (not in text fields), "Undo: …" at the top of the background menu, an Undo
   button per row in History (undone rows are crossed out).
 
-### 5. Search with filters ☐
-- `find` gains filters: kind (folder/picture/video/audio/document/book/archive), size range,
-  modified range, and name as glob or plain text. Results stream in chunks (event) instead of one
-  capped reply.
-- Results show as a pane view ("Search: …") where the usual actions work: open, reveal in folder,
-  copy, move, delete, drag.
+### 5. Search with filters ☑
+Built:
+- `find` takes `filters` (kind, size range, modified range) and treats a query with `*` or `?`
+  as a pattern on the whole name (plain text still matches anywhere). An empty query with
+  filters finds everything they let through. Limits raised to 1000 results / 30 seconds.
+- Kinds by extension (`files::kind_of`): folder, picture, video, audio, document, book,
+  archive. Size and date filters skip folders.
+- A filter button beside the pane's Filter field opens a row with Kind, Size and Modified, Search
+  and Clear. The status bar names the search with its filters.
+- Results show in the pane as before, where the usual actions work.
+- Not done: streaming results in chunks (still one reply; the limits keep it bounded).
 
 ### 6. Batch rename ☐
 - Dialog on several picked items: find/replace (plain or regex), add prefix/suffix, numbering

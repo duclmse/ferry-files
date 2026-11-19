@@ -225,3 +225,24 @@ td.name .where {
   color: var(--ink);
   font-weight: 600;
 }
+
+/* The search's filters, under a pane's toolbar (pane.rs). */
+.search-filters {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px;
+  padding: 6px 10px;
+  border-bottom: 1px solid var(--line);
+  background: var(--panel);
+}
+
+.search-filters select {
+  font: inherit;
+  padding: 2px 4px;
+}
+
+.search-filters .hint {
+  flex: 1 1 220px;
+  min-width: 0;
+}

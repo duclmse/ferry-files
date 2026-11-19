@@ -256,16 +256,93 @@ pub(super) struct Matches {
     pub(super) complete: bool,
 }
 
-/// Files and folders under `dir` whose names contain `query` (any case), nearest first.
-/// Stops at 300 results or after 20 seconds. Folders starting with a dot are skipped unless `hidden`.
-#[tauri::command(rename_all = "snake_case")]
-pub(super) async fn find(state: State<'_, AppState>, src: String, dir: String, query: String, hidden: bool) -> Result<Matches, String> {
-    let dev = state.source(Some(&src))?;
-    blocking(move || Ok(find_in(&dev, &dir, &query, hidden, 300, std::time::Duration::from_secs(20)))).await
+/// What else a search asks of what it finds, besides its name.
+#[derive(serde::Deserialize, Default)]
+pub(super) struct Filters {
+    /// "folder", "picture", "video", "audio", "document", "book" or "archive".
+    kind: Option<String>,
+    min_size: Option<u64>,
+    max_size: Option<u64>,
+    /// Modified at or after / before, in seconds since 1970.
+    after: Option<i64>,
+    before: Option<i64>,
 }
 
-pub(super) fn find_in(dev: &Device, dir: &str, query: &str, hidden: bool, max: usize, time: std::time::Duration) -> Matches {
+/// What kind of file a name is, by its extension, as the search's kind filter names them.
+pub(super) fn kind_of(name: &str) -> &'static str {
+    let x = name.rsplit_once('.').map(|(_, x)| x.to_ascii_lowercase()).unwrap_or_default();
+    let is = |list: &[&str]| list.contains(&x.as_str());
+    if is(&["jpg", "jpeg", "png", "gif", "webp", "bmp", "heic", "heif", "avif", "svg", "tif", "tiff", "dng", "raw"]) {
+        "picture"
+    } else if is(&["mp4", "m4v", "mov", "webm", "3gp", "mkv", "avi"]) {
+        "video"
+    } else if is(&["mp3", "m4a", "aac", "wav", "flac", "ogg", "oga", "opus", "amr"]) {
+        "audio"
+    } else if is(&["epub", "mobi", "azw", "azw3", "fb2", "cbz", "cbr"]) {
+        "book"
+    } else if is(&["pdf", "doc", "docx", "odt", "rtf", "txt", "md", "xls", "xlsx", "ods", "csv", "ppt", "pptx", "odp", "pages", "numbers", "key"]) {
+        "document"
+    } else if is(&["zip", "7z", "rar", "tar", "gz", "tgz", "bz2", "xz", "apk"]) {
+        "archive"
+    } else {
+        ""
+    }
+}
+
+impl Filters {
+    fn accepts(&self, e: &device::Entry) -> bool {
+        let file_only = self.min_size.is_some() || self.max_size.is_some() || self.after.is_some() || self.before.is_some();
+        match self.kind.as_deref() {
+            None | Some("") => {}
+            Some("folder") => return e.dir,
+            Some(k) => {
+                if e.dir || kind_of(&e.name) != k {
+                    return false;
+                }
+            }
+        }
+        if file_only && e.dir {
+            return false;
+        }
+        self.min_size.is_none_or(|m| e.size >= m)
+            && self.max_size.is_none_or(|m| e.size < m)
+            && self.after.is_none_or(|t| e.mtime >= t)
+            && self.before.is_none_or(|t| e.mtime < t)
+    }
+}
+
+/// Whether `name` fits `pattern`, where * stands for any run of characters and ? for one. Both
+/// already lowercased.
+pub(super) fn glob(pattern: &[char], name: &[char]) -> bool {
+    match pattern.split_first() {
+        None => name.is_empty(),
+        Some(('*', rest)) => (0..=name.len()).any(|i| glob(rest, &name[i..])),
+        Some(('?', rest)) => !name.is_empty() && glob(rest, &name[1..]),
+        Some((c, rest)) => name.first() == Some(c) && glob(rest, &name[1..]),
+    }
+}
+
+/// Files and folders under `dir` whose names contain `query` (any case; with * or ?, whose names
+/// fit it as a pattern) and that pass `filters`, nearest first. An empty query finds everything
+/// the filters let through. Stops at 1000 results or after 30 seconds. Folders starting with a dot
+/// are skipped unless `hidden`.
+#[tauri::command(rename_all = "snake_case")]
+pub(super) async fn find(state: State<'_, AppState>, src: String, dir: String, query: String, hidden: bool, filters: Option<Filters>) -> Result<Matches, String> {
+    let dev = state.source(Some(&src))?;
+    let filters = filters.unwrap_or_default();
+    blocking(move || Ok(find_in(&dev, &dir, &query, hidden, &filters, 1000, std::time::Duration::from_secs(30)))).await
+}
+
+pub(super) fn find_in(dev: &Device, dir: &str, query: &str, hidden: bool, filters: &Filters, max: usize, time: std::time::Duration) -> Matches {
     let q = query.trim().to_lowercase();
+    let pattern: Option<Vec<char>> = (q.contains('*') || q.contains('?')).then(|| q.chars().collect());
+    let fits = |name: &str| {
+        let name = name.to_lowercase();
+        match &pattern {
+            Some(p) => glob(p, &name.chars().collect::<Vec<_>>()),
+            None => name.contains(&q),
+        }
+    };
     let start = std::time::Instant::now();
     let mut out = vec![];
     let mut queue = std::collections::VecDeque::from([dir.to_string()]);
@@ -282,7 +359,7 @@ pub(super) fn find_in(dev: &Device, dir: &str, query: &str, hidden: bool, max: u
             if e.dir {
                 queue.push_back(e.path.clone());
             }
-            if e.name.to_lowercase().contains(&q) && out.len() < max {
+            if out.len() < max && fits(&e.name) && filters.accepts(&e) {
                 out.push(e);
             }
         }
@@ -407,12 +484,24 @@ mod tests {
         let mac = crate::Device::new(Box::new(crate::local::Local));
         let r = crate::platform::app_path(&root);
         let names = |hidden| -> Vec<String> {
-            super::find_in(&mac, &r, "BOOK", hidden, 100, std::time::Duration::from_secs(5)).entries.into_iter().map(|e| e.name).collect()
+            super::find_in(&mac, &r, "BOOK", hidden, &Default::default(), 100, std::time::Duration::from_secs(5)).entries.into_iter().map(|e| e.name).collect()
         };
         assert_eq!(names(false), ["Book one.epub", "book two.EPUB"]);
         assert_eq!(names(true).len(), 3);
-        let f = super::find_in(&mac, &r, "o", true, 2, std::time::Duration::from_secs(5));
+        let f = super::find_in(&mac, &r, "o", true, &Default::default(), 2, std::time::Duration::from_secs(5));
         assert!(!f.complete && f.entries.len() == 2);
+        // Patterns and filters.
+        let with = |q: &str, f: super::Filters| -> Vec<String> {
+            let mut v: Vec<String> = super::find_in(&mac, &r, q, false, &f, 100, std::time::Duration::from_secs(5)).entries.into_iter().map(|e| e.name).collect();
+            v.sort();
+            v
+        };
+        assert_eq!(with("book*.epub", Default::default()), ["Book one.epub", "book two.EPUB"]);
+        assert_eq!(with("?otes.*", Default::default()), ["notes.txt"]);
+        assert_eq!(with("", super::Filters { kind: Some("book".into()), ..Default::default() }), ["Book one.epub", "book two.EPUB"]);
+        assert_eq!(with("", super::Filters { kind: Some("folder".into()), ..Default::default() }), ["a", "b"]);
+        assert_eq!(with("", super::Filters { min_size: Some(2), ..Default::default() }), Vec::<String>::new());
+        assert_eq!(with("o", super::Filters { after: Some(0), ..Default::default() }).len(), 3, "files only, no folders");
         // Rename.
         assert!(mac.rename(&format!("{r}/a/notes.txt"), "Book one.epub").is_ok(), "other folder, free");
         assert!(mac.rename(&format!("{r}/a/Book one.epub"), "b").is_err(), "taken by a folder");

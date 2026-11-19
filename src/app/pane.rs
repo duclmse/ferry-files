@@ -347,6 +347,9 @@ pub(super) fn PaneView(pane: Pane) -> impl IntoView {
                             }>"✕"</button>
                     })}
                 </div>
+                <button class="btn icon-only" class:active=move || p.filters_open.get() || p.filtering()
+                    title="Search filters: kind, size, date" aria-label="Search filters" aria-expanded=move || p.filters_open.get().to_string()
+                    on:click=move |_| p.filters_open.update(|o| *o = !*o)>{ico(Icon::Funnel)}</button>
                 <button class="btn icon-only" title=format!("New tab ({})", crate::os::keys("⌘T")) aria-label="New tab"
                     on:click=move |_| ctx.new_tab(p, p.src.get_untracked(), p.cwd.get_untracked())>{ico(Icon::NewTab)}</button>
                 {(p.id == 0).then(|| view! {
@@ -359,6 +362,28 @@ pub(super) fn PaneView(pane: Pane) -> impl IntoView {
                         on:click=move |_| ctx.set_split(false)>{ico(Icon::Close)}</button>
                 })}
             </div>
+            {move || p.filters_open.get().then(|| {
+                let pick = |label: &'static str, sig: RwSignal<usize>, names: Vec<&'static str>| view! {
+                    <select aria-label=label prop:value=move || sig.get().to_string()
+                        on:change=move |e| sig.set(event_target_value(&e).parse().unwrap_or(0))>
+                        {names.into_iter().enumerate().map(|(i, n)| view! { <option value=i.to_string()>{n}</option> }).collect_view()}
+                    </select>
+                };
+                view! {
+                    <div class="search-filters">
+                        {pick("Kind", p.search_kind, SEARCH_KINDS.iter().map(|x| x.0).collect())}
+                        {pick("Size", p.search_size, SEARCH_SIZES.iter().map(|x| x.0).collect())}
+                        {pick("Modified", p.search_time, SEARCH_TIMES.iter().map(|x| x.0).collect())}
+                        <button class="btn small primary" on:click=move |_| ctx.find(p)>"Search"</button>
+                        <button class="btn small" title="Back to any kind, size and time" on:click=move |_| {
+                            p.search_kind.set(0);
+                            p.search_size.set(0);
+                            p.search_time.set(0);
+                        }>"Clear"</button>
+                        <span class="hint">"Searches this folder and its subfolders, with the text in Filter if any. Use * and ? for patterns, like IMG_*.jpg."</span>
+                    </div>
+                }
+            })}
             <div class="body">
                 <div class="files" class:beside=move || p.preview.get() class:sized=move || { p.view_w.get() > 0.0 }
                     style=move || match p.view_w.get() {
@@ -527,7 +552,7 @@ pub(super) fn ListStatus(pane: Pane) -> impl IntoView {
         let n = p.all.with(|a| a.len());
         let more = if complete { "" } else { " (stopped early: open a smaller folder to see all)" };
         view! {
-            <span class="search">{format!("{n} found for “{q}”{more}")}</span>
+            <span class="search">{format!("{n} found for {q}{more}")}</span>
             <button class="btn small back" title="Back to folder" aria-label="Back to folder" on:click=move |_| ctx.reload(p)><svg class="back-icon" viewBox="0 0 16 16" aria-hidden="true"><path d="M13 8H3M7.5 3.5 3 8l4.5 4.5"/></svg></button>
         }
     });

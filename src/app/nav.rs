@@ -107,18 +107,44 @@ impl Ctx {
         }
     }
 
-    /// Searches the pane's folder and its subfolders for names containing the filter's text.
+    /// Searches the pane's folder and its subfolders for names containing the filter's text (or
+    /// fitting it, with * and ?), with the pane's search filters.
     pub(super) fn find(self, p: Pane) {
         let query = p.filter.get_untracked().trim().to_string();
-        if query.is_empty() {
+        let (k, s, t) = (p.search_kind.get_untracked(), p.search_size.get_untracked(), p.search_time.get_untracked());
+        let filtered = k + s + t > 0;
+        if query.is_empty() && !filtered {
             return;
         }
-        self.searches.update(|v| {
+        let day = 86_400;
+        let now = (js_sys::Date::now() / 1000.0) as i64;
+        let days = SEARCH_TIMES[t].1;
+        let filters = json!({
+            "kind": SEARCH_KINDS[k].1,
+            "min_size": SEARCH_SIZES[s].1,
+            "max_size": SEARCH_SIZES[s].2,
+            "after": (days > 0).then(|| now - days * day),
+            "before": (days < 0).then(|| now + days * day),
+        });
+        // How the status bar names it: the text, then the filters in use.
+        let mut label = vec![];
+        if !query.is_empty() {
+            label.push(format!("“{query}”"));
+        }
+        for (i, name) in [(k, SEARCH_KINDS[k].0), (s, SEARCH_SIZES[s].0), (t, SEARCH_TIMES[t].0)] {
+            if i > 0 {
+                label.push(name.to_lowercase());
+            }
+        }
+        let label = label.join(", ");
+        if !query.is_empty() {
+            self.searches.update(|v| {
             v.retain(|q| *q != query);
             v.insert(0, query.clone());
             v.truncate(10);
             store(SEARCHES_KEY, &serde_json::to_string(v).unwrap_or_default());
-        });
+            });
+        }
         let (src, dir) = (p.src.get_untracked(), p.cwd.get_untracked());
         p.loading.set(true);
         spawn_local(async move {
@@ -127,12 +153,12 @@ impl Ctx {
                 entries: Vec<Entry>,
                 complete: bool,
             }
-            let args = json!({ "src": src.key(), "dir": dir, "query": query, "hidden": self.show_hidden.get_untracked() });
+            let args = json!({ "src": src.key(), "dir": dir, "query": query, "hidden": self.show_hidden.get_untracked(), "filters": filters });
             match call::<Matches>("find", args).await {
                 Ok(m) if p.cwd.get_untracked() == dir && p.src.get_untracked() == src => {
                     p.all.set(m.entries);
                     p.filter.set(String::new());
-                    p.found.set(Some((query, m.complete)));
+                    p.found.set(Some((label, m.complete)));
                     p.select_only(None);
                     p.arrange();
                 }
