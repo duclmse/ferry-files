@@ -127,8 +127,11 @@ pub struct JobQueue {
 impl JobQueue {
     pub fn new(db_path: &Path) -> Result<Self> {
         let manager = SqliteConnectionManager::file(db_path).with_init(|conn| {
+            // busy_timeout first: the pool opens its connections at once, and
+            // switching a new file to WAL needs a lock the others hold.
             conn.execute_batch(
-                "PRAGMA journal_mode=WAL;
+                "PRAGMA busy_timeout=30000;
+                 PRAGMA journal_mode=WAL;
                  PRAGMA synchronous=NORMAL;",
             )?;
             Ok(())
@@ -236,10 +239,12 @@ impl JobQueue {
         Ok(n)
     }
 
+    /// Whether a job for this content is queued, running or done. A failed
+    /// one does not count, so copying a file back in retries it.
     pub fn is_duplicate(&self, file_hash: &str) -> Result<bool> {
         let conn = self.get_conn()?;
         let count: i64 = conn.query_row(
-            "SELECT COUNT(*) FROM jobs WHERE file_hash = ? AND status = 'done'",
+            "SELECT COUNT(*) FROM jobs WHERE file_hash = ? AND status != 'failed'",
             [file_hash],
             |row| row.get(0),
         )?;
@@ -447,7 +452,9 @@ mod tests {
         let q = make_queue();
         assert!(!q.is_duplicate("hash1").unwrap());
         let id = enqueue_one(&q, "hash1");
-        assert!(!q.is_duplicate("hash1").unwrap());
+        assert!(q.is_duplicate("hash1").unwrap(), "pending counts");
+        q.set_status(&id, Status::Failed, Some("x")).unwrap();
+        assert!(!q.is_duplicate("hash1").unwrap(), "failed does not");
         q.set_status(&id, Status::Done, None).unwrap();
         assert!(q.is_duplicate("hash1").unwrap());
     }
