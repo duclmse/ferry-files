@@ -108,9 +108,9 @@ td.name .where {
   margin-left: auto;
   display: flex;
   align-items: center;
-  width: 170px;
+  width: 230px;
   height: 28px;
-  padding: 0 4px 0 8px;
+  padding: 0 3px 0 8px;
   gap: 4px;
   border: 1px solid var(--line);
   border-radius: 7px;
@@ -169,6 +169,45 @@ td.name .where {
   color: var(--ink);
 }
 
+/* Toggles inside the field: regular expression, and the search options row. */
+.filter-opt {
+  flex: none;
+  display: grid;
+  place-items: center;
+  width: 22px;
+  height: 22px;
+  padding: 0;
+  border: 0;
+  border-radius: 5px;
+  background: none;
+  color: var(--muted);
+  font: 600 11px/1 ui-monospace, SFMono-Regular, Menlo, monospace;
+  cursor: pointer;
+}
+
+.filter-opt svg {
+  width: 14px;
+  height: 14px;
+}
+
+.filter-opt:hover {
+  background: var(--hover);
+  color: var(--ink);
+}
+
+.filter-opt.on {
+  background: var(--accent);
+  color: #fff;
+}
+
+.filter-box.bad {
+  border-color: var(--danger);
+}
+
+.filter-box.bad:focus-within {
+  outline-color: var(--danger);
+}
+
 @container (max-width: 520px) {
   .filter-box:not(:focus-within):not(.has) {
     width: 28px;
@@ -177,9 +216,9 @@ td.name .where {
     cursor: pointer;
   }
 
-  .filter-box:not(:focus-within):not(.has) .filter {
-    flex: 0 0 0;
-    width: 0;
+  .filter-box:not(:focus-within):not(.has) .filter,
+  .filter-box:not(:focus-within):not(.has) .filter-opt {
+    display: none;
   }
 
   .filter-box:not(:focus-within):not(.has):hover {
@@ -189,7 +228,7 @@ td.name .where {
 
   .filter-box:focus-within,
   .filter-box.has {
-    width: 140px;
+    width: 190px;
   }
 }
 

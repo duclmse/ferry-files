@@ -26,6 +26,7 @@ image = { version = "0.25", default-features = false, features = ["jpeg", "png",
 trash = "5.4.0"
 tauri-plugin-opener = "2"
 tauri-plugin-clipboard-manager = "2"
+regex = { version = "1", default-features = false, features = ["std", "unicode", "perf"] }
 
 [target.'cfg(windows)'.dependencies]
 windows = { version = "0.62", features = [

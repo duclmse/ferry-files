@@ -275,6 +275,8 @@ enum Act {
     Import,
     /// The books on every place, side by side.
     AllBooks,
+    /// Find and replace in the names of what's picked, or of everything shown.
+    ReplaceNames,
 }
 
 enum MenuItem {
@@ -325,8 +327,12 @@ struct Pane {
     marked: RwSignal<Vec<String>>,
     /// The folder's listing (or search results), before the filter.
     all: RwSignal<Vec<Entry>>,
-    /// Shows only names containing this.
+    /// Shows only names containing this (or matching it, with `regex`).
     filter: RwSignal<String>,
+    /// The filter and search take a regular expression.
+    regex: RwSignal<bool>,
+    /// Why the filter isn't a working regular expression.
+    bad_filter: RwSignal<Option<String>>,
     sort: RwSignal<Sort>,
     /// Set while the pane shows search results instead of the folder: the search and whether it
     /// found everything.
@@ -412,6 +418,8 @@ impl Pane {
             marked: RwSignal::new(vec![]),
             all: RwSignal::new(vec![]),
             filter: RwSignal::new(String::new()),
+            regex: RwSignal::new(stored_flag(&format!("{REGEX_KEY}.{id}"), false)),
+            bad_filter: RwSignal::new(None),
             sort: RwSignal::new(Sort::stored(id)),
             found: RwSignal::new(None),
             search_kind: RwSignal::new(0),
@@ -455,9 +463,22 @@ impl Pane {
     fn arrange(self) {
         let mut es = self.all.get_untracked();
         self.sort.get_untracked().apply(&mut es);
-        let f = self.filter.get_untracked().to_lowercase();
+        let f = self.filter.get_untracked();
+        let mut bad = None;
         if !f.is_empty() {
-            es.retain(|e| e.name.to_lowercase().contains(&f));
+            if self.regex.get_untracked() {
+                // A pattern that doesn't work filters nothing out, and says why.
+                match js_regex(&f, "i") {
+                    Ok(re) => es.retain(|e| re.test(&e.name)),
+                    Err(e) => bad = Some(e),
+                }
+            } else {
+                let f = f.to_lowercase();
+                es.retain(|e| e.name.to_lowercase().contains(&f));
+            }
+        }
+        if self.bad_filter.get_untracked() != bad {
+            self.bad_filter.set(bad);
         }
         if self.diff_only.get_untracked() {
             self.cmp.with_untracked(|m| {
@@ -1016,6 +1037,10 @@ pub fn App() -> impl IntoView {
                 }
                 "rename" => {
                     ctx.ask_rename(p);
+                    true
+                }
+                "replace_names" => {
+                    ctx.replace_names(p);
                     true
                 }
                 "undo" => {

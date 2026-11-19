@@ -361,7 +361,7 @@ pub(super) fn PaneView(pane: Pane) -> impl IntoView {
                 w if w > 0.0 && p.id == 0 && ctx.split.get() => format!("flex: 0 1 {w}px"),
                 _ => String::new(),
             }>
-            {move || (p.tabs.with(Vec::len) > 1).then(|| view! { <Tabs pane=p/> })}
+            <Tabs pane=p/>
             <div class="bar">
                 {(p.id == 0).then(|| view! {
                     <button class="btn icon-only" class:active=move || ctx.side.get()
@@ -372,7 +372,8 @@ pub(super) fn PaneView(pane: Pane) -> impl IntoView {
                 <Crumbs pane=p/>
                 {move || p.loading.get().then(|| view! { <span class="spin"></span> })}
                 // Narrow panes show only the icon; clicking it opens the field.
-                <div class="filter-box" class:has=move || !p.filter.with(String::is_empty)
+                <div class="filter-box" class:has=move || !p.filter.with(String::is_empty) || p.filters_open.get() || p.filtering()
+                    class:bad=move || p.bad_filter.with(Option::is_some)
                     on:click=move |_| if let Some(el) = filter_ref.get_untracked() { let _ = el.focus(); }>
                     <svg class="filter-icon" viewBox="0 0 16 16" aria-hidden="true">
                         <circle cx="7" cy="7" r="4.5"/><path d="M10.5 10.5 14 14"/>
@@ -380,8 +381,10 @@ pub(super) fn PaneView(pane: Pane) -> impl IntoView {
                     <datalist id=format!("searches-{}", p.id)>
                         {move || ctx.searches.get().into_iter().map(|q| view! { <option value=q></option> }).collect_view()}
                     </datalist>
-                    <input class="filter" type="search" placeholder="Filter" node_ref=filter_ref list=format!("searches-{}", p.id)
-                        title=move || format!("{}. Enter searches subfolders too.", ctx.with_key("Show names containing this", "filter"))
+                    <input class="filter" type="search" node_ref=filter_ref list=format!("searches-{}", p.id)
+                        placeholder=move || if p.regex.get() { "Filter (regex)" } else { "Filter or search" }
+                        title=move || p.bad_filter.get().unwrap_or_else(|| format!("{}. Enter searches subfolders too.",
+                            ctx.with_key(if p.regex.get() { "Show names matching this regular expression" } else { "Show names containing this" }, "filter")))
                         prop:value=move || p.filter.get()
                         on:input=move |ev| { p.filter.set(event_target_value(&ev)); p.arrange(); }
                         on:keydown=move |ev| match ev.key().as_str() {
@@ -403,12 +406,21 @@ pub(super) fn PaneView(pane: Pane) -> impl IntoView {
                                 if let Some(el) = filter_ref.get_untracked() { let _ = el.focus(); }
                             }>"✕"</button>
                     })}
+                    <button class="filter-opt regex" class:on=move || p.regex.get() aria-pressed=move || p.regex.get().to_string()
+                        title=move || if p.regex.get() { "Regular expression: on" } else { "Regular expression: off" } aria-label="Regular expression"
+                        on:mousedown=|ev| ev.prevent_default()
+                        on:click=move |ev| {
+                            ev.stop_propagation();
+                            let on = !p.regex.get_untracked();
+                            p.regex.set(on);
+                            store(&format!("{REGEX_KEY}.{}", p.id), if on { "1" } else { "0" });
+                            p.arrange();
+                        }>".*"</button>
+                    <button class="filter-opt" class:on=move || p.filters_open.get() || p.filtering()
+                        title="Search subfolders, by kind, size and date" aria-label="Search options" aria-expanded=move || p.filters_open.get().to_string()
+                        on:mousedown=|ev| ev.prevent_default()
+                        on:click=move |ev| { ev.stop_propagation(); p.filters_open.update(|o| *o = !*o) }>{ico(Icon::Funnel)}</button>
                 </div>
-                <button class="btn icon-only" class:active=move || p.filters_open.get() || p.filtering()
-                    title="Search filters: kind, size, date" aria-label="Search filters" aria-expanded=move || p.filters_open.get().to_string()
-                    on:click=move |_| p.filters_open.update(|o| *o = !*o)>{ico(Icon::Funnel)}</button>
-                <button class="btn icon-only" title=move || ctx.with_key("New tab", "new_tab") aria-label="New tab"
-                    on:click=move |_| ctx.new_tab(p, p.src.get_untracked(), p.cwd.get_untracked())>{ico(Icon::NewTab)}</button>
                 {(p.id == 0).then(|| view! {
                     <button class="btn icon-only" class:active=move || ctx.split.get()
                         title=move || ctx.with_key(if ctx.split.get() { "Hide the second pane" } else { "Show a second pane" }, "split")
@@ -437,7 +449,11 @@ pub(super) fn PaneView(pane: Pane) -> impl IntoView {
                             p.search_size.set(0);
                             p.search_time.set(0);
                         }>"Clear"</button>
-                        <span class="hint">"Searches this folder and its subfolders, with the text in Filter if any. Use * and ? for patterns, like IMG_*.jpg."</span>
+                        <span class="hint">{move || if p.regex.get() {
+                            "Searches this folder and its subfolders for names matching the regular expression, like ^IMG_\\d+\\.jpe?g$."
+                        } else {
+                            "Searches this folder and its subfolders, with the text in Filter if any. Use * and ? for patterns, like IMG_*.jpg."
+                        }}</span>
                     </div>
                 }
             })}
@@ -680,6 +696,7 @@ fn Tabs(pane: Pane) -> impl IntoView {
                         on:auxclick=move |ev| if ev.button() == 1 { ev.prevent_default(); ctx.close_tab(p, i) }>
                         <span class="name">{name}</span>
                         <button class="close" title=move || ctx.with_key("Close tab", "close_tab") aria-label="Close tab"
+                            hidden=move || p.tabs.with(Vec::len) < 2
                             on:click=move |ev| { ev.stop_propagation(); ctx.close_tab(p, i) }>"×"</button>
                     </div>
                 }

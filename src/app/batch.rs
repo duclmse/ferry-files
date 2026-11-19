@@ -34,14 +34,7 @@ fn regex(r: &Rule) -> Result<Option<js_sys::RegExp>, String> {
         return Ok(None);
     }
     let source = if r.pattern { r.find.clone() } else { escape(&r.find) };
-    let flags = if r.match_case { "g" } else { "gi" };
-    // Through Reflect, so a bad pattern is an error rather than a crash.
-    let ctor = js_sys::RegExp::new("", "").constructor();
-    let args = js_sys::Array::of2(&source.into(), &flags.into());
-    match js_sys::Reflect::construct(&ctor, &args) {
-        Ok(v) => Ok(Some(v.unchecked_into())),
-        Err(e) => Err(format!("That pattern doesn't work: {}", e.dyn_ref::<js_sys::Error>().map(|e| String::from(e.message())).unwrap_or_default())),
-    }
+    js_regex(&source, if r.match_case { "g" } else { "gi" }).map(Some)
 }
 
 /// `s` with regular expression characters escaped.
@@ -212,6 +205,21 @@ pub(super) async fn rename_all(src: Src, items: Vec<(String, String)>) -> (Vec<(
 }
 
 impl Ctx {
+    /// Find and replace in names: in what's picked when that's several items, else in everything
+    /// the pane shows.
+    pub(super) fn replace_names(self, p: Pane) {
+        let picked = p.picked();
+        let items = if picked.len() > 1 { picked } else { p.entries.get_untracked() };
+        if !items.is_empty() && self.renamable(p) {
+            self.panel.set(Some(Panel::Rename(p.id, items)));
+        }
+    }
+
+    /// Whether the pane's items can be renamed: not at the top of an MTP phone.
+    pub(super) fn renamable(self, p: Pane) -> bool {
+        !(p.cwd.get_untracked() == "/" && self.src_info(p.src.get_untracked()).is_some_and(|i| i.transport == "mtp"))
+    }
+
     /// F2 or Rename… on several items: the batch rename dialog.
     pub(super) fn ask_rename(self, p: Pane) {
         let items = p.picked();

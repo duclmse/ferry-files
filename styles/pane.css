@@ -91,6 +91,11 @@
   visibility: visible;
 }
 
+/* A pane's only tab can't be closed. */
+.tabs .close[hidden] {
+  display: none;
+}
+
 .tabs .add {
   align-self: center;
   width: 24px;

@@ -115,7 +115,14 @@ impl Ctx {
                 enabled: !p.cwd.get_untracked().is_empty(),
             });
             v.push(item("Books on all devices…", "", Act::AllBooks));
-            v.extend([MenuItem::Sep, item("New tab", "⌘T", Act::NewTab), item(fav, "", Act::Favourite), item("Refresh", "", Act::Refresh)]);
+            v.push(MenuItem::Do {
+                label: "Find and replace in names…".into(),
+                key: "replace_names",
+                act: Act::ReplaceNames,
+                danger: false,
+                enabled: !p.entries.with_untracked(Vec::is_empty) && self.renamable(p),
+            });
+            v.extend([MenuItem::Sep, item("New tab", "new_tab", Act::NewTab), item(fav, "", Act::Favourite), item("Refresh", "", Act::Refresh)]);
             v.push(MenuItem::Do {
                 label: "Import photos…".into(),
                 key: "",
@@ -154,12 +161,12 @@ impl Ctx {
                 v.extend(self.column_items(p));
             }
             v.push(MenuItem::Sep);
-            v.push(item(if split { "Hide second pane" } else { "Show second pane" }, "⌘\\", Act::Split));
+            v.push(item(if split { "Hide second pane" } else { "Show second pane" }, "split", Act::Split));
             let side = if self.side.get_untracked() { "Hide" } else { "Show" };
-            v.push(item(format!("{side} {}", crate::os::sidebar()), "⌥⌘S", Act::Sidebar));
+            v.push(item(format!("{side} {}", crate::os::sidebar()), "sidebar", Act::Sidebar));
             if let Some((_, text)) = self.last_undo() {
                 let short: String = if text.chars().count() > 40 { format!("{}…", text.chars().take(39).collect::<String>()) } else { text };
-                v.splice(0..0, [item(format!("Undo: {short}"), "⌘Z", Act::Undo), MenuItem::Sep]);
+                v.splice(0..0, [item(format!("Undo: {short}"), "undo", Act::Undo), MenuItem::Sep]);
             }
             return v;
         };
@@ -172,7 +179,7 @@ impl Ctx {
                 v.push(MenuItem::Do { label: self.to_label(p, "Move", picked), key: "move", act: Act::Move, danger: false, enabled });
                 v.push(MenuItem::Sep);
             }
-            let renamable = !(p.cwd.get_untracked() == "/" && self.src_info(p.src.get_untracked()).is_some_and(|i| i.transport == "mtp"));
+            let renamable = self.renamable(p);
             v.push(MenuItem::Do { label: format!("Rename {picked} items…"), key: "rename", act: Act::Rename, danger: false, enabled: renamable });
             v.push(MenuItem::Sep);
             v.push(MenuItem::Do { label: format!("Delete {picked} items…"), key: "delete", act: Act::Delete, danger: true, enabled: true });
@@ -188,7 +195,7 @@ impl Ctx {
         if kind(e) == Kind::Epub {
             v.push(item("Read", "", Act::Read));
         }
-        v.push(item(open, "↵", Act::Open));
+        v.push(item(open, "open", Act::Open));
         if e.dir {
             v.push(item("Open in new tab", "", Act::NewTab));
         }
@@ -196,7 +203,7 @@ impl Ctx {
             v.push(item("Check book", "", Act::Check));
         }
         if !e.dir {
-            v.push(item(crate::os::quick_look(), "Space", Act::QuickLook));
+            v.push(item(crate::os::quick_look(), "quick_look", Act::QuickLook));
         }
         // Elsewhere, Space already opens in the default app.
         if !e.dir && kind(e) != Kind::Other && crate::os::is_mac() {
@@ -210,7 +217,7 @@ impl Ctx {
             v.push(MenuItem::Do { label: self.to_label(p, "Copy", 1), key: "copy", act: Act::Copy, danger: false, enabled });
             v.push(MenuItem::Do { label: self.to_label(p, "Move", 1), key: "move", act: Act::Move, danger: false, enabled });
         }
-        let renamable = !(p.cwd.get_untracked() == "/" && self.src_info(p.src.get_untracked()).is_some_and(|i| i.transport == "mtp"));
+        let renamable = self.renamable(p);
         v.push(MenuItem::Do { label: "Rename".into(), key: "rename", act: Act::Rename, danger: false, enabled: renamable });
         if e.dir {
             let fav = if self.is_fav(p.src.get_untracked(), &e.path) { "Remove from Favourites" } else { "Add to Favourites" };
@@ -247,6 +254,7 @@ impl Ctx {
             (Act::Compare, _) => self.compare_marks(p),
             (Act::Import, _) => self.ask_import(p),
             (Act::AllBooks, _) => self.panel.set(Some(Panel::AllBooks)),
+            (Act::ReplaceNames, _) => self.replace_names(p),
             (Act::Dupes, _) => {
                 let mut folders: Vec<(Src, String)> = vec![(p.src.get_untracked(), p.cwd.get_untracked())];
                 let o = self.other(p);

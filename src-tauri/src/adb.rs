@@ -9,7 +9,7 @@ use std::process::Stdio;
 pub fn adb_path() -> Option<PathBuf> {
     let exe = format!("adb{}", std::env::consts::EXE_SUFFIX);
     let home = dirs::home_dir().unwrap_or_default();
-    let mut sdks: Vec<PathBuf> = ["ANDROID_HOME", "ANDROID_SDK_ROOT"].iter().filter_map(|v| std::env::var_os(v)).map(PathBuf::from).collect();
+    let mut sdks: Vec<PathBuf> = ["ANDROID_HOME", "ANDROID_SDK_ROOT"].iter().filter_map(std::env::var_os).map(PathBuf::from).collect();
     let mut bins: Vec<PathBuf> = Vec::new();
     if cfg!(target_os = "macos") {
         sdks.push(home.join("Library/Android/sdk"));

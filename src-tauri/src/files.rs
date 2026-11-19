@@ -323,26 +323,59 @@ pub(super) fn glob(pattern: &[char], name: &[char]) -> bool {
 }
 
 /// Files and folders under `dir` whose names contain `query` (any case; with * or ?, whose names
-/// fit it as a pattern) and that pass `filters`, nearest first. An empty query finds everything
+/// fit it as a pattern; with `regex`, that match it as a regular expression, any case) and that
+/// pass `filters`, nearest first. An empty query finds everything
 /// the filters let through. Stops at 1000 results or after 30 seconds. Folders starting with a dot
 /// are skipped unless `hidden`.
 #[tauri::command(rename_all = "snake_case")]
-pub(super) async fn find(state: State<'_, AppState>, src: String, dir: String, query: String, hidden: bool, filters: Option<Filters>) -> Result<Matches, String> {
+pub(super) async fn find(state: State<'_, AppState>, src: String, dir: String, query: String, hidden: bool, filters: Option<Filters>, regex: Option<bool>) -> Result<Matches, String> {
     let dev = state.source(Some(&src))?;
     let filters = filters.unwrap_or_default();
+    let query = if regex.unwrap_or(false) { Query::regex(&query)? } else { Query::text(&query) };
     blocking(move || Ok(find_in(&dev, &dir, &query, hidden, &filters, 1000, std::time::Duration::from_secs(30)))).await
 }
 
-pub(super) fn find_in(dev: &Device, dir: &str, query: &str, hidden: bool, filters: &Filters, max: usize, time: std::time::Duration) -> Matches {
-    let q = query.trim().to_lowercase();
-    let pattern: Option<Vec<char>> = (q.contains('*') || q.contains('?')).then(|| q.chars().collect());
-    let fits = |name: &str| {
-        let name = name.to_lowercase();
-        match &pattern {
-            Some(p) => glob(p, &name.chars().collect::<Vec<_>>()),
-            None => name.contains(&q),
+/// What `find_in` looks for in names.
+pub(super) enum Query {
+    /// Contained in the name, any case.
+    Has(String),
+    /// A pattern with * and ?, lowercased.
+    Glob(Vec<char>),
+    Regex(regex::Regex),
+}
+
+impl Query {
+    /// Plain text, or a pattern when it has * or ?.
+    pub(super) fn text(query: &str) -> Self {
+        let q = query.trim().to_lowercase();
+        if q.contains('*') || q.contains('?') {
+            Query::Glob(q.chars().collect())
+        } else {
+            Query::Has(q)
         }
-    };
+    }
+
+    /// A regular expression, any case, or why it isn't one.
+    pub(super) fn regex(query: &str) -> Result<Self, String> {
+        regex::RegexBuilder::new(query.trim())
+            .case_insensitive(true)
+            .size_limit(1 << 20)
+            .build()
+            .map(Query::Regex)
+            .map_err(|e| format!("That regular expression doesn't work: {e}"))
+    }
+
+    fn fits(&self, name: &str) -> bool {
+        match self {
+            Query::Has(q) => name.to_lowercase().contains(q),
+            Query::Glob(p) => glob(p, &name.to_lowercase().chars().collect::<Vec<_>>()),
+            Query::Regex(re) => re.is_match(name),
+        }
+    }
+}
+
+pub(super) fn find_in(dev: &Device, dir: &str, query: &Query, hidden: bool, filters: &Filters, max: usize, time: std::time::Duration) -> Matches {
+    let fits = |name: &str| query.fits(name);
     let start = std::time::Instant::now();
     let mut out = vec![];
     let mut queue = std::collections::VecDeque::from([dir.to_string()]);
@@ -484,15 +517,15 @@ mod tests {
         let mac = crate::Device::new(Box::new(crate::local::Local));
         let r = crate::platform::app_path(&root);
         let names = |hidden| -> Vec<String> {
-            super::find_in(&mac, &r, "BOOK", hidden, &Default::default(), 100, std::time::Duration::from_secs(5)).entries.into_iter().map(|e| e.name).collect()
+            super::find_in(&mac, &r, &super::Query::text("BOOK"), hidden, &Default::default(), 100, std::time::Duration::from_secs(5)).entries.into_iter().map(|e| e.name).collect()
         };
         assert_eq!(names(false), ["Book one.epub", "book two.EPUB"]);
         assert_eq!(names(true).len(), 3);
-        let f = super::find_in(&mac, &r, "o", true, &Default::default(), 2, std::time::Duration::from_secs(5));
+        let f = super::find_in(&mac, &r, &super::Query::text("o"), true, &Default::default(), 2, std::time::Duration::from_secs(5));
         assert!(!f.complete && f.entries.len() == 2);
         // Patterns and filters.
         let with = |q: &str, f: super::Filters| -> Vec<String> {
-            let mut v: Vec<String> = super::find_in(&mac, &r, q, false, &f, 100, std::time::Duration::from_secs(5)).entries.into_iter().map(|e| e.name).collect();
+            let mut v: Vec<String> = super::find_in(&mac, &r, &super::Query::text(q), false, &f, 100, std::time::Duration::from_secs(5)).entries.into_iter().map(|e| e.name).collect();
             v.sort();
             v
         };
@@ -502,6 +535,15 @@ mod tests {
         assert_eq!(with("", super::Filters { kind: Some("folder".into()), ..Default::default() }), ["a", "b"]);
         assert_eq!(with("", super::Filters { min_size: Some(2), ..Default::default() }), Vec::<String>::new());
         assert_eq!(with("o", super::Filters { after: Some(0), ..Default::default() }).len(), 3, "files only, no folders");
+        // Regular expressions, any case.
+        let re = |q: &str| -> Vec<String> {
+            let mut v: Vec<String> = super::find_in(&mac, &r, &super::Query::regex(q).unwrap(), false, &Default::default(), 100, std::time::Duration::from_secs(5)).entries.into_iter().map(|e| e.name).collect();
+            v.sort();
+            v
+        };
+        assert_eq!(re(r"^book \w+\.epub$"), ["Book one.epub", "book two.EPUB"]);
+        assert_eq!(re(r"^.$"), ["a", "b"]);
+        assert!(super::Query::regex("(").is_err());
         // Rename.
         assert!(mac.rename(&format!("{r}/a/notes.txt"), "Book one.epub").is_ok(), "other folder, free");
         assert!(mac.rename(&format!("{r}/a/Book one.epub"), "b").is_err(), "taken by a folder");

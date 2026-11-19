@@ -240,12 +240,24 @@ pub(super) const SEARCH_TIMES: &[(&str, i64)] = &[
     ("Past year", 365),
     ("Over a year ago", -365),
 ];
+pub(super) const REGEX_KEY: &str = "ferry-files.filter-regex";
 pub(super) const SIDE_W_KEY: &str = "ferry-files.side-w";
 /// The narrowest the sidebar may be dragged; a narrower saved width is widened to it.
 pub(super) const SIDE_MIN: f64 = 250.0;
 pub(super) const PANE_W_KEY: &str = "ferry-files.pane-w";
 /// The narrowest the right pane may be; also `.pane[data-pane="1"]` in views.css.
 pub(super) const RIGHT_PANE_MIN: f64 = 360.0;
+
+/// A JavaScript regular expression, or why `source` isn't one.
+pub(super) fn js_regex(source: &str, flags: &str) -> Result<js_sys::RegExp, String> {
+    // Through Reflect, so a bad pattern is an error rather than a crash.
+    let ctor = js_sys::RegExp::new("", "").constructor();
+    let args = js_sys::Array::of2(&source.into(), &flags.into());
+    match js_sys::Reflect::construct(&ctor, &args) {
+        Ok(v) => Ok(v.unchecked_into()),
+        Err(e) => Err(format!("That pattern doesn't work: {}", e.dyn_ref::<js_sys::Error>().map(|e| String::from(e.message())).unwrap_or_default())),
+    }
+}
 
 /// A setting kept in localStorage as "1" or "0".
 pub(super) fn stored_flag(key: &str, default: bool) -> bool {

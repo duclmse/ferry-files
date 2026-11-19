@@ -87,7 +87,7 @@ pub(crate) fn parse(text: &str) -> Vec<UsbDev> {
             continue;
         }
         let Some((key, value)) = line.split_once(" = ") else { continue };
-        let key = key.trim_start_matches(|c: char| c == ' ' || c == '|').trim_matches('"');
+        let key = key.trim_start_matches([' ', '|']).trim_matches('"');
         let num = || value.trim().parse::<u64>().ok();
         match key {
             "locationID" => cur.location = num().map(|n| n as u32),

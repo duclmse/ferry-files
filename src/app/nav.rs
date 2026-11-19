@@ -144,7 +144,7 @@ impl Ctx {
         // How the status bar names it: the text, then the filters in use.
         let mut label = vec![];
         if !query.is_empty() {
-            label.push(format!("“{query}”"));
+            label.push(if p.regex.get_untracked() { format!("/{query}/") } else { format!("“{query}”") });
         }
         for (i, name) in [(k, SEARCH_KINDS[k].0), (s, SEARCH_SIZES[s].0), (t, SEARCH_TIMES[t].0)] {
             if i > 0 {
@@ -168,7 +168,7 @@ impl Ctx {
                 entries: Vec<Entry>,
                 complete: bool,
             }
-            let args = json!({ "src": src.key(), "dir": dir, "query": query, "hidden": self.show_hidden.get_untracked(), "filters": filters });
+            let args = json!({ "src": src.key(), "dir": dir, "query": query, "hidden": self.show_hidden.get_untracked(), "filters": filters, "regex": p.regex.get_untracked() });
             match call::<Matches>("find", args).await {
                 Ok(m) if p.cwd.get_untracked() == dir && p.src.get_untracked() == src => {
                     p.all.set(m.entries);

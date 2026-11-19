@@ -2,7 +2,7 @@
 //! The work on each book is in books.rs; these read and write it through the device.
 
 use super::*;
-use crate::files::{find_in, Matches};
+use crate::files::{find_in, Matches, Query};
 
 
 /// Every EPUB under `dir`, nearest first.
@@ -10,7 +10,7 @@ use crate::files::{find_in, Matches};
 pub(super) async fn library(state: State<'_, AppState>, src: String, dir: String, hidden: bool) -> Result<Matches, String> {
     let dev = state.source(Some(&src))?;
     blocking(move || {
-        let mut m = find_in(&dev, &dir, ".epub", hidden, &Default::default(), 5000, std::time::Duration::from_secs(90));
+        let mut m = find_in(&dev, &dir, &Query::text(".epub"), hidden, &Default::default(), 5000, std::time::Duration::from_secs(90));
         m.entries.retain(|e| !e.dir && e.name.to_lowercase().ends_with(".epub"));
         Ok(m)
     })
