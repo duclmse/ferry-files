@@ -113,7 +113,6 @@ pub(super) fn SearchPane(pane: Pane) -> impl IntoView {
     };
     let changes = move || p.replace_rows.with(|r| r.as_ref().map_or(0, HashMap::len));
     let problems = move || p.replace_rows.with(|r| r.as_ref().map_or(0, |m| m.values().filter(|(_, x)| x.is_some()).count()));
-    let replace_error = move || p.replace_rows.with(|r| r.as_ref().err().cloned());
     // Typing filters once it pauses: each key would otherwise go through the whole folder.
     let pending = StoredValue::new_local(None::<TimeoutHandle>);
     let cancel = move || {
@@ -155,8 +154,10 @@ pub(super) fn SearchPane(pane: Pane) -> impl IntoView {
         </select>
     };
 
-    // A grid: the chevron, the search and Replace with boxes one above the other (so always as
-    // wide as each other), then the buttons; the hint and the options take the rows under them.
+    // A grid: the chevron (beside both boxes while Replace with shows), the search and Replace
+    // with boxes one above the other (so always as wide as each other), then the buttons; the
+    // options take the row under them. A box with something wrong is outlined in red, and says
+    // what in its tooltip.
     move || p.filters_open.get().then(|| view! {
         <div class="search-filters">
             <button class="filter-opt chevron" class:open=move || p.replacing.get() aria-expanded=move || p.replacing.get().to_string()
@@ -208,10 +209,15 @@ pub(super) fn SearchPane(pane: Pane) -> impl IntoView {
                     on:click=move |_| { cancel(); ctx.close_search(p); }>{ico(Icon::Close)}</button>
             </div>
             {move || p.replacing.get().then(|| view! {
-                <div class="filter-box replace-box">
+                <div class="filter-box replace-box" class:bad=move || { problems() > 0 }>
                     <span class="replace-icon" aria-hidden="true">"⇄"</span>
                     <input class="filter" type="text" aria-label="Replace with" spellcheck="false" autocomplete="off"
                         placeholder=move || if p.regex.get() { "Replace with ($1 for groups)" } else { "Replace with" }
+                        title=move || match problems() {
+                            0 => "What to put in place of what the search box finds".to_string(),
+                            1 => "1 new name won't work; see the list".to_string(),
+                            n => format!("{n} new names won't work; see the list"),
+                        }
                         prop:value=move || p.replace.get()
                         on:input=move |ev| p.replace.set(event_target_value(&ev))
                         on:keydown=move |ev| match ev.key().as_str() {
@@ -221,15 +227,15 @@ pub(super) fn SearchPane(pane: Pane) -> impl IntoView {
                         }/>
                 </div>
                 <div class="tools">
-                    <button class="btn small primary" disabled=move || { changes() == 0 || problems() > 0 || !ctx.renamable(p) }
-                        title="Rename the shown items as previewed in the list" on:click=move |_| ctx.replace_all(p)>
-                        {move || match changes() { 1 => "Rename 1 item".to_string(), n => format!("Rename {n} items") }}</button>
+                    <button class="btn icon-only small primary" disabled=move || { changes() == 0 || problems() > 0 || !ctx.renamable(p) }
+                        title=move || match changes() {
+                            0 => "Nothing shown would be renamed".to_string(),
+                            1 => "Rename 1 item as previewed in the list".to_string(),
+                            n => format!("Rename {n} items as previewed in the list"),
+                        }
+                        aria-label=move || match changes() { 1 => "Rename 1 item".to_string(), n => format!("Rename {n} items") }
+                        on:click=move |_| ctx.replace_all(p)>{ico(Icon::Check)}</button>
                 </div>
-                {move || {
-                    replace_error().or_else(|| (problems() > 0).then(|| {
-                        format!("{} new name{} won't work; see the list.", problems(), if problems() == 1 { "" } else { "s" })
-                    })).map(|e| view! { <span class="hint error">{e}</span> })
-                }}
             })}
             {move || p.search_options.get().then(|| view! {
                 <div class="options-row">

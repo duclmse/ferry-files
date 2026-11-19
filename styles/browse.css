@@ -251,8 +251,8 @@ td.name .where {
 }
 
 /* The filter pane under a pane's toolbar (search.rs): the chevron, the search box with Replace
-   with under it (same column, so the same width), then the buttons. The hint and the kind, size
-   and time choices take the rows under them. Fits a narrow pane without wrapping. */
+   with under it (same column, so the same width), then the buttons. The kind, size and time
+   choices take the row under them. Fits a narrow pane without wrapping. */
 .search-filters {
   display: grid;
   grid-template-columns: 22px minmax(90px, 400px) 1fr;
@@ -280,7 +280,6 @@ td.name .where {
 }
 
 /* Under the boxes, as wide as the space after the chevron. */
-.search-filters .hint,
 .search-filters .options-row {
   grid-column: 2 / -1;
   min-width: 0;
@@ -293,10 +292,6 @@ td.name .where {
   gap: 6px;
 }
 
-.search-filters .hint.error {
-  color: var(--danger);
-}
-
 /* Some kind, size or time is chosen while they're hidden. */
 .search-filters .options.narrowed {
   color: var(--accent);
@@ -305,6 +300,14 @@ td.name .where {
 /* Before the search box: opens Replace with under it, and points down while it's open. */
 .search-filters .chevron {
   grid-column: 1;
+  grid-row: 1;
+  align-self: stretch;
+  height: auto;
+}
+
+/* Beside both boxes. */
+.search-filters .chevron.open {
+  grid-row: 1 / span 2;
 }
 
 .search-filters .chevron svg {
@@ -332,11 +335,6 @@ td.name .where {
 .search-filters select {
   font: inherit;
   padding: 2px 4px;
-}
-
-.search-filters .hint {
-  flex: 1 1 200px;
-  min-width: 0;
 }
 
 /* Renaming several items. */

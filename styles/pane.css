@@ -43,8 +43,9 @@
   cursor: default;
 }
 
-/* The sidebar and second pane buttons at the ends of the strip. */
-.tabs .tab-tool {
+/* The sidebar and second pane buttons at the ends of the strip. With .btn, so this padding wins
+   over .btn.icon-only's: that would leave 8px for the 14px icon, pushing it off centre. */
+.tabs .btn.tab-tool {
   flex: none;
   align-self: center;
   display: grid;
