@@ -100,6 +100,25 @@
   flex: none;
 }
 
+.event {
+  align-items: center;
+}
+
+.event .grow {
+  flex: 1;
+  min-width: 0;
+}
+
+.event .btn {
+  flex: none;
+}
+
+/* Undone: kept in the list, crossed out. */
+.event.undone .grow {
+  color: var(--muted);
+  text-decoration: line-through;
+}
+
 .backups > .hint,
 .history > .hint {
   margin: 8px 10px;

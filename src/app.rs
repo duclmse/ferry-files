@@ -23,6 +23,7 @@ mod preview;
 mod safety;
 mod sidebar;
 mod transfer;
+mod undo;
 mod util;
 mod views;
 mod wifi;
@@ -38,6 +39,7 @@ use preview::*;
 use safety::*;
 use sidebar::*;
 use transfer::*;
+use undo::*;
 use util::*;
 use views::*;
 use wifi::*;
@@ -229,6 +231,8 @@ enum Act {
     NewTab,
     /// Shows or hides the sidebar.
     Sidebar,
+    /// Undoes the newest action that can be.
+    Undo,
 }
 
 enum MenuItem {
@@ -565,8 +569,8 @@ struct Ctx {
     favs: RwSignal<Vec<Fav>>,
     /// Free space per storage, by side ("mac", "d1", ...).
     space: RwSignal<HashMap<String, Vec<Space>>>,
-    /// What was done this session, newest last: (time, what).
-    history: RwSignal<Vec<(String, String)>>,
+    /// What was done this session, newest last, with how to undo it.
+    history: RwSignal<Vec<Op>>,
     /// The Backups or History window, when open.
     panel: RwSignal<Option<Panel>>,
     /// What's being dragged from a pane: its side and paths.
@@ -893,6 +897,10 @@ pub fn App() -> impl IntoView {
                     e.prevent_default();
                     p.renaming.set(Some(x.path.clone()));
                 }
+            }
+            ("z", true) if !e.shift_key() => {
+                e.prevent_default();
+                ctx.undo_last();
             }
             ("a", true) => {
                 e.prevent_default();

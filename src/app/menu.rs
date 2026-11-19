@@ -135,6 +135,10 @@ impl Ctx {
             v.push(item(if split { "Hide second pane" } else { "Show second pane" }, "⌘\\", Act::Split));
             let side = if self.side.get_untracked() { "Hide" } else { "Show" };
             v.push(item(format!("{side} {}", crate::os::sidebar()), "⌥⌘S", Act::Sidebar));
+            if let Some((_, text)) = self.last_undo() {
+                let short: String = if text.chars().count() > 40 { format!("{}…", text.chars().take(39).collect::<String>()) } else { text };
+                v.splice(0..0, [item(format!("Undo: {short}"), "⌘Z", Act::Undo), MenuItem::Sep]);
+            }
             return v;
         };
         let picked = p.picked().len();
@@ -224,6 +228,7 @@ impl Ctx {
             (Act::View(v), _) => self.set_view(p, v),
             (Act::Split, _) => self.set_split(!self.split.get_untracked()),
             (Act::Sidebar, _) => self.set_side(!self.side.get_untracked()),
+            (Act::Undo, _) => self.undo_last(),
             (Act::CopyName, Some(e)) => copy_text(p, e.name),
             (Act::CopyPath, Some(e)) => copy_text(p, if p.src.get_untracked() == Src::Mac { crate::os::native_path(&e.path) } else { e.path }),
             (Act::Column(c), _) if c < LIST_COLS.len() => {

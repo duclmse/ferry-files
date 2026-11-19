@@ -131,6 +131,31 @@ pub(super) async fn remove(state: State<'_, AppState>, src: Option<String>, path
     blocking(move || dev.remove(&path).map_err(msg)).await
 }
 
+/// Removes a file, or a folder with everything in it: each file backed up, like any delete, then
+/// the folders, deepest first. Used to undo a copy. Stops at the first error.
+pub(super) fn remove_all(dev: &Device, path: &str) -> Result<u32, String> {
+    let Some(st) = dev.stat(path).map_err(msg)? else {
+        return Err(format!("{path} isn't there any more."));
+    };
+    let mut backups = 0;
+    if st.dir {
+        for e in dev.listdir(path).map_err(msg)? {
+            backups += remove_all(dev, &e.path)?;
+        }
+    }
+    if dev.remove(path).map_err(msg)?.is_some() {
+        backups += 1;
+    }
+    Ok(backups)
+}
+
+/// `remove_all` on a device. Returns how many files were backed up.
+#[tauri::command(rename_all = "snake_case")]
+pub(super) async fn remove_tree(state: State<'_, AppState>, src: String, path: String) -> Result<u32, String> {
+    let dev = state.source(Some(&src))?;
+    blocking(move || remove_all(&dev, &path)).await
+}
+
 /// Asks where to save, then copies the device file to the computer. Returns where it went, or None if cancelled.
 #[tauri::command(rename_all = "snake_case")]
 pub(super) async fn download(app: AppHandle, state: State<'_, AppState>, src: String, path: String) -> Result<Option<String>, String> {

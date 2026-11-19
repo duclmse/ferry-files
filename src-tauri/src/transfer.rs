@@ -16,7 +16,7 @@ pub(super) struct Progress {
     current: String,
 }
 
-#[derive(Serialize)]
+#[derive(Serialize, Default)]
 pub(super) struct TransferReport {
     copied: u32,
     /// Name and reason, for each item that wasn't copied (or moved).
@@ -26,6 +26,9 @@ pub(super) struct TransferReport {
     backups: Vec<String>,
     /// Resuming: files already at the target with the same size, left as they are.
     already: u32,
+    /// What the transfer made at the target's top level that wasn't there before (a file, or a
+    /// folder with everything in it): what undoing the copy removes, or the move moves back.
+    made: Vec<String>,
 }
 
 /// One file or folder to make at the target, found by walking the sources.
@@ -85,17 +88,24 @@ pub(super) fn run_transfer(
     stop: &std::sync::atomic::AtomicBool,
     emit: impl Fn(Progress),
 ) -> Result<TransferReport, String> {
-    let mut report = TransferReport { copied: 0, skipped: vec![], cancelled: false, backups: vec![], already: 0 };
+    let mut report = TransferReport::default();
     let mut items = vec![];
+    let mut new = vec![];
     for p in paths {
         if same && (device::dirname(p) == to_dir || to_dir == p || to_dir.starts_with(&format!("{p}/"))) {
             let why = if device::dirname(p) == to_dir { "It's already in this folder." } else { "A folder can't go inside itself." };
             report.skipped.push((device::basename(p).to_string(), why.into()));
             continue;
         }
+        let target = device::join(to_dir, device::basename(p));
+        if b.stat(&target).map_err(msg)?.is_none() {
+            new.push(target);
+        }
         walk(a, p, to_dir, &mut items)?;
     }
-    run_items(a, b, job, &items, opts, stop, emit, report)
+    let mut report = run_items(a, b, job, &items, opts, stop, emit, report)?;
+    report.made = new.into_iter().filter(|t| b.stat(t).ok().flatten().is_some()).collect();
+    Ok(report)
 }
 
 /// Copies (or moves) each item in turn: folders are made (or merged into), files are written
@@ -340,7 +350,7 @@ pub(super) async fn sync(
     let r = blocking(move || {
         let mut c = Comparison::default();
         compare_dirs(&a, &from_dir, &b, &to_dir, "", hidden, &mut c)?;
-        let report = TransferReport { copied: 0, skipped: vec![], cancelled: false, backups: vec![], already: 0 };
+        let report = TransferReport::default();
         run_items(&a, &b, job, &c.missing, Opts { verify: verify.unwrap_or(false), ..Opts::default() }, &stop, |p| {
             let _ = app.emit("transfer", p);
         }, report)
@@ -378,6 +388,13 @@ mod tests {
         assert_eq!(r.skipped.len(), 1, "the existing a.txt is skipped");
         assert_eq!(fs::read(dst.join("book/a.txt")).unwrap(), b"old");
         assert_eq!(fs::read(dst.join("book/inner/b.txt")).unwrap(), b"bb");
+        assert!(r.made.is_empty(), "book was there before: merged into, not made");
+        // A copy into a fresh folder makes book there; undoing it removes all of it.
+        fs::create_dir(root.join("copied")).unwrap();
+        let r = super::run_transfer(&mac, &mac, true, 1, &paths, &s(&root.join("copied")), super::Opts::default(), &stop, |_| {}).unwrap();
+        assert_eq!(r.made, vec![s(&root.join("copied/book"))]);
+        assert_eq!(crate::files::remove_all(&mac, &r.made[0]).unwrap(), 2, "a.txt and b.txt backed up");
+        assert!(!root.join("copied/book").exists());
         // Resuming: b.txt is there with the same size (done); a.txt differs (skipped, kept).
         let r = super::run_transfer(&mac, &mac, true, 1, &paths, &s(&dst), super::Opts { moving: false, resume: true, verify: true }, &stop, |_| {}).unwrap();
         assert_eq!((r.copied, r.already, r.skipped.len()), (0, 1, 1));
@@ -426,7 +443,7 @@ mod tests {
         assert_eq!(missing, ["/x/new.txt", "/x/y", "/x/y/deep.txt"]);
         assert_eq!((c.differ, c.extra, c.same), (vec!["big.txt".to_string()], vec!["x/only-b.txt".to_string()], 1));
         let stop = std::sync::atomic::AtomicBool::new(false);
-        let report = super::TransferReport { copied: 0, skipped: vec![], cancelled: false, backups: vec![], already: 0 };
+        let report = super::TransferReport::default();
         let r = super::run_items(&mac, &mac, 1, &c.missing, super::Opts::default(), &stop, |_| {}, report).unwrap();
         assert_eq!((r.copied, r.skipped.len()), (2, 0));
         assert_eq!(fs::read(b.join("x/y/deep.txt")).unwrap(), b"dd");

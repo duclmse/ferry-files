@@ -44,6 +44,9 @@ pub struct TransferReport {
     pub skipped: Vec<(String, String)>,
     pub cancelled: bool,
     pub backups: Vec<String>,
+    /// What the copy made at the target's top level that wasn't there before.
+    #[serde(default)]
+    pub made: Vec<String>,
 }
 
 /// A book's info, for the library.

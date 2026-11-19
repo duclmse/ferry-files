@@ -5,9 +5,7 @@ use super::*;
 impl Ctx {
     /// Notes an action in the session's history.
     pub(super) fn log(self, what: impl Into<String>) {
-        let d = js_sys::Date::new_0();
-        let at = format!("{:02}:{:02}:{:02}", d.get_hours(), d.get_minutes(), d.get_seconds());
-        self.history.update(|h| h.push((at, what.into())));
+        self.push_op(what.into(), None);
     }
 
     /// Asks how much space is free on `src`'s storages.
@@ -189,15 +187,23 @@ pub(super) fn History() -> impl IntoView {
         <div class="overlay" on:click=move |_| close()>
             <div class="dialog wide" on:click=|e| e.stop_propagation()>
                 <h2>"History"</h2>
-                <p class="hint">"What was done since the app started. Replaced and deleted files can be put back from Backups."</p>
+                <p class="hint">{format!("What was done since the app started. Renames, new items, deletes, copies and moves can be undone ({} undoes the newest); replaced files can be put back from Backups.", crate::os::keys("⌘Z"))}</p>
                 <div class="history">
                     {move || {
                         let h = ctx.history.get();
                         if h.is_empty() {
                             return view! { <p class="hint">"Nothing yet."</p> }.into_any();
                         }
-                        h.into_iter().rev().map(|(at, what)| view! {
-                            <div class="event"><span class="at">{at}</span><span>{what}</span></div>
+                        h.into_iter().enumerate().rev().map(|(i, op)| {
+                            let undo = (op.undo.is_some() && !op.undone).then(|| view! {
+                                <button class="btn small" title="Do the opposite, if nothing has changed since"
+                                    on:click=move |_| ctx.undo(i, ctx.act())>{ico(Icon::Restore)}"Undo"</button>
+                            });
+                            view! {
+                                <div class="event" class:undone=op.undone>
+                                    <span class="at">{op.at}</span><span class="grow">{op.text}</span>{undo}
+                                </div>
+                            }
                         }).collect_view().into_any()
                     }}
                 </div>

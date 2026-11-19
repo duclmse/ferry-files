@@ -81,11 +81,13 @@ impl Ctx {
             let mut done = 0;
             let mut backups = 0;
             let mut error = None;
+            let mut gone = vec![];
             for e in &items {
                 match call::<Option<String>>("remove", json!({ "src": src.key(), "path": e.path })).await {
                     Ok(b) => {
                         done += 1;
                         backups += b.is_some() as usize;
+                        gone.push((e.path.clone(), e.dir, b));
                     }
                     Err(err) => {
                         error = Some(err);
@@ -96,7 +98,7 @@ impl Ctx {
             let what = if items.len() == 1 { items[0].name.clone() } else { format!("{done} items") };
             let note = if backups > 0 { format!(" Backups are kept on {}.", crate::os::the_computer()) } else { String::new() };
             if done > 0 {
-                self.log(format!("Deleted {what} from {}", self.place(src)));
+                self.log_undo(format!("Deleted {what} from {}", self.place(src)), Undo::Delete { src, items: gone });
             }
             match error {
                 None => p.notice.set(Notice::Ok(format!("Deleted {what}.{note}"))),
@@ -119,7 +121,7 @@ impl Ctx {
         spawn_local(async move {
             match call::<String>("rename", json!({ "src": src.key(), "path": e.path, "name": name })).await {
                 Ok(new) => {
-                    self.log(format!("Renamed {} to {}", e.name, base(&new)));
+                    self.log_undo(format!("Renamed {} to {}", e.name, base(&new)), Undo::Renames { src, items: vec![(new.clone(), e.name.clone())] });
                     p.select_only(Some(new));
                     self.changed(src, &parent(&e.path));
                 }
@@ -147,7 +149,7 @@ impl Ctx {
             match result {
                 Ok(()) => {
                     p.notice.set(Notice::None);
-                    self.log(format!("Created {}", path));
+                    self.log_undo(format!("Created {}", path), Undo::Create { src, path: path.clone(), folder });
                     if folder { self.changed(src, &dir) } else { self.open_text(p, path) }
                 }
                 Err(e) => p.error(e),

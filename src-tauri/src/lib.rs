@@ -166,6 +166,7 @@ pub fn run() {
             files::write_text,
             files::mkdir,
             files::remove,
+            files::remove_tree,
             files::download,
             files::upload,
             safety::backups,

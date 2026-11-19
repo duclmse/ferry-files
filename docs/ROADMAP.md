@@ -86,15 +86,23 @@ Built:
 
 ## Phase 2 — Files
 
-### 4. Undo ☐
+### 4. Undo ☑
 Goal: ⌘Z undoes the last file action.
 
-- `history` becomes structured: `Op { at, text, undo: Option<Undo> }` with
-  `Undo::{Rename{src,path,old_name}, Create{src,path}, Move{from_src,paths,to_src,to_dir}, Delete{src,path,backup}}`.
-- Undo of: rename → rename back; new folder/file → remove (backed up as usual); move → move back;
-  delete → restore from its backup (`restore` command). Copies: remove the copies.
-- Each undo checks the thing is still as left (stat), else says what changed and does nothing.
-- ⌘Z in panes, "Undo …" in the background menu and an Undo button per History row.
+Built (`src/app/undo.rs`):
+- `history` is a list of `Op { at, text, undo: Option<Undo>, undone }`.
+- `Undo::Renames` (rename back; a list, ready for batch rename), `Create` (remove the new item;
+  a file only while still empty), `Delete` (folders made again, files restored from their
+  backups), `Copy` (removes what the copy made, with the new `remove_tree` command: every file
+  backed up), `Move` (moves back through the transfer queue).
+- The backend reports `TransferReport.made`: top-level items the transfer created that weren't
+  there before. A copy's undo removes only those; a move can be undone only when every item went
+  into a new place and nothing was skipped (otherwise moving back would take files that were
+  there before).
+- Each undo first checks things are as the action left them (the renamed/created/copied items
+  are there, a deleted name is still free), else says what changed and does nothing.
+- ⌘Z in the panes (not in text fields), "Undo: …" at the top of the background menu, an Undo
+  button per row in History (undone rows are crossed out).
 
 ### 5. Search with filters ☐
 - `find` gains filters: kind (folder/picture/video/audio/document/book/archive), size range,

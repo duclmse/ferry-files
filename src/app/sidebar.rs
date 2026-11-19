@@ -371,6 +371,7 @@ pub(super) fn Shortcuts() -> impl IntoView {
         ("Tab", "The other pane"),
         ("⌘\\", "Show or hide the second pane"),
         ("⌥⌘S", "Show or hide the sidebar"),
+        ("⌘Z", "Undo the last rename, new item, delete, copy or move"),
         ("Middle-click", "Open a sidebar folder in a new tab"),
         ("⌘T", "New tab"),
         ("⌘W", "Close tab"),

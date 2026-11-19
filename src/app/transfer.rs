@@ -146,7 +146,20 @@ impl Ctx {
         let state = match r {
             Ok(r) => {
                 let lines = report_lines(&job.work, &r);
-                self.log(lines[0].clone());
+                match &job.work {
+                    Work::Copy { moving: false, .. } if !r.made.is_empty() => {
+                        self.log_undo(lines[0].clone(), Undo::Copy { to: to_src, made: r.made.clone() });
+                    }
+                    // A move goes back only when it went whole into new places: otherwise moving
+                    // back would take files that were there before too.
+                    Work::Copy { moving: true, items, .. }
+                        if !r.cancelled && r.skipped.is_empty() && r.already == 0 && r.made.len() == items.len() =>
+                    {
+                        let back = r.made.iter().cloned().zip(items.iter().map(|x| parent(x))).collect();
+                        self.log_undo(lines[0].clone(), Undo::Move { from: from_src, to: to_src, back });
+                    }
+                    _ => self.log(lines[0].clone()),
+                }
                 let msg = lines.join("\n");
                 let left = r.cancelled || !r.skipped.is_empty();
                 p.notice.set(if r.skipped.is_empty() { Notice::Ok(msg) } else { Notice::Error(msg) });
