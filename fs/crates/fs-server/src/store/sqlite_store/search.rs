@@ -39,20 +39,6 @@ fn is_name_condition(c: &SqlCondition) -> bool {
     )
 }
 
-/// The extension a `*.ext` glob ends in, so `idx_files_extension` can answer
-/// it. The column cannot replace the glob: folders and names such as `.pdf`
-/// have no extension, so the glob stays and the indexed search returns only
-/// real matches. Only a full page proves that nothing was missed; a short one
-/// falls through to the full search.
-fn glob_extension(c: &SqlCondition) -> Option<String> {
-    let SqlCondition::NameGlobNoCase(p) = c else {
-        return None;
-    };
-    let ext = p.strip_prefix("*.")?;
-    let plain = !ext.is_empty() && !ext.contains(['*', '?', '[', ']', '.']);
-    plain.then(|| ext.to_ascii_lowercase())
-}
-
 /// The planner emits `NameLike("%")` as a catch-all for OR / NOT.
 fn is_match_all(c: &SqlCondition) -> bool {
     matches!(c, SqlCondition::NameLike(p) if p == "%")
@@ -318,20 +304,15 @@ impl SqliteStore {
             return self.search_meta(&MetaFilters::default(), limit);
         }
         let bulk_loading = self.bulk_loading()?;
-        if self.ext_index && !bulk_loading {
-            if let Some(ext) = conds.iter().find_map(glob_extension) {
-                let mut with_ext = Vec::with_capacity(conds.len() + 1);
-                with_ext.push(SqlCondition::ExtIn(vec![ext]));
-                with_ext.extend_from_slice(conds);
-                let rows = self.search_plain(&with_ext, limit)?;
-                if rows.len() >= limit {
-                    return Ok(rows);
-                }
-            }
-        }
+        // A `*.ext` glob comes with `ExtOrNone`, which the extension index
+        // answers; the partitioned name scan below would read every name.
+        let by_extension = self.ext_index
+            && conds
+                .iter()
+                .any(|c| matches!(c, SqlCondition::ExtOrNone(_)));
         let (name_conds, other_conds): (Vec<SqlCondition>, Vec<SqlCondition>) =
             conds.iter().cloned().partition(is_name_condition);
-        if name_conds.iter().all(is_match_all) || !self.name_index || bulk_loading {
+        if by_extension || name_conds.iter().all(is_match_all) || !self.name_index || bulk_loading {
             return self.search_plain(conds, limit);
         }
         self.search_by_name_index(&name_conds, &other_conds, limit)

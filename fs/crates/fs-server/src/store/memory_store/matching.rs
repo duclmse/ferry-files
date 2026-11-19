@@ -421,6 +421,7 @@ impl SqlCondition {
             SqlCondition::SizeRange(a, b) => r.size_bytes() >= *a && r.size_bytes() <= *b,
             SqlCondition::SizeOp(op, v) => cmp_op_u64(*op, r.size_bytes(), *v),
             SqlCondition::ExtIn(exts) => r.extension().is_some_and(|e| exts.iter().any(|x| x == e)),
+            SqlCondition::ExtOrNone(ext) => r.extension().is_none_or(|e| e == ext),
             SqlCondition::ParentPath(p) => r.path_is_under(p),
             SqlCondition::NameLenOp(op, n) => cmp_op_usize(*op, r.name().chars().count(), *n),
             SqlCondition::DepthOp(op, d) => cmp_op_usize(*op, r.path_depth(), *d),

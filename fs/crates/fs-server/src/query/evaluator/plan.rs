@@ -178,12 +178,15 @@ fn emit_predicate(pred: &Predicate, mods: &Modifiers, p: &mut QueryPlan) -> Resu
                             case_sensitive,
                         });
                     }
-                } else if case_sensitive {
-                    p.sql_conditions
-                        .push(SqlCondition::NameGlob(glob_to_sqlite(s, true)));
                 } else {
-                    p.sql_conditions
-                        .push(SqlCondition::NameGlobNoCase(glob_to_sqlite(s, true)));
+                    p.sql_conditions.push(if case_sensitive {
+                        SqlCondition::NameGlob(glob_to_sqlite(s, true))
+                    } else {
+                        SqlCondition::NameGlobNoCase(glob_to_sqlite(s, true))
+                    });
+                    if let Some(ext) = glob_extension(s) {
+                        p.sql_conditions.push(SqlCondition::ExtOrNone(ext));
+                    }
                 }
             } else {
                 let (literal, widened) =
@@ -344,6 +347,14 @@ fn emit_function(
         }
     }
     Ok(())
+}
+
+/// The extension a plain `*.ext` glob ends in, lowercased as every writer
+/// stores it. Any name the glob matches has that extension or none.
+fn glob_extension(pattern: &str) -> Option<String> {
+    let ext = pattern.strip_prefix("*.")?;
+    let plain = !ext.is_empty() && !ext.contains(['*', '?', '[', ']', '.', '/', '\\']);
+    plain.then(|| ext.to_lowercase())
 }
 
 /// The SQL `LIKE` pattern for `s` and whether it was widened. Either way it

@@ -560,7 +560,11 @@ fn extension_glob_finds_folders_and_dot_names_the_column_lacks() {
         batch.extend([folder, dot, other].map(|r| (r, "/r".to_owned())));
         store.batch_upsert_crawl(&batch, gen).unwrap();
 
-        let glob = [SqlCondition::NameGlobNoCase("*.pdf".into())];
+        // What the planner emits for `*.pdf`.
+        let glob = [
+            SqlCondition::NameGlobNoCase("*.pdf".into()),
+            SqlCondition::ExtOrNone("pdf".into()),
+        ];
         let page = store.search_conditions(&glob, 10).unwrap();
         assert_eq!(page.len(), 10);
         assert!(page.iter().all(|r| r.name.to_lowercase().ends_with(".pdf")));
@@ -582,6 +586,18 @@ fn extension_glob_finds_folders_and_dot_names_the_column_lacks() {
             .unwrap();
         assert_eq!(folders.len(), 1);
         assert_eq!(folders[0].name, "books.pdf");
+
+        let sort = crate::store::Sort {
+            key: crate::store::SortKey::Name,
+            descending: false,
+        };
+        let first = store.search_sorted(&glob, sort, 3).unwrap();
+        let names: Vec<&str> = first.iter().map(|r| r.name.as_str()).collect();
+        assert_eq!(
+            names,
+            [".pdf", "books.pdf", "doc0.PDF"],
+            "sorted over all matches"
+        );
     }
 }
 

@@ -425,7 +425,8 @@ mod modifiers_end_to_end {
             id: None,
             path: path.into(),
             name: path.rsplit('/').next().unwrap_or(path).into(),
-            extension: path.rsplit_once('.').map(|(_, e)| e.into()),
+            // Lowercased, as every writer stores it.
+            extension: path.rsplit_once('.').map(|(_, e)| e.to_lowercase()),
             size_bytes: 10,
             mtime: 0,
             ctime: 0,
@@ -539,6 +540,33 @@ mod modifiers_end_to_end {
         check(&FileStore::Memory(Arc::new(
             MemoryStore::new(dir.path()).unwrap(),
         )));
+    }
+}
+
+#[test]
+fn plain_extension_globs_are_narrowed_to_the_extension_index() {
+    use crate::store::SqlCondition;
+    let macros = MacroConfig::default();
+    let ext_of = |q: &str| {
+        let p = plan(&parse(q, &macros).unwrap(), &Modifiers::default()).unwrap();
+        p.sql_conditions.iter().find_map(|c| match c {
+            SqlCondition::ExtOrNone(e) => Some(e.clone()),
+            _ => None,
+        })
+    };
+    assert_eq!(ext_of("*.pdf").as_deref(), Some("pdf"));
+    assert_eq!(ext_of("*.PDF").as_deref(), Some("pdf"));
+    assert_eq!(ext_of("case: *.PDF").as_deref(), Some("pdf"));
+    for q in [
+        "*.p?f",
+        "*.tar.gz",
+        "a*.pdf",
+        "path:*.pdf",
+        "*.",
+        "*.[pP]df",
+        "nowildcards:*.pdf",
+    ] {
+        assert_eq!(ext_of(q), None, "{q}");
     }
 }
 

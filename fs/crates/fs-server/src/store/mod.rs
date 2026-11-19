@@ -320,6 +320,11 @@ pub enum SqlCondition {
     SizeOp(CmpOp, u64),
     /// `extension IN (...)`
     ExtIn(Vec<String>),
+    /// `extension = ? OR extension IS NULL`: exactly the rows a `*.ext` name
+    /// glob can match, since every writer stores the lowercased
+    /// `Path::extension` and folders and names like `.ext` have none.
+    /// Narrows such a glob to `idx_files_extension`.
+    ExtOrNone(String),
     /// `path LIKE ? ESCAPE '\'` with `<dir>/%` (all files under a directory)
     ParentPath(String),
     /// `LENGTH(name) <op> value`, in characters
@@ -388,6 +393,10 @@ impl SqlCondition {
             SqlCondition::SizeOp(op, v) => (
                 format!("size_bytes {} ?", op.as_sql()),
                 vec![Value::Integer(*v as i64)],
+            ),
+            SqlCondition::ExtOrNone(ext) => (
+                "(extension = ? OR extension IS NULL)".into(),
+                vec![Value::Text(ext.clone())],
             ),
             SqlCondition::ExtIn(exts) => {
                 let ph = exts.iter().map(|_| "?").collect::<Vec<_>>().join(", ");

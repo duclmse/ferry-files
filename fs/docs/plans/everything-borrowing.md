@@ -483,21 +483,30 @@ two runs of three warm calls each:
 `*.pdf` is unchanged: its matches are spread thinly over every range, so
 `LIMIT` is reached only near the end.
 
-Follow-up, done: `*.ext` now asks `idx_files_extension` first
-(`search.rs`, `glob_extension`). The extension column cannot replace the
-glob, since folders and names such as `.pdf` have none, so the glob stays in
-the query and every row it returns is a real match. A full page is the
-answer; a short one may be missing those names and falls through to the
-regular search. Synthetic 2M-row database (`populate_for_bench` plus 200
-`.pdf` names spread over every name range), warm, `limit=100`:
+Follow-up, done: a plain `*.ext` glob is narrowed to `idx_files_extension`
+in the planner (`plan.rs`, `glob_extension`), which adds
+`ExtOrNone(ext)`: `extension = ext OR extension IS NULL`. That is exact,
+not a guess: every writer stores the lowercased `Path::extension`, and
+folders and names such as `.pdf` have none, so any name the glob matches
+has that extension or no extension. SQLite answers it with a multi-index OR
+on the extension index, so it also serves sorted queries, OR branches and
+no-match globs. The SQLite search takes the plain query plan when the
+condition is present, since the partitioned name scan would read every
+name. Synthetic 2M-row database (`populate_for_bench` plus 200 `.pdf` names
+spread over every name range; no folders, so few rows lack an extension),
+warm, `limit=100`:
 
-| Query   | Name index only | + extension index |
-| ------- | --------------: | ----------------: |
-| `*.pdf` |          829 ms |           0.07 ms |
-| `*.md`  |         0.97 ms |           0.09 ms |
-| `*.zzz` |          896 ms |  900 ms (must scan everything) |
+| Query           | Name index only | + extension index |
+| --------------- | --------------: | ----------------: |
+| `*.pdf`         |          818 ms |           0.07 ms |
+| `*.md`          |          1.1 ms |           0.09 ms |
+| `*.zzz`         |          881 ms |          0.013 ms |
+| `*.pdf` sorted  |          332 ms |           0.15 ms |
+| `*.md` sorted   |          339 ms |            164 ms |
 
-Sorted queries still read every match and do not take the shortcut.
+`*.md` sorted still orders all 250,000 matches. In a real tree a no-match
+glob reads the rows without an extension (folders, 7% of `~/projects`, plus
+extensionless files) instead of every row.
 
 Use the default unless writes matter more than queries, for example a large
 tree under constant churn. Remove `attrib` first, since no common query uses
