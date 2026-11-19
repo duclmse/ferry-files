@@ -107,7 +107,48 @@ fn batch_to_events(
             _ => {}
         }
     }
-    out
+    out.into_iter().map(long_names).collect()
+}
+
+/// The event with its paths in long form on Windows, where the change
+/// notifications name a path by its 8.3 alias (`RUNNER~1`) when that is
+/// how it was opened. The crawl and the journal replay use long names, so
+/// an alias indexed a second copy of whatever it named, which no later
+/// event under the long name removed.
+fn long_names(event: IndexEvent) -> IndexEvent {
+    if !cfg!(windows) {
+        return event;
+    }
+    match event {
+        IndexEvent::Created(p) => IndexEvent::Created(long_path(p)),
+        IndexEvent::Modified(p) => IndexEvent::Modified(long_path(p)),
+        IndexEvent::Deleted(p) => IndexEvent::Deleted(long_path(p)),
+        IndexEvent::ArchiveModified(p) => IndexEvent::ArchiveModified(long_path(p)),
+        IndexEvent::ArchiveDeleted(p) => IndexEvent::ArchiveDeleted(long_path(p)),
+        IndexEvent::Renamed { from, to } => IndexEvent::Renamed {
+            from: long_path(from),
+            to: long_path(to),
+        },
+    }
+}
+
+/// Resolves an 8.3 alias through the file system: the path itself if it
+/// still exists, else its folder (a deleted entry's own short name cannot
+/// be resolved, and is kept).
+fn long_path(path: PathBuf) -> PathBuf {
+    if !path.to_string_lossy().contains('~') {
+        return path;
+    }
+    if let Ok(long) = std::fs::canonicalize(&path) {
+        return crate::config::without_verbatim(long);
+    }
+    match (path.parent(), path.file_name()) {
+        (Some(parent), Some(name)) => match std::fs::canonicalize(parent) {
+            Ok(long) => crate::config::without_verbatim(long).join(name),
+            Err(_) => path,
+        },
+        _ => path,
+    }
 }
 
 // ---------------------------------------------------------------------------

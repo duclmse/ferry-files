@@ -266,3 +266,18 @@ fn excluded_paths_drop_out_of_watcher_events() {
         ]
     );
 }
+
+#[tokio::test]
+async fn an_unseen_folder_under_an_unindexed_parent_is_not_walked() {
+    let data = TempDir::new().unwrap();
+    let watch = TempDir::new().unwrap();
+    let cfg = make_config(watch.path()).read().await.clone();
+    let stores = stores(&data);
+    // An alias of an indexed folder looks like this: its parent is unknown.
+    let deep = watch.path().join("unknown").join("alias");
+    std::fs::create_dir_all(&deep).unwrap();
+    std::fs::write(deep.join("f.txt"), b"x").unwrap();
+    apply_file_events(vec![IndexEvent::Created(deep.clone())], &cfg, &stores);
+    let child = deep.join("f.txt").to_string_lossy().into_owned();
+    assert!(stores.sqlite.get_by_path(&child).unwrap().is_none());
+}

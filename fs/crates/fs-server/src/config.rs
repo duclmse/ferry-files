@@ -528,7 +528,7 @@ pub fn load(path: &Path) -> Result<Config> {
 /// USN code open a volume named `\\.\\\?\C:`, so journal replay never ran,
 /// and it ended up in every indexed path. Drive and UNC paths read the same
 /// without it as long as they stay under MAX_PATH, as these roots do.
-fn without_verbatim(p: PathBuf) -> PathBuf {
+pub(crate) fn without_verbatim(p: PathBuf) -> PathBuf {
     let Some(s) = p.to_str() else { return p };
     if let Some(rest) = s.strip_prefix(r"\\?\UNC\") {
         return PathBuf::from(format!(r"\\{rest}"));

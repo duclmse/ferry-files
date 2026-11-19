@@ -547,6 +547,17 @@ fn log_if_slow(start: std::time::Instant, what: &str, path: &str) {
     }
 }
 
+fn parent_indexed(cfg: &Config, sqlite: &FileStore, batch: &FileBatch, path: &Path) -> bool {
+    let Some(parent) = path.parent() else {
+        return false;
+    };
+    if cfg.watch_paths.iter().any(|root| root == parent) {
+        return true;
+    }
+    let parent = parent.to_string_lossy();
+    batch.has(&parent) || indexed_dir(sqlite, &parent)
+}
+
 /// Whether `path` is indexed as a folder: one row lookup, where asking for
 /// the subtree of every deleted or renamed file cost a query each.
 fn indexed_dir(sqlite: &FileStore, path: &str) -> bool {
@@ -590,10 +601,13 @@ fn apply_file_events(events: Vec<IndexEvent>, cfg: &Config, stores: &Stores) {
         };
         let record = build_file_record(&path, &meta, is_hidden_name(&path), unix_now());
         // A folder moved in, or renamed without a pairing the debouncer saw,
-        // is reported alone; its contents arrive with no events.
+        // is reported alone; its contents arrive with no events. Its parent
+        // is indexed; a path that names an indexed folder another way (an
+        // alias) has an unindexed parent too, and must not be walked again.
         if meta.is_dir()
             && !batch.has(&record.path)
             && matches!(stores.sqlite.get_by_path(&record.path), Ok(None))
+            && parent_indexed(cfg, &stores.sqlite, &batch, &path)
         {
             match ExclusionEngine::shared(&cfg.exclusions) {
                 Ok(excl) => {
