@@ -286,7 +286,7 @@ pub(super) fn ColumnView(pane: Pane) -> impl IntoView {
         zip.track();
         zip_open.track();
         request_animation_frame(move || {
-            if let Some(el) = strip.get_untracked() {
+            if let Some(el) = strip.try_get_untracked().flatten() {
                 el.set_scroll_left(el.scroll_width());
             }
         });

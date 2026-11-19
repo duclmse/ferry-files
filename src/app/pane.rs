@@ -21,7 +21,8 @@ pub(super) fn Crumbs(pane: Pane) -> impl IntoView {
     // Shows everything for a moment, measures, and folds as many folders as it takes to fit. It
     // all happens before the browser paints, so nothing flickers.
     let fit = move || {
-        let Some(el) = el.get_untracked() else { return };
+        // From an animation frame or a resize observer, which can come after the bar is gone.
+        let Some(el) = el.try_get_untracked().flatten() else { return };
         let classes = el.class_list();
         let _ = classes.add_1("measuring");
         let (need, room) = (el.scroll_width(), el.client_width());
@@ -39,7 +40,7 @@ pub(super) fn Crumbs(pane: Pane) -> impl IntoView {
                 k += 1;
             }
         }
-        if fold.get_untracked() != k {
+        if fold.try_get_untracked().is_some_and(|f| f != k) {
             fold.set(k);
         }
     };
@@ -56,15 +57,17 @@ pub(super) fn Crumbs(pane: Pane) -> impl IntoView {
     Effect::new(move |_| {
         let Some(node) = el.get() else { return };
         let cb = wasm_bindgen::closure::Closure::<dyn Fn()>::new(move || {
-            let w = el.get_untracked().map_or(0, |e| e.client_width());
-            if w != width.get_value() {
+            let w = el.try_get_untracked().flatten().map_or(0, |e| e.client_width());
+            if width.try_get_value().is_some_and(|old| old != w) {
                 width.set_value(w);
                 fit();
             }
         });
         if let Ok(ro) = web_sys::ResizeObserver::new(cb.as_ref().unchecked_ref()) {
             ro.observe(&node);
-            watcher.set_value(Some((ro, cb)));
+            if let Some((old, _)) = watcher.try_update_value(|w| w.replace((ro, cb))).flatten() {
+                old.disconnect();
+            }
         }
     });
     on_cleanup(move || {
@@ -383,11 +386,7 @@ pub(super) fn PaneView(pane: Pane) -> impl IntoView {
             <SearchPane pane=p/>
             <CompareBar pane=p/>
             <div class="body">
-                <div class="files" class:beside=move || p.preview.get() class:sized=move || { p.view_w.get() > 0.0 }
-                    style=move || match p.view_w.get() {
-                        w if w > 0.0 && p.preview.get() => format!("flex-basis: {w}px"),
-                        _ => String::new(),
-                    }>
+                <div class="files" class:beside=move || p.preview.get()>
                     {move || match p.view.get() {
                         ViewMode::List => view! { <ListView pane=p/> }.into_any(),
                         ViewMode::Thumbs => view! { <ThumbView pane=p/> }.into_any(),
@@ -395,7 +394,7 @@ pub(super) fn PaneView(pane: Pane) -> impl IntoView {
                     }}
                 </div>
                 {move || p.preview.get().then(|| view! {
-                    <Grip size=p.view_w key=format!("ferry-files.view-w.{}", p.id) min=200.0 room=360.0/>
+                    <Grip size=p.preview_w key=format!("ferry-files.preview-w.{}", p.id) min=PREVIEW_MIN target=Target::Next room=200.0/>
                     <Preview pane=p/>
                 })}
             </div>

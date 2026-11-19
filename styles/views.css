@@ -243,9 +243,9 @@
   padding: 16px;
 }
 
-/* At its narrowest unless the files beside it were sized by hand: then it takes the rest. */
+/* 360px (PREVIEW_MIN) unless dragged wider; the files beside it take the rest. */
 .preview {
-  flex: 0 0 360px;
+  flex: 0 1 360px;
   min-width: 360px;
   display: flex;
   flex-direction: column;
@@ -450,14 +450,6 @@
 .pane .files.beside {
   flex: 1 1 0;
   min-width: 200px;
-}
-
-.pane .files.beside.sized {
-  flex-grow: 0;
-}
-
-.pane .files.beside.sized ~ .preview {
-  flex: 1 1 0;
 }
 
 .pane .body > .grip {

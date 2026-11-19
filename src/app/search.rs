@@ -1,8 +1,12 @@
-//! The filter pane under a pane's bar: one box that filters the folder as you type and searches its
-//! subfolders on Enter, the kind/size/date options, and Replace with (⌘R), which renames the
-//! shown items, previewing each new name in the list first.
+//! The filter pane under a pane's bar: one box that filters the folder as you type (once you
+//! pause) and searches its subfolders on Enter, the kind/size/date options, and Replace with
+//! (⌘R, or the chevron before the box), which renames the shown items, previewing each new name
+//! in the list first.
 
 use super::*;
+
+/// How long typing must pause before the list is filtered.
+const FILTER_DELAY: std::time::Duration = std::time::Duration::from_millis(180);
 
 /// Path → (new name, what's wrong with it).
 pub(super) type ReplaceRows = HashMap<String, (String, Option<String>)>;
@@ -110,6 +114,33 @@ pub(super) fn SearchPane(pane: Pane) -> impl IntoView {
     let changes = move || p.replace_rows.with(|r| r.as_ref().map_or(0, HashMap::len));
     let problems = move || p.replace_rows.with(|r| r.as_ref().map_or(0, |m| m.values().filter(|(_, x)| x.is_some()).count()));
     let replace_error = move || p.replace_rows.with(|r| r.as_ref().err().cloned());
+    // Typing filters once it pauses: each key would otherwise go through the whole folder.
+    let pending = StoredValue::new_local(None::<TimeoutHandle>);
+    let cancel = move || {
+        if let Some(h) = pending.try_update_value(Option::take).flatten() {
+            h.clear();
+        }
+    };
+    on_cleanup(cancel);
+    // Filters by what the box has now; it may have changed since the timer started.
+    let apply = move |input: &web_sys::HtmlInputElement| {
+        cancel();
+        let text = input.value();
+        if p.filters_open.get_untracked() && p.filter.with_untracked(|f| *f != text) {
+            p.filter.set(text);
+            p.arrange();
+        }
+    };
+    let typed = move |ev: leptos::ev::Event| {
+        let Some(input) = ev.target().and_then(|t| t.dyn_into::<web_sys::HtmlInputElement>().ok()) else { return };
+        cancel();
+        if input.value().is_empty() {
+            // Clearing shows everything right away.
+            apply(&input);
+        } else if let Ok(h) = set_timeout_with_handle(move || apply(&input), FILTER_DELAY) {
+            let _ = pending.try_set_value(Some(h));
+        }
+    };
     let pick = |label: &'static str, sig: RwSignal<usize>, names: Vec<&'static str>| view! {
         <select aria-label=label prop:value=move || sig.get().to_string()
             on:change=move |e| sig.set(event_target_value(&e).parse().unwrap_or(0))>
@@ -120,6 +151,9 @@ pub(super) fn SearchPane(pane: Pane) -> impl IntoView {
     move || p.filters_open.get().then(|| view! {
         <div class="search-filters">
             <div class="line">
+                <button class="filter-opt chevron" class:open=move || p.replacing.get() aria-expanded=move || p.replacing.get().to_string()
+                    title=move || ctx.with_key(if p.replacing.get() { "Hide Replace with" } else { "Replace in names" }, "replace") aria-label="Replace"
+                    on:mousedown=|ev| ev.prevent_default() on:click=move |_| ctx.toggle_replace(p)>{ico(Icon::Chevron)}</button>
                 <div class="filter-box search-box" class:bad=move || p.bad_filter.with(Option::is_some)>
                     {ico(Icon::Search)}
                     <datalist id=format!("searches-{}", p.id)>
@@ -132,29 +166,32 @@ pub(super) fn SearchPane(pane: Pane) -> impl IntoView {
                             if p.regex.get() { "Names matching this regular expression, any case".into() } else { "Names containing this; * and ? make a pattern, like IMG_*.jpg".into() }
                         })
                         prop:value=move || p.filter.get()
-                        on:input=move |ev| { p.filter.set(event_target_value(&ev)); p.arrange(); }
+                        on:input=typed
                         on:keydown=move |ev| match ev.key().as_str() {
-                            "Enter" => ctx.find(p),
-                            "Escape" => ctx.close_search(p),
+                            "Enter" => {
+                                if let Some(input) = ev.target().and_then(|t| t.dyn_into::<web_sys::HtmlInputElement>().ok()) {
+                                    apply(&input);
+                                }
+                                ctx.find(p);
+                            }
+                            "Escape" => { cancel(); ctx.close_search(p); }
                             _ => {}
                         }/>
                     {move || (!p.filter.with(String::is_empty)).then(|| view! {
                         <button class="filter-clear" title="Clear" aria-label="Clear the filter"
                             on:mousedown=|ev| ev.prevent_default()
-                            on:click=move |_| { p.filter.set(String::new()); p.arrange(); }>"✕"</button>
+                            on:click=move |_| { cancel(); p.filter.set(String::new()); p.arrange(); }>"✕"</button>
                     })}
                     <button class="filter-opt regex" class:on=move || p.regex.get() aria-pressed=move || p.regex.get().to_string()
                         title=move || if p.regex.get() { "Regular expression: on" } else { "Regular expression: off" } aria-label="Regular expression"
                         on:mousedown=|ev| ev.prevent_default() on:click=toggle_regex>".*"</button>
-                    <button class="filter-opt" class:on=move || p.replacing.get() aria-pressed=move || p.replacing.get().to_string()
-                        title=move || ctx.with_key("Replace in names", "replace") aria-label="Replace"
-                        on:mousedown=|ev| ev.prevent_default() on:click=move |_| ctx.toggle_replace(p)>"⇄"</button>
                 </div>
                 {pick("Kind", p.search_kind, SEARCH_KINDS.iter().map(|x| x.0).collect())}
                 {pick("Size", p.search_size, SEARCH_SIZES.iter().map(|x| x.0).collect())}
                 {pick("Modified", p.search_time, SEARCH_TIMES.iter().map(|x| x.0).collect())}
                 <button class="btn small primary" title="Search this folder and its subfolders" on:click=move |_| ctx.find(p)>"Search"</button>
                 <button class="btn small" title="Clear the text, and back to any kind, size and time" on:click=move |_| {
+                    cancel();
                     p.filter.set(String::new());
                     p.search_kind.set(0);
                     p.search_size.set(0);
@@ -163,10 +200,11 @@ pub(super) fn SearchPane(pane: Pane) -> impl IntoView {
                 }>"Clear"</button>
                 <span class="grow"></span>
                 <button class="btn icon-only small" title="Close" aria-label="Close filter and search"
-                    on:click=move |_| ctx.close_search(p)>{ico(Icon::Close)}</button>
+                    on:click=move |_| { cancel(); ctx.close_search(p); }>{ico(Icon::Close)}</button>
             </div>
             {move || p.replacing.get().then(|| view! {
                 <div class="line">
+                    <span class="chevron-room"></span>
                     <div class="filter-box replace-box">
                         <span class="replace-icon" aria-hidden="true">"⇄"</span>
                         <input class="filter" type="text" aria-label="Replace with" spellcheck="false" autocomplete="off"

@@ -14,12 +14,15 @@ pub(super) enum Target {
     Prev,
     /// The element the grip is in (a table header cell). Dragging left makes it wider.
     ParentLeft,
+    /// The element just after the grip. Dragging left makes it wider.
+    Next,
 }
 
 /// A handle dragged sideways to change `size`, which is saved to `key` (unless empty) when the
 /// drag ends.
 /// Double-click sets it back to 0 (the default). The size stays between `min` and `max`, and,
-/// when `room` is set, leaves that much of the grip's container free to its right.
+/// when `room` is set, leaves that much of the grip's container free on the side it grows to
+/// (the right, or for `Target::Next` the left).
 #[component]
 pub(super) fn Grip(
     size: RwSignal<f64>,
@@ -55,14 +58,16 @@ pub(super) fn Grip(
         let measured = match target {
             Target::Prev => grip.previous_element_sibling(),
             Target::ParentLeft => grip.parent_element(),
+            Target::Next => grip.next_element_sibling(),
         };
         let Some(measured) = measured else { return };
         let start = measured.get_bounding_client_rect().width();
-        let sign = if target == Target::ParentLeft { -1.0 } else { 1.0 };
-        // How far right the grip may go before the space after it is less than `room`.
+        let sign = if target == Target::Prev { 1.0 } else { -1.0 };
+        // How far the grip may go before the space on the side it moves to is less than `room`.
         let max = match (room, grip.parent_element()) {
             (Some(room), Some(parent)) => {
-                let free = parent.get_bounding_client_rect().right() - grip.get_bounding_client_rect().right() - room;
+                let (outer, g) = (parent.get_bounding_client_rect(), grip.get_bounding_client_rect());
+                let free = if target == Target::Next { g.left() - outer.left() } else { outer.right() - g.right() } - room;
                 max.min(start + free.max(0.0))
             }
             _ => max,

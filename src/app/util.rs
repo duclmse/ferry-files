@@ -247,6 +247,8 @@ pub(super) const SIDE_MIN: f64 = 250.0;
 pub(super) const PANE_W_KEY: &str = "ferry-files.pane-w";
 /// The narrowest the right pane may be; also `.pane[data-pane="1"]` in views.css.
 pub(super) const RIGHT_PANE_MIN: f64 = 360.0;
+/// The preview's width unless dragged, and the narrowest it may be; also `.preview` in views.css.
+pub(super) const PREVIEW_MIN: f64 = 360.0;
 
 /// A JavaScript regular expression, or why `source` isn't one.
 pub(super) fn js_regex(source: &str, flags: &str) -> Result<js_sys::RegExp, String> {

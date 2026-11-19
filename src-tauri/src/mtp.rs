@@ -13,15 +13,6 @@ const FILETYPE_UNKNOWN: c_int = 44; // LIBMTP_FILETYPE_UNKNOWN (libmtp 1.1.23)
 const ERROR_NO_DEVICE_ATTACHED: c_int = 5;
 const CACHE_TTL: Duration = Duration::from_secs(3);
 
-#[cfg(target_os = "macos")]
-pub const MTP_HINT: &str = "Check that the phone is unlocked, connected with a data cable, and set to \
-\"File transfer\" (USB notification on the phone). Quit Android File Transfer, Image Capture and Preview, \
-and if it still fails run: killall ptpcamerad";
-#[cfg(not(target_os = "macos"))]
-pub const MTP_HINT: &str = "Check that the phone is unlocked, connected with a data cable, and set to \
-\"File transfer\" (USB notification on the phone). If the file manager has the phone open, unmount it \
-there first (gvfs holds it), and check that your user may use USB devices (udev rules from libmtp).";
-
 /// How to get libmtp, when it isn't there.
 #[cfg(target_os = "macos")]
 const INSTALL: &str = "libmtp not found. Install it with: brew install libmtp";
@@ -517,7 +508,7 @@ impl Mtp {
                 None => raws.first().copied(),
             };
             let Some(raw) = found else {
-                return err(format!("No MTP device found. {MTP_HINT}"));
+                return err(format!("No MTP device found"));
             };
             // Uncached: don't enumerate the whole phone on connect (slow on Android).
             let dev = unsafe { (lib.open_uncached)(raw) };
@@ -526,7 +517,7 @@ impl Mtp {
             }
             tries += 1;
             if tries == 4 {
-                return err(format!("Couldn't open the MTP device. {MTP_HINT}"));
+                return err(format!("Couldn't open the MTP device"));
             }
             drop(lock);
             std::thread::sleep(std::time::Duration::from_millis(1500));

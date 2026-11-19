@@ -374,7 +374,8 @@ struct Pane {
     preview: RwSignal<bool>,
     /// Widths the user dragged (0: the default): the files beside the preview, and the list's
     /// kind, date and size columns.
-    view_w: RwSignal<f64>,
+    /// The preview's width; 0 is its default (`PREVIEW_MIN`, see views.css).
+    preview_w: RwSignal<f64>,
     /// Widths of the column view's columns, by folder, for this session.
     col_ws: StoredValue<HashMap<String, f64>>,
     list_w: [RwSignal<f64>; 3],
@@ -448,7 +449,7 @@ impl Pane {
             reroot: StoredValue::new(None),
             renaming: RwSignal::new(None),
             preview: RwSignal::new(stored_flag(&format!("ferry-files.preview.{id}"), true)),
-            view_w: stored_px(&format!("ferry-files.view-w.{id}")),
+            preview_w: stored_px(&format!("ferry-files.preview-w.{id}")),
             col_ws: StoredValue::new(HashMap::new()),
             list_w: [0, 1, 2].map(|n| stored_px(&format!("ferry-files.list-w.{id}.{n}"))),
             list_cols: RwSignal::new(stored_cols(id)),

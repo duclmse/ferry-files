@@ -39,7 +39,10 @@ pub(super) fn Preview(pane: Pane) -> impl IntoView {
         })
     });
     view! {
-        <div class="preview">
+        <div class="preview" style=move || match p.preview_w.get() {
+            w if w > 0.0 => format!("flex-basis: {w}px"),
+            _ => String::new(),
+        }>
             {move || match shown.get() {
                 None => view! { <span class="hint">{move || match p.marked.with(Vec::len) {
                     0 | 1 => "Pick an item to see it here.".to_string(),
@@ -181,7 +184,7 @@ fn BigCover(src: Src, entry: Entry) -> impl IntoView {
     let pic = NodeRef::<html::Div>::new();
     // The space the cover could take is the preview's, above the details.
     request_animation_frame(move || {
-        let Some(room) = pic.get_untracked().and_then(|d| d.parent_element()) else { return };
+        let Some(room) = pic.try_get_untracked().flatten().and_then(|d| d.parent_element()) else { return };
         let dpr = window().device_pixel_ratio().max(1.0);
         if (room.client_width().max(room.client_height()) as f64) * dpr > THUMB_PX {
             want.set(true);
@@ -220,7 +223,7 @@ fn FullImage(pane: Pane, src: Src, entry: Entry, info: RwSignal<MediaInfo>, #[pr
     let fit = RwSignal::new(1.0f64);
     let img_ref = NodeRef::<html::Img>::new();
     let measure = move || {
-        if let Some(img) = img_ref.get_untracked() {
+        if let Some(img) = img_ref.try_get_untracked().flatten() {
             if img.natural_width() > 0 && img.offset_width() > 0 {
                 fit.set(img.offset_width() as f64 / img.natural_width() as f64);
             }
@@ -232,7 +235,9 @@ fn FullImage(pane: Pane, src: Src, entry: Entry, info: RwSignal<MediaInfo>, #[pr
         let cb = Closure::<dyn Fn()>::new(measure);
         if let Ok(ro) = web_sys::ResizeObserver::new(cb.as_ref().unchecked_ref()) {
             ro.observe(&img);
-            watcher.set_value(Some((ro, cb)));
+            if let Some((old, _)) = watcher.try_update_value(|w| w.replace((ro, cb))).flatten() {
+                old.disconnect();
+            }
         }
     });
     on_cleanup(move || {
