@@ -33,6 +33,8 @@ web-sys = { version = "0.3", features = [
     "DomTokenList",
     "HtmlMediaElement",
     "HtmlImageElement",
+    "IntersectionObserver",
+    "IntersectionObserverEntry",
     "HtmlVideoElement",
     "ResizeObserver",
 ] }

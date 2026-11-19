@@ -24,6 +24,7 @@ mod keymap;
 mod layout;
 mod menu;
 mod nav;
+mod near;
 mod palette;
 mod pane;
 mod preview;

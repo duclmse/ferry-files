@@ -203,19 +203,43 @@ fn renaming(p: Pane, e: &Entry) -> impl Fn() -> bool + Copy + 'static {
 
 /// The file's icon, replaced by its thumbnail (an image, or an EPUB's cover) once that has loaded.
 /// Files with no thumbnail, or whose thumbnail fails, keep the icon.
+///
+/// The picture is only there while the tile is in view: scrolled away, it's let go (and the icon
+/// shows again), so a folder of thousands of photos doesn't keep every one it has shown in memory.
 #[component]
 pub(super) fn Thumbnail(src: Src, entry: Entry) -> impl IntoView {
     let ctx = expect_context::<Ctx>();
     let state = RwSignal::new(0u8); // 0 loading, 1 loaded, 2 failed
+    let shown = RwSignal::new(false);
     let glyph = icon(kind(&entry));
     let url = thumb_url(src, &entry);
     // Phone thumbnails can be turned off in the settings.
     let allowed = move || src == Src::Mac || ctx.phone_thumbs.get();
+    let img = NodeRef::<html::Img>::new();
+    let watching = StoredValue::new_local(None::<(web_sys::Element, u32)>);
+    let stop = move || {
+        if let Some((el, id)) = watching.try_update_value(Option::take).flatten() {
+            near::unwatch(&el, id);
+        }
+    };
+    // Again when the picture comes back after phone thumbnails were turned off and on.
+    img.on_load(move |el| {
+        stop();
+        let el: web_sys::Element = el.into();
+        let id = near::watch(&el, move |on| {
+            shown.set(on);
+            if !on && state.get_untracked() == 1 {
+                state.set(0);
+            }
+        });
+        watching.set_value(Some((el, id)));
+    });
+    on_cleanup(stop);
     view! {
         {move || (state.get() != 1 || !allowed()).then(|| view! { <span class="glyph">{glyph}</span> })}
         {move || url.clone().filter(|_| allowed()).map(|url| view! {
-            // Kept in the layout (just invisible) while loading, so lazy loading still starts it.
-            <img src=url loading="lazy" decoding="async" draggable="false" alt=""
+            // Kept in the layout (just invisible) while loading, so it's seen coming into view.
+            <img node_ref=img src=move || shown.get().then(|| url.clone()) decoding="async" draggable="false" alt=""
                 class:pending=move || state.get() != 1
                 on:load=move |_| state.set(1) on:error=move |_| state.set(2)/>
         })}
