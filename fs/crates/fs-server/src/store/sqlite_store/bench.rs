@@ -15,7 +15,7 @@ impl SqliteStore {
     /// `INSERT OR IGNORE`).
     pub fn populate_for_bench(&self, count: usize) -> Result<()> {
         const EXTENSIONS: &[&str] = &["rs", "toml", "md", "txt", "py", "go", "ts", "json"];
-        let conn = self.get_conn()?;
+        let conn = self.write_conn()?;
         let now = std::time::SystemTime::now()
             .duration_since(std::time::UNIX_EPOCH)
             .unwrap_or_default()

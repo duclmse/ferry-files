@@ -42,7 +42,7 @@ impl SqliteStore {
     /// Drops the secondary indexes if the `files` table is empty. Returns
     /// whether a bulk load started; `end_bulk_load` is a no-op otherwise.
     pub fn begin_bulk_load(&self) -> Result<bool> {
-        let mut conn = self.get_conn()?;
+        let mut conn = self.write_conn()?;
         let tx = conn.transaction()?;
         let empty: bool =
             tx.query_row("SELECT NOT EXISTS (SELECT 1 FROM files)", [], |r| r.get(0))?;
@@ -88,7 +88,7 @@ impl SqliteStore {
 
     /// Recreates the indexes dropped by `begin_bulk_load`.
     pub fn end_bulk_load(&self) -> Result<()> {
-        let conn = self.get_conn()?;
+        let conn = self.write_conn()?;
         let saved: Option<String> = conn
             .query_row(
                 "SELECT value FROM index_meta WHERE key = ?1",

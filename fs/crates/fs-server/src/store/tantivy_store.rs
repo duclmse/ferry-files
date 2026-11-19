@@ -1,5 +1,5 @@
 use std::path::Path;
-use std::sync::{Arc, Mutex};
+use std::sync::{Mutex, RwLock};
 
 use tantivy::collector::TopDocs;
 use tantivy::query::QueryParser;
@@ -11,10 +11,17 @@ use crate::error::{AppError, Result};
 
 // ---------------------------------------------------------------------------
 
+const PATH_LOCKS: usize = 64;
+
 pub struct TantivyStore {
     index: Index,
     reader: IndexReader,
-    writer: Arc<Mutex<IndexWriter>>,
+    /// Adds and deletes share the writer, which takes them from any thread;
+    /// only a commit needs it to itself.
+    writer: RwLock<IndexWriter>,
+    /// Makes an upsert's delete and add one step for its path, so two
+    /// upserts of the same path cannot leave both documents.
+    path_locks: [Mutex<()>; PATH_LOCKS],
     f_path: Field,
     f_name: Field,
     f_content: Field,
@@ -58,7 +65,8 @@ impl TantivyStore {
         Ok(Self {
             index,
             reader,
-            writer: Arc::new(Mutex::new(writer)),
+            writer: RwLock::new(writer),
+            path_locks: std::array::from_fn(|_| Mutex::new(())),
             f_path,
             f_name,
             f_content,
@@ -71,9 +79,10 @@ impl TantivyStore {
     /// Delete-then-add upsert. Does NOT commit - call `commit()` separately.
     pub fn upsert(&self, record: &FileRecord, content: Option<&str>) -> Result<()> {
         let term = tantivy::Term::from_field_text(self.f_path, &record.path);
+        let _path = self.lock_path(&record.path)?;
         let w = self
             .writer
-            .lock()
+            .read()
             .map_err(|e| AppError::Index(e.to_string()))?;
 
         w.delete_term(term);
@@ -97,19 +106,28 @@ impl TantivyStore {
     /// Delete document(s) matching this path. Does NOT commit.
     pub fn remove(&self, path: &str) -> Result<()> {
         let term = tantivy::Term::from_field_text(self.f_path, path);
+        let _path = self.lock_path(path)?;
         let w = self
             .writer
-            .lock()
+            .read()
             .map_err(|e| AppError::Index(e.to_string()))?;
         w.delete_term(term);
         Ok(())
+    }
+
+    fn lock_path(&self, path: &str) -> Result<std::sync::MutexGuard<'_, ()>> {
+        use std::hash::{BuildHasher, BuildHasherDefault, DefaultHasher};
+        let slot = BuildHasherDefault::<DefaultHasher>::default().hash_one(path) as usize;
+        self.path_locks[slot % PATH_LOCKS]
+            .lock()
+            .map_err(|e| AppError::Index(e.to_string()))
     }
 
     /// Flush pending operations to disk.
     pub fn commit(&self) -> Result<()> {
         let mut w = self
             .writer
-            .lock()
+            .write()
             .map_err(|e| AppError::Index(e.to_string()))?;
         w.commit().map_err(AppError::Tantivy)?;
         Ok(())
@@ -275,6 +293,27 @@ mod tests {
         let hits = store.search_fulltext("hello", 10, &filters).unwrap();
         assert!(!hits.is_empty(), "expected at least one hit for 'hello'");
         assert!(hits.iter().any(|h| h.path == "/src/main.rs"));
+    }
+
+    #[test]
+    fn concurrent_upserts_of_one_path_leave_one_document() {
+        let store = make_store();
+        let rec = sample_record("/src/race.rs");
+        std::thread::scope(|scope| {
+            for _ in 0..8 {
+                scope.spawn(|| {
+                    for _ in 0..50 {
+                        store.upsert(&rec, Some("zebraquartz")).unwrap();
+                    }
+                });
+            }
+        });
+        store.commit().unwrap();
+        store.reload_reader().unwrap();
+        let hits = store
+            .search_fulltext("zebraquartz", 100, &MetaFilters::default())
+            .unwrap();
+        assert_eq!(hits.len(), 1);
     }
 
     #[test]

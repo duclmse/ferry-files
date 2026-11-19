@@ -86,7 +86,7 @@ async-stream = "0.3"
 futures      = "0.3"
 
 [target.'cfg(unix)'.dependencies]
-nix = { version = "0.28", features = ["fs", "process", "user"] }
+nix = { version = "0.28", features = ["fs", "process", "resource", "user"] }
 
 # FSEvents history replay (watcher/journal.rs); already pulled in by `notify`.
 [target.'cfg(target_os = "macos")'.dependencies]
@@ -140,4 +140,8 @@ harness = false
 
 [[bench]]
 name    = "scheduler_load"
+harness = false
+
+[[bench]]
+name    = "reconcile"
 harness = false

@@ -18,28 +18,46 @@ impl SqliteStore {
     /// Opens the store, building the listed optional indexes that are
     /// missing and dropping the others.
     pub fn with_indexes(db_path: &Path, indexes: &[SqliteIndex]) -> Result<Self> {
-        let manager = SqliteConnectionManager::file(db_path).with_init(|conn| {
-            conn.execute_batch(
-                "PRAGMA journal_mode=WAL;
+        let manager = || {
+            SqliteConnectionManager::file(db_path).with_init(|conn| {
+                conn.execute_batch(
+                    "PRAGMA journal_mode=WAL;
                  PRAGMA synchronous=NORMAL;
                  PRAGMA foreign_keys=ON;
                  PRAGMA busy_timeout=30000;",
-            )?;
-            Ok(())
-        });
+                )?;
+                Ok(())
+            })
+        };
+        // Each connection to ":memory:" is a database of its own, so the
+        // tests' stores keep to one connection for reads and writes alike.
+        let in_memory = db_path == Path::new(":memory:");
         let pool = r2d2::Pool::builder()
-            .max_size(16)
-            .build(manager)
+            .max_size(if in_memory { 1 } else { 16 })
+            .build(manager())
             .map_err(|e| AppError::Index(e.to_string()))?;
+        let writer = if in_memory {
+            pool.clone()
+        } else {
+            r2d2::Pool::builder()
+                .max_size(1)
+                // A write waits its turn; an index rebuild after the first
+                // crawl holds the connection for minutes on a large tree.
+                .connection_timeout(std::time::Duration::from_secs(600))
+                .build(manager())
+                .map_err(|e| AppError::Index(e.to_string()))?
+        };
 
-        let conn = pool.get().map_err(|e| AppError::Index(e.to_string()))?;
+        let conn = writer.get().map_err(|e| AppError::Index(e.to_string()))?;
         conn.execute_batch(SCHEMA)?;
         apply_migrations(&conn)?;
         super::schema::repair_backslash_parents(&conn)?;
         sync_optional_indexes(&conn, indexes)?;
 
+        drop(conn);
         Ok(Self {
             pool,
+            writer,
             name_bounds: Default::default(),
             name_index: indexes.contains(&SqliteIndex::Name),
             ext_index: indexes.contains(&SqliteIndex::Extension),
@@ -50,18 +68,27 @@ impl SqliteStore {
         self.pool.get().map_err(|e| AppError::Index(e.to_string()))
     }
 
+    /// The connection every write goes through; never take two at once.
+    pub(crate) fn write_conn(&self) -> Result<r2d2::PooledConnection<SqliteConnectionManager>> {
+        self.writer
+            .get()
+            .map_err(|e| AppError::Index(e.to_string()))
+    }
+
     // -----------------------------------------------------------------------
     // Upsert / delete
     // -----------------------------------------------------------------------
 
     pub fn upsert_file(&self, file: &FileRecord) -> Result<i64> {
-        let conn = self.get_conn()?;
+        let conn = self.write_conn()?;
         self.upsert_file_conn(&conn, file)
     }
 
     pub fn upsert_file_conn(&self, conn: &rusqlite::Connection, file: &FileRecord) -> Result<i64> {
         let parent = parent_of(&file.path);
-        conn.execute(
+        // Prepared once per connection: archive entries come through here
+        // one row at a time, thousands per archive.
+        conn.prepare_cached(
             "INSERT INTO files (
                 path, name, extension, size_bytes, mtime, ctime,
                 is_dir, is_hidden, is_symlink, attrib_bitmask,
@@ -82,24 +109,24 @@ impl SqliteStore {
                 indexed_at       = excluded.indexed_at,
                 archive_path     = excluded.archive_path,
                 parent           = excluded.parent",
-            rusqlite::params![
-                &file.path,
-                &file.name,
-                &file.extension,
-                file.size_bytes as i64,
-                file.mtime,
-                file.ctime,
-                i64::from(file.is_dir),
-                i64::from(file.is_hidden),
-                i64::from(file.is_symlink),
-                file.attrib_bitmask,
-                i64::from(file.content_indexed),
-                &file.tantivy_id,
-                file.indexed_at,
-                &file.archive_path,
-                parent,
-            ],
-        )?;
+        )?
+        .execute(rusqlite::params![
+            &file.path,
+            &file.name,
+            &file.extension,
+            file.size_bytes as i64,
+            file.mtime,
+            file.ctime,
+            i64::from(file.is_dir),
+            i64::from(file.is_hidden),
+            i64::from(file.is_symlink),
+            file.attrib_bitmask,
+            i64::from(file.content_indexed),
+            &file.tantivy_id,
+            file.indexed_at,
+            &file.archive_path,
+            parent,
+        ])?;
         Ok(conn.last_insert_rowid())
     }
 
@@ -115,7 +142,7 @@ impl SqliteStore {
         if batch.is_empty() {
             return Ok(());
         }
-        let conn = self.get_conn()?;
+        let conn = self.write_conn()?;
         let bulk = self.bulk_loading()?;
         if bulk {
             conn.execute_batch(super::bulk::BULK_AUTOCHECKPOINT)?;
@@ -204,7 +231,7 @@ impl SqliteStore {
         generation: i64,
     ) -> Result<i64> {
         let parent = parent_of(&file.path);
-        conn.execute(
+        conn.prepare_cached(
             "INSERT INTO files (
                 path, name, extension, size_bytes, mtime, ctime,
                 is_dir, is_hidden, is_symlink, attrib_bitmask,
@@ -228,37 +255,37 @@ impl SqliteStore {
                 parent           = excluded.parent,
                 watch_root       = excluded.watch_root,
                 crawl_generation = excluded.crawl_generation",
-            rusqlite::params![
-                &file.path,
-                &file.name,
-                &file.extension,
-                file.size_bytes as i64,
-                file.mtime,
-                file.ctime,
-                i64::from(file.is_dir),
-                i64::from(file.is_hidden),
-                i64::from(file.is_symlink),
-                file.attrib_bitmask,
-                i64::from(file.content_indexed),
-                &file.tantivy_id,
-                file.indexed_at,
-                &file.archive_path,
-                parent,
-                watch_root,
-                generation,
-            ],
-        )?;
+        )?
+        .execute(rusqlite::params![
+            &file.path,
+            &file.name,
+            &file.extension,
+            file.size_bytes as i64,
+            file.mtime,
+            file.ctime,
+            i64::from(file.is_dir),
+            i64::from(file.is_hidden),
+            i64::from(file.is_symlink),
+            file.attrib_bitmask,
+            i64::from(file.content_indexed),
+            &file.tantivy_id,
+            file.indexed_at,
+            &file.archive_path,
+            parent,
+            watch_root,
+            generation,
+        ])?;
         Ok(conn.last_insert_rowid())
     }
 
     pub fn remove_file(&self, path: &str) -> Result<()> {
-        let conn = self.get_conn()?;
+        let conn = self.write_conn()?;
         conn.execute("DELETE FROM files WHERE path = ?", [path])?;
         Ok(())
     }
 
     pub fn remove_directory(&self, path: &str) -> Result<usize> {
-        let conn = self.get_conn()?;
+        let conn = self.write_conn()?;
         let n = conn.execute(
             &format!("DELETE FROM files WHERE {}", super::schema::UNDER_DIR_1),
             [path],
@@ -273,7 +300,7 @@ impl SqliteStore {
     /// Atomically increment the generation counter and return the new value.
     /// The counter is stored as `crawl_generation` in `index_meta`.
     pub fn begin_crawl_generation(&self) -> Result<i64> {
-        let conn = self.get_conn()?;
+        let conn = self.write_conn()?;
         conn.execute(
             "INSERT INTO index_meta (key, value) VALUES ('crawl_generation', '1')
              ON CONFLICT(key) DO UPDATE SET value = CAST(CAST(value AS INTEGER) + 1 AS TEXT)",
@@ -292,7 +319,7 @@ impl SqliteStore {
     /// before watch_root tracking was introduced are also cleaned up. No paths
     /// are loaded into Rust memory.
     pub fn remove_stale_for_root(&self, watch_root: &str, generation: i64) -> Result<usize> {
-        let conn = self.get_conn()?;
+        let conn = self.write_conn()?;
         // Rows that are newly upserted in this crawl get watch_root set by
         // mark_seen(). Rows never marked have watch_root = NULL, so we cover
         // both cases with a path prefix OR watch_root predicate.
@@ -342,7 +369,7 @@ impl SqliteStore {
     }
 
     pub fn set_meta(&self, key: &str, value: &str) -> Result<()> {
-        let conn = self.get_conn()?;
+        let conn = self.write_conn()?;
         conn.execute(
             "INSERT INTO index_meta (key, value) VALUES (?1, ?2)
              ON CONFLICT(key) DO UPDATE SET value = excluded.value",

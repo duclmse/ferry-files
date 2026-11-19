@@ -24,7 +24,7 @@ impl SqliteStore {
         if records.is_empty() {
             return Ok(());
         }
-        let conn = self.get_conn()?;
+        let conn = self.write_conn()?;
         conn.execute_batch("BEGIN").map_err(AppError::Database)?;
         let result: Result<()> = (|| {
             for record in records {
@@ -49,7 +49,7 @@ impl SqliteStore {
     }
 
     pub fn remove_archive_entries(&self, archive_path: &str) -> Result<usize> {
-        let conn = self.get_conn()?;
+        let conn = self.write_conn()?;
         let n = conn.execute("DELETE FROM files WHERE archive_path = ?", [archive_path])?;
         Ok(n)
     }
