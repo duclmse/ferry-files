@@ -362,7 +362,7 @@ pub(super) fn Shortcuts() -> impl IntoView {
         ("Space", "Quick Look"), // Shown as os::quick_look().
         ("/ or ⌘F or ⌘K", "Filter; Enter searches subfolders"),
         ("⌘L", "Type a path"),
-        ("F2", "Rename"),
+        ("F2", "Rename (with several picked: rename them together)"),
         ("⌘⌫ or Delete", "Delete"),
         ("F5 / F6", "Copy or move to the other pane"),
         ("⌘A", "Pick everything"),

@@ -92,15 +92,19 @@ impl Ctx {
                         return Err(format!("{} isn't there any more.", base(now)));
                     }
                 }
-                let mut back = 0;
-                for (now, old) in &items {
-                    call::<String>("rename", json!({ "src": src.key(), "path": now, "name": old })).await?;
-                    back += 1;
-                    self.changed(src, &parent(now));
+                let (back, err) = batch::rename_all(src, items.iter().map(|(now, old)| (now.clone(), old.clone())).collect()).await;
+                let mut dirs: Vec<String> = back.iter().map(|(now, _)| parent(now)).collect();
+                dirs.sort();
+                dirs.dedup();
+                for d in dirs {
+                    self.changed(src, &d);
+                }
+                if let Some(e) = err {
+                    return Err(if back.is_empty() { e } else { format!("Renamed {} back, then: {e}", back.len()) });
                 }
                 Ok(match items.as_slice() {
                     [(_, old)] => format!("Renamed back to {old}."),
-                    _ => format!("Renamed {back} items back."),
+                    _ => format!("Renamed {} items back.", back.len()),
                 })
             }
             Undo::Create { src, path, folder } => {

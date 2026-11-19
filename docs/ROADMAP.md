@@ -116,11 +116,17 @@ Built:
 - Results show in the pane as before, where the usual actions work.
 - Not done: streaming results in chunks (still one reply; the limits keep it bounded).
 
-### 6. Batch rename ☐
-- Dialog on several picked items: find/replace (plain or regex), add prefix/suffix, numbering
-  (`{n:03}`), case, date (modified, or EXIF date taken from phase 3 item 10).
-- Live preview table old → new, conflicts and invalid names marked; Apply renames through
-  `Device::rename` one by one; one Undo entry for the whole batch.
+### 6. Batch rename ☑
+- F2 or "Rename N items…" with several picked opens a dialog: Find / Replace with (plain, or a
+  JavaScript regular expression with $1…; match case optional), a New name pattern with {name},
+  {n}, {n:3} and {date} (date modified), a Start number, and case (lower, UPPER, Title).
+  The extension stays.
+- Live preview table: now → new, with "No change", "Same as another new name", "Already there"
+  and bad names marked; Rename is off until nothing is marked.
+- Renames go one by one in an order where no item takes a name another still has (names swapped
+  in a ring go by way of a temporary name). One Undo entry for the batch; undo uses the same
+  ordering.
+- Not done: EXIF date taken (comes with phase 3 item 10).
 
 ### 7. Compare two folders ☐
 - With two panes open: "Compare" marks each row only-here / differs / same (colour + filter "Show

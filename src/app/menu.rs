@@ -150,6 +150,9 @@ impl Ctx {
                 v.push(MenuItem::Do { label: self.to_label(p, "Move", picked), key: "F6", act: Act::Move, danger: false, enabled });
                 v.push(MenuItem::Sep);
             }
+            let renamable = !(p.cwd.get_untracked() == "/" && self.src_info(p.src.get_untracked()).is_some_and(|i| i.transport == "mtp"));
+            v.push(MenuItem::Do { label: format!("Rename {picked} items…"), key: "F2", act: Act::Rename, danger: false, enabled: renamable });
+            v.push(MenuItem::Sep);
             v.push(MenuItem::Do { label: format!("Delete {picked} items…"), key: "⌘⌫", act: Act::Delete, danger: true, enabled: true });
             return v;
         }
@@ -210,7 +213,7 @@ impl Ctx {
             (Act::Download, Some(e)) => self.download(p, e.path),
             (Act::Copy, Some(_)) => self.send_to_other(p, false),
             (Act::Move, Some(_)) => self.send_to_other(p, true),
-            (Act::Rename, Some(e)) => p.renaming.set(Some(e.path)),
+            (Act::Rename, Some(_)) => self.ask_rename(p),
             (Act::QuickLook, Some(_)) => self.quick_look(p),
             (Act::Favourite, Some(e)) => self.toggle_fav(p.src.get_untracked(), e.path),
             (Act::Favourite, None) => self.toggle_fav(p.src.get_untracked(), p.cwd.get_untracked()),

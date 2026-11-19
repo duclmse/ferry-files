@@ -10,6 +10,7 @@ use serde_json::json;
 use std::collections::{HashMap, HashSet};
 use wasm_bindgen::JsCast;
 
+mod batch;
 mod books;
 mod devices;
 mod editor;
@@ -28,6 +29,7 @@ mod util;
 mod views;
 mod wifi;
 
+use batch::*;
 use books::*;
 use devices::*;
 use editor::*;
@@ -483,6 +485,8 @@ impl Pane {
 #[derive(Clone, PartialEq)]
 enum Panel {
     Backups,
+    /// Renaming several items of a pane (by its id).
+    Rename(usize, Vec<Entry>),
     History,
     /// The books under a folder.
     Library(Src, String),
@@ -908,10 +912,8 @@ pub fn App() -> impl IntoView {
                 ctx.send_to_other(p, e.key() == "F6");
             }
             ("F2", _) => {
-                if let [x] = p.picked().as_slice() {
-                    e.prevent_default();
-                    p.renaming.set(Some(x.path.clone()));
-                }
+                e.prevent_default();
+                ctx.ask_rename(p);
             }
             ("z", true) if !e.shift_key() => {
                 e.prevent_default();
@@ -1069,6 +1071,7 @@ pub fn App() -> impl IntoView {
         {move || ctx.panel.get().map(|w| match w {
             Panel::Backups => view! { <Backups/> }.into_any(),
             Panel::History => view! { <History/> }.into_any(),
+            Panel::Rename(pane, items) => view! { <BatchRename pane=pane items=items/> }.into_any(),
             Panel::Library(src, dir) => view! { <Library src=src dir=dir/> }.into_any(),
             Panel::Reader(src, path, back) => view! { <Reader src=src path=path back=back/> }.into_any(),
         })}
