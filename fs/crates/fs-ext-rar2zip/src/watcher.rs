@@ -214,11 +214,21 @@ mod tests {
         }
     }
 
-    async fn next(rx: &mut mpsc::Receiver<PathBuf>) -> Option<PathBuf> {
-        tokio::time::timeout(Duration::from_secs(5), rx.recv())
-            .await
-            .ok()
-            .flatten()
+    /// Waits for `want`, skipping repeats of `seen`: FSEvents can also report
+    /// a file created just before the watch began, which the startup scan
+    /// already sent. Intake drops such repeats by content hash.
+    async fn arrives(rx: &mut mpsc::Receiver<PathBuf>, want: &Path, seen: &[PathBuf]) {
+        let deadline = tokio::time::Instant::now() + Duration::from_secs(5);
+        loop {
+            let got = tokio::time::timeout_at(deadline, rx.recv())
+                .await
+                .unwrap_or_else(|_| panic!("{} did not arrive", want.display()))
+                .unwrap();
+            if got == want {
+                return;
+            }
+            assert!(seen.contains(&got), "unexpected {}", got.display());
+        }
     }
 
     #[tokio::test]
@@ -236,20 +246,29 @@ mod tests {
         let cfg = Arc::new(RwLock::new(config(&watch)));
         let task = tokio::spawn(run_watcher(cfg, tx, stop.clone()));
 
-        assert_eq!(next(&mut rx).await.unwrap(), watch.join("sub/before.rar"));
+        let before = watch.join("sub/before.rar");
+        arrives(&mut rx, &before, &[]).await;
 
         // Let the platform watcher settle before the events that matter.
         tokio::time::sleep(Duration::from_millis(300)).await;
         std::fs::write(watch.join("dl.rar.part"), b"d").unwrap();
         std::fs::rename(watch.join("dl.rar.part"), watch.join("dl.rar")).unwrap();
-        assert_eq!(next(&mut rx).await.unwrap(), watch.join("dl.rar"));
+        arrives(
+            &mut rx,
+            &watch.join("dl.rar"),
+            std::slice::from_ref(&before),
+        )
+        .await;
 
         std::fs::rename(watch.join("dl.rar"), watch.join("failed/dl.rar")).unwrap();
         tokio::time::sleep(Duration::from_secs(2)).await;
-        assert!(
-            rx.try_recv().is_err(),
-            "a move into failed/ is not an arrival"
-        );
+        while let Ok(got) = rx.try_recv() {
+            assert!(
+                !got.starts_with(watch.join("failed")),
+                "a move into failed/ is not an arrival: {}",
+                got.display()
+            );
+        }
 
         stop.cancel();
         task.await.unwrap().unwrap();
