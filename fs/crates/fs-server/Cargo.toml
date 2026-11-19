@@ -76,7 +76,6 @@ tempfile = "3"
 postcard = { version = "1", features = ["alloc"] }
 
 # Utilities
-humansize = "2"
 once_cell = "1"
 dashmap   = "5"
 flate2    = "1"

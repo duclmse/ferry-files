@@ -49,7 +49,10 @@ impl FileSearch for FileSearchService {
         request: Request<SearchRequest>,
     ) -> Result<Response<SearchResponse>, Status> {
         let req = request.into_inner();
-        let (results, total, took_ms) = self.run_query(&req.query, req.limit, req.offset).await?;
+        let (results, total, took_ms) = self
+            .run_query(&req.query, req.limit, req.offset)
+            .await
+            .map_err(|e| *e)?;
         Ok(Response::new(SearchResponse {
             results,
             total: total as i32,
@@ -64,7 +67,10 @@ impl FileSearch for FileSearchService {
         request: Request<SearchRequest>,
     ) -> Result<Response<Self::SearchStreamStream>, Status> {
         let req = request.into_inner();
-        let (results, _, _) = self.run_query(&req.query, req.limit, req.offset).await?;
+        let (results, _, _) = self
+            .run_query(&req.query, req.limit, req.offset)
+            .await
+            .map_err(|e| *e)?;
 
         // Fan results out through a bounded channel so the caller can start
         // consuming before all records are serialised.
@@ -134,17 +140,17 @@ impl FileSearchService {
         query_str: &str,
         limit: i32,
         offset: i32,
-    ) -> Result<(Vec<SearchResult>, usize, u64), Status> {
+    ) -> Result<(Vec<SearchResult>, usize, u64), Box<Status>> {
         // Single config lock - reads macros and the default limit then releases.
         let (macros, default_limit) = {
             let cfg = self.config.read().await;
             (cfg.macros.clone(), cfg.search.default_limit)
         };
         let expr = parser::parse(query_str, &macros)
-            .map_err(|e| Status::invalid_argument(e.to_string()))?;
+            .map_err(|e| Box::new(Status::invalid_argument(e.to_string())))?;
 
         let mut plan = evaluator::plan(&expr, &Default::default())
-            .map_err(|e| Status::invalid_argument(e.to_string()))?;
+            .map_err(|e| Box::new(Status::invalid_argument(e.to_string())))?;
         let (limit, offset) = resolve_page(limit, offset, default_limit);
         plan.limit = Some(limit);
         plan.offset = offset;
@@ -156,7 +162,7 @@ impl FileSearchService {
             Arc::clone(&self.config),
         )
         .await
-        .map_err(|e| Status::internal(e.to_string()))?;
+        .map_err(|e| Box::new(Status::internal(e.to_string())))?;
 
         // Consume hits by value - moves Strings rather than cloning them.
         let results = result

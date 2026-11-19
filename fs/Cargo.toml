@@ -24,8 +24,6 @@ chrono             = { version = "0.4", features = ["serde"] }
 rusqlite           = { version = "0.31", features = ["bundled"] }
 r2d2               = "0.8"
 r2d2_sqlite        = "0.24"
-ssh2               = "0.9"
-openssl            = { version = "0.10", features = ["vendored"] }
 clap               = { version = "4", features = ["derive"] }
 glob               = "0.3"
 uuid               = { version = "1", features = ["v4"] }

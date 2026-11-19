@@ -231,7 +231,8 @@ impl<'a> GlobShape<'a> {
 pub(super) enum Glob<'a> {
     Prefix(&'a [u8]),
     Suffix(&'a [u8]),
-    Contains(memchr::memmem::Finder<'a>),
+    /// Boxed: a `Finder` is ~288 bytes, and every compiled condition would pay for it.
+    Contains(Box<memchr::memmem::Finder<'a>>),
     General(&'a [u8]),
 }
 
@@ -240,7 +241,7 @@ impl<'a> Glob<'a> {
         match GlobShape::of(pattern) {
             GlobShape::Prefix(s) => Self::Prefix(s.as_bytes()),
             GlobShape::Suffix(s) => Self::Suffix(s.as_bytes()),
-            GlobShape::Contains(s) => Self::Contains(memchr::memmem::Finder::new(s)),
+            GlobShape::Contains(s) => Self::Contains(Box::new(memchr::memmem::Finder::new(s))),
             GlobShape::General(s) => Self::General(s.as_bytes()),
         }
     }

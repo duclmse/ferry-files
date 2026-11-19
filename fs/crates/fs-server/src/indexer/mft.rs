@@ -267,8 +267,10 @@ fn merge_record(nodes: &mut Vec<Node>, number: u32, record: &[u8]) -> Option<()>
                 let parent = (u64_at(c, 0)? & REFERENCE_MASK) as u32;
                 let units: Vec<u16> = c
                     .get(66..66 + 2 * usize::from(*c.get(64)?))?
-                    .chunks_exact(2)
-                    .map(|u| u16::from_le_bytes([u[0], u[1]]))
+                    .as_chunks::<2>()
+                    .0
+                    .iter()
+                    .map(|u| u16::from_le_bytes(*u))
                     .collect();
                 let name: Box<str> = String::from_utf16_lossy(&units).into();
                 if !node.links.iter().any(|l| l.0 == parent && l.1 == name) {

@@ -77,8 +77,10 @@ pub(super) fn parse(buf: &[u8], out: &mut Vec<Record>) -> Option<i64> {
         let name_off = u16_at(rec, 58)? as usize;
         let units: Vec<u16> = rec
             .get(name_off..name_off + name_len)?
-            .chunks_exact(2)
-            .map(|c| u16::from_le_bytes([c[0], c[1]]))
+            .as_chunks::<2>()
+            .0
+            .iter()
+            .map(|c| u16::from_le_bytes(*c))
             .collect();
         out.push(Record {
             parent: u64_at(rec, 16)?,
