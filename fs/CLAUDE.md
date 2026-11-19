@@ -170,5 +170,12 @@ disk. The commit loop in `daemon.rs` runs every `commit_interval_secs`.
   `mutating` router in `api/fs.rs`.
 - The client must stay thin: `fs-cli` depends only on `fs-protocol`, never on
   `fs-server` or an extension crate. New client features go through IPC.
+- SQLite writes go through `SqliteStore::write_conn()`, a single
+  connection; reads use `get_conn()`. Never take `write_conn()` while
+  holding it, and route new write methods through it.
+- A directory rename, move-in or move-out arrives as one watcher event for
+  the directory alone. `process_event` walks or removes the subtree; keep
+  that when changing event handling. FSEvents may report a deletion as a
+  modification of a vanished path.
 - Tantivy's `IndexWriter` holds a lock file. Only one writer per index
   directory. The daemon enforces a PID file check before acquiring the writer.

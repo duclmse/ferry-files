@@ -28,11 +28,25 @@ and installs, starts, searches through and stops the Windows Service.
 | `rar2zip` extension | Done; host keys checked (`strict` by default); moved-in and pre-existing archives picked up |
 | `sftpd` extension | Done; public-key SFTP server confined to one folder |
 
-Nothing is open. The last item, queries taking seconds right after a walk
-crawl on the 2-core Windows runner, came from watcher events (31,681 during
-a 16-minute whole-volume walk) handled on runtime workers and a sibling
-sweep that stat'ed thousands of files per event. Since those fixes, the
-first queries after either crawl take milliseconds.
+Nothing is open. The last round (Nov 2026) closed section 7 of the
+performance plan:
+
+- Four settings that were parsed but never read now work:
+  `indexer.crawl_threads`, `indexer.content_threads` (content and archive
+  work moved off the walker threads onto a bounded worker pool),
+  `exclusions.skip_network_content` and `exclusions.max_content_size_bytes`.
+- SQLite writes go through one write connection. Full-text adds and deletes
+  no longer serialise on one lock. Per-row archive upserts reuse their
+  prepared statement.
+- rar2zip skips re-hashing a file it already queued unchanged, and hashes
+  off the async runtime.
+- `benches/reconcile.rs`: a 1M-row re-crawl, peak RSS 101 MiB.
+
+The same pass fixed watcher bugs. A renamed folder lost its contents, a
+moved-in folder was indexed empty, and a folder moved out left its rows.
+Content indexed from watcher events was not searchable until the next crawl,
+because the commit loop never reloaded the reader. Details are in the
+[performance plan](plans/performance-memory-update.md#section-7-status-nov-2026).
 
 ### Testing on Windows
 
@@ -111,7 +125,8 @@ upgrading, because stored watch roots no longer carry the `\\?\` prefix.
 ## Plans
 
 - [Performance & Memory Update](plans/performance-memory-update.md) -
-  implemented; bounded crawl/fuzzy/content search, stream fan-out, postcard IPC
+  implemented, section 7 included; bounded crawl/fuzzy/content search,
+  stream fan-out, postcard IPC, content worker pool, single SQLite writer
 - [Borrowing Everything's Techniques](plans/everything-borrowing.md) - phases
   1-5 and 7 implemented (snapshot metadata, name-only fuzzy, compact memory
   store with a parent-pointer tree, SQLite bulk load, change catch-up on

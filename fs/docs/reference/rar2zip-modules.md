@@ -275,7 +275,9 @@ CREATE TABLE IF NOT EXISTS jobs (
     retry_count  INTEGER NOT NULL DEFAULT 0,
     created_at   INTEGER NOT NULL,
     updated_at   INTEGER NOT NULL,
-    error        TEXT
+    error        TEXT,
+    file_size    INTEGER,         -- added by migrate(); NULL on older rows
+    file_mtime   INTEGER          -- seconds; with file_size, for is_known_copy
 );
 
 CREATE TABLE IF NOT EXISTS multipart_groups (
@@ -287,7 +289,14 @@ CREATE TABLE IF NOT EXISTS multipart_groups (
 
 CREATE INDEX IF NOT EXISTS idx_jobs_status ON jobs(status);
 CREATE INDEX IF NOT EXISTS idx_jobs_hash   ON jobs(file_hash);
+CREATE INDEX IF NOT EXISTS idx_jobs_path   ON jobs(file_path);
 ```
+
+Intake checks `is_known_copy(path, size, mtime)` before hashing: a file at
+the same path with the same size and mtime as a job that has not failed is
+the file already queued, seen again by the startup scan or a repeated
+event, and is skipped without reading it. Otherwise it hashes the file
+(SHA-256, on a blocking thread) and `is_duplicate` decides by content.
 
 ### 5.2 Methods
 
@@ -296,6 +305,11 @@ impl JobQueue {
     pub fn new(db_path: &Path) -> Result<Self>;
     pub fn enqueue(&self, file_path: &Path, file_hash: &str,
                    strategy: Strategy, destinations: &[String]) -> Result<String>;
+    /// As `enqueue`, recording the file's (size, mtime) for is_known_copy.
+    pub fn enqueue_stamped(&self, file_path: &Path, file_hash: &str,
+                           stamp: Option<(u64, i64)>, strategy: Strategy,
+                           destinations: &[String]) -> Result<String>;
+    pub fn is_known_copy(&self, file_path: &Path, size: u64, mtime: i64) -> Result<bool>;
     pub fn set_status(&self, id: &str, status: Status,
                       error: Option<&str>) -> Result<()>;
     pub fn increment_retry(&self, id: &str) -> Result<()>;

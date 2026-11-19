@@ -249,7 +249,7 @@ spec Definitions of Done (spec sections 20 and 24).
 | Test                               | Status | Notes                                                                        |
 | ---------------------------------- | ------ | ---------------------------------------------------------------------------- |
 | `test_full_crawl_and_search`       | ✅     | 10 files (6 .rs + 4 .toml); spec said 50 - functionally equivalent           |
-| `test_incremental_update`          | ✅     | Create + delete covered. **Rename step (spec step 4) not implemented.**      |
+| `test_incremental_update`          | ✅     | Create, rename and delete covered; folder rename and move-in in `test_directory_rename_and_move_in` |
 | `test_content_search`              | ✅     | Waits on `content_indexed >= 1` then Tantivy commit sleep                    |
 | `test_everything_query_acceptance` | ✅     | All spec query forms return HTTP 200; `dir:src` fixed (was 400 - parser gap) |
 | `test_zip_inner_file_search`       | ✅     | All 8 steps implemented.                                                     |

@@ -1,8 +1,10 @@
 # Agent Handoff: Performance and Memory Update Plan
 
 > **Status:** implemented (mark-and-sweep crawl, indexed `parent`, bounded
-> fuzzy/content search, multi-destination `Strategy::Disk`, postcard IPC).
-> Kept for design history; current behaviour is specified in `docs/reference/`.
+> fuzzy/content search, multi-destination `Strategy::Disk`, postcard IPC),
+> and section 7 with its tests and benchmarks (Nov 2026; see
+> [Section 7 status](#section-7-status-nov-2026)). Kept for design history;
+> current behaviour is specified in `docs/reference/`.
 
 Use this document to update both the project documentation and the Rust
 implementation. The goal is to keep the documented architecture aligned with
@@ -300,7 +302,8 @@ Changes to existing files:
 - `src/lib.rs` - added `pub mod api`.
 - `src/main.rs` - IPC server spawned inside `run_daemon`; `Command::Search`,
   `Command::Stats`, `Command::Reindex`, `Command::Open` now connect via
-  `IpcClient` and print results. `Command::Tui` still deferred to Phase 7.
+  `IpcClient` and print results. `Command::Tui` was deferred to Phase 7 and
+  is built (`fs tui`).
 - `src/indexer/crawler.rs` - moved platform-specific `store::ATTRIB_*` imports
   inside their respective `#[cfg]` blocks to pass `clippy -D warnings` on
   non-Windows targets.
@@ -312,7 +315,8 @@ Design decisions:
 - `SearchHitDto` does not carry internal `id` or `tantivy_id` fields - smaller
   on the wire and avoids leaking store internals to the CLI.
 - `Reindex` and `Open` handlers accept the request and return an acknowledged
-  response; full daemon signalling for reindex is deferred to Phase 7.
+  response; reindex was deferred to Phase 7 and now signals the daemon's
+  crawl loop (`reindex_tx`).
 - `--ipc-format json` flag not added; JSON fallback can be added if debugging
   need arises (Phase 7 tooling).
 
@@ -387,6 +391,39 @@ rar2zip queue schema:
   and filtering this is acceptable, but if destination-level retries/status are
   added, split destinations into a child table instead of parsing JSON.
 
+### Section 7 status (Nov 2026)
+
+| Item | State |
+| ---- | ----- |
+| SQLite statement reuse | Crawl batches prepare once per batch; `upsert_file_conn` and `upsert_archive_entry_conn` use `prepare_cached`, so archive entries no longer re-prepare per row. |
+| Archive crawler streaming | `ArchiveCrawler::crawl` returns `ArchiveEntryIter`, one entry at a time. |
+| Content extraction scheduling | Done. The walk (or the file table crawl) hands files needing content or archive work to `indexer.content_threads` worker threads over a 1,024-entry bounded channel; the walk uses `indexer.crawl_threads`. Content reads stop at the limit (`read_content`), so files over 1 MB get content in the crawl too. Before this neither setting was read. |
+| `skip_network_content`, `max_content_size_bytes` | Both were parsed and never read. `content::effective_config` now applies them for the crawl (per watch root), watcher events and archive entries. The Linux mount check uses the deepest mount point by path component (it matched `/mnt/nfs` against `/mnt/nfsdata`). |
+| Tantivy writer lock pressure | Adds and deletes share an `RwLock` read guard; only a commit takes it exclusively. 64 striped path locks keep an upsert's delete and add together, so concurrent upserts of one path leave one document. |
+| SQLite pool sizing | 16 read connections plus one write connection (`write_conn`) for every write. Writers queue in-process instead of sleeping in SQLite's busy handler (up to 100 ms per retry). `:memory:` stores keep one connection, since each connection there is a separate database. |
+| Path and string memory | Not changed: conditional on profiling, and no profile has shown path allocation dominating. |
+| Logging | Done earlier; the one `eprintln!` left in `daemon.rs` reports config errors before logging is set up. |
+| rar2zip hashing and dedup | SHA-256 stays the dedup key. Jobs record the file's size and mtime; a file seen again at the same path, unchanged, is skipped without hashing (the startup scan and repeated events). Hashing runs on a blocking thread with a 1 MiB buffer, not 64 KB `tokio::fs` reads. |
+| rar2zip queue schema | Not changed: the child table is only needed for per-destination retries, which do not exist. |
+
+The same pass fixed watcher-path bugs found while moving the side work:
+
+- A directory rename removed every row under the old name and added only
+  the directory back; its contents stayed missing until the next crawl.
+  The new subtree is now walked and indexed, and full-text documents
+  under the old name are removed.
+- A folder moved in (or a rename FSEvents did not pair) arrived as one
+  create; a folder the index has not seen is now walked. A folder moved
+  out, or a modify of a vanished path (FSEvents' unpaired rename or
+  deletion), now removes the subtree.
+- A renamed text file lost its full-text document.
+- An archive created or modified while `fsd` ran had its entries indexed
+  but not its own row.
+- The commit loop never reloaded the Tantivy reader (manual reload), so
+  content indexed from watcher events was not searchable until the next
+  crawl.
+- A paired rename was emitted once per path, so it was processed twice.
+
 ## Tests and Benchmarks
 
 Add or update tests near the implementation files, following the project
@@ -408,12 +445,26 @@ Minimum tests:
 - Full crawl content indexing uses bounded workers rather than unbounded inline
   reads in walker callbacks.
 
+Status: all minimum tests exist. New in Nov 2026:
+`content::tests` (limit, cap), `exclusions::tests::mount_table_*`,
+`tantivy_store::tests::concurrent_upserts_*`, `watcher::tests`, the
+integration test `test_directory_rename_and_move_in`, and rar2zip's
+`known_copy_*`, `migrates_a_queue_*` and intake re-sighting tests.
+
 Benchmark updates:
 
 - Add RSS or allocator-observed peak memory measurements where practical.
 - Add a 1M-row synthetic full-crawl reconciliation benchmark.
 - Add broad fuzzy and broad content search benchmarks that assert bounded
   candidate/path memory.
+
+Status: `benches/reconcile.rs` re-crawls 1,000,000 rows with 1% gone per
+round and prints peak RSS: 29.2 s per round on an M-series Mac with all
+five secondary indexes kept (the first crawl drops them; this is a later
+crawl), peak RSS 101 MiB. Peak memory for real crawls is recorded by
+`scripts/bench-windows.ps1` (peak working set). `fuzzy_search_500k_files`
+covers broad fuzzy; candidate bounds are asserted by unit tests rather than
+benchmarks.
 
 ## Non-Goals
 

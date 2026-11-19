@@ -101,10 +101,10 @@ index_cache_size = 256
 | `log_dir`                               | `string`       | _(required)_     | Rolling log files                                 |
 | `exclusions.path_patterns`              | `[string]`     | `[]`             | Glob patterns to exclude                          |
 | `exclusions.exclude_hidden`             | `bool`         | `false`          | Skip dot-files/directories                        |
-| `exclusions.skip_network_content`       | `bool`         | `false`          | Skip content indexing on network mounts           |
+| `exclusions.skip_network_content`       | `bool`         | `false`          | No content for a watch root on a network mount    |
 | `content.extension_limits`              | `{ext: bytes}` | `{}`             | Per-extension content read limit; `"*"` = default |
-| `indexer.crawl_threads`                 | `int`          | half CPU count   | Parallel crawl threads                            |
-| `indexer.content_threads`               | `int`          | half CPU count   | Parallel content-extraction threads               |
+| `indexer.crawl_threads`                 | `int`          | half CPU count   | Directory walker threads                          |
+| `indexer.content_threads`               | `int`          | half CPU count   | Crawl threads reading content and archives        |
 | `indexer.commit_interval_secs`          | `int`          | `5`              | Tantivy commit interval                           |
 | `indexer.event_batch_size`              | `int`          | `100`            | Max watcher events per batch                      |
 | `api.rest_port`                         | `int`          | `7700`           | HTTP REST port                                    |
@@ -122,7 +122,7 @@ index_cache_size = 256
 | `archive_index.max_nesting_depth`       | `int`          | `0`              | Max nested ZIP depth                              |
 | `archive_index.passwords`               | `[string]`     | `[]`             | Passwords for encrypted ZIPs                      |
 | `macros.<name>`                         | `string`       | _(none)_         | User-defined query macros                         |
-| `exclusions.max_content_size_bytes`     | `int`          | `0` (disabled)   | Global hard cap on content bytes read per file    |
+| `exclusions.max_content_size_bytes`     | `int`          | `0` (disabled)   | Caps every `content.extension_limits` value       |
 | `archive_service.enabled`              | `bool`         | `false`          | Enable `/archive/*` REST routes and .zidx sidecars |
 | `archive_service.zidx_dir`             | `string`       | `{data_dir}/zidx`| Root directory for .zidx sidecar files            |
 | `archive_service.index_cache_size`     | `int`          | `256`            | Max ZidxIndex instances held open in the LRU cache |

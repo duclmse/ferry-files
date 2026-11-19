@@ -261,8 +261,8 @@ pub struct Config {
 pub struct ExclusionConfig {
     pub path_patterns:        Vec<String>,  // glob patterns
     pub exclude_hidden:       bool,         // default false
-    pub max_content_size_bytes: u64,        // 0 = no limit
-    pub skip_network_content: bool,         // default false
+    pub max_content_size_bytes: u64,        // 0 = no limit; caps every content limit
+    pub skip_network_content: bool,         // default false; per watch root
 }
 
 #[derive(Debug, Clone, Deserialize)]
@@ -296,8 +296,8 @@ pub struct SearchConfig {
 
 #[derive(Debug, Clone, Deserialize)]
 pub struct IndexerConfig {
-    pub crawl_threads:         usize,  // default num_cpus / 2
-    pub content_threads:       usize,  // default num_cpus / 2
+    pub crawl_threads:         usize,  // default num_cpus / 2; walker threads
+    pub content_threads:       usize,  // default num_cpus / 2; content + archive workers
     pub commit_interval_secs:  u64,    // default 5
     pub event_batch_size:      usize,  // default 100
 }
@@ -447,6 +447,11 @@ For inner ZIP entries: `is_hidden = false`, `is_symlink = false`, `attrib_bitmas
 
 ### 6.3 Methods
 
+Reads use a pool of 16 connections. Every write goes through one more
+connection (`write_conn`, a pool of one), so writers queue in-process rather
+than in SQLite's busy handler; a method holding it must not take it again.
+A `:memory:` store uses a single connection for both.
+
 ```rust
 impl SqliteStore {
     pub fn new(db_path: &Path) -> Result<Self>;
@@ -516,7 +521,10 @@ size_bytes  U64 STORED FAST
 pub struct TantivyStore {
     index:  tantivy::Index,
     reader: tantivy::IndexReader,
-    writer: Arc<Mutex<tantivy::IndexWriter>>,
+    // Read guard for add/delete, write guard only for commit.
+    writer: RwLock<tantivy::IndexWriter>,
+    // 64 striped locks: an upsert's delete and add stay together per path.
+    path_locks: [Mutex<()>; 64],
     schema: tantivy::Schema,
 }
 
@@ -536,8 +544,10 @@ impl TantivyStore {
 
 ### 7.3 Commit Strategy
 
-Background Tokio task calls `commit()` every `commit_interval_secs`. Also commit
-after bulk crawl. `IndexWriter` heap budget: 128 MB.
+Background Tokio task calls `commit()` then `reload_reader()` every
+`commit_interval_secs`, on a blocking thread; the reader's reload policy is
+manual, so searches see a commit only after the reload. Also commit and
+reload after a full crawl. `IndexWriter` heap budget: 128 MB.
 
 ### 7.4 Tests
 

@@ -273,11 +273,11 @@ Cost: one `stat` per entry and no index writes for unchanged files. On the
 exclusions, macOS: the same walk phase 6 measured), against 32-37 s for an
 initial crawl and longer for a reconcile crawl, which also upserts every
 row. Unit tests run on macOS (new, edited, deleted, moved-in,
-unindexed-with-old-times and excluded entries); Linux and Windows builds are
-clippy-clean via cross-compilation, but neither has been run on its own OS
-here.
+unindexed-with-old-times and excluded entries). Since Nov 2026 CI runs the
+tests on Linux and Windows too, and the Windows benchmark's catch-up checks
+exercise the scan as the fallback.
 
-### Windows: USN journal replay (follow-up, done; not run on Windows)
+### Windows: USN journal replay (follow-up, done; run on Windows in CI)
 
 `watcher/journal/usn.rs` replays the NTFS change journal, so the Windows
 catch-up costs time in proportion to the changes instead of the tree, like
@@ -308,12 +308,11 @@ Everything's.
   paths changed. A missing root still goes to the scan, which crawls.
 
 The record parser, the fold into paths, the root mapping and the volume
-grouping are unit-tested on every platform; the Windows calls are
-clippy-clean via cross-compilation (`x86_64-pc-windows-gnu`) but have not
-been run on Windows. Two things to check there first: that a service
-without administrator rights logs the fallback and scans, and that the
-paths the replay produces match the crawler's for roots configured with
-`/` separators or a different case.
+grouping are unit-tested on every platform. On Windows (Nov 2026, CI and
+`scripts/bench-windows.ps1`) the replay passes all 9 catch-up checks, both
+after a walk and after a file table crawl. Running it there found that
+canonicalized roots kept the `\\?\` prefix, so no record mapped onto a
+root and replay never ran; roots are now stored without it.
 
 ## Phase 6 - Faster enumeration (Everything §2.1) - writer fixed; platform enumeration measured, not built
 
