@@ -76,12 +76,15 @@ pub(super) fn ListView(pane: Pane) -> impl IntoView {
         <div class="list" class:drop=move || ctx.drop_at.get().as_deref() == Some(here.as_str())
             on:click=move |_| p.select_only(None) on:contextmenu=move |ev| ctx.show_menu(p, &ev, None)
             on:dragover=over on:drop=drop>
-            <table class:moving=move || moving.with(Option::is_some)>
+            // At least the other columns and NAME_MIN for the name: narrower, the fixed layout would
+            // give the name nothing. The list scrolls sideways instead.
+            <table class:moving=move || moving.with(Option::is_some)
+                style=move || format!("min-width: {}px", NAME_MIN + p.list_cols.get().into_iter().map(|c| col_w(p, c)).sum::<f64>())>
                 // The name takes what's left; the others have the widths dragged on their left edge.
                 <colgroup>
                     <col/>
                     {move || p.list_cols.get().into_iter().map(|c| view! {
-                        <col style=move || format!("width: {}px", match p.list_w[c].get() { w if w > 0.0 => w, _ => LIST_W[c] })/>
+                        <col style=move || format!("width: {}px", col_w(p, c))/>
                     }).collect_view()}
                 </colgroup>
                 <thead on:contextmenu=move |ev| ctx.show_columns_menu(p, &ev)><tr node_ref=head>
@@ -156,8 +159,20 @@ fn sort_button(p: Pane, k: SortKey, dragged: StoredValue<bool>) -> impl IntoView
 /// The list's columns after the name, by index, and their default widths.
 pub(super) const LIST_COLS: [SortKey; 3] = [SortKey::Kind, SortKey::Date, SortKey::Size];
 const LIST_W: [f64; 3] = [110.0, 150.0, 90.0];
+/// Their order before any is moved: size, kind, modified.
+pub(super) const LIST_ORDER: [usize; 3] = [2, 0, 1];
+/// The narrowest the name column gets; a narrower list scrolls sideways.
+const NAME_MIN: f64 = 160.0;
 
-/// The list's columns as last arranged for pane `id`: all of them, in order, at first.
+/// Column `c`'s width: as dragged, or its default.
+fn col_w(p: Pane, c: usize) -> f64 {
+    match p.list_w[c].get() {
+        w if w > 0.0 => w,
+        _ => LIST_W[c],
+    }
+}
+
+/// The list's columns as last arranged for pane `id`: all of them, in `LIST_ORDER`, at first.
 pub(super) fn stored_cols(id: usize) -> Vec<usize> {
     let mut v: Vec<usize> = Vec::new();
     match stored(&format!("ferry-files.list-cols.{id}")) {
@@ -168,7 +183,7 @@ pub(super) fn stored_cols(id: usize) -> Vec<usize> {
                 }
             }
         }
-        None => v = (0..LIST_COLS.len()).collect(),
+        None => v = LIST_ORDER.to_vec(),
     }
     v
 }

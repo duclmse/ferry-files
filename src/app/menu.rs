@@ -75,8 +75,8 @@ impl Ctx {
     pub(super) fn column_items(self, p: Pane) -> Vec<MenuItem> {
         let shown = p.list_cols.get_untracked();
         let mut v = vec![MenuItem::Do { label: "✓ Name".into(), key: "", act: Act::Column(usize::MAX), danger: false, enabled: false }];
-        v.extend(LIST_COLS.iter().enumerate().map(|(c, k)| {
-            item(format!("{} {}", if shown.contains(&c) { "✓" } else { "\u{2003}" }, k.label()), "", Act::Column(c))
+        v.extend(LIST_ORDER.iter().map(|&c| {
+            item(format!("{} {}", if shown.contains(&c) { "✓" } else { "\u{2003}" }, LIST_COLS[c].label()), "", Act::Column(c))
         }));
         v.extend([MenuItem::Sep, item("Default columns", "", Act::ResetColumns)]);
         v
@@ -284,13 +284,14 @@ impl Ctx {
                     }
                     // Back where it is by default, among those shown.
                     None => {
-                        let at = v.iter().position(|&x| x > c).unwrap_or(v.len());
+                        let rank = |c: usize| LIST_ORDER.iter().position(|&x| x == c);
+                        let at = v.iter().position(|&x| rank(x) > rank(c)).unwrap_or(v.len());
                         v.insert(at, c);
                     }
                 }
                 p.set_list_cols(v);
             }
-            (Act::ResetColumns, _) => p.set_list_cols((0..LIST_COLS.len()).collect()),
+            (Act::ResetColumns, _) => p.set_list_cols(LIST_ORDER.to_vec()),
             (Act::ShowAs(how), Some(e)) => {
                 p.peek_as.set(Some((e.path, how)));
                 p.preview.set(true);
