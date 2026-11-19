@@ -72,8 +72,8 @@ research doc disagree, the **reference** doc wins.
   store with a parent-pointer tree, SQLite bulk load, change catch-up on
   restart including USN journal replay, optional SQLite indexes, `*.ext`
   answered from the extension index); platform enumeration measured and not
-  built; NTFS file table crawl built behind `indexer.use_mft`, not yet proven
-  on real Windows volumes
+  built; NTFS file table crawl built behind `indexer.use_mft` and run on a
+  real volume in CI (slower than the walk unless the root is most of a volume)
 
 ## Research notes
 

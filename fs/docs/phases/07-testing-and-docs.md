@@ -204,7 +204,8 @@ They serve as the primary reference for users.
 - [x] README covers all 10 sections + ZIP inner-file section.
 - [x] `VERSIONS.md` populated with all resolved crate versions (incl. `zip`,
       `tempfile`).
-- [ ] Builds on Windows, Linux, and macOS.
+- [x] Builds on Windows, Linux, and macOS.
+      *(CI: `.github/workflows/ci.yml`, all green on Windows Server 2025, Ubuntu and macOS runners, Nov 2026)*
 
 ### rar2zip
 
@@ -222,7 +223,8 @@ They serve as the primary reference for users.
       *(`tests/sftpd.rs::stream_strategy_uploads_without_a_local_zip`)*
 - [x] README covers all 8 sections.
       *(section 5 is now Host keys, since Windows Service belongs to `fsd`)*
-- [ ] Builds on Windows only (Windows Service code must compile).
+- [x] Builds on Windows only (Windows Service code must compile).
+      *(CI: `.github/workflows/ci.yml`, all green on Windows Server 2025, Ubuntu and macOS runners, Nov 2026)*
 - [x] `VERSIONS.md` populated with all resolved crate versions.
 - [x] Integration test passes for both Disk and Stream strategies.
       *(`tests/sftpd.rs`, against the sftpd extension; the env-gated

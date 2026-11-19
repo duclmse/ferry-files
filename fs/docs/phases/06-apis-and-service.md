@@ -420,7 +420,11 @@ All four subcommands:
 - [x] `status` prints queue depth table. *(code complete; `queue_depth()` covered by unit tests)*
 - [x] `retry-failed` resets failed jobs. *(code complete; `reset_failed()` covered by unit tests)*
 - [x] `validate-config` exits 0 on valid config. *(code complete; covered by `config::tests`)*
-- [ ] Windows Service: `sc start rar2zip` starts the service.
+- [x] Windows Service: `sc start rar2zip` starts the service.
+      *(now `fsd install-service` and the `FsDaemon` service, which runs the
+      extensions: CI installs, starts, searches through, stops and uninstalls
+      it. It could not start before Nov 2026: the command line was registered
+      as the executable path.)*
       *(code complete with `#[cfg(target_os = "windows")]` guards + `install-service.ps1` created; requires Windows SCM to verify at runtime)*
 - [x] `cargo build --release -p rar2zip` succeeds on Windows with zero warnings.
       *(verified 2026-05-09 on Windows 11; 2m 08s release build, zero warnings)*
