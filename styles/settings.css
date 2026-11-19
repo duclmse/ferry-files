@@ -169,22 +169,67 @@
   }
 }
 
-/* Keyboard shortcuts. */
+/* Keyboard shortcuts: the command, then its keys. */
+.shortcuts .key-search {
+  box-sizing: border-box;
+  width: 100%;
+  font: inherit;
+  font-size: 13px;
+  padding: 5px 8px;
+  border: 1px solid var(--line);
+  border-radius: 6px;
+  background: var(--bg);
+  color: var(--ink);
+}
+
+.shortcuts .key-search:focus {
+  outline: 2px solid var(--accent);
+  outline-offset: -1px;
+}
+
 .shortcuts dl {
-  display: grid;
-  align-items: center;
-  grid-template-columns: max-content 1fr;
-  gap: 6px 14px;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
   margin: 0;
   font-size: 13px;
 }
 
+.shortcuts .key-row {
+  display: grid;
+  grid-template-columns: 1fr max-content;
+  align-items: center;
+  gap: 2px 14px;
+  padding: 2px 0;
+}
+
+.shortcuts .key-row.hidden,
+.shortcuts h3.hidden {
+  display: none;
+}
+
 .shortcuts dt {
+  min-width: 0;
+}
+
+.shortcuts .key-row dd {
   display: flex;
   flex-wrap: wrap;
   justify-content: flex-end;
   align-items: center;
   gap: 4px;
+}
+
+.shortcuts .dup-warn {
+  grid-column: 1 / -1;
+  margin: 0;
+  color: var(--danger);
+  font-size: 12px;
+}
+
+.shortcuts .chip.dup kbd {
+  border-color: var(--danger);
+  color: var(--danger);
 }
 
 .shortcuts .chip {
@@ -256,17 +301,12 @@
   color: var(--ink);
 }
 
-.shortcuts dd {
-  align-self: center;
-}
-
 .shortcuts h3 {
   margin: 16px 0 8px;
 }
 
 .shortcuts dd {
   margin: 0;
-  color: var(--muted);
 }
 
 .shortcuts kbd {

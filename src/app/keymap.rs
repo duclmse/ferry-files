@@ -288,45 +288,93 @@ pub(super) fn ShortcutsEditor() -> impl IntoView {
     };
     on_cleanup(move || ctx.capturing.set(None));
     let changed = move || ctx.keymap.with(|k| !k.is_empty());
+    let query = RwSignal::new(String::new());
+    // Keys given to more than one command: chord → the commands that have it.
+    let dups = Memo::new(move |_| {
+        let mut by: HashMap<String, Vec<&'static str>> = HashMap::new();
+        ctx.keymap.with(|k| {
+            for c in COMMANDS {
+                for ch in chords_in(k, c.id) {
+                    let ids = by.entry(ch).or_default();
+                    if !ids.contains(&c.id) {
+                        ids.push(c.id);
+                    }
+                }
+            }
+        });
+        by.retain(|_, ids| ids.len() > 1);
+        by
+    });
+    let matches = move |text: &str, keys: &[String]| {
+        query.with(|q| {
+            let q = q.trim().to_lowercase();
+            q.is_empty() || text.to_lowercase().contains(&q) || keys.iter().any(|k| k.to_lowercase().contains(&q))
+        })
+    };
+    let shows = move |c: &Command| matches(&what(c.what), &ctx.chords(c.id).iter().map(|ch| label(ch)).collect::<Vec<_>>());
+    let fixed_shows = move |(k, w): &(&'static str, &'static str)| matches(&what(w), &[crate::os::keys(k).to_string()]);
+    let any_command = move || COMMANDS.iter().any(shows);
+    let any_fixed = move || FIXED.iter().any(fixed_shows);
     view! {
         <div class="shortcuts">
-            <p class="hint">"Press + to give a command another key, × to take one away."</p>
+            <input class="key-search" type="search" placeholder="Search commands or keys" aria-label="Search commands or keys"
+                prop:value=move || query.get() on:input=move |e| query.set(event_target_value(&e))/>
+            {move || match dups.with(HashMap::len) {
+                0 => None,
+                1 => Some(view! { <p class="dup-warn">"One key is on more than one command, so only the first one runs. Remove it from the others."</p> }.into_any()),
+                n => Some(view! { <p class="dup-warn">{format!("{n} keys are on more than one command, so only the first one runs. Remove them from the others.")}</p> }.into_any()),
+            }}
             <dl>
                 {COMMANDS.iter().map(|c| {
                     let id = c.id;
                     let waiting = move || ctx.capturing.get() == Some(id);
                     let mine = move || ctx.keymap.with(|k| k.contains_key(id));
+                    // "⌘K is also on: Open", once per key this command shares.
+                    let clashes = move || {
+                        dups.with(|d| {
+                            ctx.chords(id).iter().filter_map(|ch| {
+                                let others: Vec<String> = d.get(ch)?.iter().filter(|o| **o != id).filter_map(|o| command(o)).map(|o| what(o.what)).collect();
+                                Some(format!("{} is also on: {}", label(ch), others.join("; ")))
+                            }).collect::<Vec<_>>()
+                        })
+                    };
                     view! {
-                        <dt>
-                            {move || ctx.chords(id).into_iter().map(|ch| {
-                                let shown = label(&ch);
-                                view! {
-                                    <span class="chip">
-                                        <kbd>{shown.clone()}</kbd>
-                                        <button class="unbind" title=format!("Remove {shown}") aria-label=format!("Remove {shown}")
-                                            on:click=move |_| ctx.unbind(id, &ch)>{ico(Icon::Close)}</button>
-                                    </span>
-                                }
-                            }).collect_view()}
-                            <button class="bind" class:waiting=waiting
-                                title=move || if waiting() { "Press the keys, or Esc to stop" } else { "Add a key" } aria-label="Add a key"
-                                on:click=move |_| ctx.capturing.set(if waiting() { None } else { Some(id) })>
-                                {move || if waiting() { "Press keys…".into_any() } else { ico(Icon::Plus).into_any() }}
-                            </button>
-                        </dt>
-                        <dd>
-                            {what(c.what)}
-                            {move || mine().then(|| view! {
-                                <button class="reset" title="Reset: back to the default keys" aria-label="Reset" on:click=move |_| ctx.reset_keys(Some(id))>{ico(Icon::Restore)}</button>
-                            })}
-                        </dd>
+                        <div class="key-row" class:hidden=move || !shows(c)>
+                            <dt>{what(c.what)}</dt>
+                            <dd>
+                                {move || ctx.chords(id).into_iter().map(|ch| {
+                                    let shown = label(&ch);
+                                    let dup = dups.with(|d| d.contains_key(&ch));
+                                    view! {
+                                        <span class="chip" class:dup=dup>
+                                            <kbd>{shown.clone()}</kbd>
+                                            <button class="unbind" title=format!("Remove {shown}") aria-label=format!("Remove {shown}")
+                                                on:click=move |_| ctx.unbind(id, &ch)>{ico(Icon::Close)}</button>
+                                        </span>
+                                    }
+                                }).collect_view()}
+                                <button class="bind" class:waiting=waiting
+                                    title=move || if waiting() { "Press the keys, or Esc to stop" } else { "Add a key" } aria-label="Add a key"
+                                    on:click=move |_| ctx.capturing.set(if waiting() { None } else { Some(id) })>
+                                    {move || if waiting() { "Press keys…".into_any() } else { ico(Icon::Plus).into_any() }}
+                                </button>
+                                {move || mine().then(|| view! {
+                                    <button class="reset" title="Reset: back to the default keys" aria-label="Reset" on:click=move |_| ctx.reset_keys(Some(id))>{ico(Icon::Restore)}</button>
+                                })}
+                            </dd>
+                            {move || clashes().into_iter().map(|t| view! { <p class="dup-warn">{t}</p> }).collect_view()}
+                        </div>
                     }
                 }).collect_view()}
             </dl>
-            <h3>"Fixed"</h3>
+            <h3 class:hidden=move || !any_fixed()>"Fixed"</h3>
             <dl>
-                {FIXED.iter().map(|(k, w)| view! { <dt><kbd>{crate::os::keys(k)}</kbd></dt><dd>{what(w)}</dd> }).collect_view()}
+                {FIXED.iter().map(|f| {
+                    let (k, w) = *f;
+                    view! { <div class="key-row" class:hidden=move || !fixed_shows(f)><dt>{what(w)}</dt><dd><kbd>{crate::os::keys(k)}</kbd></dd></div> }
+                }).collect_view()}
             </dl>
+            {move || (!any_command() && !any_fixed()).then(|| view! { <p class="hint">"No command or key matches."</p> })}
             <button class="btn reset-all" disabled=move || !changed() on:click=move |_| ctx.reset_keys(None)>"Reset all shortcuts"</button>
         </div>
     }
