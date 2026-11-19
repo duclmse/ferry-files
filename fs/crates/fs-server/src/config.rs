@@ -455,12 +455,33 @@ pub fn load(path: &Path) -> Result<Config> {
     // `validate()` reports that separately.
     for p in &mut cfg.watch_paths {
         if let Ok(canon) = p.canonicalize() {
-            *p = canon;
+            *p = if cfg!(windows) {
+                without_verbatim(canon)
+            } else {
+                canon
+            };
         }
     }
 
     cfg.source_path = Some(path.to_path_buf());
     Ok(cfg)
+}
+
+/// `canonicalize` on Windows returns `\\?\C:\x`. Kept, that prefix made the
+/// USN code open a volume named `\\.\\\?\C:`, so journal replay never ran,
+/// and it ended up in every indexed path. Drive and UNC paths read the same
+/// without it as long as they stay under MAX_PATH, as these roots do.
+fn without_verbatim(p: PathBuf) -> PathBuf {
+    let Some(s) = p.to_str() else { return p };
+    if let Some(rest) = s.strip_prefix(r"\\?\UNC\") {
+        return PathBuf::from(format!(r"\\{rest}"));
+    }
+    match s.strip_prefix(r"\\?\") {
+        Some(rest) if rest.len() < 260 && rest.as_bytes().get(1) == Some(&b':') => {
+            PathBuf::from(rest)
+        }
+        _ => p,
+    }
 }
 
 /// Validate config. Returns a list of error strings; empty means valid.
@@ -874,5 +895,20 @@ log_dir     = "{dir}/logs"
         let port = shared.read().await.api.rest_port;
         token.cancel();
         assert_eq!(port, 8800);
+    }
+
+    #[test]
+    fn verbatim_prefix_is_dropped_from_drive_and_unc_roots() {
+        let w = |s: &str| without_verbatim(PathBuf::from(s));
+        assert_eq!(
+            w(r"\\?\C:\Windows\System32"),
+            PathBuf::from(r"C:\Windows\System32")
+        );
+        assert_eq!(w(r"\\?\UNC\srv\share\x"), PathBuf::from(r"\\srv\share\x"));
+        assert_eq!(
+            w(r"\\?\Volume{1234}\x"),
+            PathBuf::from(r"\\?\Volume{1234}\x")
+        );
+        assert_eq!(w("/already/plain"), PathBuf::from("/already/plain"));
     }
 }
