@@ -26,6 +26,8 @@ pub(super) struct TransferReport {
     backups: Vec<String>,
     /// Resuming: files already at the target with the same size, left as they are.
     already: u32,
+    /// Syncing as a mirror: items removed from the target (each file backed up first).
+    removed: u32,
     /// What the transfer made at the target's top level that wasn't there before (a file, or a
     /// folder with everything in it): what undoing the copy removes, or the move moves back.
     made: Vec<String>,
@@ -37,13 +39,15 @@ pub(super) struct Item {
     to: String,
     dir: bool,
     size: u64,
+    /// Write over the file at `to` (backed up first), whatever `Opts::replace` says.
+    replace: bool,
 }
 
 /// Lists everything under `from` (itself first), with where it goes under `to_dir`.
 pub(super) fn walk(dev: &Device, from: &str, to_dir: &str, out: &mut Vec<Item>) -> Result<(), String> {
     let st = dev.stat(from).map_err(msg)?.ok_or_else(|| format!("No such file or folder: {from}"))?;
     let to = device::join(to_dir, &st.name);
-    out.push(Item { from: from.to_string(), to: to.clone(), dir: st.dir, size: st.size });
+    out.push(Item { from: from.to_string(), to: to.clone(), dir: st.dir, size: st.size, replace: false });
     if st.dir {
         let mut kids = dev.listdir(from).map_err(msg)?;
         kids.sort_by(|a, b| a.name.cmp(&b.name));
@@ -140,6 +144,7 @@ pub(super) fn run_items(
             break;
         }
         let name = device::basename(&it.from).to_string();
+        let replace = replace || it.replace;
         if failed.iter().any(|f| it.from.starts_with(&format!("{f}/"))) {
             continue;
         }
@@ -272,6 +277,8 @@ pub(super) struct Comparison {
     missing: Vec<Item>,
     /// Files on both sides with different sizes, or a file on one side and a folder on the other.
     differ: Vec<String>,
+    /// The files of `differ` that are files on both sides, ready to replace the target's.
+    changed: Vec<Item>,
     /// Only in the target.
     extra: Vec<String>,
     same: u32,
@@ -287,7 +294,12 @@ pub(super) fn compare_dirs(a: &Device, a_dir: &str, b: &Device, b_dir: &str, rel
             None => walk(a, &e.path, b_dir, &mut out.missing)?,
             Some(t) if t.dir && e.dir => compare_dirs(a, &e.path, b, &t.path, &r(&e.name), hidden, out)?,
             Some(t) if !t.dir && !e.dir && t.size == e.size => out.same += 1,
-            Some(_) => out.differ.push(r(&e.name)),
+            Some(t) => {
+                if !t.dir && !e.dir {
+                    out.changed.push(Item { from: e.path.clone(), to: t.path.clone(), dir: false, size: e.size, replace: true });
+                }
+                out.differ.push(r(&e.name));
+            }
         }
     }
     let names: std::collections::HashSet<&str> = mine.iter().map(|e| e.name.as_str()).collect();
@@ -304,6 +316,9 @@ pub(super) struct CompareReport {
     folders: u32,
     bytes: u64,
     differ: Vec<String>,
+    /// Of `differ`, the files an update would replace, and their size.
+    changed: u32,
+    changed_bytes: u64,
     extra: Vec<String>,
     same: u32,
 }
@@ -396,6 +411,8 @@ pub(super) async fn compare(state: State<'_, AppState>, from_src: String, from_d
             folders: c.missing.iter().filter(|i| i.dir).count() as u32,
             bytes: c.missing.iter().map(|i| i.size).sum(),
             differ: c.differ,
+            changed: c.changed.len() as u32,
+            changed_bytes: c.changed.iter().map(|i| i.size).sum(),
             extra: c.extra,
             same: c.same,
         })
@@ -403,8 +420,60 @@ pub(super) async fn compare(state: State<'_, AppState>, from_src: String, from_d
     .await
 }
 
-/// Copies what's missing from `to_dir`, at any depth, from `from_dir`. Never replaces or removes
-/// anything in `to_dir`. Sends "transfer" events like `transfer`.
+/// How `sync` treats the target.
+#[derive(Clone, Copy, PartialEq, Debug)]
+pub(super) enum SyncMode {
+    /// Only copy what's missing.
+    Copy,
+    /// Also replace files that differ (each backed up first).
+    Update,
+    /// Also remove what's only in the target (backed up first): the target ends up like the source.
+    Mirror,
+}
+
+/// The work of `sync`, apart from the app. In `Mirror` mode only the `remove` paths (relative to
+/// `to_dir`, as `compare` listed them) that are still only in the target are removed, so nothing
+/// goes that wasn't shown first.
+#[allow(clippy::too_many_arguments)]
+pub(super) fn run_sync(
+    a: &Device,
+    b: &Device,
+    from_dir: &str,
+    to_dir: &str,
+    hidden: bool,
+    mode: SyncMode,
+    remove: &[String],
+    job: u32,
+    opts: Opts,
+    stop: &std::sync::atomic::AtomicBool,
+    emit: impl Fn(Progress),
+) -> Result<TransferReport, String> {
+    let mut c = Comparison::default();
+    compare_dirs(a, from_dir, b, to_dir, "", hidden, &mut c)?;
+    let mut items = c.missing;
+    if mode != SyncMode::Copy {
+        items.append(&mut c.changed);
+    }
+    let mut report = run_items(a, b, job, &items, opts, stop, emit, TransferReport::default())?;
+    if mode == SyncMode::Mirror && !report.cancelled {
+        for rel in remove.iter().filter(|r| c.extra.contains(r)) {
+            if stop.load(Ordering::Relaxed) {
+                report.cancelled = true;
+                break;
+            }
+            match crate::files::remove_all(b, &device::join(to_dir, rel)) {
+                Ok(_) => report.removed += 1,
+                Err(e) => report.skipped.push((rel.clone(), format!("Not removed: {e}"))),
+            }
+        }
+    }
+    Ok(report)
+}
+
+/// Syncs `to_dir` from `from_dir`, at any depth: copies what's missing; with mode "update" also
+/// replaces files that differ; with "mirror" also removes the `remove` items found only in the
+/// target. Whatever is replaced or removed is backed up first. Sends "transfer" events like
+/// `transfer`.
 #[tauri::command(rename_all = "snake_case")]
 #[allow(clippy::too_many_arguments)]
 pub(super) async fn sync(
@@ -417,19 +486,25 @@ pub(super) async fn sync(
     to_dir: String,
     hidden: bool,
     verify: Option<bool>,
+    mode: Option<String>,
+    remove: Option<Vec<String>>,
 ) -> Result<TransferReport, String> {
     use tauri::Emitter;
+    let mode = match mode.as_deref() {
+        None | Some("copy") => SyncMode::Copy,
+        Some("update") => SyncMode::Update,
+        Some("mirror") => SyncMode::Mirror,
+        Some(m) => return Err(format!("Unknown sync mode: {m}")),
+    };
     let (a, b) = (state.source(Some(&from_src))?, state.source(Some(&to_src))?);
     refuse_nested(from_src == to_src, &from_dir, &to_dir)?;
     let stop = Arc::new(std::sync::atomic::AtomicBool::new(false));
     state.jobs.lock().unwrap().insert(job, stop.clone());
     let r = blocking(move || {
-        let mut c = Comparison::default();
-        compare_dirs(&a, &from_dir, &b, &to_dir, "", hidden, &mut c)?;
-        let report = TransferReport::default();
-        run_items(&a, &b, job, &c.missing, Opts { verify: verify.unwrap_or(false), ..Opts::default() }, &stop, |p| {
+        let opts = Opts { verify: verify.unwrap_or(false), ..Opts::default() };
+        run_sync(&a, &b, &from_dir, &to_dir, hidden, mode, &remove.unwrap_or_default(), job, opts, &stop, |p| {
             let _ = app.emit("transfer", p);
-        }, report)
+        })
     })
     .await;
     state.jobs.lock().unwrap().remove(&job);
@@ -526,6 +601,18 @@ mod tests {
         assert_eq!(fs::read(b.join("big.txt")).unwrap(), b"s", "different files are left alone");
         assert!(!b.join(".hid").exists(), "hidden files only when asked");
         assert!(super::refuse_nested(true, &s(&a), &s(&a.join("x"))).is_err());
+
+        // Update replaces the file that differs; Mirror also removes what was listed.
+        fs::write(b.join("x/also-b.txt"), b"").unwrap();
+        let r = super::run_sync(&mac, &mac, &s(&a), &s(&b), false, super::SyncMode::Update, &[], 1, super::Opts::default(), &stop, |_| {}).unwrap();
+        assert_eq!((r.copied, r.backups.len(), r.removed), (1, 1, 0));
+        assert_eq!(fs::read(b.join("big.txt")).unwrap(), b"long");
+        assert!(b.join("x/only-b.txt").exists());
+        let listed = ["x/only-b.txt".to_string()];
+        let r = super::run_sync(&mac, &mac, &s(&a), &s(&b), false, super::SyncMode::Mirror, &listed, 1, super::Opts::default(), &stop, |_| {}).unwrap();
+        assert_eq!((r.copied, r.removed), (0, 1));
+        assert!(!b.join("x/only-b.txt").exists());
+        assert!(b.join("x/also-b.txt").exists(), "only what was listed goes");
         fs::remove_dir_all(&root).unwrap();
     }
 

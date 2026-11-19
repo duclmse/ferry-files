@@ -38,6 +38,7 @@ pub(super) fn Sidebar() -> impl IntoView {
         (heading, open)
     };
     let (fav_heading, fav_open) = section("favs", "Favourites", false);
+    let (pairs_heading, pairs_open) = section("pairs", "Sync pairs", false);
     let (mac_heading, mac_open) = section("mac", crate::os::computer(), false);
     let (dev_heading, dev_open) = section("devices", "Devices", true);
     // Disks mounted on the Mac: USB drives, SD cards, disk images.
@@ -139,6 +140,24 @@ pub(super) fn Sidebar() -> impl IntoView {
                                 {unfav.run()}
                             </div>
                         }.into_any(),
+                    }
+                }).collect_view())}
+            })}
+            {move || (!ctx.sync_pairs.with(|x| x.is_empty())).then(|| view! {
+                {pairs_heading()}
+                {move || pairs_open.get().then(|| ctx.sync_pairs.get().into_iter().map(|pair| {
+                    let how = SYNC_MODES.iter().find(|m| m.0 == pair.mode).map_or("Copy missing", |m| m.1);
+                    let tip = format!("{how}: {} on {} into {} on {}. Click to see what it would do.",
+                        pair.from_dir, ctx.side_name(&pair.from), pair.to_dir, ctx.side_name(&pair.to));
+                    let name = format!("{} → {}", base(&pair.from_dir), base(&pair.to_dir));
+                    let (p1, p2) = (pair.clone(), pair);
+                    view! {
+                        <div class="tree-row fav pair" style="--depth: 1">
+                            <span class="twisty none"></span>
+                            <button class="item" title=tip on:click=move |_| ctx.open_pair(&p1)>{name}</button>
+                            <button class="unfav" title="Remove this sync pair" aria-label="Remove this sync pair"
+                                on:click=move |_| ctx.set_pairs(ctx.sync_pairs.get_untracked().into_iter().filter(|x| *x != p2).collect())>"✕"</button>
+                        </div>
                     }
                 }).collect_view())}
             })}

@@ -35,6 +35,11 @@ impl Ctx {
         let o = self.other(p);
         let from = (p.src.get_untracked(), p.cwd.get_untracked());
         let to = (o.src.get_untracked(), o.cwd.get_untracked());
+        self.preview_sync(p, from, to, "copy".into());
+    }
+
+    /// Compares `from` with `to` and shows in pane `p` what syncing would do, to confirm.
+    pub(super) fn preview_sync(self, p: Pane, from: (Src, String), to: (Src, String), mode: String) {
         if to.1 == "/" && self.src_info(to.0).is_some_and(|i| i.transport == "mtp") {
             p.error("Open a storage in the other pane first: files can't go at the top level over MTP.");
             return;
@@ -44,17 +49,50 @@ impl Ctx {
         spawn_local(async move {
             let args = json!({ "from_src": from.0.key(), "from_dir": from.1, "to_src": to.0.key(), "to_dir": to.1, "hidden": hidden });
             match call::<CompareReport>("compare", args).await {
-                Ok(report) => p.notice.set(Notice::Sync { report, from, to }),
+                Ok(report) => p.notice.set(Notice::Sync { report, from, to, mode }),
                 Err(e) => p.error(e),
             }
         });
     }
 
-    /// Copies what `compare` found missing, as a queued job.
-    pub(super) fn sync(self, p: Pane, from: (Src, String), to: (Src, String)) {
+    /// Syncs as `preview_sync` showed, as a queued job. `remove`: in mirror mode, what the
+    /// preview listed to remove (nothing else is).
+    pub(super) fn sync(self, p: Pane, from: (Src, String), to: (Src, String), mode: String, remove: Vec<String>) {
         p.notice.set(Notice::None);
-        let work = Work::Sync { from: self.side(from.0), from_dir: from.1, to: self.side(to.0), to_dir: to.1, hidden: self.show_hidden.get_untracked() };
+        let hidden = self.show_hidden.get_untracked();
+        let work = Work::Sync { from: self.side(from.0), from_dir: from.1, to: self.side(to.0), to_dir: to.1, hidden, mode, remove };
         self.enqueue(p.id, work, false);
+    }
+
+    /// Saves a sync to the sidebar, to run again; a pair already saved gets the new mode.
+    pub(super) fn save_pair(self, from: (Src, String), to: (Src, String), mode: String) {
+        let pair = SyncPair { from: self.side(from.0), from_dir: from.1, to: self.side(to.0), to_dir: to.1, mode };
+        let mut pairs = self.sync_pairs.get_untracked();
+        pairs.retain(|x| !(x.from == pair.from && x.from_dir == pair.from_dir && x.to == pair.to && x.to_dir == pair.to_dir));
+        pairs.push(pair);
+        self.set_pairs(pairs);
+    }
+
+    pub(super) fn set_pairs(self, pairs: Vec<SyncPair>) {
+        store(SYNC_PAIRS_KEY, &serde_json::to_string(&pairs).unwrap_or_default());
+        self.sync_pairs.set(pairs);
+    }
+
+    /// Previews a saved sync in the active pane.
+    pub(super) fn open_pair(self, pair: &SyncPair) {
+        let p = self.act();
+        match (self.src_of(&pair.from), self.src_of(&pair.to)) {
+            (Ok(a), Ok(b)) => self.preview_sync(p, (a, pair.from_dir.clone()), (b, pair.to_dir.clone()), pair.mode.clone()),
+            (Err(e), _) | (_, Err(e)) => p.error(e),
+        }
+    }
+
+    /// What a side is called: "the computer", or the phone's name.
+    pub(super) fn side_name(self, side: &Side) -> String {
+        match side {
+            Side::Mac => crate::os::the_computer().to_string(),
+            Side::Phone { label, .. } => label.clone(),
+        }
     }
 
     /// Whether a job is running now.
@@ -71,7 +109,7 @@ impl Ctx {
     }
 
     /// Where `side` is now: the computer, or the phone with that serial if it's connected.
-    fn src_of(self, side: &Side) -> Result<Src, String> {
+    pub(super) fn src_of(self, side: &Side) -> Result<Src, String> {
         match side {
             Side::Mac => Ok(Src::Mac),
             Side::Phone { serial, id, label } => self
@@ -136,10 +174,10 @@ impl Ctx {
                 });
                 call::<TransferReport>("transfer", args).await
             }
-            Work::Sync { from_dir, to_dir, hidden, .. } => {
+            Work::Sync { from_dir, to_dir, hidden, mode, remove, .. } => {
                 let args = json!({
                     "job": job.id, "from_src": from_src.key(), "from_dir": from_dir, "to_src": to_src.key(), "to_dir": to_dir, "hidden": hidden,
-                    "verify": self.verify.get_untracked(),
+                    "verify": self.verify.get_untracked(), "mode": if mode.is_empty() { "copy" } else { mode }, "remove": remove,
                 });
                 call::<TransferReport>("sync", args).await
             }
@@ -254,8 +292,14 @@ fn report_lines(work: &Work, r: &TransferReport) -> Vec<String> {
     let mut lines = vec![match work {
         Work::Copy { replace: true, to_dir, .. } => format!("Replaced {} in {}. The files that were there are in Backups.", n(r.copied), to_dir),
         Work::Copy { moving, to_dir, .. } => format!("{} {} to {}.", if *moving { "Moved" } else { "Copied" }, n(r.copied), to_dir),
-        Work::Sync { from_dir, to_dir, .. } => format!("Synced {} into {}: copied {}.", base(from_dir), to_dir, n(r.copied)),
+        Work::Sync { from_dir, to_dir, .. } => {
+            let removed = if r.removed > 0 { format!(", removed {} {}", r.removed, if r.removed == 1 { "item" } else { "items" }) } else { String::new() };
+            format!("Synced {} into {}: copied {}{removed}.", base(from_dir), to_dir, n(r.copied))
+        }
     }];
+    if matches!(work, Work::Sync { .. }) && (!r.backups.is_empty() || r.removed > 0) {
+        lines.push(format!("What was replaced or removed is in Backups on {}.", crate::os::the_computer()));
+    }
     let moving = matches!(work, Work::Copy { moving: true, .. });
     if r.already > 0 {
         lines.push(format!("{} already there from before{}.", n(r.already), if moving { "; their originals were kept" } else { "" }));
@@ -289,7 +333,14 @@ fn job_title(w: &Work) -> String {
             }
             format!("{} {what} to {}", if *moving { "Move" } else { "Copy" }, base(to_dir))
         }
-        Work::Sync { from_dir, to_dir, .. } => format!("Sync {} into {}", base(from_dir), base(to_dir)),
+        Work::Sync { from_dir, to_dir, mode, .. } => {
+            let verb = match mode.as_str() {
+                "update" => "Update",
+                "mirror" => "Mirror",
+                _ => "Sync",
+            };
+            format!("{verb} {} into {}", base(from_dir), base(to_dir))
+        }
     }
 }
 

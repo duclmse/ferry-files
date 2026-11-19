@@ -188,6 +188,24 @@ struct Fav {
 
 const FAVS_KEY: &str = "ferry-files.favs";
 
+/// A saved sync: two folders, and how the second is kept like the first ("copy", "update" or
+/// "mirror"). Listed in the sidebar to preview and run again.
+#[derive(Clone, PartialEq, serde::Serialize, serde::Deserialize)]
+struct SyncPair {
+    from: Side,
+    from_dir: String,
+    to: Side,
+    to_dir: String,
+    mode: String,
+}
+
+const SYNC_PAIRS_KEY: &str = "ferry-files.sync-pairs";
+
+/// How a sync can go: value and label.
+const SYNC_MODES: [(&str, &str); 3] = [("copy", "Copy missing"), ("update", "Update"), ("mirror", "Mirror")];
+/// A mirror removing more than this many items needs "remove" typed to run.
+const MIRROR_TYPE_OVER: usize = 10;
+
 /// An open context menu: where it is, which pane it's for, and the file or folder it's for
 /// (None: the folder's background).
 #[derive(Clone, PartialEq)]
@@ -261,7 +279,8 @@ enum Notice {
     Ok(String),
     ConfirmDelete(Vec<Entry>),
     /// The result of comparing this pane's folder with the other pane's, before syncing.
-    Sync { report: CompareReport, from: (Src, String), to: (Src, String) },
+    /// `mode` is the one picked at first: "copy", "update" or "mirror".
+    Sync { report: CompareReport, from: (Src, String), to: (Src, String), mode: String },
     /// Asking for a name; `folder` says whether it's a new folder or a new text file.
     NewItem { folder: bool },
 }
@@ -539,8 +558,19 @@ enum Work {
         #[serde(default)]
         replace: bool,
     },
-    /// Copies what's missing from `to_dir` out of `from_dir`.
-    Sync { from: Side, from_dir: String, to: Side, to_dir: String, hidden: bool },
+    /// Copies what's missing from `to_dir` out of `from_dir`. With `mode` "update", also replaces
+    /// files that differ; with "mirror", also removes the `remove` items (relative to `to_dir`).
+    Sync {
+        from: Side,
+        from_dir: String,
+        to: Side,
+        to_dir: String,
+        hidden: bool,
+        #[serde(default)]
+        mode: String,
+        #[serde(default)]
+        remove: Vec<String>,
+    },
 }
 
 #[derive(Clone, PartialEq)]
@@ -623,6 +653,7 @@ struct Ctx {
     jobs: RwSignal<Vec<Job>>,
     next_job: StoredValue<u32>,
     favs: RwSignal<Vec<Fav>>,
+    sync_pairs: RwSignal<Vec<SyncPair>>,
     /// Free space per storage, by side ("mac", "d1", ...).
     space: RwSignal<HashMap<String, Vec<Space>>>,
     /// What was done this session, newest last, with how to undo it.
@@ -685,6 +716,7 @@ impl Ctx {
             history: RwSignal::new(vec![]),
             panel: RwSignal::new(None),
             favs: RwSignal::new(stored(FAVS_KEY).and_then(|s| serde_json::from_str(&s).ok()).unwrap_or_default()),
+            sync_pairs: RwSignal::new(stored(SYNC_PAIRS_KEY).and_then(|s| serde_json::from_str(&s).ok()).unwrap_or_default()),
             drag: StoredValue::new(None),
             drop_at: RwSignal::new(None),
             side_w: stored_px(SIDE_W_KEY),

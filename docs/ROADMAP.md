@@ -149,15 +149,17 @@ Built:
   the oldest). Delete removes the picked files through `remove` (backed up), refusing to take every
   copy in a group; one Undo entry per device.
 
-### 9. Sync, more modes ☐
-Extends the existing sync:
-- **Update**: also replace files that differ (newer by mtime when both sides keep times, else
-  by asking), with backups.
-- **Mirror**: also remove extras on the target (backed up), after a preview that lists every
-  removal; requires typing confirmation when more than N files would be removed.
-- Saved sync pairs ("Phone Camera → ~/Pictures/Phone") in the sidebar, one click to preview & run.
-- Two-way sync is deliberately left out: without reliable modification times on MTP it can't tell
-  which side changed. Revisit with a stored snapshot of the last sync.
+### 9. Sync, more modes ☑
+- The Sync preview has a mode: **Copy missing** (as before), **Update** (also replaces files that
+  differ in size, each backed up through `Device::write`), **Mirror** (Update, and also removes
+  what's only in the target, files backed up). `sync` takes `mode` and `remove`; Mirror removes
+  only the listed items that are still extras, so nothing goes that the preview didn't show.
+- Mirror lists every item it will remove; more than 10 needs "remove" typed to run.
+- "Save" keeps the pair (folders on either side, and the mode) under Sync pairs in the sidebar;
+  clicking one previews it in the active pane. Phones are found again by serial.
+- Not done: Update compares by size only (times aren't kept across devices), so a same-size
+  edit isn't replaced. Two-way sync is left out: without reliable modification times on MTP it
+  can't tell which side changed. Revisit with a stored snapshot of the last sync.
 
 ## Phase 3 — Media and books
 

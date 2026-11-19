@@ -172,7 +172,7 @@ pub(super) fn Notices(pane: Pane) -> impl IntoView {
                         <button class="btn" on:click=dismiss>"Cancel"</button></div>
                 }.into_any()
             }
-            Notice::Sync { report: r, from, to } => {
+            Notice::Sync { report: r, from, to, mode } => {
                 let list = |what: &str, v: &[String]| -> String {
                     let mut s = v.iter().take(4).cloned().collect::<Vec<_>>().join(", ");
                     if v.len() > 4 {
@@ -180,29 +180,86 @@ pub(super) fn Notices(pane: Pane) -> impl IntoView {
                     }
                     format!("{} {what}: {s}.", v.len())
                 };
-                let mut lines = vec![if r.files + r.folders == 0 {
-                    format!("Nothing to copy: everything in {} is already in {}.", base(&from.1), to.1)
-                } else {
-                    format!("Copy {} {} ({}){} from {} into {} on {}?",
-                        r.files, if r.files == 1 { "file" } else { "files" }, human_size(r.bytes),
-                        if r.folders > 0 { format!(" and {} {}", r.folders, if r.folders == 1 { "folder" } else { "folders" }) } else { String::new() },
-                        base(&from.1), to.1, ctx.place(to.0))
-                }];
-                if r.same > 0 {
-                    lines.push(format!("{} already there.", r.same));
-                }
-                if !r.differ.is_empty() {
-                    lines.push(format!("{} Left as they are.", list("differ in size", &r.differ)));
-                }
-                if !r.extra.is_empty() {
-                    lines.push(format!("{} Left as they are.", list("only in the other pane", &r.extra)));
-                }
-                let go = r.files + r.folders > 0;
+                let files = |n: u32| format!("{n} {}", if n == 1 { "file" } else { "files" });
+                let mode = RwSignal::new(mode);
+                let typed = RwSignal::new(String::new());
+                let r = StoredValue::new(r);
                 let (f, t) = (StoredValue::new(from), StoredValue::new(to));
+                let removing = move || mode.with(|m| m == "mirror") && r.with_value(|r| !r.extra.is_empty());
+                // Many removals need the word typed, so a mirror isn't run by a stray click.
+                let must_type = move || removing() && r.with_value(|r| r.extra.len() > MIRROR_TYPE_OVER);
+                let lines = move || {
+                    let (from, to) = (f.get_value(), t.get_value());
+                    let m = mode.get();
+                    r.with_value(|r| {
+                        let copy = r.files + r.folders > 0;
+                        let replace = m != "copy" && r.changed > 0;
+                        let mut lines = vec![];
+                        if copy {
+                            lines.push(format!("Copy {} ({}){} from {} into {} on {}.",
+                                files(r.files), human_size(r.bytes),
+                                if r.folders > 0 { format!(" and {} {}", r.folders, if r.folders == 1 { "folder" } else { "folders" }) } else { String::new() },
+                                base(&from.1), to.1, ctx.place(to.0)));
+                        }
+                        if replace {
+                            lines.push(format!("Replace {} that differ ({}). The ones there now are backed up.", files(r.changed), human_size(r.changed_bytes)));
+                        }
+                        if !(copy || replace || (m == "mirror" && !r.extra.is_empty())) {
+                            lines.push(format!("Nothing to do: {} already has what's in {}.", to.1, base(&from.1)));
+                        }
+                        if r.same > 0 {
+                            lines.push(format!("{} already there.", r.same));
+                        }
+                        let kept = r.differ.len() - if m == "copy" { 0 } else { r.changed as usize };
+                        if m == "copy" && kept > 0 {
+                            lines.push(format!("{} Left as they are.", list("differ in size", &r.differ)));
+                        } else if kept > 0 {
+                            lines.push(format!("{kept} {} a file on one side and a folder on the other. Left as {}.", if kept == 1 { "is" } else { "are" }, if kept == 1 { "it is" } else { "they are" }));
+                        }
+                        if !r.extra.is_empty() {
+                            if m == "mirror" {
+                                lines.push(format!("Remove {} only in {} (folders with everything in them). Files are backed up first:", r.extra.len(), to.1));
+                            } else {
+                                lines.push(format!("{} Left as they are.", list("only in the other pane", &r.extra)));
+                            }
+                        }
+                        lines.join("\n")
+                    })
+                };
+                let go = move || {
+                    let m = mode.get();
+                    r.with_value(|r| r.files + r.folders > 0 || (m != "copy" && r.changed > 0) || (m == "mirror" && !r.extra.is_empty()))
+                };
+                let ready = move || go() && (!must_type() || typed.with(|x| x.trim().eq_ignore_ascii_case("remove")));
+                let run = move || {
+                    let remove = if removing() { r.with_value(|r| r.extra.clone()) } else { vec![] };
+                    ctx.sync(p, f.get_value(), t.get_value(), mode.get_untracked(), remove);
+                };
+                let label = move || match mode.get().as_str() {
+                    "update" => "Update",
+                    "mirror" => "Mirror",
+                    _ => "Copy",
+                };
                 view! {
-                    <div class="notice"><span class="text">{lines.join("\n")}</span>
-                        {go.then(|| view! { <button class="btn primary" on:click=move |_| ctx.sync(p, f.get_value(), t.get_value())>{ico(Icon::Copy)}"Copy"</button> })}
-                        <button class="btn" on:click=dismiss>{if go { "Cancel" } else { "Dismiss" }}</button></div>
+                    <div class="notice sync"><span class="text">{lines}</span>
+                        <select aria-label="How to sync" title="Copy: only what's missing. Update: also replace files that differ. Mirror: also remove what's only in the target."
+                            on:change=move |e| { mode.set(event_target_value(&e)); typed.set(String::new()); }>
+                            {SYNC_MODES.iter().map(|(v, l)| view! { <option value=*v selected=move || mode.with(|m| m == v)>{*l}</option> }).collect_view()}
+                        </select>
+                        {move || must_type().then(|| view! {
+                            <input class="confirm" placeholder="Type remove" aria-label="Type remove to confirm"
+                                prop:value=move || typed.get() on:input=move |e| typed.set(event_target_value(&e))
+                                on:keydown=move |e| if e.key() == "Enter" && ready() { run() }/>
+                        })}
+                        <button class="btn primary" class:danger=removing class:solid=removing disabled=move || !ready()
+                            on:click=move |_| run()>{ico(Icon::Copy)}{label}</button>
+                        <button class="btn" title="Keep this sync in the sidebar, to run again"
+                            on:click=move |_| { ctx.save_pair(f.get_value(), t.get_value(), mode.get_untracked()); p.notice.set(Notice::Ok("Saved under Sync pairs in the sidebar.".into())); }>"Save"</button>
+                        <button class="btn" on:click=dismiss>"Cancel"</button>
+                        {move || removing().then(|| view! {
+                            <ul class="sync-remove">{r.with_value(|r| r.extra.iter().map(|x| view! { <li>{x.clone()}</li> }).collect_view())}</ul>
+                        })}
+                    </div>
                 }.into_any()
             }
             Notice::NewItem { folder } => {

@@ -68,6 +68,9 @@ pub struct TransferReport {
     pub skipped: Vec<(String, String)>,
     pub cancelled: bool,
     pub backups: Vec<String>,
+    /// Syncing as a mirror: items removed from the target.
+    #[serde(default)]
+    pub removed: u32,
     /// What the copy made at the target's top level that wasn't there before.
     #[serde(default)]
     pub made: Vec<String>,
@@ -107,6 +110,11 @@ pub struct CompareReport {
     pub bytes: u64,
     /// Relative paths of files that are on both sides but differ in size.
     pub differ: Vec<String>,
+    /// Of `differ`, the files an update would replace, and their size.
+    #[serde(default)]
+    pub changed: u32,
+    #[serde(default)]
+    pub changed_bytes: u64,
     /// Relative paths only in the target.
     pub extra: Vec<String>,
     pub same: u32,

@@ -441,3 +441,28 @@ th.num {
   font: inherit;
   outline: none;
 }
+
+/* Sync: the mode, and in mirror mode every item to be removed, below. */
+.notice.sync select {
+  height: 28px;
+}
+
+.notice.sync input.confirm {
+  min-width: 120px;
+  width: 120px;
+}
+
+.notice .sync-remove {
+  flex-basis: 100%;
+  max-height: 160px;
+  overflow: auto;
+  margin: 0;
+  padding: 6px 10px 6px 28px;
+  border: 1px solid var(--line);
+  border-radius: 7px;
+  background: var(--bg);
+  color: var(--danger);
+  font-size: 12px;
+  -webkit-user-select: text;
+  user-select: text;
+}
