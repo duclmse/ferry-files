@@ -103,11 +103,11 @@ index_cache_size = 256
 | `exclusions.exclude_hidden`             | `bool`         | `false`          | Skip dot-files/directories                        |
 | `exclusions.skip_network_content`       | `bool`         | `false`          | No content for a watch root on a network mount    |
 | `content.extension_limits`              | `{ext: bytes}` | `{}`             | Per-extension content read limit; `"*"` = default |
-| `indexer.crawl_threads`                 | `int`          | half CPU count   | Directory walker threads                          |
+| `indexer.crawl_threads`                 | `int`          | CPU count (≤ 12) | Directory walker threads                          |
 | `indexer.content_threads`               | `int`          | half CPU count   | Crawl threads reading content and archives        |
 | `indexer.commit_interval_secs`          | `int`          | `5`              | Tantivy commit interval                           |
-| `indexer.use_mft`                       | `bool`/`"auto"` | `"auto"`       | Windows: crawl from the NTFS file table; `auto` for whole-drive roots |
-| `indexer.event_batch_size`              | `int`          | `100`            | Max watcher events per batch                      |
+| `indexer.use_mft`                       | `bool`/`"auto"` | `"auto"`       | Windows: crawl from the NTFS file table; `auto` for whole-drive roots and roots with ≥ 200,000 entries last crawl |
+| `indexer.event_batch_size`              | `int`          | `100`            | Watcher events applied per write transaction      |
 | `api.rest_port`                         | `int`          | `7700`           | HTTP REST port                                    |
 | `api.grpc_port`                         | `int`          | `7701`           | gRPC port                                         |
 | `api.ipc_path`                          | `string`       | platform default | Unix socket or Named Pipe path                    |

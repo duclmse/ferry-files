@@ -1,7 +1,6 @@
 use std::path::Path;
 
 use crate::config::{ContentConfig, ExclusionConfig};
-use crate::error::{AppError, Result};
 
 use super::exclusions::is_network_mount;
 
@@ -72,62 +71,6 @@ pub fn read_content(path: &Path, max_bytes: u64) -> Option<String> {
     let mut buf = Vec::with_capacity(len as usize);
     file.take(max_bytes).read_to_end(&mut buf).ok()?;
     extract_content_from_bytes(&buf)
-}
-
-/// Extract text content from a file on disk.
-/// Files ≤ 1 MB: `tokio::fs::read`. Files > 1 MB: `memmap2`.
-/// Returns `None` if the file is binary or content should be skipped.
-pub async fn extract_content(path: &Path, max_bytes: u64) -> Result<Option<String>> {
-    let meta = tokio::fs::metadata(path).await.map_err(AppError::Io)?;
-    let file_size = meta.len();
-    let limit = max_bytes as usize;
-
-    let buf: Vec<u8> = if file_size <= 1024 * 1024 {
-        let full = tokio::fs::read(path).await.map_err(AppError::Io)?;
-        if full.len() > limit {
-            full[..limit].to_vec()
-        } else {
-            full
-        }
-    } else {
-        let path_buf = path.to_path_buf();
-        tokio::task::spawn_blocking(move || -> Result<Vec<u8>> {
-            let file = std::fs::File::open(&path_buf).map_err(AppError::Io)?;
-            let mmap = unsafe { memmap2::Mmap::map(&file).map_err(AppError::Io)? };
-            let end = limit.min(mmap.len());
-            Ok(mmap[..end].to_vec())
-        })
-        .await
-        .map_err(|e| AppError::Content(e.to_string()))??
-    };
-
-    if is_binary(&buf) {
-        tracing::debug!("binary file: {}", path.display());
-        return Ok(None);
-    }
-
-    let raw = if let Some((enc, bom_len)) = encoding_rs::Encoding::for_bom(&buf) {
-        tracing::debug!("BOM encoding {} for {}", enc.name(), path.display());
-        let (cow, _, _) = enc.decode(&buf[bom_len..]);
-        cow.into_owned()
-    } else {
-        tracing::debug!("UTF-8 decode for {}", path.display());
-        let (cow, _, _) = encoding_rs::UTF_8.decode(&buf);
-        cow.into_owned()
-    };
-
-    // Truncate at nearest UTF-8 char boundary
-    let content = if raw.len() > limit {
-        let mut i = limit;
-        while i > 0 && !raw.is_char_boundary(i) {
-            i -= 1;
-        }
-        raw[..i].to_string()
-    } else {
-        raw
-    };
-
-    Ok(Some(content))
 }
 
 // ---------------------------------------------------------------------------
@@ -215,19 +158,17 @@ mod tests {
         assert_eq!(content_limit(Path::new("foo.txt"), &c), None);
     }
 
-    #[tokio::test]
-    async fn small_text_file_extracted() {
+    #[test]
+    fn small_text_file_extracted() {
         let mut f = NamedTempFile::new().unwrap();
         f.write_all(b"fn main() {}").unwrap();
-        let result = extract_content(f.path(), 4096).await.unwrap();
-        assert_eq!(result, Some("fn main() {}".to_string()));
+        assert_eq!(read_content(f.path(), 4096), Some("fn main() {}".into()));
     }
 
-    #[tokio::test]
-    async fn file_truncated_to_max_bytes() {
+    #[test]
+    fn file_truncated_to_max_bytes() {
         let mut f = NamedTempFile::new().unwrap();
         f.write_all(b"abcdefghij").unwrap();
-        let result = extract_content(f.path(), 5).await.unwrap();
-        assert_eq!(result, Some("abcde".to_string()));
+        assert_eq!(read_content(f.path(), 5), Some("abcde".into()));
     }
 }

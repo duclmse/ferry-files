@@ -7,7 +7,7 @@ use std::sync::{
 };
 use std::time::Duration;
 
-use tokio::sync::{mpsc, watch, RwLock, Semaphore};
+use tokio::sync::{mpsc, watch, RwLock};
 use tokio::task::JoinSet;
 use tokio_util::sync::CancellationToken;
 use tracing_subscriber::{fmt, layer::SubscriberExt, util::SubscriberInitExt, EnvFilter};
@@ -19,7 +19,7 @@ use crate::api::rest::AppState;
 use crate::config;
 use crate::config::AuthMode;
 use crate::error::AppError;
-use crate::indexer::crawler::{full_crawl, process_event, IndexEvent, IndexMetrics};
+use crate::indexer::crawler::{full_crawl, process_events, IndexEvent, IndexMetrics};
 use crate::indexer::exclusions::ExclusionEngine;
 use crate::scheduler::{ArchiveSemaphores, ClientRateLimiter, SchedulerMetrics};
 use crate::store::{tantivy_store::TantivyStore, FileStore};
@@ -90,7 +90,6 @@ mod win_guard {
 // Beyond this, new events wait for a running task to finish rather than
 // spawning unboundedly. Keeps memory and SQLite-pool contention bounded
 // under inotify/FSEvents bursts (e.g. large `git checkout`).
-const MAX_EVENT_TASKS: usize = 16;
 
 // Longer than the time an extension process is given to stop.
 const EXTENSION_DRAIN: Duration = Duration::from_secs(35);
@@ -199,12 +198,6 @@ pub async fn run_with_shutdown(
     // ── 8. Reindex watch channel ───────────────────────────────────────────
     let (reindex_tx, mut reindex_rx) = watch::channel(false);
 
-    // ── 9. Event-task semaphore ────────────────────────────────────────────
-    // Caps the number of concurrently running process_event tasks to
-    // MAX_EVENT_TASKS. Provides backpressure during watcher bursts without
-    // spawning an unbounded number of tokio tasks.
-    let event_sem = Arc::new(Semaphore::new(MAX_EVENT_TASKS));
-
     // ── 10. Shutdown signal → cancel token ────────────────────────────────
     {
         let shutdown_c = shutdown.clone();
@@ -246,9 +239,8 @@ pub async fn run_with_shutdown(
                         // The reader reloads only on request, so searches
                         // see the commit only after the reload.
                         let t = Arc::clone(&tantivy_c);
-                        let committed = move || t.commit().and_then(|()| t.reload_reader());
-                        match tokio::task::spawn_blocking(committed).await {
-                            Ok(Ok(())) => {}
+                        match tokio::task::spawn_blocking(move || t.commit_if_changed()).await {
+                            Ok(Ok(_)) => {}
                             Ok(Err(e)) => tracing::warn!("tantivy commit error: {e}"),
                             Err(e) => tracing::warn!("tantivy commit panicked: {e}"),
                         }
@@ -533,23 +525,27 @@ pub async fn run_with_shutdown(
                 break;
             }
             Some(event) = ev_rx.recv() => {
-                // Acquire a semaphore permit before spawning. When MAX_EVENT_TASKS
-                // are already running this yields here (backpressure) rather than
-                // allocating another task.
-                // The semaphore is never closed, so Err is unreachable in practice;
-                // treat it as a shutdown signal rather than panicking the daemon.
-                let Ok(permit) = Arc::clone(&event_sem).acquire_owned().await else {
-                    break;
-                };
-                let sqlite_e  = Arc::clone(&sqlite);
-                let tantivy_e = Arc::clone(&tantivy);
-                let metrics_e = Arc::clone(&metrics);
-                let cfg_e     = Arc::clone(&shared_cfg);
-                let reg_e     = Arc::clone(&archive_registry);
-                tokio::spawn(async move {
-                    process_event(event, cfg_e, sqlite_e, tantivy_e, metrics_e, reg_e).await;
-                    drop(permit); // release when done
-                });
+                // One batch at a time, in arrival order: events for one path
+                // apply in the order they happened, and a batch shares one
+                // write transaction. The bounded channel holds the watcher
+                // back while a batch runs.
+                let limit = shared_cfg.read().await.indexer.event_batch_size.max(1);
+                let mut batch = vec![event];
+                while batch.len() < limit {
+                    match ev_rx.try_recv() {
+                        Ok(event) => batch.push(event),
+                        Err(_) => break,
+                    }
+                }
+                process_events(
+                    batch,
+                    Arc::clone(&shared_cfg),
+                    Arc::clone(&sqlite),
+                    Arc::clone(&tantivy),
+                    Arc::clone(&metrics),
+                    Arc::clone(&archive_registry),
+                )
+                .await;
             }
             Ok(()) = reindex_rx.changed() => {
                 let full = *reindex_rx.borrow();
@@ -581,17 +577,24 @@ pub async fn run_with_shutdown(
     }
     tracing::info!("draining in-flight events (max 10s)…");
     let drain_deadline = tokio::time::Instant::now() + Duration::from_secs(10);
-    while tokio::time::Instant::now() < drain_deadline {
-        match ev_rx.try_recv() {
-            Ok(event) => {
-                let sqlite_e = Arc::clone(&sqlite);
-                let tantivy_e = Arc::clone(&tantivy);
-                let metrics_e = Arc::clone(&metrics);
-                let cfg_e = Arc::clone(&shared_cfg);
-                let reg_e = Arc::clone(&archive_registry);
-                process_event(event, cfg_e, sqlite_e, tantivy_e, metrics_e, reg_e).await;
-            }
-            Err(_) => break,
+    let mut pending = Vec::new();
+    while let Ok(event) = ev_rx.try_recv() {
+        pending.push(event);
+    }
+    if !pending.is_empty() {
+        let drained = process_events(
+            pending,
+            Arc::clone(&shared_cfg),
+            Arc::clone(&sqlite),
+            Arc::clone(&tantivy),
+            Arc::clone(&metrics),
+            Arc::clone(&archive_registry),
+        );
+        if tokio::time::timeout_at(drain_deadline, drained)
+            .await
+            .is_err()
+        {
+            tracing::warn!("in-flight events not all applied before the deadline");
         }
     }
 

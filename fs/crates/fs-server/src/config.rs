@@ -323,7 +323,7 @@ impl Default for SearchConfig {
 
 #[derive(Debug, Clone, Deserialize)]
 pub struct IndexerConfig {
-    #[serde(default = "default_threads")]
+    #[serde(default = "default_crawl_threads")]
     pub crawl_threads: usize,
 
     #[serde(default = "default_threads")]
@@ -376,12 +376,19 @@ impl<'de> Deserialize<'de> for MftMode {
     }
 }
 
+/// The walk waits on the file system more than the CPU: one thread per
+/// core, capped as the `ignore` crate caps its own default. Half that made
+/// a walk over 83k entries 1.1 s on one thread against 0.25 s on eight.
+fn default_crawl_threads() -> usize {
+    std::thread::available_parallelism()
+        .map_or(4, |n| n.get())
+        .min(12)
+}
+
+/// Half the cores, at least one: on one core the old order gave 0, which
+/// validation rejects.
 fn default_threads() -> usize {
-    (std::thread::available_parallelism()
-        .map(|n| n.get())
-        .unwrap_or(4))
-    .max(1)
-        / 2
+    (std::thread::available_parallelism().map_or(4, |n| n.get()) / 2).max(1)
 }
 fn default_commit_interval() -> u64 {
     5
@@ -393,7 +400,7 @@ fn default_event_batch_size() -> usize {
 impl Default for IndexerConfig {
     fn default() -> Self {
         Self {
-            crawl_threads: default_threads(),
+            crawl_threads: default_crawl_threads(),
             content_threads: default_threads(),
             commit_interval_secs: default_commit_interval(),
             event_batch_size: default_event_batch_size(),

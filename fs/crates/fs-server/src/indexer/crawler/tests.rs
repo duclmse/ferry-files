@@ -137,3 +137,96 @@ async fn delete_event_removes_record() {
     let path_str = file.to_string_lossy().into_owned();
     assert!(store.get_by_path(&path_str).unwrap().is_none());
 }
+
+fn stores(dir: &TempDir) -> Stores {
+    Stores {
+        sqlite: make_store(dir),
+        tantivy: make_tantivy(dir),
+        metrics: Arc::new(IndexMetrics::default()),
+        registry: Arc::new(ArchiveRegistry::disabled()),
+    }
+}
+
+#[tokio::test]
+async fn a_batch_keeps_each_paths_last_event() {
+    let data = TempDir::new().unwrap();
+    let watch = TempDir::new().unwrap();
+    let cfg = make_config(watch.path()).read().await.clone();
+    let stores = stores(&data);
+    let kept = watch.path().join("kept.txt");
+    let gone = watch.path().join("gone.txt");
+    std::fs::write(&kept, b"x").unwrap();
+
+    // gone.txt was created and then deleted; kept.txt deleted, then back.
+    std::fs::write(&gone, b"x").unwrap();
+    let mut events = vec![IndexEvent::Created(gone.clone())];
+    std::fs::remove_file(&gone).unwrap();
+    events.extend([
+        IndexEvent::Deleted(gone.clone()),
+        IndexEvent::Deleted(kept.clone()),
+        IndexEvent::Created(kept.clone()),
+    ]);
+    apply_file_events(events, &cfg, &stores);
+
+    let path = |p: &Path| p.to_string_lossy().into_owned();
+    assert!(stores.sqlite.get_by_path(&path(&kept)).unwrap().is_some());
+    assert!(stores.sqlite.get_by_path(&path(&gone)).unwrap().is_none());
+    assert_eq!(stores.metrics.events_processed.load(Ordering::Relaxed), 4);
+}
+
+#[tokio::test]
+async fn a_deleted_folder_takes_its_subtree_and_later_events_still_apply() {
+    let data = TempDir::new().unwrap();
+    let watch = TempDir::new().unwrap();
+    let cfg = make_config(watch.path()).read().await.clone();
+    let stores = stores(&data);
+    let folder = watch.path().join("f");
+    std::fs::create_dir(&folder).unwrap();
+    std::fs::write(folder.join("a.txt"), b"x").unwrap();
+    // Unseen folder: its contents come from a walk.
+    apply_file_events(vec![IndexEvent::Created(folder.clone())], &cfg, &stores);
+    let child = folder.join("a.txt").to_string_lossy().into_owned();
+    assert!(stores.sqlite.get_by_path(&child).unwrap().is_some());
+
+    std::fs::remove_dir_all(&folder).unwrap();
+    let other = watch.path().join("other.txt");
+    std::fs::write(&other, b"x").unwrap();
+    apply_file_events(
+        vec![
+            IndexEvent::Deleted(folder.clone()),
+            IndexEvent::Created(other.clone()),
+        ],
+        &cfg,
+        &stores,
+    );
+    assert!(stores.sqlite.get_by_path(&child).unwrap().is_none());
+    let other = other.to_string_lossy().into_owned();
+    assert!(stores.sqlite.get_by_path(&other).unwrap().is_some());
+}
+
+#[tokio::test]
+async fn a_crawl_records_how_many_entries_each_root_had() {
+    let data = TempDir::new().unwrap();
+    let watch = TempDir::new().unwrap();
+    for i in 0..3 {
+        std::fs::write(watch.path().join(format!("{i}.txt")), b"x").unwrap();
+    }
+    let store = make_store(&data);
+    let config = make_config(watch.path());
+    let root = config.read().await.watch_paths[0]
+        .to_string_lossy()
+        .into_owned();
+    assert_eq!(last_entries(&store, &root), 0);
+    full_crawl(
+        config,
+        store.clone(),
+        make_tantivy(&data),
+        IndexMetrics::new(),
+        Arc::new(ArchiveRegistry::disabled()),
+        CancellationToken::new(),
+    )
+    .await
+    .unwrap();
+    // The root folder and its three files.
+    assert_eq!(last_entries(&store, &root), 4);
+}

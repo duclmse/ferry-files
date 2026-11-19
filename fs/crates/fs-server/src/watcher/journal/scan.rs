@@ -102,13 +102,13 @@ fn changed_since(
     skip: &(dyn Fn(&Path, bool) -> bool + Sync),
 ) -> Option<Vec<(PathBuf, bool)>> {
     let first = roots.first()?;
-    let mut wb = ignore::WalkBuilder::new(first);
+    let mut wb = crate::indexer::walk_builder(first);
     for r in &roots[1..] {
         wb.add(r);
     }
     let found = Mutex::new(Vec::new());
     let overflow = AtomicBool::new(false);
-    wb.hidden(false).git_ignore(false).build_parallel().run(|| {
+    wb.build_parallel().run(|| {
         Box::new(|entry| {
             let Ok(entry) = entry else {
                 return ignore::WalkState::Continue;

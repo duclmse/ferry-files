@@ -1,7 +1,6 @@
 use std::path::{Path, PathBuf};
 use std::sync::{atomic::Ordering, mpsc, Arc};
 
-use ignore::WalkBuilder;
 use tokio::sync::RwLock;
 use tokio_util::sync::CancellationToken;
 
@@ -11,7 +10,7 @@ use crate::error::{AppError, Result};
 use crate::store::{tantivy_store::TantivyStore, FileRecord, FileStore};
 
 use super::archive::ArchiveCrawler;
-use super::content::{content_limit, extract_content};
+use super::content::content_limit;
 use super::exclusions::ExclusionEngine;
 use super::mft::MftCache;
 
@@ -131,6 +130,28 @@ impl SideWork {
             }
         }
     }
+}
+
+/// With `use_mft = "auto"`, a root whose last crawl found at least this many
+/// entries reads the file table even if it is not a whole volume. On the
+/// 2-core CI runner the table cost 9-10 s for all of C: whatever the root,
+/// and the walk managed 2,200-10,000 entries a second, so the break-even
+/// lies between about 22,000 and 100,000 entries; this leaves a margin.
+/// Measured on one machine with a warm cache: revisit with cold numbers.
+const MFT_AUTO_MIN_ENTRIES: u64 = 200_000;
+
+fn entries_key(root: &str) -> String {
+    format!("root_entries:{root}")
+}
+
+/// Entries the last full crawl found under `root`; 0 if never crawled.
+fn last_entries(store: &FileStore, root: &str) -> u64 {
+    store
+        .get_meta(&entries_key(root))
+        .ok()
+        .flatten()
+        .and_then(|v| v.parse().ok())
+        .unwrap_or(0)
 }
 
 /// Bounds the files waiting for content or archive work, so a walk that
@@ -265,9 +286,7 @@ pub async fn full_crawl(
 
             let watch_root = watch_path.to_string_lossy().into_owned();
 
-            let walker = WalkBuilder::new(watch_path)
-                .hidden(false)
-                .git_ignore(false)
+            let walker = super::walk_builder(watch_path)
                 .threads(crawl_threads)
                 .build_parallel();
             let side_work = Arc::new(SideWork::new(
@@ -307,7 +326,9 @@ pub async fn full_crawl(
                 let gen = generation;
                 std::thread::spawn(move || {
                     let mut buf: Vec<(FileRecord, String)> = Vec::with_capacity(BATCH_SIZE);
+                    let mut entries: u64 = 0;
                     for item in rx {
+                        entries += 1;
                         buf.push(item);
                         if buf.len() >= BATCH_SIZE {
                             if let Err(e) = sqlite_b.batch_upsert_crawl(&buf, gen) {
@@ -337,6 +358,7 @@ pub async fn full_crawl(
                             }
                         }
                     }
+                    entries
                 })
             };
 
@@ -348,7 +370,9 @@ pub async fn full_crawl(
                 MftMode::On => true,
                 MftMode::Off => false,
                 MftMode::Auto => {
-                    super::mft::is_volume_root(watch_path) || mft_cache.has_drive_of(watch_path)
+                    super::mft::is_volume_root(watch_path)
+                        || mft_cache.has_drive_of(watch_path)
+                        || last_entries(&sqlite_w, &watch_root) >= MFT_AUTO_MIN_ENTRIES
                 }
             };
             let from_mft = try_mft
@@ -415,7 +439,9 @@ pub async fn full_crawl(
             // Closing tx signals the writer thread that no more records are coming.
             // Join before removing stale rows so all crawl_generation marks are committed.
             drop(tx);
-            let _ = writer_thread.join();
+            if let Ok(entries) = writer_thread.join() {
+                let _ = sqlite_w.set_meta(&entries_key(&watch_root), &entries.to_string());
+            }
 
             // Remove stale rows for this watch root in SQL - no Rust Vec of paths.
             let removed = sqlite_w.remove_stale_for_root(&watch_root, generation)?;
@@ -490,7 +516,11 @@ fn sweep_due(parent: &str) -> bool {
 /// Removes `path` and, for a folder, everything indexed under it: a folder
 /// moved out of the tree is reported alone, and its contents went with it.
 fn remove_path(sqlite: &FileStore, tantivy: &TantivyStore, path: &str) {
-    let under = sqlite.paths_under(path).unwrap_or_default();
+    let under = if indexed_dir(sqlite, path) {
+        sqlite.paths_under(path).unwrap_or_default()
+    } else {
+        Vec::new()
+    };
     for p in under
         .iter()
         .map(String::as_str)
@@ -508,6 +538,210 @@ fn remove_path(sqlite: &FileStore, tantivy: &TantivyStore, path: &str) {
     if let Err(e) = sqlite.remove_file(path) {
         tracing::warn!("remove {path}: {e}");
     }
+}
+
+/// Whether `path` is indexed as a folder: one row lookup, where asking for
+/// the subtree of every deleted or renamed file cost a query each.
+fn indexed_dir(sqlite: &FileStore, path: &str) -> bool {
+    matches!(sqlite.get_by_path(path), Ok(Some(r)) if r.is_dir)
+}
+
+/// Created, modified and deleted events, applied in order: plain files are
+/// collected per path, last event winning, and written in one transaction;
+/// a folder's subtree work flushes them first so it sees them in order.
+fn apply_file_events(events: Vec<IndexEvent>, cfg: &Config, stores: &Stores) {
+    let mut batch = FileBatch::default();
+    let count = events.len();
+    for event in events {
+        let (path, deleted) = match event {
+            IndexEvent::Created(p) | IndexEvent::Modified(p) => (p, false),
+            IndexEvent::Deleted(p) => (p, true),
+            _ => continue,
+        };
+        let path_str = path.to_string_lossy().into_owned();
+        let meta = if deleted {
+            None
+        } else {
+            match std::fs::metadata(&path) {
+                Ok(meta) => Some(meta),
+                // FSEvents reports an unpaired rename's old side, or a
+                // deletion, as a modification of a path that is gone.
+                Err(_) if std::fs::symlink_metadata(&path).is_err() => None,
+                Err(_) => continue,
+            }
+        };
+        let Some(meta) = meta else {
+            if indexed_dir(&stores.sqlite, &path_str) {
+                batch.flush(cfg, stores);
+                remove_path(&stores.sqlite, &stores.tantivy, &path_str);
+            } else {
+                batch.remove(path_str);
+            }
+            continue;
+        };
+        let record = build_file_record(&path, &meta, is_hidden_name(&path), unix_now());
+        // A folder moved in, or renamed without a pairing the debouncer saw,
+        // is reported alone; its contents arrive with no events.
+        if meta.is_dir()
+            && !batch.has(&record.path)
+            && matches!(stores.sqlite.get_by_path(&record.path), Ok(None))
+        {
+            match ExclusionEngine::shared(&cfg.exclusions) {
+                Ok(excl) => {
+                    for child in records_under(&path, &excl) {
+                        batch.upsert(child);
+                    }
+                }
+                Err(e) => tracing::warn!("exclusions: {e}"),
+            }
+        }
+        if let Some(parent) = path.parent() {
+            batch.parents.insert(parent.to_string_lossy().into_owned());
+        }
+        batch.upsert(record);
+    }
+    batch.flush(cfg, stores);
+    batch.sweep(stores);
+    stores
+        .metrics
+        .events_processed
+        .fetch_add(count as u64, Ordering::Relaxed);
+}
+
+#[derive(Default)]
+struct FileBatch {
+    /// The latest change per path: an upsert, or `None` for a removal.
+    changes: std::collections::HashMap<String, Option<FileRecord>>,
+    parents: std::collections::BTreeSet<String>,
+}
+
+impl FileBatch {
+    fn upsert(&mut self, record: FileRecord) {
+        self.changes.insert(record.path.clone(), Some(record));
+    }
+
+    fn remove(&mut self, path: String) {
+        self.changes.insert(path, None);
+    }
+
+    fn has(&self, path: &str) -> bool {
+        matches!(self.changes.get(path), Some(Some(_)))
+    }
+
+    fn flush(&mut self, cfg: &Config, stores: &Stores) {
+        let mut upserts = Vec::new();
+        let mut removes = Vec::new();
+        for (path, change) in self.changes.drain() {
+            match change {
+                Some(record) => upserts.push(record),
+                None => removes.push(path),
+            }
+        }
+        if let Err(e) = stores.sqlite.apply_changes(&upserts, &removes) {
+            tracing::warn!("watcher batch of {}: {e}", upserts.len() + removes.len());
+            return;
+        }
+        for path in &removes {
+            if let Err(e) = stores.tantivy.remove(path) {
+                tracing::warn!("tantivy remove: {e}");
+            }
+        }
+        // Content limits depend on the watch root (network mounts).
+        let mut side: std::collections::HashMap<PathBuf, SideWork> =
+            std::collections::HashMap::new();
+        for record in upserts.iter().filter(|r| !r.is_dir) {
+            let path = Path::new(&record.path);
+            let root = cfg
+                .watch_paths
+                .iter()
+                .filter(|root| path.starts_with(root))
+                .max_by_key(|root| root.as_os_str().len())
+                .cloned()
+                .unwrap_or_else(|| path.parent().unwrap_or(path).to_path_buf());
+            side.entry(root)
+                .or_insert_with_key(|root| SideWork::new(cfg, root, stores, None))
+                .run(record);
+        }
+    }
+
+    /// Stale-sibling reconciliation. notify-debouncer-full's FSEvents rename
+    /// pairing can silently swallow the "old path" side of a rename (its
+    /// was_created() heuristic misfires when FSEvents replays the file's
+    /// original creation flags alongside the rename-from flag), so a
+    /// renamed-away file's row could stay with no event ever firing for it.
+    /// Each touched folder's recorded children are checked on disk.
+    fn sweep(&mut self, stores: &Stores) {
+        for parent in std::mem::take(&mut self.parents) {
+            if !sweep_due(&parent) {
+                continue;
+            }
+            let Ok(children) = stores.sqlite.children_of(&parent) else {
+                continue;
+            };
+            for child in children {
+                if std::fs::symlink_metadata(&child).is_err() {
+                    if let Err(e) = stores.sqlite.remove_file(&child) {
+                        tracing::warn!("stale-sibling remove: {e}");
+                    }
+                    if let Err(e) = stores.tantivy.remove(&child) {
+                        tracing::warn!("stale-sibling tantivy remove: {e}");
+                    }
+                }
+            }
+        }
+    }
+}
+
+/// Watcher events in order, `event_batch_size` at most: runs of created,
+/// modified and deleted events are applied together, the rest one by one
+/// where they fall. One caller at a time keeps each path's events in order.
+pub async fn process_events(
+    events: Vec<IndexEvent>,
+    config: Arc<RwLock<Config>>,
+    sqlite: Arc<FileStore>,
+    tantivy: Arc<TantivyStore>,
+    metrics: Arc<IndexMetrics>,
+    registry: Arc<ArchiveRegistry>,
+) {
+    let cfg = Arc::new(config.read().await.clone());
+    let stores = Stores {
+        sqlite,
+        tantivy,
+        metrics,
+        registry,
+    };
+    let mut run = Vec::new();
+    for event in events {
+        if matches!(
+            event,
+            IndexEvent::Created(_) | IndexEvent::Modified(_) | IndexEvent::Deleted(_)
+        ) {
+            run.push(event);
+            continue;
+        }
+        flush_run(&mut run, &cfg, &stores).await;
+        process_event(
+            event,
+            Arc::clone(&config),
+            Arc::clone(&stores.sqlite),
+            Arc::clone(&stores.tantivy),
+            Arc::clone(&stores.metrics),
+            Arc::clone(&stores.registry),
+        )
+        .await;
+    }
+    flush_run(&mut run, &cfg, &stores).await;
+}
+
+async fn flush_run(run: &mut Vec<IndexEvent>, cfg: &Arc<Config>, stores: &Stores) {
+    if run.is_empty() {
+        return;
+    }
+    let events = std::mem::take(run);
+    let (cfg, stores) = (Arc::clone(cfg), stores.clone());
+    tokio::task::spawn_blocking(move || apply_file_events(events, &cfg, &stores))
+        .await
+        .ok();
 }
 
 /// Removes an archive's row and its entries, from both stores.
@@ -533,9 +767,7 @@ fn remove_archive(sqlite: &FileStore, tantivy: &TantivyStore, path: &str) {
 /// Everything under `dir`, as the crawl would record it.
 fn records_under(dir: &Path, excl: &Arc<ExclusionEngine>) -> Vec<FileRecord> {
     let prune = Arc::clone(excl);
-    let walker = WalkBuilder::new(dir)
-        .hidden(false)
-        .git_ignore(false)
+    let walker = super::walk_builder(dir)
         .filter_entry(move |e| !prune.should_exclude(e.path(), is_hidden_name(e.path())))
         .build();
     walker
@@ -565,142 +797,16 @@ pub async fn process_event(
     let cfg = config.read().await.clone();
 
     match event {
-        IndexEvent::Created(path) | IndexEvent::Modified(path) => {
-            let Ok(meta) = std::fs::metadata(&path) else {
-                // FSEvents reports an unpaired rename's old side as a
-                // modification of a path that is gone.
-                if matches!(std::fs::symlink_metadata(&path), Err(e) if e.kind() == std::io::ErrorKind::NotFound)
-                {
-                    let path_str = path.to_string_lossy().into_owned();
-                    tokio::task::spawn_blocking(move || remove_path(&sqlite, &tantivy, &path_str))
-                        .await
-                        .ok();
-                    metrics.events_processed.fetch_add(1, Ordering::Relaxed);
-                }
-                return;
+        event @ (IndexEvent::Created(_) | IndexEvent::Modified(_) | IndexEvent::Deleted(_)) => {
+            let stores = Stores {
+                sqlite,
+                tantivy,
+                metrics,
+                registry,
             };
-            let is_hidden = is_hidden_name(&path);
-            let now = unix_now();
-            let record = build_file_record(&path, &meta, is_hidden, now);
-
-            // upsert_file/children_of/remove hold the SQLite write lock and can
-            // block for up to busy_timeout under crawl-writer contention; run
-            // them on a blocking-pool thread rather than the tokio worker.
-            let sqlite_b = Arc::clone(&sqlite);
-            let tantivy_b = Arc::clone(&tantivy);
-            let record_b = record.clone();
-            let path_b = path.clone();
-            // A folder moved in, or renamed without a pairing the debouncer
-            // saw, is reported alone; its contents arrive with no events.
-            let subtree = meta.is_dir().then(|| {
-                let stores = Stores {
-                    sqlite: Arc::clone(&sqlite),
-                    tantivy: Arc::clone(&tantivy),
-                    metrics: Arc::clone(&metrics),
-                    registry: Arc::clone(&registry),
-                };
-                (
-                    SideWork::new(&cfg, &path, &stores, None),
-                    ExclusionEngine::new(&cfg.exclusions).map(Arc::new),
-                )
-            });
-            let upserted = tokio::task::spawn_blocking(move || {
-                let unseen_dir =
-                    subtree.is_some() && matches!(sqlite_b.get_by_path(&record_b.path), Ok(None));
-                if let Err(e) = sqlite_b.upsert_file(&record_b) {
-                    tracing::warn!("process_event upsert: {e}");
-                    return false;
-                }
-                if let (true, Some((side_work, Ok(excl)))) = (unseen_dir, &subtree) {
-                    let children = records_under(&path_b, excl);
-                    if !children.is_empty() {
-                        if let Err(e) = sqlite_b.upsert_files(&children) {
-                            tracing::warn!("process_event subtree upsert: {e}");
-                        }
-                        for child in &children {
-                            side_work.run(child);
-                        }
-                    }
-                }
-
-                // Stale-sibling reconciliation. notify-debouncer-full's FSEvents
-                // rename pairing can silently swallow the "old path" side of a
-                // rename entirely (its was_created() heuristic misfires when
-                // FSEvents replays the file's original creation flags alongside
-                // the rename-from flag), so a renamed-away file's row can be left
-                // in the store forever with no Deleted/Renamed event ever firing
-                // for it. Piggyback on every Created/Modified event to sweep
-                // recorded siblings under the same parent that no longer exist
-                // on disk, using the existing indexed `parent` column.
-                if let Some(parent) = path_b.parent() {
-                    let parent_str = parent.to_string_lossy().into_owned();
-                    let siblings = if sweep_due(&parent_str) {
-                        sqlite_b.children_of(&parent_str)
-                    } else {
-                        Ok(Vec::new())
-                    };
-                    if let Ok(siblings) = siblings {
-                        for sibling in siblings {
-                            if sibling == record_b.path {
-                                continue;
-                            }
-                            if std::fs::symlink_metadata(&sibling).is_err() {
-                                if let Err(e) = sqlite_b.remove_file(&sibling) {
-                                    tracing::warn!("process_event stale-sibling remove: {e}");
-                                }
-                                if let Err(e) = tantivy_b.remove(&sibling) {
-                                    tracing::warn!(
-                                        "process_event stale-sibling tantivy remove: {e}"
-                                    );
-                                }
-                            }
-                        }
-                    }
-                }
-                true
-            })
-            .await
-            .unwrap_or(false);
-
-            if !upserted {
-                return;
-            }
-
-            // Content
-            let cnt_cfg = super::content::effective_config(&cfg.content, &cfg.exclusions, &path);
-            let climit = content_limit(&path, &cnt_cfg);
-            if let Some(max_bytes) = climit {
-                let tantivy = Arc::clone(&tantivy);
-                let metrics = Arc::clone(&metrics);
-                let mut r = record.clone();
-                tokio::spawn(async move {
-                    if let Ok(Some(text)) = extract_content(&path, max_bytes).await {
-                        r.content_indexed = true;
-                        // The writer's mutex is held for the length of a
-                        // commit; waiting on it here held a runtime worker.
-                        let indexed = tokio::task::spawn_blocking(move || {
-                            tantivy.upsert(&r, Some(&text)).is_ok()
-                        })
-                        .await
-                        .unwrap_or(false);
-                        if indexed {
-                            metrics.content_indexed.fetch_add(1, Ordering::Relaxed);
-                        }
-                    }
-                });
-            }
-
-            metrics.events_processed.fetch_add(1, Ordering::Relaxed);
-        }
-
-        IndexEvent::Deleted(path) => {
-            let path_str = path.to_string_lossy().into_owned();
-            let sqlite_b = Arc::clone(&sqlite);
-            let tantivy_b = Arc::clone(&tantivy);
-            tokio::task::spawn_blocking(move || remove_path(&sqlite_b, &tantivy_b, &path_str))
+            tokio::task::spawn_blocking(move || apply_file_events(vec![event], &cfg, &stores))
                 .await
                 .ok();
-            metrics.events_processed.fetch_add(1, Ordering::Relaxed);
         }
 
         IndexEvent::Renamed { from, to } => {
@@ -711,12 +817,16 @@ pub async fn process_event(
                 registry: Arc::clone(&registry),
             };
             let side_work = SideWork::new(&cfg, &to, &stores, None);
-            let excl = ExclusionEngine::new(&cfg.exclusions).map(Arc::new);
+            let excl = ExclusionEngine::shared(&cfg.exclusions);
             tokio::task::spawn_blocking(move || {
                 let from_str = from.to_string_lossy().into_owned();
                 // Full-text documents are keyed by path, so everything under
                 // the old name goes, archive entries included.
-                let old = sqlite.paths_under(&from_str).unwrap_or_default();
+                let old = if indexed_dir(&sqlite, &from_str) {
+                    sqlite.paths_under(&from_str).unwrap_or_default()
+                } else {
+                    Vec::new()
+                };
                 for path in old.iter().chain(std::iter::once(&from_str)) {
                     let _ = tantivy.remove(path);
                 }

@@ -148,8 +148,9 @@ crawl_threads = 4
 
 # Build a full crawl from the NTFS file table instead of walking directories:
 # true, false, or "auto" (default) for roots that are a whole drive such as
-# C:\ (33 s against 650 s for the walk over all of C:). Reading the table costs
-# about the same for a small folder, where the walk is faster.
+# C:\ (33 s against 650 s for the walk over all of C:), or whose last crawl
+# found 200,000 entries or more. Reading the table costs about the same for a
+# small folder, where the walk is faster.
 # Needs administrator rights; falls back to the walk if the table is unusable.
 # Unlike the walk, it does not honour .ignore files.
 use_mft = "auto"

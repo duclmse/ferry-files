@@ -513,6 +513,21 @@ impl FileStore {
         }
     }
 
+    pub fn apply_changes(&self, upserts: &[FileRecord], removes: &[String]) -> Result<()> {
+        match self {
+            FileStore::Sqlite(s) => s.apply_changes(upserts, removes),
+            FileStore::Memory(m) => {
+                for record in upserts {
+                    m.upsert_file(record);
+                }
+                for path in removes {
+                    m.remove_file(path);
+                }
+                Ok(())
+            }
+        }
+    }
+
     pub fn remove_file(&self, path: &str) -> Result<()> {
         match self {
             FileStore::Sqlite(s) => s.remove_file(path),

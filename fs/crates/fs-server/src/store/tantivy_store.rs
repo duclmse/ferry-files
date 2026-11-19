@@ -22,6 +22,8 @@ pub struct TantivyStore {
     /// Makes an upsert's delete and add one step for its path, so two
     /// upserts of the same path cannot leave both documents.
     path_locks: [Mutex<()>; PATH_LOCKS],
+    /// Set by every add or delete since the last commit.
+    dirty: std::sync::atomic::AtomicBool,
     f_path: Field,
     f_name: Field,
     f_content: Field,
@@ -67,6 +69,7 @@ impl TantivyStore {
             reader,
             writer: RwLock::new(writer),
             path_locks: std::array::from_fn(|_| Mutex::new(())),
+            dirty: std::sync::atomic::AtomicBool::new(false),
             f_path,
             f_name,
             f_content,
@@ -100,6 +103,7 @@ impl TantivyStore {
         }
 
         w.add_document(doc).map_err(AppError::Tantivy)?;
+        self.dirty.store(true, std::sync::atomic::Ordering::Release);
         Ok(())
     }
 
@@ -112,6 +116,7 @@ impl TantivyStore {
             .read()
             .map_err(|e| AppError::Index(e.to_string()))?;
         w.delete_term(term);
+        self.dirty.store(true, std::sync::atomic::Ordering::Release);
         Ok(())
     }
 
@@ -121,6 +126,20 @@ impl TantivyStore {
         self.path_locks[slot % PATH_LOCKS]
             .lock()
             .map_err(|e| AppError::Index(e.to_string()))
+    }
+
+    /// Commits and reloads the reader if anything changed since the last
+    /// commit; returns whether it did. An idle commit still rewrote the
+    /// index metadata and synced it, 12 ms every interval for nothing.
+    pub fn commit_if_changed(&self) -> Result<bool> {
+        if !self.dirty.swap(false, std::sync::atomic::Ordering::AcqRel) {
+            return Ok(false);
+        }
+        if let Err(e) = self.commit().and_then(|()| self.reload_reader()) {
+            self.dirty.store(true, std::sync::atomic::Ordering::Release);
+            return Err(e);
+        }
+        Ok(true)
     }
 
     /// Flush pending operations to disk.
@@ -293,6 +312,17 @@ mod tests {
         let hits = store.search_fulltext("hello", 10, &filters).unwrap();
         assert!(!hits.is_empty(), "expected at least one hit for 'hello'");
         assert!(hits.iter().any(|h| h.path == "/src/main.rs"));
+    }
+
+    #[test]
+    fn commit_if_changed_skips_an_idle_index() {
+        let store = make_store();
+        assert!(!store.commit_if_changed().unwrap());
+        store.upsert(&sample_record("/a.rs"), Some("x")).unwrap();
+        assert!(store.commit_if_changed().unwrap());
+        assert!(!store.commit_if_changed().unwrap());
+        store.remove("/a.rs").unwrap();
+        assert!(store.commit_if_changed().unwrap());
     }
 
     #[test]

@@ -93,8 +93,12 @@ pub(super) fn parent_of(path: &str) -> String {
 }
 
 /// `path` is under the directory bound to `?1`, which a Windows path joins
-/// with `\` and every other path with `/`.
-pub(super) const UNDER_DIR_1: &str = "(path LIKE ?1 || '/%' OR path LIKE ?1 || '\\%')";
+/// with `\` and every other path with `/`. Written as two key ranges (`0`
+/// follows `/` and `]` follows `\`) so the unique index on `path` answers
+/// it: the `LIKE` form was case-insensitive, so it scanned the table, 99 ms
+/// per call at 1M rows, and read `_` and `%` in a folder name as wildcards.
+pub(super) const UNDER_DIR_1: &str = "((path > ?1 || '/' AND path < ?1 || '0') \
+     OR (path > ?1 || '\\' AND path < ?1 || ']'))";
 
 const PARENT_REPAIR_KEY: &str = "parent_splits_backslash";
 

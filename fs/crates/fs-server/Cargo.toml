@@ -22,7 +22,6 @@ thiserror          = { workspace = true }
 anyhow             = { workspace = true }
 chrono             = { workspace = true }
 uuid               = { workspace = true }
-glob               = { workspace = true }
 bytes              = { workspace = true }
 clap               = { workspace = true }
 rusqlite           = { workspace = true }
@@ -62,6 +61,7 @@ hashbrown = "0.15"
 rayon  = "1"
 memchr = "2"
 ignore = "0.4"
+globset = "0.4"
 
 # Content extraction
 encoding_rs = "0.8"

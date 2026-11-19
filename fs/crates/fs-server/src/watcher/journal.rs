@@ -228,10 +228,7 @@ fn rescan(
     paths_under: &impl Fn(&str) -> Vec<String>,
     events: &mut Vec<IndexEvent>,
 ) {
-    let walker = ignore::WalkBuilder::new(dir)
-        .hidden(false)
-        .git_ignore(false)
-        .build();
+    let walker = crate::indexer::walk_builder(dir).build();
     for entry in walker.flatten() {
         events.push(changed_event(entry.into_path(), formats));
     }
