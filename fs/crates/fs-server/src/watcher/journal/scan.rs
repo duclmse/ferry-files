@@ -117,6 +117,15 @@ fn changed_since(
                 return ignore::WalkState::Continue;
             };
             let path = entry.path();
+            // On Windows that metadata is the copy kept in the parent's
+            // directory listing, which NTFS does not refresh when a
+            // directory's own contents change; only the directory itself has
+            // its current mtime. One extra call per directory, not per file.
+            let meta = if cfg!(windows) && meta.is_dir() {
+                std::fs::symlink_metadata(path).unwrap_or(meta)
+            } else {
+                meta
+            };
             if skip(path, is_hidden(path)) {
                 return if meta.is_dir() {
                     ignore::WalkState::Skip
