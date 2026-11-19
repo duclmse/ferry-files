@@ -70,14 +70,19 @@ Built:
 - Unfinished jobs are kept in localStorage (`ferry-files.jobs`) and come back as "Not finished
   when the app quit" at launch.
 
-### 3. Verify after copy ☐
+### 3. Verify after copy ☑
 Goal: know a copy arrived intact.
 
-- Setting "Check copies" (off by default: it reads every file back over USB).
-- `run_items` after each write: read the target back, compare a hash (blake3 or the existing md5)
-  with the source bytes it already holds. Mismatch → the item is reported as "Copied but different —
-  try again" and, when moving, the original is **not** removed.
-- adb shortcut: `md5sum` on the phone instead of reading back (much faster).
+Built:
+- Setting "Check copies" (off by default: it reads every file back, about twice the time over
+  MTP). Passed to `transfer` and `sync` as `verify`; the backend takes an `Opts { moving, resume,
+  verify }`.
+- `run_items`, after each write: reads the copy back and compares it byte for byte with the data
+  it just wrote. A mismatch removes the copy (so a retry doesn't count it as done), reports
+  "The copy didn't match the original…", and when moving keeps the original.
+- adb: `Adb::replace` already compares an md5 of the data with `md5sum` on the phone after every
+  write, so adb copies are always checked and aren't read back again.
+- Untested: a real mismatch (needs a faulty cable or device); the match path runs in the tests.
 
 ## Phase 2 — Files
 

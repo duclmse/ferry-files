@@ -131,13 +131,14 @@ impl Ctx {
             Work::Copy { items, to_dir, moving, .. } => {
                 let args = json!({
                     "job": job.id, "from_src": from_src.key(), "paths": items, "to_src": to_src.key(), "to_dir": to_dir,
-                    "mode": if *moving { "move" } else { "copy" }, "resume": job.resume,
+                    "mode": if *moving { "move" } else { "copy" }, "resume": job.resume, "verify": self.verify.get_untracked(),
                 });
                 call::<TransferReport>("transfer", args).await
             }
             Work::Sync { from_dir, to_dir, hidden, .. } => {
                 let args = json!({
                     "job": job.id, "from_src": from_src.key(), "from_dir": from_dir, "to_src": to_src.key(), "to_dir": to_dir, "hidden": hidden,
+                    "verify": self.verify.get_untracked(),
                 });
                 call::<TransferReport>("sync", args).await
             }

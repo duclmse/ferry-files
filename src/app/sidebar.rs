@@ -329,6 +329,12 @@ pub(super) fn Settings() -> impl IntoView {
                         on:change=move |e| ctx.set_auto_connect(event_target_checked(&e))/>
                     "Connect phones when they're plugged in (adb if allowed, else MTP)"
                 </label>
+                <label class="check">
+                    <input type="checkbox" prop:checked=move || ctx.verify.get()
+                        on:change=move |e| ctx.set_verify(event_target_checked(&e))/>
+                    "Check copies"
+                </label>
+                <p class="hint">"Reads each copied file back and compares it with the original; a copy that doesn't match is removed and reported, and a move keeps its original. Copies to a phone over MTP take about twice as long. (adb copies are always checked.)"</p>
                 <h3>{format!("On {}", crate::os::this_computer())}</h3>
                 {folder("backups", "Backups", "Copies of files from before they were replaced or deleted. Kept until you clear them in Backups, which moves them to the Trash.")}
                 {folder("thumbs", "Thumbnail cache", "Made again when needed, so it's safe to clear.")}

@@ -51,6 +51,27 @@ pub(super) fn walk(dev: &Device, from: &str, to_dir: &str, out: &mut Vec<Item>) 
     Ok(())
 }
 
+/// How a transfer runs.
+#[derive(Clone, Copy, Default)]
+pub(super) struct Opts {
+    /// Remove each original once its copy is made (and checked, with `verify`).
+    pub moving: bool,
+    /// Running a stopped job again: files already at the target with the same size count as done.
+    pub resume: bool,
+    /// Read each copy back and compare it with the original.
+    pub verify: bool,
+}
+
+/// Whether the copy at `path` on `b` holds `data`. adb writes are already checked against an md5
+/// of the data on the phone (`Adb::replace`), so they aren't read back again.
+fn copy_matches(b: &Device, path: &str, data: &[u8]) -> Result<bool, String> {
+    if b.kind() == "adb" {
+        return Ok(true);
+    }
+    let (back, _) = b.read(path).map_err(msg)?;
+    Ok(back == data)
+}
+
 /// The work of `transfer`, apart from the app, so it can be tested.
 #[allow(clippy::too_many_arguments)]
 pub(super) fn run_transfer(
@@ -60,8 +81,7 @@ pub(super) fn run_transfer(
     job: u32,
     paths: &[String],
     to_dir: &str,
-    moving: bool,
-    resume: bool,
+    opts: Opts,
     stop: &std::sync::atomic::AtomicBool,
     emit: impl Fn(Progress),
 ) -> Result<TransferReport, String> {
@@ -75,25 +95,26 @@ pub(super) fn run_transfer(
         }
         walk(a, p, to_dir, &mut items)?;
     }
-    run_items(a, b, job, &items, moving, resume, stop, emit, report)
+    run_items(a, b, job, &items, opts, stop, emit, report)
 }
 
 /// Copies (or moves) each item in turn: folders are made (or merged into), files are written
 /// only where nothing is there yet. With `resume` (running a stopped or failed job again), a file
 /// already at the target with the same size counts as done instead of skipped; when moving, its
-/// original is kept, since it isn't known that this copy is the one made from it.
+/// original is kept, since it isn't known that this copy is the one made from it. With `verify`,
+/// a copy that reads back different is removed and reported, and its original is kept.
 #[allow(clippy::too_many_arguments)]
 pub(super) fn run_items(
     a: &Device,
     b: &Device,
     job: u32,
     items: &[Item],
-    moving: bool,
-    resume: bool,
+    opts: Opts,
     stop: &std::sync::atomic::AtomicBool,
     emit: impl Fn(Progress),
     mut report: TransferReport,
 ) -> Result<TransferReport, String> {
+    let Opts { moving, resume, verify } = opts;
     let files_total = items.iter().filter(|i| !i.dir).count() as u32;
     let bytes_total: u64 = items.iter().map(|i| i.size).sum();
     let mut p = Progress { job, files_done: 0, files_total, bytes_done: 0, bytes_total, current: String::new() };
@@ -155,6 +176,11 @@ pub(super) fn run_items(
                 DevError::Conflict(_) => "Already there.".to_string(),
                 e => e.to_string(),
             })?;
+            if verify && !copy_matches(b, &it.to, &data)? {
+                // Not left looking like a finished copy (a retry would count it as done).
+                let _ = b.remove(&it.to);
+                return Err("The copy didn't match the original, so it was removed. Try again; if it keeps happening, the cable or the device may be faulty.".into());
+            }
             if moving {
                 if let Some(bk) = a.remove(&it.from).map_err(|e| format!("Copied, but the original wasn't removed: {e}"))? {
                     report.backups.push(bk);
@@ -190,6 +216,7 @@ pub(super) fn run_items(
 /// removes the folders it emptied. Sends "transfer" events; `cancel_transfer(job)` stops it after
 /// the current file.
 #[tauri::command(rename_all = "snake_case")]
+#[allow(clippy::too_many_arguments)]
 pub(super) async fn transfer(
     app: AppHandle,
     state: State<'_, AppState>,
@@ -200,16 +227,16 @@ pub(super) async fn transfer(
     to_dir: String,
     mode: String,
     resume: Option<bool>,
+    verify: Option<bool>,
 ) -> Result<TransferReport, String> {
     use tauri::Emitter;
     let (a, b) = (state.source(Some(&from_src))?, state.source(Some(&to_src))?);
-    let moving = mode == "move";
+    let opts = Opts { moving: mode == "move", resume: resume.unwrap_or(false), verify: verify.unwrap_or(false) };
     let stop = Arc::new(std::sync::atomic::AtomicBool::new(false));
     state.jobs.lock().unwrap().insert(job, stop.clone());
     let same = from_src == to_src;
-    let resume = resume.unwrap_or(false);
     let r = blocking(move || {
-        run_transfer(&a, &b, same, job, &paths, &to_dir, moving, resume, &stop, |p| {
+        run_transfer(&a, &b, same, job, &paths, &to_dir, opts, &stop, |p| {
             let _ = app.emit("transfer", p);
         })
     })
@@ -303,6 +330,7 @@ pub(super) async fn sync(
     to_src: String,
     to_dir: String,
     hidden: bool,
+    verify: Option<bool>,
 ) -> Result<TransferReport, String> {
     use tauri::Emitter;
     let (a, b) = (state.source(Some(&from_src))?, state.source(Some(&to_src))?);
@@ -313,7 +341,7 @@ pub(super) async fn sync(
         let mut c = Comparison::default();
         compare_dirs(&a, &from_dir, &b, &to_dir, "", hidden, &mut c)?;
         let report = TransferReport { copied: 0, skipped: vec![], cancelled: false, backups: vec![], already: 0 };
-        run_items(&a, &b, job, &c.missing, false, false, &stop, |p| {
+        run_items(&a, &b, job, &c.missing, Opts { verify: verify.unwrap_or(false), ..Opts::default() }, &stop, |p| {
             let _ = app.emit("transfer", p);
         }, report)
     })
@@ -345,22 +373,22 @@ mod tests {
         let s = |p: &std::path::Path| crate::platform::app_path(p);
         let stop = std::sync::atomic::AtomicBool::new(false);
         let paths = [s(&src.join("book"))];
-        let r = super::run_transfer(&mac, &mac, true, 1, &paths, &s(&dst), false, false, &stop, |_| {}).unwrap();
+        let r = super::run_transfer(&mac, &mac, true, 1, &paths, &s(&dst), super::Opts { moving: false, resume: false, verify: true }, &stop, |_| {}).unwrap();
         assert_eq!(r.copied, 1);
         assert_eq!(r.skipped.len(), 1, "the existing a.txt is skipped");
         assert_eq!(fs::read(dst.join("book/a.txt")).unwrap(), b"old");
         assert_eq!(fs::read(dst.join("book/inner/b.txt")).unwrap(), b"bb");
         // Resuming: b.txt is there with the same size (done); a.txt differs (skipped, kept).
-        let r = super::run_transfer(&mac, &mac, true, 1, &paths, &s(&dst), false, true, &stop, |_| {}).unwrap();
+        let r = super::run_transfer(&mac, &mac, true, 1, &paths, &s(&dst), super::Opts { moving: false, resume: true, verify: true }, &stop, |_| {}).unwrap();
         assert_eq!((r.copied, r.already, r.skipped.len()), (0, 1, 1));
         assert!(r.skipped[0].1.contains("different"));
         assert_eq!(fs::read(dst.join("book/a.txt")).unwrap(), b"old");
         // Into itself is refused.
-        let r = super::run_transfer(&mac, &mac, true, 1, &paths, &s(&src.join("book/inner")), false, false, &stop, |_| {}).unwrap();
+        let r = super::run_transfer(&mac, &mac, true, 1, &paths, &s(&src.join("book/inner")), super::Opts { moving: false, resume: false, verify: true }, &stop, |_| {}).unwrap();
         assert_eq!((r.copied, r.skipped.len()), (0, 1));
         // Move to a fresh folder: originals go (backed up), emptied folders too.
         fs::create_dir(root.join("moved")).unwrap();
-        let r = super::run_transfer(&mac, &mac, true, 1, &paths, &s(&root.join("moved")), true, false, &stop, |_| {}).unwrap();
+        let r = super::run_transfer(&mac, &mac, true, 1, &paths, &s(&root.join("moved")), super::Opts { moving: true, resume: false, verify: true }, &stop, |_| {}).unwrap();
         assert_eq!((r.copied, r.skipped.len(), r.backups.len()), (2, 0, 2));
         assert!(!src.join("book").exists());
         assert_eq!(fs::read(root.join("moved/book/inner/b.txt")).unwrap(), b"bb");
@@ -369,7 +397,7 @@ mod tests {
         }
         // Cancelled before starting: nothing happens.
         stop.store(true, std::sync::atomic::Ordering::Relaxed);
-        let r = super::run_transfer(&mac, &mac, true, 1, &[s(&dst.join("book"))], &s(&root.join("moved")), true, false, &stop, |_| {}).unwrap();
+        let r = super::run_transfer(&mac, &mac, true, 1, &[s(&dst.join("book"))], &s(&root.join("moved")), super::Opts { moving: true, ..Default::default() }, &stop, |_| {}).unwrap();
         assert!(r.cancelled && r.copied == 0 && dst.join("book/a.txt").exists());
         fs::remove_dir_all(&root).unwrap();
     }
@@ -399,7 +427,7 @@ mod tests {
         assert_eq!((c.differ, c.extra, c.same), (vec!["big.txt".to_string()], vec!["x/only-b.txt".to_string()], 1));
         let stop = std::sync::atomic::AtomicBool::new(false);
         let report = super::TransferReport { copied: 0, skipped: vec![], cancelled: false, backups: vec![], already: 0 };
-        let r = super::run_items(&mac, &mac, 1, &c.missing, false, false, &stop, |_| {}, report).unwrap();
+        let r = super::run_items(&mac, &mac, 1, &c.missing, super::Opts::default(), &stop, |_| {}, report).unwrap();
         assert_eq!((r.copied, r.skipped.len()), (2, 0));
         assert_eq!(fs::read(b.join("x/y/deep.txt")).unwrap(), b"dd");
         assert_eq!(fs::read(b.join("big.txt")).unwrap(), b"s", "different files are left alone");

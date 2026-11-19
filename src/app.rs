@@ -548,6 +548,8 @@ struct Ctx {
     conn_error: RwSignal<Option<String>>,
     /// Settings: connect phones as soon as they're found, with adb when it can, else MTP.
     auto_connect: RwSignal<bool>,
+    /// Settings: read each copy back and compare it with the original.
+    verify: RwSignal<bool>,
     /// Phones (`UsbDevice::key`) connected automatically once already: not again, even after a
     /// failure or a disconnect, until they're unplugged.
     tried: StoredValue<HashSet<String>>,
@@ -611,6 +613,7 @@ impl Ctx {
             show_hidden: RwSignal::new(stored_flag(HIDDEN_KEY, false)),
             phone_thumbs: RwSignal::new(stored_flag(PHONE_THUMBS_KEY, true)),
             auto_connect: RwSignal::new(stored_flag(AUTO_CONNECT_KEY, true)),
+            verify: RwSignal::new(stored_flag(VERIFY_KEY, false)),
             tried: StoredValue::new(HashSet::new()),
             seen: StoredValue::new((HashSet::new(), 0)),
             jobs: RwSignal::new(vec![]),
@@ -648,6 +651,11 @@ impl Ctx {
     fn set_phone_thumbs(self, on: bool) {
         self.phone_thumbs.set(on);
         store(PHONE_THUMBS_KEY, if on { "1" } else { "0" });
+    }
+
+    fn set_verify(self, on: bool) {
+        self.verify.set(on);
+        store(VERIFY_KEY, if on { "1" } else { "0" });
     }
 
     fn set_auto_connect(self, on: bool) {
