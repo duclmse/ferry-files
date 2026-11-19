@@ -367,111 +367,84 @@ pub(super) fn Settings() -> impl IntoView {
             </div>
         }
     };
+    let check = move |on: Signal<bool>, set: fn(Ctx, bool), text: &'static str| view! {
+        <label class="check">
+            <input type="checkbox" prop:checked=move || on.get() on:change=move |e| set(ctx, event_target_checked(&e))/>
+            {text}
+        </label>
+    };
+    let general = move || view! {
+        <label class="row">
+            "Appearance"
+            <select prop:value=move || ctx.theme.get() on:change=move |e| {
+                let t = event_target_value(&e);
+                apply_theme(&t);
+                store(THEME_KEY, &t);
+                ctx.theme.set(t);
+            }>
+                <option value="auto">{if crate::os::is_mac() { "As the Mac" } else { "As the system" }}</option>
+                <option value="light">"Light"</option>
+                <option value="dark">"Dark"</option>
+            </select>
+        </label>
+        <label class="check">
+            <input type="checkbox" prop:checked=restore.get_untracked()
+                on:change=move |e| { let on = event_target_checked(&e); restore.set(on); store(RESTORE_KEY, if on { "1" } else { "0" }); }/>
+            "Bring back the tabs at launch"
+        </label>
+        <p class="hint">"Opens the tabs, split and widths the app had when it quit. Tabs on a phone come back when it's connected."</p>
+    }.into_any();
+    let files = move || view! {
+        {check(ctx.show_hidden.into(), Ctx::set_show_hidden, "Show hidden files (names starting with a dot)")}
+        {check(ctx.verify.into(), Ctx::set_verify, "Check copies")}
+        <p class="hint">"Reads each copied file back and compares it with the original; a copy that doesn't match is removed and reported, and a move keeps its original. Copies to a phone over MTP take about twice as long. (adb copies are always checked.)"</p>
+    }.into_any();
+    let phones = move || view! {
+        {check(ctx.auto_connect.into(), Ctx::set_auto_connect, "Connect phones when they're plugged in (adb if allowed, else MTP)")}
+        {check(ctx.phone_thumbs.into(), Ctx::set_phone_thumbs, "Thumbnails of phone files")}
+        <p class="hint">{format!("Each phone thumbnail reads the whole image or EPUB over USB, once; then it's cached on {}. Files on {} always get thumbnails.", crate::os::the_computer(), crate::os::the_computer())}</p>
+    }.into_any();
+    let storage = move || view! {
+        {folder("backups", "Backups", "Copies of files from before they were replaced or deleted. Kept until you clear them in Backups, which moves them to the Trash.")}
+        {folder("thumbs", "Thumbnail cache", "Made again when needed, so it's safe to clear.")}
+        {folder("opened", "Opened phone files", "Copies made to open phone files in other apps. Changes to them don't go back to the phone.")}
+        {move || error.get().map(|e| view! { <p class="error">{e}</p> })}
+    }.into_any();
+    let storage_name = format!("On {}", crate::os::this_computer());
+    let sections: [(&'static str, String); 5] = [
+        ("general", "General".into()),
+        ("files", "Files".into()),
+        ("phones", "Phones".into()),
+        ("keys", "Keyboard".into()),
+        ("storage", storage_name),
+    ];
+    let names = StoredValue::new(sections.clone());
     view! {
         <div class="overlay" on:click=move |_| ctx.settings.set(false)>
-            <div class="dialog" on:click=|e| e.stop_propagation()>
+            <div class="dialog settings" role="dialog" aria-label="Settings" on:click=|e| e.stop_propagation()>
                 <h2>"Settings"</h2>
-                <label class="row">
-                    "Appearance"
-                    <select prop:value=move || ctx.theme.get() on:change=move |e| {
-                        let t = event_target_value(&e);
-                        apply_theme(&t);
-                        store(THEME_KEY, &t);
-                        ctx.theme.set(t);
-                    }>
-                        <option value="auto">{if crate::os::is_mac() { "As the Mac" } else { "As the system" }}</option>
-                        <option value="light">"Light"</option>
-                        <option value="dark">"Dark"</option>
-                    </select>
-                </label>
-                <label class="check">
-                    <input type="checkbox" prop:checked=move || ctx.show_hidden.get()
-                        on:change=move |e| ctx.set_show_hidden(event_target_checked(&e))/>
-                    "Show hidden files (names starting with a dot)"
-                </label>
-                <label class="check">
-                    <input type="checkbox" prop:checked=move || ctx.phone_thumbs.get()
-                        on:change=move |e| ctx.set_phone_thumbs(event_target_checked(&e))/>
-                    "Thumbnails of phone files"
-                </label>
-                <p class="hint">{format!("Each phone thumbnail reads the whole image or EPUB over USB, once; then it's cached on {}. Files on {} always get thumbnails.", crate::os::the_computer(), crate::os::the_computer())}</p>
-                <label class="check">
-                    <input type="checkbox" prop:checked=move || ctx.auto_connect.get()
-                        on:change=move |e| ctx.set_auto_connect(event_target_checked(&e))/>
-                    "Connect phones when they're plugged in (adb if allowed, else MTP)"
-                </label>
-                <label class="check">
-                    <input type="checkbox" prop:checked=restore.get_untracked()
-                        on:change=move |e| { let on = event_target_checked(&e); restore.set(on); store(RESTORE_KEY, if on { "1" } else { "0" }); }/>
-                    "Bring back the tabs at launch"
-                </label>
-                <p class="hint">"Opens the tabs, split and widths the app had when it quit. Tabs on a phone come back when it's connected."</p>
-                <label class="check">
-                    <input type="checkbox" prop:checked=move || ctx.verify.get()
-                        on:change=move |e| ctx.set_verify(event_target_checked(&e))/>
-                    "Check copies"
-                </label>
-                <p class="hint">"Reads each copied file back and compares it with the original; a copy that doesn't match is removed and reported, and a move keeps its original. Copies to a phone over MTP take about twice as long. (adb copies are always checked.)"</p>
-                <h3>{format!("On {}", crate::os::this_computer())}</h3>
-                {folder("backups", "Backups", "Copies of files from before they were replaced or deleted. Kept until you clear them in Backups, which moves them to the Trash.")}
-                {folder("thumbs", "Thumbnail cache", "Made again when needed, so it's safe to clear.")}
-                {folder("opened", "Opened phone files", "Copies made to open phone files in other apps. Changes to them don't go back to the phone.")}
-                {move || error.get().map(|e| view! { <p class="error">{e}</p> })}
+                <div class="settings-main">
+                    <nav class="settings-tabs" role="tablist" aria-orientation="vertical">
+                        {sections.into_iter().map(|(id, name)| view! {
+                            <button role="tab" class:on=move || ctx.settings_tab.get() == id
+                                aria-selected=move || (ctx.settings_tab.get() == id).to_string()
+                                on:click=move |_| ctx.settings_tab.set(id)>{name}</button>
+                        }).collect_view()}
+                    </nav>
+                    <section class="settings-body" role="tabpanel"
+                        aria-label=move || names.with_value(|n| n.iter().find(|s| s.0 == ctx.settings_tab.get()).map(|s| s.1.clone()))>
+                        {move || match ctx.settings_tab.get() {
+                            "files" => files(),
+                            "phones" => phones(),
+                            "keys" => view! { <ShortcutsEditor/> }.into_any(),
+                            "storage" => storage(),
+                            _ => general(),
+                        }}
+                    </section>
+                </div>
                 <div class="actions">
-                    <button class="btn" on:click=move |_| { ctx.settings.set(false); ctx.help.set(true); }>{ico(Icon::Keyboard)}"Keyboard shortcuts"</button>
                     <span class="grow"></span>
                     <button class="btn primary" on:click=move |_| ctx.settings.set(false)>"Done"</button>
-                </div>
-            </div>
-        </div>
-    }
-}
-
-/// The keyboard shortcuts, from ? or Settings.
-#[component]
-pub(super) fn Shortcuts() -> impl IntoView {
-    let ctx = expect_context::<Ctx>();
-    const KEYS: &[(&str, &str)] = &[
-        ("↑ ↓", "Move through the files"),
-        ("← →", "Previous or next picture, video or sound (list); left and right (thumbnails, columns)"),
-        ("↵ or ⌘↓", "Open"),
-        ("⌫ or ⌘↑", "Up a folder"),
-        ("Space", "Quick Look"), // Shown as os::quick_look().
-        ("⌘K", "Commands: every action, favourites, devices, recent folders"),
-        ("/ or ⌘F", "Filter; Enter searches subfolders"),
-        ("⌘L", "Type a path"),
-        ("F2", "Rename (with several picked: rename them together)"),
-        ("⌘⌫ or Delete", "Delete"),
-        ("F5 / F6", "Copy or move to the other pane"),
-        ("⌘A", "Pick everything"),
-        ("⌘-click, Shift-click", "Pick some"),
-        ("Esc", "Unpick, or close"),
-        ("Tab", "The other pane"),
-        ("⌘\\", "Show or hide the second pane"),
-        ("⌥⌘S", "Show or hide the sidebar"),
-        ("⌘Z", "Undo the last rename, new item, delete, copy or move"),
-        ("Middle-click", "Open a sidebar folder in a new tab"),
-        ("⌘T", "New tab"),
-        ("⌘W", "Close tab"),
-        ("⌘⇧] / ⌘⇧[", "Next or previous tab"),
-        ("⌘S", "Save, in the editor"),
-        ("?", "This list"),
-    ];
-    view! {
-        <div class="overlay" on:click=move |_| ctx.help.set(false)>
-            <div class="dialog shortcuts" on:click=|e| e.stop_propagation()>
-                <h2>"Keyboard shortcuts"</h2>
-                <dl>
-                    {KEYS.iter().map(|(k, what)| view! { <dt><kbd>{crate::os::keys(k)}</kbd></dt><dd>{match *what {
-                        "Quick Look" => crate::os::quick_look().to_string(),
-                        "Show or hide the sidebar" => format!("Show or hide the {}", crate::os::sidebar()),
-                        "Open a sidebar folder in a new tab" => format!("Open a {} folder in a new tab", crate::os::sidebar()),
-                        w => w.to_string(),
-                    }}</dd> }).collect_view()}
-                </dl>
-                <div class="actions">
-                    <span class="grow"></span>
-                    <button class="btn primary" on:click=move |_| ctx.help.set(false)>"Done"</button>
                 </div>
             </div>
         </div>

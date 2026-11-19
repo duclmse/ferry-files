@@ -187,7 +187,7 @@ pub(super) fn History() -> impl IntoView {
         <div class="overlay" on:click=move |_| close()>
             <div class="dialog wide" on:click=|e| e.stop_propagation()>
                 <h2>"History"</h2>
-                <p class="hint">{format!("What was done since the app started. Renames, new items, deletes, copies and moves can be undone ({} undoes the newest); replaced files can be put back from Backups.", crate::os::keys("⌘Z"))}</p>
+                <p class="hint">{move || format!("What was done since the app started. Renames, new items, deletes, copies and moves can be undone{}; replaced files can be put back from Backups.", match ctx.key_label("undo") { k if k.is_empty() => String::new(), k => format!(" ({k} undoes the newest)") })}</p>
                 <div class="history">
                     {move || {
                         let h = ctx.history.get();

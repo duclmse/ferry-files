@@ -20,6 +20,7 @@ mod editor;
 mod files;
 mod import;
 mod icons;
+mod keymap;
 mod layout;
 mod menu;
 mod nav;
@@ -44,6 +45,7 @@ use import::*;
 use devices::*;
 use editor::*;
 use icons::{ico, Icon};
+use keymap::*;
 use layout::*;
 use menu::*;
 use palette::*;
@@ -694,8 +696,12 @@ struct Ctx {
     searches: RwSignal<Vec<String>>,
     /// Settings: "auto", "light" or "dark".
     theme: RwSignal<String>,
-    /// Whether the list of keyboard shortcuts is shown.
-    help: RwSignal<bool>,
+    /// The user's keyboard shortcuts, by command, where they differ from the defaults (keymap.rs).
+    keymap: RwSignal<HashMap<String, Vec<String>>>,
+    /// The command waiting for a key press in the Keyboard shortcuts dialog.
+    capturing: RwSignal<Option<&'static str>>,
+    /// The section shown in Settings.
+    settings_tab: RwSignal<&'static str>,
     /// Whether the Connect over Wi-Fi dialog is shown.
     wifi: RwSignal<bool>,
 }
@@ -747,9 +753,17 @@ impl Ctx {
             pane_w: stored_px(PANE_W_KEY),
             searches: RwSignal::new(stored(SEARCHES_KEY).and_then(|s| serde_json::from_str(&s).ok()).unwrap_or_default()),
             theme: RwSignal::new(stored(THEME_KEY).unwrap_or_else(|| "auto".into())),
-            help: RwSignal::new(false),
+            keymap: RwSignal::new(saved_keys()),
+            capturing: RwSignal::new(None),
+            settings_tab: RwSignal::new("general"),
             wifi: RwSignal::new(false),
         }
+    }
+
+    /// Settings, at the keyboard shortcuts.
+    fn show_shortcuts(self) {
+        self.settings_tab.set("keys");
+        self.settings.set(true);
     }
 
     /// Drops hidden files from a listing unless the settings say to show them.
@@ -875,10 +889,9 @@ pub fn App() -> impl IntoView {
         std::time::Duration::from_secs(3),
     );
 
-    // Keyboard. ⌘S saves. In the panes: Tab switches pane, ⌘\ shows or hides the second one, arrows
-    // move (←/→ also go up/in in the column view and move across in the thumbnail view), Enter or
-    // ⌘↓ opens, ⌘↑ or Backspace goes up, ⌘⌫ deletes, F2 renames, F5 copies and F6 moves to the
-    // other pane, ⌘A picks everything, Escape unpicks. ⌘T, ⌘W and ⌘⇧] / ⌘⇧[ are for tabs.
+    // Keyboard. ⌘S saves in the editors. Elsewhere the shortcuts are the user's (keymap.rs), but
+    // for arrows, which move (←/→ also go up/in in the column view and move across in the
+    // thumbnail view), and Escape, which unpicks.
     let _keys = window_event_listener(ev::keydown, move |e| {
         let meta = e.meta_key() || e.ctrl_key();
         if ctx.menu.get_untracked().is_some() {
@@ -897,14 +910,20 @@ pub fn App() -> impl IntoView {
             }
             return;
         }
-        if ctx.help.get_untracked() {
-            if matches!(e.key().as_str(), "Escape" | "?") {
-                e.prevent_default();
-                ctx.help.set(false);
-            }
-            return;
-        }
+        let chord = chord_of(&e);
+        let bound = chord.as_deref().and_then(|c| ctx.command_for(c));
         if ctx.settings.get_untracked() {
+            // Changing a shortcut: the next key press is the new one; Esc stops waiting.
+            if let Some(id) = ctx.capturing.get_untracked() {
+                if let Some(c) = chord {
+                    e.prevent_default();
+                    if c != "Escape" {
+                        ctx.bind(id, c);
+                    }
+                    ctx.capturing.set(None);
+                }
+                return;
+            }
             if e.key() == "Escape" {
                 e.prevent_default();
                 ctx.settings.set(false);
@@ -929,51 +948,13 @@ pub fn App() -> impl IntoView {
         if !matches!(p.notice.get_untracked(), Notice::None | Notice::Ok(_) | Notice::Error(_)) {
             return;
         }
-        // Tabs, even from the filter: ⌘T opens one, ⌘W closes it (the last one closes the
-        // window, as the menu does), ⌘⇧] / ⌘⇧[ and Ctrl+Tab / Ctrl+Shift+Tab move between them.
-        let cmd = crate::os::cmd(e.meta_key(), e.ctrl_key());
-        let tab_step = match e.key().as_str() {
-            "]" | "}" if cmd && e.shift_key() => Some(1),
-            "[" | "{" if cmd && e.shift_key() => Some(-1),
-            "Tab" if e.ctrl_key() => Some(if e.shift_key() { -1 } else { 1 }),
-            _ => None,
-        };
-        if let Some(d) = tab_step {
-            e.prevent_default();
-            ctx.step_tab(p, d);
-            return;
-        }
-        if cmd && e.alt_key() && !e.shift_key() && e.code() == "KeyS" {
-            e.prevent_default();
-            ctx.set_side(!ctx.side.get_untracked());
-            return;
-        }
-        if cmd && !e.shift_key() && !e.alt_key() {
-            match e.key().to_lowercase().as_str() {
-                "t" => {
-                    e.prevent_default();
-                    ctx.new_tab(p, p.src.get_untracked(), p.cwd.get_untracked());
-                    return;
-                }
-                "k" => {
-                    e.prevent_default();
-                    ctx.panel.set(Some(Panel::Palette));
-                    return;
-                }
-                "w" if p.tabs.with_untracked(Vec::len) > 1 => {
-                    e.prevent_default();
-                    ctx.close_tab(p, p.tab.get_untracked());
-                    return;
-                }
-                _ => {}
-            }
-        }
-        // Typing in a field (the filter) is the field's.
+        // Typing in a field (the filter) is the field's, but for shortcuts with ⌘ or ⌃ that work
+        // anywhere: tabs, the palette and the sidebar.
         let typing = e
             .target()
             .and_then(|t| t.dyn_into::<web_sys::Element>().ok())
             .is_some_and(|el| el.closest("input, textarea").ok().flatten().is_some());
-        if typing {
+        if typing && !bound.is_some_and(|b| b.anywhere && chord.as_deref().is_some_and(held)) {
             return;
         }
         let entries = p.entries.get_untracked();
@@ -998,54 +979,96 @@ pub fn App() -> impl IntoView {
                 .flatten()
                 .map_or(1, |g| ((g.client_width() - 24 + 8) / 136).max(1) as isize)
         };
-        match (e.key().as_str(), meta) {
-            ("Tab", false) if ctx.split.get_untracked() => {
-                e.prevent_default();
-                ctx.active.set(1 - p.id);
-            }
-            ("\\", true) => {
-                e.prevent_default();
-                ctx.set_split(!ctx.split.get_untracked());
-            }
-            ("F5", _) | ("F6", _) => {
-                e.prevent_default();
-                ctx.send_to_other(p, e.key() == "F6");
-            }
-            ("F2", _) => {
-                e.prevent_default();
-                ctx.ask_rename(p);
-            }
-            ("z", true) if !e.shift_key() => {
-                e.prevent_default();
-                ctx.undo_last();
-            }
-            ("a", true) => {
-                e.prevent_default();
-                p.marked.set(entries.iter().map(|x| x.path.clone()).collect());
-            }
-            ("Escape", false) => p.marked.set(vec![]),
-            (" ", false) => {
-                e.prevent_default();
-                ctx.quick_look(p);
-            }
-            ("f", true) | ("/", false) => {
-                e.prevent_default();
-                if let Some(el) = document().query_selector(".pane.active .filter").ok().flatten() {
-                    let _ = el.unchecked_into::<web_sys::HtmlElement>().focus();
+        if let Some(b) = bound {
+            let done = match b.id {
+                "palette" => {
+                    ctx.panel.set(Some(Panel::Palette));
+                    true
                 }
-            }
-            ("Backspace", true) | ("Delete", _) => {
+                "new_tab" => {
+                    ctx.new_tab(p, p.src.get_untracked(), p.cwd.get_untracked());
+                    true
+                }
+                // The last tab is left to the window (the menu's Close Window).
+                "close_tab" if p.tabs.with_untracked(Vec::len) > 1 => {
+                    ctx.close_tab(p, p.tab.get_untracked());
+                    true
+                }
+                "next_tab" | "prev_tab" => {
+                    ctx.step_tab(p, if b.id == "next_tab" { 1 } else { -1 });
+                    true
+                }
+                "sidebar" => {
+                    ctx.set_side(!ctx.side.get_untracked());
+                    true
+                }
+                "other_pane" if ctx.split.get_untracked() => {
+                    ctx.active.set(1 - p.id);
+                    true
+                }
+                "split" => {
+                    ctx.set_split(!ctx.split.get_untracked());
+                    true
+                }
+                "copy" | "move" => {
+                    ctx.send_to_other(p, b.id == "move");
+                    true
+                }
+                "rename" => {
+                    ctx.ask_rename(p);
+                    true
+                }
+                "undo" => {
+                    ctx.undo_last();
+                    true
+                }
+                "pick_all" => {
+                    p.marked.set(entries.iter().map(|x| x.path.clone()).collect());
+                    true
+                }
+                "quick_look" => {
+                    ctx.quick_look(p);
+                    true
+                }
+                "filter" => {
+                    if let Some(el) = document().query_selector(".pane.active .filter").ok().flatten() {
+                        let _ = el.unchecked_into::<web_sys::HtmlElement>().focus();
+                    }
+                    true
+                }
+                "delete" => {
+                    ctx.ask_delete(p);
+                    true
+                }
+                "help" => {
+                    ctx.show_shortcuts();
+                    true
+                }
+                "type_path" => {
+                    p.editing_path.set(true);
+                    true
+                }
+                "open" => match current.clone() {
+                    Some(x) => {
+                        ctx.open(p, x);
+                        true
+                    }
+                    None => false,
+                },
+                "up" => {
+                    ctx.go_up(p);
+                    true
+                }
+                _ => false,
+            };
+            if done {
                 e.prevent_default();
-                ctx.ask_delete(p);
+                return;
             }
-            ("?", _) => {
-                e.prevent_default();
-                ctx.help.set(true);
-            }
-            ("l", true) => {
-                e.prevent_default();
-                p.editing_path.set(true);
-            }
+        }
+        // Moving around isn't changeable.
+        match (e.key().as_str(), meta) {
+            ("Escape", false) => p.marked.set(vec![]),
             // In the list, ← and → go to the previous and next picture, video or sound.
             ("ArrowRight", false) | ("ArrowLeft", false) if view == ViewMode::List => {
                 if let Some(x) = current.filter(|x| media(x).is_some()) {
@@ -1076,16 +1099,6 @@ pub fn App() -> impl IntoView {
                 }
             }
             ("ArrowLeft", false) if view == ViewMode::Columns => {
-                e.prevent_default();
-                ctx.go_up(p);
-            }
-            ("Enter", _) | ("ArrowDown", true) => {
-                if let Some(x) = current {
-                    e.prevent_default();
-                    ctx.open(p, x);
-                }
-            }
-            ("Backspace", false) | ("ArrowUp", true) => {
                 e.prevent_default();
                 ctx.go_up(p);
             }
@@ -1167,7 +1180,6 @@ pub fn App() -> impl IntoView {
         <Browser/>
         <ContextMenu/>
         {move || ctx.settings.get().then(|| view! { <Settings/> })}
-        {move || ctx.help.get().then(|| view! { <Shortcuts/> })}
         {move || ctx.wifi.get().then(|| view! { <WifiDialog/> })}
         {move || ctx.panel.get().map(|w| match w {
             Panel::Backups => view! { <Backups/> }.into_any(),

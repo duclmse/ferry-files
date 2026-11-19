@@ -92,25 +92,166 @@
   padding: 3px 6px;
 }
 
+/* Settings: its sections in a column at the left, the shown one beside it. */
+.dialog.settings {
+  width: min(760px, 100%);
+  height: min(600px, 100%);
+  overflow: hidden;
+}
+
+.settings-main {
+  flex: 1;
+  min-height: 0;
+  display: flex;
+  gap: 16px;
+}
+
+.settings-tabs {
+  flex: none;
+  width: 150px;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  padding-right: 12px;
+  border-right: 1px solid var(--line);
+}
+
+.settings-tabs button {
+  text-align: left;
+  padding: 6px 10px;
+  border: 0;
+  border-radius: 6px;
+  background: none;
+  color: var(--muted);
+  font: inherit;
+  font-size: 13px;
+  cursor: pointer;
+}
+
+.settings-tabs button:hover {
+  background: var(--hover);
+  color: var(--ink);
+}
+
+.settings-tabs button.on {
+  background: var(--sel);
+  color: var(--ink);
+  font-weight: 600;
+}
+
+.settings-body {
+  flex: 1;
+  min-width: 0;
+  overflow-y: auto;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  padding-right: 4px;
+}
+
+.shortcuts .reset-all {
+  align-self: flex-start;
+  margin-top: 12px;
+}
+
+@media (max-width: 560px) {
+  .settings-main {
+    flex-direction: column;
+  }
+
+  .settings-tabs {
+    width: auto;
+    flex-direction: row;
+    flex-wrap: wrap;
+    padding: 0 0 8px;
+    border-right: 0;
+    border-bottom: 1px solid var(--line);
+  }
+}
+
 /* Keyboard shortcuts. */
-.dialog.shortcuts dl {
+.shortcuts dl {
   display: grid;
+  align-items: center;
   grid-template-columns: max-content 1fr;
   gap: 6px 14px;
   margin: 0;
   font-size: 13px;
 }
 
-.dialog.shortcuts dt {
-  text-align: right;
+.shortcuts dt {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: flex-end;
+  align-items: center;
+  gap: 4px;
 }
 
-.dialog.shortcuts dd {
+.shortcuts .chip {
+  display: inline-flex;
+  align-items: center;
+}
+
+.shortcuts .unbind,
+.shortcuts .bind,
+.shortcuts .reset {
+  border: 0;
+  border-radius: 4px;
+  background: none;
+  color: var(--muted);
+  font: inherit;
+  font-size: 12px;
+  line-height: 1;
+  padding: 2px 4px;
+  cursor: pointer;
+}
+
+.shortcuts .unbind {
+  visibility: hidden;
+}
+
+.shortcuts .chip:hover .unbind,
+.shortcuts .unbind:focus-visible {
+  visibility: visible;
+}
+
+.shortcuts .bind {
+  border: 1px dashed var(--line);
+  min-width: 22px;
+}
+
+.shortcuts .bind.waiting {
+  border-style: solid;
+  border-color: var(--accent);
+  color: var(--accent);
+}
+
+.shortcuts .reset {
+  margin-left: 6px;
+  text-decoration: underline;
+}
+
+.shortcuts .unbind:hover,
+.shortcuts .bind:hover,
+.shortcuts .reset:hover {
+  background: var(--hover);
+  color: var(--ink);
+}
+
+.shortcuts dd {
+  align-self: center;
+}
+
+.shortcuts h3 {
+  margin: 16px 0 8px;
+}
+
+.shortcuts dd {
   margin: 0;
   color: var(--muted);
 }
 
-.dialog.shortcuts kbd {
+.shortcuts kbd {
   font: 12px ui-monospace, SFMono-Regular, Menlo, monospace;
   padding: 1px 6px;
   border: 1px solid var(--line);

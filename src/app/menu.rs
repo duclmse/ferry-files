@@ -168,14 +168,14 @@ impl Ctx {
             let mut v = vec![];
             if split {
                 let enabled = self.in_storage(self.other(p));
-                v.push(MenuItem::Do { label: self.to_label(p, "Copy", picked), key: "F5", act: Act::Copy, danger: false, enabled });
-                v.push(MenuItem::Do { label: self.to_label(p, "Move", picked), key: "F6", act: Act::Move, danger: false, enabled });
+                v.push(MenuItem::Do { label: self.to_label(p, "Copy", picked), key: "copy", act: Act::Copy, danger: false, enabled });
+                v.push(MenuItem::Do { label: self.to_label(p, "Move", picked), key: "move", act: Act::Move, danger: false, enabled });
                 v.push(MenuItem::Sep);
             }
             let renamable = !(p.cwd.get_untracked() == "/" && self.src_info(p.src.get_untracked()).is_some_and(|i| i.transport == "mtp"));
-            v.push(MenuItem::Do { label: format!("Rename {picked} items…"), key: "F2", act: Act::Rename, danger: false, enabled: renamable });
+            v.push(MenuItem::Do { label: format!("Rename {picked} items…"), key: "rename", act: Act::Rename, danger: false, enabled: renamable });
             v.push(MenuItem::Sep);
-            v.push(MenuItem::Do { label: format!("Delete {picked} items…"), key: "⌘⌫", act: Act::Delete, danger: true, enabled: true });
+            v.push(MenuItem::Do { label: format!("Delete {picked} items…"), key: "delete", act: Act::Delete, danger: true, enabled: true });
             return v;
         }
         let mut v = vec![];
@@ -207,11 +207,11 @@ impl Ctx {
         }
         if split {
             let enabled = self.in_storage(self.other(p));
-            v.push(MenuItem::Do { label: self.to_label(p, "Copy", 1), key: "F5", act: Act::Copy, danger: false, enabled });
-            v.push(MenuItem::Do { label: self.to_label(p, "Move", 1), key: "F6", act: Act::Move, danger: false, enabled });
+            v.push(MenuItem::Do { label: self.to_label(p, "Copy", 1), key: "copy", act: Act::Copy, danger: false, enabled });
+            v.push(MenuItem::Do { label: self.to_label(p, "Move", 1), key: "move", act: Act::Move, danger: false, enabled });
         }
         let renamable = !(p.cwd.get_untracked() == "/" && self.src_info(p.src.get_untracked()).is_some_and(|i| i.transport == "mtp"));
-        v.push(MenuItem::Do { label: "Rename".into(), key: "F2", act: Act::Rename, danger: false, enabled: renamable });
+        v.push(MenuItem::Do { label: "Rename".into(), key: "rename", act: Act::Rename, danger: false, enabled: renamable });
         if e.dir {
             let fav = if self.is_fav(p.src.get_untracked(), &e.path) { "Remove from Favourites" } else { "Add to Favourites" };
             v.push(item(fav, "", Act::Favourite));
@@ -224,7 +224,7 @@ impl Ctx {
         v.extend([item("Copy name", "", Act::CopyName), item("Copy path", "", Act::CopyPath)]);
         v.extend([MenuItem::Sep, item("Refresh", "", Act::Refresh), MenuItem::Sep]);
         let label = if e.dir { "Delete folder if empty…" } else { "Delete…" };
-        v.push(MenuItem::Do { label: label.into(), key: "⌘⌫", act: Act::Delete, danger: true, enabled: true });
+        v.push(MenuItem::Do { label: label.into(), key: "delete", act: Act::Delete, danger: true, enabled: true });
         v
     }
 
@@ -328,7 +328,7 @@ pub(super) fn ContextMenu() -> impl IntoView {
                                         _ => ctx.run(p, act, entry.clone()),
                                     }
                                 }>
-                                <span>{label}</span><span class="key">{crate::os::keys(key)}</span>
+                                <span>{label}</span><span class="key">{move || ctx.key_label(key)}</span>
                             </button>
                         }.into_any()
                     }

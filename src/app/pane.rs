@@ -73,7 +73,7 @@ pub(super) fn Crumbs(pane: Pane) -> impl IntoView {
         }
     });
     view! {
-        <div class="crumbs" node_ref=el title=format!("Click here or press {} to type a path", crate::os::keys("⌘L")) on:click=edit>
+        <div class="crumbs" node_ref=el title=move || match ctx.key_label("type_path") { k if k.is_empty() => "Click here to type a path".to_string(), k => format!("Click here or press {k} to type a path") } on:click=edit>
             {move || if p.editing_path.get() {
                 view! { <PathEdit pane=p/> }.into_any()
             } else {
@@ -365,10 +365,10 @@ pub(super) fn PaneView(pane: Pane) -> impl IntoView {
             <div class="bar">
                 {(p.id == 0).then(|| view! {
                     <button class="btn icon-only" class:active=move || ctx.side.get()
-                        title=move || format!("{} the {} ({})", if ctx.side.get() { "Hide" } else { "Show" }, crate::os::sidebar(), crate::os::keys("⌥⌘S"))
+                        title=move || ctx.with_key(&format!("{} the {}", if ctx.side.get() { "Hide" } else { "Show" }, crate::os::sidebar()), "sidebar")
                         aria-label="Sidebar" on:click=move |_| ctx.set_side(!ctx.side.get_untracked())>{ico(Icon::Sidebar)}</button>
                 })}
-                <button class="btn icon-only" title=format!("Up ({})", crate::os::keys("⌘↑")) aria-label="Up" disabled=move || p.cwd.get() == "/" on:click=move |_| ctx.go_up(p)>{ico(Icon::Up)}</button>
+                <button class="btn icon-only" title=move || ctx.with_key("Up", "up") aria-label="Up" disabled=move || p.cwd.get() == "/" on:click=move |_| ctx.go_up(p)>{ico(Icon::Up)}</button>
                 <Crumbs pane=p/>
                 {move || p.loading.get().then(|| view! { <span class="spin"></span> })}
                 // Narrow panes show only the icon; clicking it opens the field.
@@ -381,7 +381,7 @@ pub(super) fn PaneView(pane: Pane) -> impl IntoView {
                         {move || ctx.searches.get().into_iter().map(|q| view! { <option value=q></option> }).collect_view()}
                     </datalist>
                     <input class="filter" type="search" placeholder="Filter" node_ref=filter_ref list=format!("searches-{}", p.id)
-                        title=format!("Show names containing this ({} or /). Enter searches subfolders too.", crate::os::keys("⌘F"))
+                        title=move || format!("{}. Enter searches subfolders too.", ctx.with_key("Show names containing this", "filter"))
                         prop:value=move || p.filter.get()
                         on:input=move |ev| { p.filter.set(event_target_value(&ev)); p.arrange(); }
                         on:keydown=move |ev| match ev.key().as_str() {
@@ -407,15 +407,15 @@ pub(super) fn PaneView(pane: Pane) -> impl IntoView {
                 <button class="btn icon-only" class:active=move || p.filters_open.get() || p.filtering()
                     title="Search filters: kind, size, date" aria-label="Search filters" aria-expanded=move || p.filters_open.get().to_string()
                     on:click=move |_| p.filters_open.update(|o| *o = !*o)>{ico(Icon::Funnel)}</button>
-                <button class="btn icon-only" title=format!("New tab ({})", crate::os::keys("⌘T")) aria-label="New tab"
+                <button class="btn icon-only" title=move || ctx.with_key("New tab", "new_tab") aria-label="New tab"
                     on:click=move |_| ctx.new_tab(p, p.src.get_untracked(), p.cwd.get_untracked())>{ico(Icon::NewTab)}</button>
                 {(p.id == 0).then(|| view! {
                     <button class="btn icon-only" class:active=move || ctx.split.get()
-                        title=move || format!("{} ({})", if ctx.split.get() { "Hide the second pane" } else { "Show a second pane" }, crate::os::keys("⌘\\"))
+                        title=move || ctx.with_key(if ctx.split.get() { "Hide the second pane" } else { "Show a second pane" }, "split")
                         aria-label="Second pane" on:click=move |_| ctx.set_split(!ctx.split.get_untracked())>{ico(Icon::Split)}</button>
                 })}
                 {(p.id == 1).then(|| view! {
-                    <button class="btn icon-only" title=format!("Hide this pane ({})", crate::os::keys("⌘\\")) aria-label="Hide this pane"
+                    <button class="btn icon-only" title=move || ctx.with_key("Hide this pane", "split") aria-label="Hide this pane"
                         on:click=move |_| ctx.set_split(false)>{ico(Icon::Close)}</button>
                 })}
             </div>
@@ -679,12 +679,12 @@ fn Tabs(pane: Pane) -> impl IntoView {
                         // A middle click closes it.
                         on:auxclick=move |ev| if ev.button() == 1 { ev.prevent_default(); ctx.close_tab(p, i) }>
                         <span class="name">{name}</span>
-                        <button class="close" title=format!("Close tab ({})", crate::os::keys("⌘W")) aria-label="Close tab"
+                        <button class="close" title=move || ctx.with_key("Close tab", "close_tab") aria-label="Close tab"
                             on:click=move |ev| { ev.stop_propagation(); ctx.close_tab(p, i) }>"×"</button>
                     </div>
                 }
             }).collect_view()}
-            <button class="add" title=format!("New tab ({})", crate::os::keys("⌘T")) aria-label="New tab"
+            <button class="add" title=move || ctx.with_key("New tab", "new_tab") aria-label="New tab"
                 on:click=move |_| ctx.new_tab(p, p.src.get_untracked(), p.cwd.get_untracked())>"+"</button>
         </div>
     }

@@ -39,7 +39,7 @@ enum Cmd {
     Do(fn(Ctx)),
 }
 
-/// An app-wide command: its label, shortcut, and what it does.
+/// An app-wide command: its label, its shortcut's command (keymap.rs), and what it does.
 type AppCmd = (&'static str, &'static str, fn(Ctx));
 
 #[derive(Clone)]
@@ -106,12 +106,12 @@ impl Ctx {
         from_menu("Here", self.menu_items(p, None), None, &mut out);
         let app: [AppCmd; 7] = [
             ("Settings", "", |c| c.settings.set(true)),
-            ("Keyboard shortcuts", "?", |c| c.help.set(true)),
+            ("Keyboard shortcuts", "help", |c| c.show_shortcuts()),
             ("Backups", "", |c| c.panel.set(Some(Panel::Backups))),
             ("History", "", |c| c.panel.set(Some(Panel::History))),
             ("Refresh devices", "", |c| c.refresh_devices()),
             ("Connect over Wi-Fi…", "", |c| c.wifi.set(true)),
-            ("Go up a folder", "⌘↑", |c| c.go_up(c.act())),
+            ("Go up a folder", "up", |c| c.go_up(c.act())),
         ];
         out.extend(app.into_iter().map(|(label, key, f)| Choice { group: "App", label: label.into(), key, cmd: Cmd::Do(f) }));
         let here = (p.src.get_untracked(), p.cwd.get_untracked());
@@ -228,8 +228,10 @@ pub(super) fn Palette() -> impl IntoView {
                     run(i);
                 }
             }
-            "k" if crate::os::cmd(e.meta_key(), e.ctrl_key()) => {
+            _ if chord_of(&e).and_then(|c| ctx.command_for(&c)).is_some_and(|c| c.id == "palette") => {
                 e.prevent_default();
+                // Not on to the window, which would open it again.
+                e.stop_propagation();
                 ctx.panel.set(None);
             }
             _ => {}
@@ -256,7 +258,7 @@ pub(super) fn Palette() -> impl IntoView {
                                     on:click=move |_| run(i)>
                                     <span class="group">{c.group}</span>
                                     <span class="label">{c.label}</span>
-                                    <span class="key">{crate::os::keys(c.key)}</span>
+                                    <span class="key">{move || ctx.key_label(c.key)}</span>
                                 </button>
                             }
                         }).collect_view().into_any()
