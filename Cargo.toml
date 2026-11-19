@@ -47,3 +47,12 @@ members = ["src-tauri"]
 # Image decoding (thumbnails) is far too slow unoptimised; dependencies are built optimised even in dev.
 [profile.dev.package."*"]
 opt-level = 2
+
+# Smaller, faster release builds: the whole program optimised together.
+[profile.release]
+lto = true
+codegen-units = 1
+
+# The UI is downloaded into the webview at each launch: optimised for size.
+[profile.release.package.ferry-files-ui]
+opt-level = "s"
