@@ -259,6 +259,24 @@ pub(super) fn js_regex(source: &str, flags: &str) -> Result<js_sys::RegExp, Stri
     }
 }
 
+/// A pattern with * and ? as the source of a regular expression that matches whole names.
+pub(super) fn glob_source(pattern: &str) -> String {
+    let mut out = String::from("^");
+    for c in pattern.chars() {
+        match c {
+            '*' => out.push_str(".*"),
+            '?' => out.push('.'),
+            c if r"\^$.|+()[]{}/".contains(c) => {
+                out.push('\\');
+                out.push(c);
+            }
+            c => out.push(c),
+        }
+    }
+    out.push('$');
+    out
+}
+
 /// A setting kept in localStorage as "1" or "0".
 pub(super) fn stored_flag(key: &str, default: bool) -> bool {
     stored(key).map_or(default, |v| v == "1")

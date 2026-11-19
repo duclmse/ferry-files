@@ -30,6 +30,7 @@ pub(super) const COMMANDS: &[Command] = &[
     c("filter", "Filter; Enter searches subfolders", &["cmd+KeyF", "Slash"], false),
     c("type_path", "Type a path", &["cmd+KeyL"], false),
     c("rename", "Rename (with several picked: rename them together)", &["F2"], false),
+    c("replace", "Replace in names: the Replace with box under the search box", &["cmd+KeyR"], true),
     c("replace_names", "Find and replace in names (what's picked, or everything shown)", &["alt+cmd+KeyF"], false),
     c("delete", "Delete", &["cmd+Backspace", "Delete"], false),
     c("copy", "Copy to the other pane", &["F5"], false),

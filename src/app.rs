@@ -28,6 +28,7 @@ mod palette;
 mod pane;
 mod preview;
 mod safety;
+mod search;
 mod sidebar;
 mod transfer;
 mod undo;
@@ -52,6 +53,7 @@ use palette::*;
 use pane::*;
 use preview::*;
 use safety::*;
+use search::*;
 use sidebar::*;
 use transfer::*;
 use undo::*;
@@ -343,8 +345,13 @@ struct Pane {
     search_size: RwSignal<usize>,
     search_time: RwSignal<usize>,
     filters_open: RwSignal<bool>,
-    /// What a search looks for: the search box in the search options row, filled from the filter.
-    query: RwSignal<String>,
+    /// The Replace with box is showing under the search box.
+    replacing: RwSignal<bool>,
+    /// What Replace with puts in place of what the search box matches.
+    replace: RwSignal<String>,
+    /// While replacing: the shown items whose names change, as path → (new name, what's wrong with
+    /// it), or why the names can't be worked out.
+    replace_rows: RwSignal<Result<ReplaceRows, String>>,
     /// While comparing with the other pane: each item's mark by name (see `Marks`), and whether
     /// only the differences are shown.
     cmp: RwSignal<Option<HashMap<String, String>>>,
@@ -428,7 +435,9 @@ impl Pane {
             search_size: RwSignal::new(0),
             search_time: RwSignal::new(0),
             filters_open: RwSignal::new(false),
-            query: RwSignal::new(String::new()),
+            replacing: RwSignal::new(false),
+            replace: RwSignal::new(String::new()),
+            replace_rows: RwSignal::new(Ok(HashMap::new())),
             cmp: RwSignal::new(None),
             diff_only: RwSignal::new(false),
             notice: RwSignal::new(Notice::None),
@@ -474,6 +483,11 @@ impl Pane {
                 match js_regex(&f, "i") {
                     Ok(re) => es.retain(|e| re.test(&e.name)),
                     Err(e) => bad = Some(e),
+                }
+            } else if f.contains('*') || f.contains('?') {
+                // A pattern, as the search takes it: * any run of characters, ? one.
+                if let Ok(re) = js_regex(&glob_source(&f), "i") {
+                    es.retain(|e| re.test(&e.name));
                 }
             } else {
                 let f = f.to_lowercase();
@@ -1059,9 +1073,11 @@ pub fn App() -> impl IntoView {
                     true
                 }
                 "filter" => {
-                    if let Some(el) = document().query_selector(".pane.active .filter").ok().flatten() {
-                        let _ = el.unchecked_into::<web_sys::HtmlElement>().focus();
-                    }
+                    ctx.open_search(p, false);
+                    true
+                }
+                "replace" => {
+                    ctx.toggle_replace(p);
                     true
                 }
                 "delete" => {

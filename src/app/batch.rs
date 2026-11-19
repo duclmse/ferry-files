@@ -204,7 +204,41 @@ pub(super) async fn rename_all(src: Src, items: Vec<(String, String)>) -> (Vec<(
     (done, None)
 }
 
+/// New names for `items` with what `find` matches (any case; a regular expression with `pattern`,
+/// where `replace` may use $1…) replaced, as (item, new name, what's wrong with it).
+pub(super) fn replace_plan(items: &[Entry], find: &str, replace: &str, pattern: bool, taken: &HashMap<String, HashSet<String>>) -> Result<Vec<(Entry, String, Option<String>)>, String> {
+    let r = Rule { find: find.into(), replace: replace.into(), pattern, template: "{name}".into(), start: 1, ..Default::default() };
+    Ok(plan(items, &r, taken)?.into_iter().map(|x| (x.entry, x.new, x.problem)).collect())
+}
+
 impl Ctx {
+    /// After renaming: the undo entry, the renamed items marked, their folders reloaded, and a
+    /// notice. Returns the error to show, if renaming stopped on one.
+    pub(super) fn renamed(self, p: Pane, src: Src, done: Vec<(String, String)>, err: Option<String>) -> Option<String> {
+        if !done.is_empty() {
+            let what = match done.as_slice() {
+                [(now, before)] => format!("Renamed {before} to {}", base(now)),
+                _ => format!("Renamed {} items", done.len()),
+            };
+            self.log_undo(format!("{what} in {}", self.place(src)), Undo::Renames { src, items: done.clone() });
+            p.marked.set(done.iter().map(|(now, _)| now.clone()).collect());
+            let mut dirs: Vec<String> = done.iter().map(|(now, _)| parent(now)).collect();
+            dirs.sort();
+            dirs.dedup();
+            for d in dirs {
+                self.changed(src, &d);
+            }
+        }
+        match err {
+            None => {
+                p.notice.set(Notice::Ok(format!("Renamed {} item{}.", done.len(), if done.len() == 1 { "" } else { "s" })));
+                None
+            }
+            Some(e) if done.is_empty() => Some(e),
+            Some(e) => Some(format!("Renamed {}, then: {e}", done.len())),
+        }
+    }
+
     /// Find and replace in names: in what's picked when that's several items, else in everything
     /// the pane shows.
     pub(super) fn replace_names(self, p: Pane) {
@@ -290,27 +324,9 @@ pub(super) fn BatchRename(pane: usize, items: Vec<Entry>) -> impl IntoView {
         spawn_local(async move {
             let (done, err) = rename_all(src, plan).await;
             working.set(false);
-            if !done.is_empty() {
-                let what = match done.as_slice() {
-                    [(now, before)] => format!("Renamed {before} to {}", base(now)),
-                    _ => format!("Renamed {} items", done.len()),
-                };
-                ctx.log_undo(format!("{what} in {}", ctx.place(src)), Undo::Renames { src, items: done.clone() });
-                p.marked.set(done.iter().map(|(now, _)| now.clone()).collect());
-                let mut dirs: Vec<String> = done.iter().map(|(now, _)| parent(now)).collect();
-                dirs.sort();
-                dirs.dedup();
-                for d in dirs {
-                    ctx.changed(src, &d);
-                }
-            }
-            match err {
-                None => {
-                    p.notice.set(Notice::Ok(format!("Renamed {} item{}.", done.len(), if done.len() == 1 { "" } else { "s" })));
-                    close();
-                }
-                Some(e) if done.is_empty() => error.set(Some(e)),
-                Some(e) => error.set(Some(format!("Renamed {}, then: {e}", done.len()))),
+            match ctx.renamed(p, src, done, err) {
+                None => close(),
+                Some(e) => error.set(Some(e)),
             }
         });
     };

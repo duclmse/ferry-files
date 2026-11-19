@@ -293,8 +293,18 @@ pub(super) fn Name(pane: Pane, entry: Entry) -> impl IntoView {
     let path = entry.path.clone();
     let e = StoredValue::new(entry);
     let editing = Memo::new(move |_| p.renaming.with(|r| r.as_deref() == Some(path.as_str())));
+    let path = e.with_value(|e| e.path.clone());
+    // While replacing, the name it would get.
+    let new = Memo::new(move |_| p.replace_rows.with(|r| r.as_ref().ok().and_then(|m| m.get(&path).cloned())));
     move || if editing.get() {
         view! { <NameEdit pane=p entry=e.get_value()/> }.into_any()
+    } else if let Some((name, problem)) = new.get() {
+        let bad = problem.is_some();
+        view! {
+            <span class="renaming-to" title=problem>
+                <s>{e.with_value(|e| e.name.clone())}</s>" → "<b class:bad=bad>{name}</b>
+            </span>
+        }.into_any()
     } else {
         e.with_value(|e| e.name.clone()).into_any()
     }
@@ -353,7 +363,6 @@ pub(super) fn PaneView(pane: Pane) -> impl IntoView {
     let ctx = expect_context::<Ctx>();
     let p = pane;
     let active = move || ctx.active.get() == p.id;
-    let filter_ref = NodeRef::<html::Input>::new();
     view! {
         <section class="pane" class:active=active data-pane=p.id.to_string() on:mousedown=move |_| ctx.active.set(p.id)
             // The left pane keeps the width it was dragged to; the right one takes the rest.
@@ -366,117 +375,12 @@ pub(super) fn PaneView(pane: Pane) -> impl IntoView {
                 <button class="btn icon-only" title=move || ctx.with_key("Up", "up") aria-label="Up" disabled=move || p.cwd.get() == "/" on:click=move |_| ctx.go_up(p)>{ico(Icon::Up)}</button>
                 <Crumbs pane=p/>
                 {move || p.loading.get().then(|| view! { <span class="spin"></span> })}
-                // Narrow panes show only the icon; clicking it opens the field.
-                <div class="filter-box" class:has=move || !p.filter.with(String::is_empty) || p.filters_open.get() || p.filtering()
-                    class:bad=move || p.bad_filter.with(Option::is_some)
-                    on:click=move |_| if let Some(el) = filter_ref.get_untracked() { let _ = el.focus(); }>
-                    <svg class="filter-icon" viewBox="0 0 16 16" aria-hidden="true">
-                        <circle cx="7" cy="7" r="4.5"/><path d="M10.5 10.5 14 14"/>
-                    </svg>
-                    <datalist id=format!("searches-{}", p.id)>
-                        {move || ctx.searches.get().into_iter().map(|q| view! { <option value=q></option> }).collect_view()}
-                    </datalist>
-                    <input class="filter" type="search" node_ref=filter_ref list=format!("searches-{}", p.id)
-                        placeholder=move || if p.regex.get() { "Filter (regex)" } else { "Filter or search" }
-                        title=move || p.bad_filter.get().unwrap_or_else(|| format!("{}. Enter searches subfolders too.",
-                            ctx.with_key(if p.regex.get() { "Show names matching this regular expression" } else { "Show names containing this" }, "filter")))
-                        prop:value=move || p.filter.get()
-                        on:input=move |ev| { p.filter.set(event_target_value(&ev)); p.arrange(); }
-                        on:keydown=move |ev| match ev.key().as_str() {
-                            "Enter" => {
-                                p.query.set(p.filter.get_untracked());
-                                ctx.find(p);
-                            }
-                            "Escape" => {
-                                p.filter.set(String::new());
-                                p.arrange();
-                                if let Some(t) = ev.target() { let _ = t.unchecked_into::<web_sys::HtmlElement>().blur(); }
-                            }
-                            _ => {}
-                        }/>
-                    {move || (!p.filter.with(String::is_empty)).then(|| view! {
-                        <button class="filter-clear" title="Clear" aria-label="Clear filter"
-                            on:mousedown=|ev| ev.prevent_default()
-                            on:click=move |ev| {
-                                ev.stop_propagation();
-                                p.filter.set(String::new());
-                                p.arrange();
-                                if let Some(el) = filter_ref.get_untracked() { let _ = el.focus(); }
-                            }>"✕"</button>
-                    })}
-                    <button class="filter-opt regex" class:on=move || p.regex.get() aria-pressed=move || p.regex.get().to_string()
-                        title=move || if p.regex.get() { "Regular expression: on" } else { "Regular expression: off" } aria-label="Regular expression"
-                        on:mousedown=|ev| ev.prevent_default()
-                        on:click=move |ev| {
-                            ev.stop_propagation();
-                            let on = !p.regex.get_untracked();
-                            p.regex.set(on);
-                            store(&format!("{REGEX_KEY}.{}", p.id), if on { "1" } else { "0" });
-                            p.arrange();
-                        }>".*"</button>
-                    <button class="filter-opt" class:on=move || p.filters_open.get() || p.filtering()
-                        title="Search subfolders, by kind, size and date" aria-label="Search options" aria-expanded=move || p.filters_open.get().to_string()
-                        on:mousedown=|ev| ev.prevent_default()
-                        on:click=move |ev| {
-                            ev.stop_propagation();
-                            let open = !p.filters_open.get_untracked();
-                            // The search box starts from what's in the filter.
-                            if open && !p.filter.with_untracked(String::is_empty) {
-                                p.query.set(p.filter.get_untracked());
-                            }
-                            p.filters_open.set(open);
-                        }>{ico(Icon::Funnel)}</button>
-                </div>
+                <button class="btn icon-only search-toggle" class:active=move || p.filters_open.get() || !p.filter.with(String::is_empty) || p.filtering()
+                    title=move || ctx.with_key("Filter and search", "filter") aria-label="Filter and search"
+                    aria-expanded=move || p.filters_open.get().to_string()
+                    on:click=move |_| if p.filters_open.get_untracked() { ctx.close_search(p) } else { ctx.open_search(p, false) }>{ico(Icon::Search)}</button>
             </div>
-            {move || p.filters_open.get().then(|| {
-                let pick = |label: &'static str, sig: RwSignal<usize>, names: Vec<&'static str>| view! {
-                    <select aria-label=label prop:value=move || sig.get().to_string()
-                        on:change=move |e| sig.set(event_target_value(&e).parse().unwrap_or(0))>
-                        {names.into_iter().enumerate().map(|(i, n)| view! { <option value=i.to_string()>{n}</option> }).collect_view()}
-                    </select>
-                };
-                let search_ref = NodeRef::<html::Input>::new();
-                // Focused when the row opens.
-                Effect::new(move || if let Some(el) = search_ref.get() { let _ = el.focus(); });
-                view! {
-                    <div class="search-filters">
-                        <div class="filter-box search-box" class:has=true on:click=move |_| if let Some(el) = search_ref.get_untracked() { let _ = el.focus(); }>
-                            <svg class="filter-icon" viewBox="0 0 16 16" aria-hidden="true">
-                                <circle cx="7" cy="7" r="4.5"/><path d="M10.5 10.5 14 14"/>
-                            </svg>
-                            <input class="filter" type="search" node_ref=search_ref list=format!("searches-{}", p.id) aria-label="Search for"
-                                placeholder=move || if p.regex.get() { "Search subfolders (regex)" } else { "Search subfolders: text, or * and ?" }
-                                prop:value=move || p.query.get()
-                                on:input=move |ev| p.query.set(event_target_value(&ev))
-                                on:keydown=move |ev| match ev.key().as_str() {
-                                    "Enter" => ctx.find(p),
-                                    "Escape" => p.filters_open.set(false),
-                                    _ => {}
-                                }/>
-                            <button class="filter-opt regex" class:on=move || p.regex.get() aria-pressed=move || p.regex.get().to_string()
-                                title=move || if p.regex.get() { "Regular expression: on" } else { "Regular expression: off" } aria-label="Regular expression"
-                                on:mousedown=|ev| ev.prevent_default()
-                                on:click=move |ev| {
-                                    ev.stop_propagation();
-                                    let on = !p.regex.get_untracked();
-                                    p.regex.set(on);
-                                    store(&format!("{REGEX_KEY}.{}", p.id), if on { "1" } else { "0" });
-                                    p.arrange();
-                                }>".*"</button>
-                        </div>
-                        {pick("Kind", p.search_kind, SEARCH_KINDS.iter().map(|x| x.0).collect())}
-                        {pick("Size", p.search_size, SEARCH_SIZES.iter().map(|x| x.0).collect())}
-                        {pick("Modified", p.search_time, SEARCH_TIMES.iter().map(|x| x.0).collect())}
-                        <button class="btn small primary" on:click=move |_| ctx.find(p)>"Search"</button>
-                        <button class="btn small" title="Clear the search text, and back to any kind, size and time" on:click=move |_| {
-                            p.query.set(String::new());
-                            p.search_kind.set(0);
-                            p.search_size.set(0);
-                            p.search_time.set(0);
-                        }>"Clear"</button>
-                    </div>
-                }
-            })}
+            <SearchPane pane=p/>
             <CompareBar pane=p/>
             <div class="body">
                 <div class="files" class:beside=move || p.preview.get() class:sized=move || { p.view_w.get() > 0.0 }

@@ -47,8 +47,11 @@
 .tabs .tab-tool {
   flex: none;
   align-self: center;
+  display: grid;
+  place-items: center;
   width: 26px;
   height: 26px;
+  padding: 0;
   margin: -2px 0 2px;
 }
 
