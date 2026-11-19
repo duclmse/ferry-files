@@ -178,8 +178,47 @@ impl SqliteStore {
                 )
                 .map_err(AppError::Database)?;
 
+            // A later crawl finds most rows unchanged. The upsert's SET names
+            // every column, so it rewrote all secondary index entries of
+            // every row; this touches only the two columns no index covers
+            // (benches/reconcile.rs, 1M rows: 29.2 s -> 5.9 s per re-crawl).
+            // Skipped in a bulk load, where every row is new.
+            let mut touch = (!bulk)
+                .then(|| {
+                    conn.prepare(
+                        "UPDATE files SET watch_root = ?1, crawl_generation = ?2
+                         WHERE path = ?3 AND size_bytes = ?4 AND mtime = ?5
+                           AND ctime = ?6 AND is_dir = ?7 AND is_hidden = ?8
+                           AND is_symlink = ?9 AND attrib_bitmask = ?10
+                           AND archive_path IS ?11 AND parent IS ?12",
+                    )
+                })
+                .transpose()
+                .map_err(AppError::Database)?;
+
             for (record, watch_root) in batch {
                 let parent = parent_of(&record.path);
+                if let Some(touch) = touch.as_mut() {
+                    let touched = touch
+                        .execute(rusqlite::params![
+                            watch_root,
+                            generation,
+                            &record.path,
+                            record.size_bytes as i64,
+                            record.mtime,
+                            record.ctime,
+                            i64::from(record.is_dir),
+                            i64::from(record.is_hidden),
+                            i64::from(record.is_symlink),
+                            record.attrib_bitmask,
+                            &record.archive_path,
+                            &parent,
+                        ])
+                        .map_err(AppError::Database)?;
+                    if touched == 1 {
+                        continue;
+                    }
+                }
                 stmt.execute(rusqlite::params![
                     &record.path,
                     &record.name,

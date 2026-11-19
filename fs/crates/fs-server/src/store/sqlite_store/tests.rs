@@ -666,3 +666,31 @@ fn windows_paths_have_subtrees_in_both_stores() {
         "a sibling prefix is not a parent"
     );
 }
+
+#[test]
+fn recrawl_rewrites_changed_rows_and_keeps_unchanged_ones() {
+    let store = make_store();
+    let rows = |mtime: i64| -> Vec<(FileRecord, String)> {
+        ["/r/a.txt", "/r/b.txt", "/r/c.txt"]
+            .iter()
+            .map(|p| {
+                let mut r = sample_record(p);
+                r.mtime = if *p == "/r/b.txt" { mtime } else { 1 };
+                (r, "/r".to_owned())
+            })
+            .collect()
+    };
+    let gen1 = store.begin_crawl_generation().unwrap();
+    store.batch_upsert_crawl(&rows(1), gen1).unwrap();
+
+    // b.txt changed and c.txt is gone.
+    let gen2 = store.begin_crawl_generation().unwrap();
+    let mut second = rows(99);
+    second.pop();
+    store.batch_upsert_crawl(&second, gen2).unwrap();
+    assert_eq!(store.remove_stale_for_root("/r", gen2).unwrap(), 1);
+
+    assert_eq!(store.get_by_path("/r/a.txt").unwrap().unwrap().mtime, 1);
+    assert_eq!(store.get_by_path("/r/b.txt").unwrap().unwrap().mtime, 99);
+    assert!(store.get_by_path("/r/c.txt").unwrap().is_none());
+}
