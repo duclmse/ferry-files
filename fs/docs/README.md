@@ -28,13 +28,11 @@ and installs, starts, searches through and stops the Windows Service.
 | `rar2zip` extension | Done; host keys checked (`strict` by default); moved-in and pre-existing archives picked up |
 | `sftpd` extension | Done; public-key SFTP server confined to one folder |
 
-Open, none blocking:
-
-- On the 2-core Windows runner, queries right after a walk crawl took
-  seconds while the daemon stayed busy for minutes; after a file table crawl
-  they took milliseconds. Tantivy commits and content upserts no longer hold
-  runtime workers, and the sibling sweep is rate-limited off macOS; the
-  benchmark now reports watcher events to confirm the cause.
+Nothing is open. The last item, queries taking seconds right after a walk
+crawl on the 2-core Windows runner, came from watcher events (31,681 during
+a 16-minute whole-volume walk) handled on runtime workers and a sibling
+sweep that stat'ed thousands of files per event. Since those fixes, the
+first queries after either crawl take milliseconds.
 
 ### Testing on Windows
 
