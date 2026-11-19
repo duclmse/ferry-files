@@ -529,9 +529,13 @@ body.resizing .grip.pane-grip:active {
   background: var(--accent);
 }
 
-.grip.pane-grip:hover::before {
+/* Hovered or being dragged, the grab mark stays in the middle (the general rule above would
+   stretch it from the top). */
+.grip.pane-grip:hover::before,
+body.resizing .grip.pane-grip:active::before {
   inset: auto 0;
   top: calc(50% - 12px);
+  height: 24px;
   background: var(--accent-ink);
 }
 
