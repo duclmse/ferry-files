@@ -365,19 +365,23 @@ pub async fn full_crawl(
     .await
     .map_err(|e| AppError::Index(e.to_string()))??;
 
-    // Final commit
-    if let Err(e) = tantivy.commit() {
-        tracing::error!("final tantivy commit: {e}");
-    }
-    if let Err(e) = tantivy.reload_reader() {
-        tracing::error!("tantivy reload: {e}");
-    }
-
+    // Blocking: the commit drains Tantivy's indexing queue and fsyncs, and
+    // total_files counts every row.
     let now = unix_now();
     metrics.last_crawl_secs.store(now as u64, Ordering::Relaxed);
-    let _ = sqlite.set_meta("last_crawl_time", &now.to_string());
-    let total = sqlite.total_files().unwrap_or(0);
-    let _ = sqlite.set_meta("total_files", &total.to_string());
+    tokio::task::spawn_blocking(move || {
+        if let Err(e) = tantivy.commit() {
+            tracing::error!("final tantivy commit: {e}");
+        }
+        if let Err(e) = tantivy.reload_reader() {
+            tracing::error!("tantivy reload: {e}");
+        }
+        let _ = sqlite.set_meta("last_crawl_time", &now.to_string());
+        let total = sqlite.total_files().unwrap_or(0);
+        let _ = sqlite.set_meta("total_files", &total.to_string());
+    })
+    .await
+    .map_err(|e| AppError::Index(e.to_string()))?;
 
     Ok(())
 }

@@ -218,8 +218,15 @@ pub async fn run_with_shutdown(
                 tokio::select! {
                     _ = shutdown_c.cancelled() => break,
                     _ = tokio::time::sleep(Duration::from_secs(interval_secs)) => {
-                        if let Err(e) = tantivy_c.commit() {
-                            tracing::warn!("tantivy commit error: {e}");
+                        // A commit waits for every queued document to be
+                        // indexed and then fsyncs; on a runtime worker that
+                        // stalled every request (seconds on a 2-core host
+                        // after a crawl queued thousands of documents).
+                        let t = Arc::clone(&tantivy_c);
+                        match tokio::task::spawn_blocking(move || t.commit()).await {
+                            Ok(Ok(())) => {}
+                            Ok(Err(e)) => tracing::warn!("tantivy commit error: {e}"),
+                            Err(e) => tracing::warn!("tantivy commit panicked: {e}"),
                         }
                     }
                 }
