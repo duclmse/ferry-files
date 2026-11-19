@@ -1,7 +1,7 @@
 //! The file browser UI: connect screen, one or two panes of folders (each on the phone or the Mac,
 //! in a list, thumbnail or column view, with a context menu), and a text editor.
 
-use crate::api::{call, Backup, BookInfo, CompareReport, Issue, Devices, Space, Entry, FileDrop, Info, Progress, TextFile, TransferReport, UsbDevice, WriteResult};
+use crate::api::{call, Backup, BookInfo, CompareReport, Marks, Issue, Devices, Space, Entry, FileDrop, Info, Progress, TextFile, TransferReport, UsbDevice, WriteResult};
 use leptos::ev;
 use leptos::html;
 use leptos::prelude::*;
@@ -12,6 +12,7 @@ use wasm_bindgen::JsCast;
 
 mod batch;
 mod books;
+mod compare;
 mod devices;
 mod editor;
 mod files;
@@ -31,6 +32,7 @@ mod wifi;
 
 use batch::*;
 use books::*;
+use compare::*;
 use devices::*;
 use editor::*;
 use icons::{ico, Icon};
@@ -235,6 +237,8 @@ enum Act {
     Sidebar,
     /// Undoes the newest action that can be.
     Undo,
+    /// Marks how each item differs from the other pane's.
+    Compare,
 }
 
 enum MenuItem {
@@ -296,6 +300,10 @@ struct Pane {
     search_size: RwSignal<usize>,
     search_time: RwSignal<usize>,
     filters_open: RwSignal<bool>,
+    /// While comparing with the other pane: each item's mark by name (see `Marks`), and whether
+    /// only the differences are shown.
+    cmp: RwSignal<Option<HashMap<String, String>>>,
+    diff_only: RwSignal<bool>,
     notice: RwSignal<Notice>,
     view: RwSignal<ViewMode>,
     /// Listings of other folders, for the column view's columns to the left of the current one.
@@ -373,6 +381,8 @@ impl Pane {
             search_size: RwSignal::new(0),
             search_time: RwSignal::new(0),
             filters_open: RwSignal::new(false),
+            cmp: RwSignal::new(None),
+            diff_only: RwSignal::new(false),
             notice: RwSignal::new(Notice::None),
             view: RwSignal::new(ViewMode::stored(id)),
             cols: RwSignal::new(HashMap::new()),
@@ -411,6 +421,13 @@ impl Pane {
         let f = self.filter.get_untracked().to_lowercase();
         if !f.is_empty() {
             es.retain(|e| e.name.to_lowercase().contains(&f));
+        }
+        if self.diff_only.get_untracked() {
+            self.cmp.with_untracked(|m| {
+                if let Some(m) = m {
+                    es.retain(|e| m.get(&e.name).is_some_and(|x| x != "same"));
+                }
+            });
         }
         self.marked.update(|m| m.retain(|x| es.iter().any(|e| &e.path == x)));
         self.entries.set(es);
@@ -506,7 +523,16 @@ enum Side {
 #[derive(Clone, PartialEq, serde::Serialize, serde::Deserialize)]
 enum Work {
     /// Copies (or moves) `items` into `to_dir`.
-    Copy { from: Side, items: Vec<String>, to: Side, to_dir: String, moving: bool },
+    /// With `replace`, files already there are written over (backed up first).
+    Copy {
+        from: Side,
+        items: Vec<String>,
+        to: Side,
+        to_dir: String,
+        moving: bool,
+        #[serde(default)]
+        replace: bool,
+    },
     /// Copies what's missing from `to_dir` out of `from_dir`.
     Sync { from: Side, from_dir: String, to: Side, to_dir: String, hidden: bool },
 }
@@ -573,6 +599,9 @@ struct Ctx {
     auto_connect: RwSignal<bool>,
     /// Settings: read each copy back and compare it with the original.
     verify: RwSignal<bool>,
+    /// Comparing the two panes now, and whether by content (else by size).
+    comparing: RwSignal<bool>,
+    cmp_content: RwSignal<bool>,
     /// Phones (`UsbDevice::key`) connected automatically once already: not again, even after a
     /// failure or a disconnect, until they're unplugged.
     tried: StoredValue<HashSet<String>>,
@@ -637,6 +666,8 @@ impl Ctx {
             phone_thumbs: RwSignal::new(stored_flag(PHONE_THUMBS_KEY, true)),
             auto_connect: RwSignal::new(stored_flag(AUTO_CONNECT_KEY, true)),
             verify: RwSignal::new(stored_flag(VERIFY_KEY, false)),
+            comparing: RwSignal::new(false),
+            cmp_content: RwSignal::new(false),
             tried: StoredValue::new(HashSet::new()),
             seen: StoredValue::new((HashSet::new(), 0)),
             jobs: RwSignal::new(vec![]),

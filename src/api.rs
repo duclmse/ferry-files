@@ -67,6 +67,14 @@ pub struct Issue {
     pub text: String,
 }
 
+/// How each item of two compared folders stands (by name): "only", "same", "newer", "older"
+/// or "differs".
+#[derive(Clone, Debug, PartialEq, Deserialize)]
+pub struct Marks {
+    pub a: std::collections::HashMap<String, String>,
+    pub b: std::collections::HashMap<String, String>,
+}
+
 /// What syncing one folder into another would copy.
 #[derive(Clone, Debug, PartialEq, Deserialize)]
 pub struct CompareReport {

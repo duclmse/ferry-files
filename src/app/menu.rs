@@ -116,6 +116,13 @@ impl Ctx {
             });
             v.extend([MenuItem::Sep, item("New tab", "⌘T", Act::NewTab), item(fav, "", Act::Favourite), item("Refresh", "", Act::Refresh)]);
             v.push(MenuItem::Do {
+                label: "Compare with the other pane".into(),
+                key: "",
+                act: Act::Compare,
+                danger: false,
+                enabled: split && !p.cwd.get_untracked().is_empty(),
+            });
+            v.push(MenuItem::Do {
                 label: "Sync to the other pane…".into(),
                 key: "",
                 act: Act::Sync,
@@ -222,6 +229,7 @@ impl Ctx {
             (Act::NewFile, _) => p.notice.set(Notice::NewItem { folder: false }),
             (Act::Upload, _) => self.upload(p),
             (Act::Sync, _) => self.compare(p),
+            (Act::Compare, _) => self.compare_marks(p),
             (Act::Read, Some(e)) => self.panel.set(Some(Panel::Reader(p.src.get_untracked(), e.path, None))),
             (Act::Check, Some(e)) => self.check_book(p, e),
             (Act::Library, _) => self.panel.set(Some(Panel::Library(p.src.get_untracked(), p.cwd.get_untracked()))),

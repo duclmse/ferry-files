@@ -384,6 +384,7 @@ pub(super) fn PaneView(pane: Pane) -> impl IntoView {
                     </div>
                 }
             })}
+            <CompareBar pane=p/>
             <div class="body">
                 <div class="files" class:beside=move || p.preview.get() class:sized=move || { p.view_w.get() > 0.0 }
                     style=move || match p.view_w.get() {

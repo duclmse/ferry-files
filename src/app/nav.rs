@@ -54,15 +54,25 @@ impl Ctx {
                         l.insert(src, path.clone());
                     });
                     store(&self.last_key(p, src), &path);
-                    if p.cwd.get_untracked() != path || new_src {
+                    let moved = p.cwd.get_untracked() != path || new_src;
+                    if moved {
                         p.marked.set(vec![]);
                         p.filter.set(String::new());
+                    }
+                    // Marks from comparing hold for these two folders only; the same folder again
+                    // (after a copy, say) is compared again.
+                    let compared = p.cmp.with_untracked(Option::is_some);
+                    if moved {
+                        self.stop_compare();
                     }
                     p.found.set(None);
                     p.cwd.set(path);
                     p.all.set(entries);
                     p.arrange();
                     p.selected.set(select);
+                    if compared && !moved {
+                        self.compare_marks(p);
+                    }
                     if matches!(p.notice.get_untracked(), Notice::Error(_)) {
                         p.notice.set(Notice::None);
                     }
@@ -116,6 +126,7 @@ impl Ctx {
         if query.is_empty() && !filtered {
             return;
         }
+        self.stop_compare();
         let day = 86_400;
         let now = (js_sys::Date::now() / 1000.0) as i64;
         let days = SEARCH_TIMES[t].1;
@@ -308,6 +319,9 @@ impl Ctx {
     pub(super) fn set_split(self, on: bool) {
         self.split.set(on);
         store(SPLIT_KEY, if on { "1" } else { "0" });
+        if !on {
+            self.stop_compare();
+        }
         if on {
             let p = self.panes[1];
             if p.cwd.get_untracked().is_empty() {

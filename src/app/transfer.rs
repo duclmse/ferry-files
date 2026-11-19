@@ -26,7 +26,7 @@ impl Ctx {
             p.error("Open a storage first: files can't go at the top level over MTP.");
             return;
         }
-        let work = Work::Copy { from: self.side(from_src), items, to: self.side(to_src), to_dir, moving };
+        let work = Work::Copy { from: self.side(from_src), items, to: self.side(to_src), to_dir, moving, replace: false };
         self.enqueue(p.id, work, false);
     }
 
@@ -63,7 +63,7 @@ impl Ctx {
     }
 
     /// How a job finds `src` again.
-    fn side(self, src: Src) -> Side {
+    pub(super) fn side(self, src: Src) -> Side {
         match (src, self.src_info(src)) {
             (Src::Dev(_), Some(i)) => Side::Phone { serial: i.serial, id: i.id, label: i.label },
             _ => Side::Mac,
@@ -83,7 +83,7 @@ impl Ctx {
         }
     }
 
-    fn enqueue(self, pane: usize, work: Work, resume: bool) {
+    pub(super) fn enqueue(self, pane: usize, work: Work, resume: bool) {
         let id = self.next_job.get_value();
         self.next_job.set_value(id + 1);
         self.jobs.update(|js| js.push(Job { id, work, pane, state: JobState::Queued, progress: None, resume }));
@@ -128,10 +128,11 @@ impl Ctx {
             }
         };
         let r = match &job.work {
-            Work::Copy { items, to_dir, moving, .. } => {
+            Work::Copy { items, to_dir, moving, replace, .. } => {
+                let mode = if *moving { "move" } else if *replace { "replace" } else { "copy" };
                 let args = json!({
                     "job": job.id, "from_src": from_src.key(), "paths": items, "to_src": to_src.key(), "to_dir": to_dir,
-                    "mode": if *moving { "move" } else { "copy" }, "resume": job.resume, "verify": self.verify.get_untracked(),
+                    "mode": mode, "resume": job.resume, "verify": self.verify.get_untracked(),
                 });
                 call::<TransferReport>("transfer", args).await
             }
@@ -251,6 +252,7 @@ impl Ctx {
 fn report_lines(work: &Work, r: &TransferReport) -> Vec<String> {
     let n = |c: u32| format!("{c} {}", if c == 1 { "file" } else { "files" });
     let mut lines = vec![match work {
+        Work::Copy { replace: true, to_dir, .. } => format!("Replaced {} in {}. The files that were there are in Backups.", n(r.copied), to_dir),
         Work::Copy { moving, to_dir, .. } => format!("{} {} to {}.", if *moving { "Moved" } else { "Copied" }, n(r.copied), to_dir),
         Work::Sync { from_dir, to_dir, .. } => format!("Synced {} into {}: copied {}.", base(from_dir), to_dir, n(r.copied)),
     }];
@@ -277,11 +279,14 @@ fn report_lines(work: &Work, r: &TransferReport) -> Vec<String> {
 /// A job in a few words: "Copy 3 items to Download".
 fn job_title(w: &Work) -> String {
     match w {
-        Work::Copy { items, to_dir, moving, .. } => {
+        Work::Copy { items, to_dir, moving, replace, .. } => {
             let what = match items.as_slice() {
                 [one] => base(one),
                 many => format!("{} items", many.len()),
             };
+            if *replace {
+                return format!("Replace {what} in {}", base(to_dir));
+            }
             format!("{} {what} to {}", if *moving { "Move" } else { "Copy" }, base(to_dir))
         }
         Work::Sync { from_dir, to_dir, .. } => format!("Sync {} into {}", base(from_dir), base(to_dir)),
@@ -304,6 +309,7 @@ pub(super) fn TransferBar() -> impl IntoView {
                         JobState::Running => {
                             let verb = match &j.work {
                                 Work::Copy { moving: true, .. } => "Moving",
+                                Work::Copy { replace: true, .. } => "Replacing",
                                 Work::Copy { .. } => "Copying",
                                 Work::Sync { .. } => "Syncing",
                             };

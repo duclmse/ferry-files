@@ -128,12 +128,16 @@ Built:
   ordering.
 - Not done: EXIF date taken (comes with phase 3 item 10).
 
-### 7. Compare two folders ☐
-- With two panes open: "Compare" marks each row only-here / differs / same (colour + filter "Show
-  differences only"). Uses the existing `compare_dirs`, returned per path instead of counts.
-- Actions: copy only-here files to the other side; for differing files, "Replace older" (writes
-  with backup).
-- Compare by size (fast) or content (hash, slow; per-file progress).
+### 7. Compare two folders ☑
+- "Compare with the other pane" (folder menu) marks each item in both panes: only here, newer,
+  older, different or the same, as a coloured stripe (the same ones fade). New command
+  `compare_marks`; folders on both sides are compared by what's in them (by size).
+- A bar above the files: counts, "Differences only", "By content" (same-size files byte by byte,
+  read in 4 MiB parts), "Copy N to <other>" for what's only here, "Replace N older in <other>"
+  (a copy with mode "replace": the files there are backed up first), Again and Done.
+- Marks clear when either pane opens another folder, searches, or the second pane closes; the
+  same folder reloading (after a copy) compares again.
+- Not done: per-file progress while comparing by content.
 
 ### 8. Duplicate finder ☐
 - Pick one or more folders (any devices). Group by size, then by a hash of the first 64 KiB, then

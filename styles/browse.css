@@ -328,3 +328,48 @@ td.name .where {
   word-break: normal;
   color: var(--muted);
 }
+
+/* Comparing the two panes. */
+.compare-bar {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px 12px;
+  padding: 6px 10px;
+  border-bottom: 1px solid var(--line);
+  background: var(--bg);
+  font-size: 12px;
+}
+
+.compare-bar .summary {
+  color: var(--muted);
+}
+
+.compare-bar label.row {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+}
+
+.compare-bar .grow {
+  flex: 1;
+}
+
+/* A stripe at the start of each compared item: blue only here, green newer, orange older, red
+   different; the same ones fade. */
+[data-cmp="only"] { --cmp: var(--accent); }
+[data-cmp="newer"] { --cmp: var(--ok); }
+[data-cmp="older"] { --cmp: #d98a1c; }
+[data-cmp="differs"] { --cmp: var(--danger); }
+
+tr[data-cmp] > td.name,
+.row[data-cmp],
+.tile[data-cmp] {
+  box-shadow: inset 3px 0 0 var(--cmp, transparent);
+}
+
+tr[data-cmp="same"] > td,
+.row[data-cmp="same"],
+.tile[data-cmp="same"] {
+  opacity: 0.55;
+}

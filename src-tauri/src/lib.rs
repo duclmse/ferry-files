@@ -178,6 +178,7 @@ pub fn run() {
             transfer::transfer,
             transfer::cancel_transfer,
             transfer::compare,
+            transfer::compare_marks,
             transfer::sync,
             library::library,
             library::book_info,

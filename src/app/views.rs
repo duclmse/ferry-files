@@ -117,7 +117,7 @@ pub(super) fn ListView(pane: Pane) -> impl IntoView {
                             let (over, drop) = drop_events(ctx, p, dir.clone());
                             let cells = [kind_label(&e), when(e.mtime), if e.dir { String::new() } else { human_size(e.size) }];
                             view! {
-                                <tr data-path=e.path.clone() class:selected=move || p.is_picked(&path) class:drop=move || ctx.drop_at.get().as_deref() == Some(key.as_str())
+                                <tr data-path=e.path.clone() data-cmp={let e = e.clone(); move || cmp_mark(p, &e)} class:selected=move || p.is_picked(&path) class:drop=move || ctx.drop_at.get().as_deref() == Some(key.as_str())
                                     draggable=move || (!editing()).to_string() data-dir=dir
                                     on:dragstart=drag_start(ctx, p, e.path.clone()) on:dragend=drag_end(ctx)
                                     on:dragover=move |ev| if e.dir { over(ev) } on:drop=move |ev| if e.dir { drop(ev) }
@@ -229,7 +229,7 @@ pub(super) fn ThumbView(pane: Pane) -> impl IntoView {
                         let is_dir = e.dir;
                         view! {
                             <div class="tile" title=e.name.clone()
-                                data-path=e.path.clone() class:selected=move || p.is_picked(&path) class:drop=move || ctx.drop_at.get().as_deref() == Some(key.as_str())
+                                data-path=e.path.clone() data-cmp={let e = e.clone(); move || cmp_mark(p, &e)} class:selected=move || p.is_picked(&path) class:drop=move || ctx.drop_at.get().as_deref() == Some(key.as_str())
                                 draggable=move || (!editing()).to_string() data-dir=dir
                                 on:dragstart=drag_start(ctx, p, e.path.clone()) on:dragend=drag_end(ctx)
                                 on:dragover=move |ev| if is_dir { over(ev) } on:drop=move |ev| if is_dir { drop(ev) }
@@ -462,7 +462,7 @@ pub(super) fn Column(pane: Pane, dir: String, chain: Memo<Vec<String>>, width: R
                     view! {
                         <div class="row"
                             class:open=move || open_child.get().as_deref() == Some(p1.as_str())
-                            data-path=e.path.clone() class:selected=move || current.get() && p.is_picked(&p2)
+                            data-path=e.path.clone() data-cmp={let e = e.clone(); move || cmp_mark(p, &e)} class:selected=move || current.get() && p.is_picked(&p2)
                             class:drop=move || ctx.drop_at.get().as_deref() == Some(key.as_str())
                             draggable=move || (!editing()).to_string() data-dir=fdir
                             on:dragstart=drag_start(ctx, p, e.path.clone()) on:dragend=drag_end(ctx)

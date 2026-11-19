@@ -37,6 +37,7 @@
     "allow-transfer",
     "allow-cancel-transfer",
     "allow-compare",
+    "allow-compare-marks",
     "allow-sync",
     "allow-library",
     "allow-book-info",
