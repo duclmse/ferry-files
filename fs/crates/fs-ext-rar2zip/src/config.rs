@@ -7,6 +7,7 @@ use tokio::sync::RwLock;
 use tokio_util::sync::CancellationToken;
 
 use crate::error::{AppError, Result};
+use crate::hostkey::{self, HostKeyCheck, HostKeyPolicy};
 
 #[derive(Debug, Clone, Deserialize)]
 pub struct Config {
@@ -32,6 +33,27 @@ pub struct Config {
 }
 
 impl Config {
+    /// How `dest`'s host key is verified. Fails only when the policy needs a
+    /// `known_hosts` file and none is configured or can be found.
+    pub fn host_key_policy(
+        &self,
+        dest: &Destination,
+    ) -> std::result::Result<HostKeyPolicy, String> {
+        let check = dest.host_key_check.unwrap_or(self.transfer.host_key_check);
+        let known_hosts = match &self.transfer.known_hosts {
+            Some(path) => hostkey::expand_home(path),
+            None if check == HostKeyCheck::Off || !dest.host_keys.is_empty() => PathBuf::new(),
+            None => hostkey::default_known_hosts().ok_or(
+                "no home folder for ~/.ssh/known_hosts; set transfer.known_hosts".to_owned(),
+            )?,
+        };
+        Ok(HostKeyPolicy {
+            check,
+            known_hosts,
+            pins: dest.host_keys.clone(),
+        })
+    }
+
     /// Compares the whole name's suffix, because `Path::extension` reports
     /// only `gz` for `a.tar.gz` and could never match a `tar.gz` entry.
     pub fn includes_extension(&self, path: &Path) -> bool {
@@ -99,6 +121,12 @@ pub struct Destination {
     pub user: String,
     pub remote_path: String,
     pub ssh_key_path: PathBuf,
+    /// Overrides `transfer.host_key_check` for this destination.
+    #[serde(default)]
+    pub host_key_check: Option<HostKeyCheck>,
+    /// Pinned `SHA256:...` fingerprints; when set, `known_hosts` is not used.
+    #[serde(default)]
+    pub host_keys: Vec<String>,
 }
 
 fn default_ssh_port() -> u16 {
@@ -115,6 +143,11 @@ pub struct TransferConfig {
     pub retry_delay_secs: u64,
     #[serde(default)]
     pub bandwidth_limit_kbps: u64,
+    #[serde(default)]
+    pub host_key_check: HostKeyCheck,
+    /// Defaults to `~/.ssh/known_hosts`.
+    #[serde(default)]
+    pub known_hosts: Option<PathBuf>,
 }
 
 fn default_max_concurrent() -> usize {
@@ -134,6 +167,8 @@ impl Default for TransferConfig {
             max_retries: default_max_retries(),
             retry_delay_secs: default_retry_delay(),
             bandwidth_limit_kbps: 0,
+            host_key_check: HostKeyCheck::default(),
+            known_hosts: None,
         }
     }
 }
@@ -223,6 +258,15 @@ pub fn validate(cfg: &Config) -> Vec<String> {
     }
 
     for dest in &cfg.destinations {
+        for pin in hostkey::invalid_pins(&dest.host_keys) {
+            errors.push(format!(
+                "host_keys for host {}: '{pin}' is not a fingerprint such as SHA256:...",
+                dest.host
+            ));
+        }
+        if let Err(e) = cfg.host_key_policy(dest) {
+            errors.push(format!("host {}: {e}", dest.host));
+        }
         if !dest.ssh_key_path.exists() {
             errors.push(format!(
                 "ssh_key_path does not exist for host {}: {}",
@@ -401,6 +445,58 @@ compression_level = 6
         let cfg = load(f.path()).unwrap();
         let errs = validate(&cfg);
         assert!(errs.iter().any(|e| e.contains("metrics_port")));
+    }
+
+    #[test]
+    fn host_key_policy_defaults_to_strict_and_destinations_override_it() {
+        use crate::hostkey::HostKeyCheck;
+        let dir = tempfile::tempdir().unwrap();
+        let watch = dir.path().to_string_lossy().replace('\\', "/");
+        let text = format!(
+            r#"
+watch_folder  = "{watch}"
+failed_folder = "{watch}/failed"
+
+[conversion]
+
+[transfer]
+known_hosts = "{watch}/kh"
+
+[[destinations]]
+host = "a"
+user = "u"
+remote_path = "/in"
+ssh_key_path = "{watch}/id"
+
+[[destinations]]
+host = "b"
+user = "u"
+remote_path = "/in"
+ssh_key_path = "{watch}/id"
+host_key_check = "accept-new"
+host_keys = ["not-a-fingerprint"]
+"#
+        );
+        let f = write_config(&text);
+        let cfg = load(f.path()).unwrap();
+        let a = cfg.host_key_policy(&cfg.destinations[0]).unwrap();
+        assert_eq!(a.check, HostKeyCheck::Strict);
+        assert_eq!(a.known_hosts, dir.path().join("kh"));
+        let b = cfg.host_key_policy(&cfg.destinations[1]).unwrap();
+        assert_eq!(b.check, HostKeyCheck::AcceptNew);
+        let errs = validate(&cfg);
+        assert!(
+            errs.iter()
+                .any(|e| e.contains("'not-a-fingerprint' is not a fingerprint")),
+            "{errs:?}"
+        );
+    }
+
+    #[test]
+    fn unknown_host_key_check_is_a_parse_error() {
+        let dir = tempfile::tempdir().unwrap();
+        let text = minimal_config_toml(dir.path()) + "\n[transfer]\nhost_key_check = \"yes\"\n";
+        assert!(load(write_config(&text).path()).is_err());
     }
 
     #[test]

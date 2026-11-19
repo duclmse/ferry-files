@@ -9,6 +9,7 @@ use tokio_util::sync::CancellationToken;
 
 use crate::config::{self, Config};
 use crate::error::Result;
+use crate::hostkey::{self, HostKeyCheck};
 use crate::queue::JobQueue;
 
 const PING_TIMEOUT: Duration = Duration::from_secs(5);
@@ -52,6 +53,20 @@ impl Extension for Rar2zipExtension {
             let addr = format!("{}:{}", dest.host, dest.port);
             if let Err(e) = ping(&addr) {
                 errors.push(format!("destination {addr}: {e}"));
+            }
+            let Ok(policy) = self.config.host_key_policy(dest) else {
+                continue;
+            };
+            if policy.check == HostKeyCheck::Strict && policy.pins.is_empty() {
+                match hostkey::is_known(&policy.known_hosts, &dest.host, dest.port) {
+                    Ok(true) => {}
+                    Ok(false) => errors.push(format!(
+                        "destination {addr}: not in {}; add it (ssh-keyscan), pin host_keys, \
+                         or set host_key_check = \"accept-new\"",
+                        policy.known_hosts.display()
+                    )),
+                    Err(e) => errors.push(format!("destination {addr}: {e}")),
+                }
             }
         }
         errors

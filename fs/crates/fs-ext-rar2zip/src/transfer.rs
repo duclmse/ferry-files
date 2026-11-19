@@ -14,6 +14,7 @@ use tokio_util::sync::CancellationToken;
 use crate::config::{Config, Destination};
 use crate::convert::convert_to_bytes;
 use crate::error::{AppError, Result};
+use crate::hostkey::{self, HostKeyPolicy};
 use crate::metrics::Metrics;
 use crate::queue::Job;
 
@@ -21,19 +22,51 @@ const CHUNK: usize = 65536;
 
 // ---------------------------------------------------------------------------
 // russh client handler
-// Accept all server keys. Production deployments should verify against a
-// pinned host key or a known_hosts file.
 // ---------------------------------------------------------------------------
 
-struct SshHandler;
+struct SshHandler {
+    host: String,
+    port: u16,
+    policy: HostKeyPolicy,
+}
+
+/// Carries the reason a host key was refused, which russh's own
+/// `UnknownKey` error would lose.
+#[derive(Debug)]
+enum HandlerError {
+    Ssh(russh::Error),
+    HostKey(String),
+}
+
+impl From<russh::Error> for HandlerError {
+    fn from(e: russh::Error) -> Self {
+        Self::Ssh(e)
+    }
+}
+
+impl std::fmt::Display for HandlerError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::Ssh(e) => e.fmt(f),
+            Self::HostKey(e) => f.write_str(e),
+        }
+    }
+}
 
 impl client::Handler for SshHandler {
-    type Error = russh::Error;
+    type Error = HandlerError;
 
     async fn check_server_key(
         &mut self,
-        _server_public_key: &russh::keys::PublicKey,
+        server_public_key: &russh::keys::PublicKey,
     ) -> std::result::Result<bool, Self::Error> {
+        let (policy, host, port) = (self.policy.clone(), self.host.clone(), self.port);
+        let key = server_public_key.clone();
+        // Reads and may append to known_hosts.
+        tokio::task::spawn_blocking(move || hostkey::verify(&policy, &host, port, &key))
+            .await
+            .map_err(|e| HandlerError::HostKey(e.to_string()))?
+            .map_err(HandlerError::HostKey)?;
         Ok(true)
     }
 }
@@ -58,7 +91,7 @@ pub async fn transfer_all(
         let result = upload_with_retry(
             zip_path,
             dest,
-            &config.transfer,
+            config,
             Arc::clone(&metrics),
             Arc::clone(&sem),
             shutdown.clone(),
@@ -81,11 +114,13 @@ pub async fn transfer_all(
 async fn upload_with_retry(
     zip_path: &Path,
     dest: &Destination,
-    cfg: &crate::config::TransferConfig,
+    config: &Config,
     metrics: Arc<Metrics>,
     sem: Arc<Semaphore>,
     shutdown: CancellationToken,
 ) -> Result<()> {
+    let cfg = &config.transfer;
+    let policy = config.host_key_policy(dest).map_err(AppError::Ssh)?;
     let base_delay = cfg.retry_delay_secs;
 
     for attempt in 0..=cfg.max_retries {
@@ -103,6 +138,7 @@ async fn upload_with_retry(
             &local_hash,
             zip_path,
             dest,
+            &policy,
             cfg.bandwidth_limit_kbps,
         )
         .await;
@@ -141,9 +177,10 @@ async fn upload_bytes_to_dest(
     local_hash: &str,
     local_path: &Path,
     dest: &Destination,
+    policy: &HostKeyPolicy,
     limit_kbps: u64,
 ) -> Result<u64> {
-    let session = connect(dest).await?;
+    let session = connect(dest, policy).await?;
 
     let remote = remote_path(dest, local_path);
 
@@ -185,6 +222,7 @@ pub async fn stream_convert_and_transfer(
     config: &Config,
     shutdown: CancellationToken,
 ) -> Result<()> {
+    let policy = config.host_key_policy(dest).map_err(AppError::Ssh)?;
     for attempt in 0..=config.transfer.max_retries {
         let src_c = src.to_path_buf();
         let conv_cfg = config.conversion.clone();
@@ -204,7 +242,7 @@ pub async fn stream_convert_and_transfer(
         let remote = format!("{}/{zip_name}.zip", dest.remote_path.trim_end_matches('/'));
 
         let result = async {
-            let session = connect(dest).await?;
+            let session = connect(dest, &policy).await?;
 
             let channel = session
                 .channel_open_session()
@@ -262,9 +300,14 @@ pub async fn stream_convert_and_transfer(
 // SSH helpers
 // ---------------------------------------------------------------------------
 
-async fn connect(dest: &Destination) -> Result<Handle<SshHandler>> {
+async fn connect(dest: &Destination, policy: &HostKeyPolicy) -> Result<Handle<SshHandler>> {
     let config = Arc::new(client::Config::default());
-    let mut session = client::connect(config, (dest.host.as_str(), dest.port), SshHandler)
+    let handler = SshHandler {
+        host: dest.host.clone(),
+        port: dest.port,
+        policy: policy.clone(),
+    };
+    let mut session = client::connect(config, (dest.host.as_str(), dest.port), handler)
         .await
         .map_err(|e| AppError::Ssh(format!("connect to {}: {e}", dest.host)))?;
 
@@ -325,7 +368,7 @@ async fn verify_checksum(session: &Handle<SshHandler>, remote: &str, expected: &
         .await
         .map_err(|e| AppError::Ssh(e.to_string()))?;
     channel
-        .exec(true, format!("sha256sum {remote}"))
+        .exec(true, format!("sha256sum {}", shell_quote(remote)))
         .await
         .map_err(|e| AppError::Ssh(e.to_string()))?;
 
@@ -354,7 +397,9 @@ async fn verify_checksum(session: &Handle<SshHandler>, remote: &str, expected: &
 
 async fn delete_remote(session: &Handle<SshHandler>, remote: &str) {
     if let Ok(mut ch) = session.channel_open_session().await {
-        let _ = ch.exec(true, format!("rm -f {remote}")).await;
+        let _ = ch
+            .exec(true, format!("rm -f {}", shell_quote(remote)))
+            .await;
         loop {
             match ch.wait().await {
                 Some(ChannelMsg::ExitStatus { .. }) | None => break,
@@ -362,6 +407,12 @@ async fn delete_remote(session: &Handle<SshHandler>, remote: &str) {
             }
         }
     }
+}
+
+/// The remote side runs these through a shell, and archive names often hold
+/// spaces, quotes or `$`.
+fn shell_quote(s: &str) -> String {
+    format!("'{}'", s.replace('\'', "'\\''"))
 }
 
 fn remote_path(dest: &Destination, local: &Path) -> String {
@@ -417,6 +468,12 @@ mod tests {
     use super::*;
 
     #[test]
+    fn shell_quote_keeps_names_literal() {
+        assert_eq!(shell_quote("/in/a b.zip"), "'/in/a b.zip'");
+        assert_eq!(shell_quote("it's $HOME.zip"), r"'it'\''s $HOME.zip'");
+    }
+
+    #[test]
     fn backoff_sequence() {
         let delays: Vec<u64> = (0..7).map(|a| backoff_secs(10, a)).collect();
         assert_eq!(delays, [10, 20, 40, 80, 160, 300, 300]);
@@ -466,6 +523,8 @@ mod tests {
             user: "user".into(),
             remote_path: "/remote/".into(),
             ssh_key_path: "/key".into(),
+            host_key_check: None,
+            host_keys: vec![],
         };
         let local = Path::new("/tmp/archive.zip");
         assert_eq!(remote_path(&dest, local), "/remote/archive.zip");
@@ -479,6 +538,8 @@ mod tests {
             user: "user".into(),
             remote_path: "/remote".into(),
             ssh_key_path: "/key".into(),
+            host_key_check: None,
+            host_keys: vec![],
         };
         let local = Path::new("/tmp/archive.zip");
         assert_eq!(remote_path(&dest, local), "/remote/archive.zip");

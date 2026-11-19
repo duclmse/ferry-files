@@ -10,6 +10,9 @@
 //!   TEST_SFTP_REMOTE_PATH - absolute remote directory for uploads
 //!   TEST_SFTP_KEY - path to the private key file
 //!
+//! The server's host key must be in `~/.ssh/known_hosts`, or pinned with
+//! TEST_SFTP_HOST_KEY (`SHA256:...`).
+//!
 //! Run with:
 //!   cargo test -p fs-ext-rar2zip --features integration --test integration
 
@@ -77,12 +80,15 @@ mod tests {
                 user: sftp.user.clone(),
                 remote_path: sftp.remote_path.clone(),
                 ssh_key_path: sftp.key_path.clone(),
+                host_key_check: None,
+                host_keys: std::env::var("TEST_SFTP_HOST_KEY").into_iter().collect(),
             }],
             transfer: TransferConfig {
                 max_concurrent: 1,
                 max_retries: 1,
                 retry_delay_secs: 1,
                 bandwidth_limit_kbps: 0,
+                ..TransferConfig::default()
             },
             observability: ObservabilityConfig::default(),
             smtp: None,

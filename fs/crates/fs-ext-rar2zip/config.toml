@@ -39,6 +39,12 @@ port         = 22
 user         = "deploy"
 remote_path  = "/srv/uploads/zips"
 ssh_key_path = 'C:\Users\service\.ssh\id_ed25519'
+# Pin the server's host key instead of using known_hosts. Get the value from
+# `ssh-keyscan -p 22 sftp.example.com | ssh-keygen -lf -` or, for an sftpd
+# server, `fs ext sftpd status`.
+# host_keys = ["SHA256:..."]
+# Overrides transfer.host_key_check for this destination.
+# host_key_check = "accept-new"
 
 # Second destination (optional - forces Disk strategy for all jobs)
 # [[destinations]]
@@ -79,6 +85,16 @@ retry_delay_secs = 10
 
 # Upload bandwidth limit in KB/s. 0 = unlimited.
 bandwidth_limit_kbps = 0
+
+# How SFTP server host keys are verified (destinations with host_keys use
+# those instead):
+#   "strict"      the host must already be in known_hosts (default)
+#   "accept-new"  record a host on first connection; refuse a changed key
+#   "off"         accept any key; logs a warning on every connection
+host_key_check = "strict"
+
+# OpenSSH known_hosts file. Default: ~/.ssh/known_hosts of the user fsd runs as.
+# known_hosts = 'C:\ProgramData\fs\known_hosts'
 
 # ── Observability ─────────────────────────────────────────────────────────────
 
