@@ -143,6 +143,7 @@ impl JobQueue {
 
         let conn = pool.get().map_err(|e| AppError::Config(e.to_string()))?;
         conn.execute_batch(SCHEMA)?;
+        migrate(&conn)?;
 
         Ok(Self { pool })
     }
@@ -162,6 +163,18 @@ impl JobQueue {
         strategy: Strategy,
         destinations: &[String],
     ) -> Result<String> {
+        self.enqueue_stamped(file_path, file_hash, None, strategy, destinations)
+    }
+
+    /// `stamp` is the file's `(size, mtime)` when hashed, for `is_known_copy`.
+    pub fn enqueue_stamped(
+        &self,
+        file_path: &Path,
+        file_hash: &str,
+        stamp: Option<(u64, i64)>,
+        strategy: Strategy,
+        destinations: &[String],
+    ) -> Result<String> {
         let id = Uuid::new_v4().to_string();
         let now = now_secs();
         let dests_json =
@@ -172,8 +185,8 @@ impl JobQueue {
         conn.execute(
             "INSERT INTO jobs
              (id, file_path, file_hash, status, strategy, destinations,
-              retry_count, created_at, updated_at, error)
-             VALUES (?1, ?2, ?3, ?4, ?5, ?6, 0, ?7, ?7, NULL)",
+              retry_count, created_at, updated_at, error, file_size, file_mtime)
+             VALUES (?1, ?2, ?3, ?4, ?5, ?6, 0, ?7, ?7, NULL, ?8, ?9)",
             rusqlite::params![
                 &id,
                 path_str.as_ref(),
@@ -182,6 +195,8 @@ impl JobQueue {
                 strategy.as_str(),
                 &dests_json,
                 now,
+                stamp.map(|(size, _)| size as i64),
+                stamp.map(|(_, mtime)| mtime),
             ],
         )?;
         Ok(id)
@@ -237,6 +252,21 @@ impl JobQueue {
             rusqlite::params![now],
         )?;
         Ok(n)
+    }
+
+    /// Whether this very file, unchanged since it was hashed, already has a
+    /// job that is queued, running or done. The startup scan and repeated
+    /// events see the same files again; this spares hashing them again.
+    pub fn is_known_copy(&self, file_path: &Path, size: u64, mtime: i64) -> Result<bool> {
+        let conn = self.get_conn()?;
+        let known: bool = conn.query_row(
+            "SELECT EXISTS (SELECT 1 FROM jobs
+               WHERE file_path = ?1 AND file_size = ?2 AND file_mtime = ?3
+                 AND status != 'failed')",
+            rusqlite::params![file_path.to_string_lossy().as_ref(), size as i64, mtime],
+            |row| row.get(0),
+        )?;
+        Ok(known)
     }
 
     /// Whether a job for this content is queued, running or done. A failed
@@ -372,6 +402,23 @@ pub(crate) fn now_secs() -> i64 {
         .as_secs() as i64
 }
 
+/// Adds what later versions added to `jobs`, to a database made before.
+fn migrate(conn: &rusqlite::Connection) -> Result<()> {
+    let has_size: bool = conn.query_row(
+        "SELECT EXISTS (SELECT 1 FROM pragma_table_info('jobs') WHERE name = 'file_size')",
+        [],
+        |r| r.get(0),
+    )?;
+    if !has_size {
+        conn.execute_batch(
+            "ALTER TABLE jobs ADD COLUMN file_size INTEGER;
+             ALTER TABLE jobs ADD COLUMN file_mtime INTEGER;",
+        )?;
+    }
+    conn.execute_batch("CREATE INDEX IF NOT EXISTS idx_jobs_path ON jobs(file_path);")?;
+    Ok(())
+}
+
 fn row_to_job(row: &rusqlite::Row<'_>) -> rusqlite::Result<Job> {
     let status_str: String = row.get(3)?;
     let strategy_str: String = row.get(4)?;
@@ -434,6 +481,49 @@ mod tests {
             &["host1".into()],
         )
         .unwrap()
+    }
+
+    #[test]
+    fn known_copy_needs_same_path_size_and_mtime() {
+        let q = make_queue();
+        let path = Path::new("/watch/a.rar");
+        let id = q
+            .enqueue_stamped(path, "h", Some((10, 100)), Strategy::Disk, &[])
+            .unwrap();
+        assert!(q.is_known_copy(path, 10, 100).unwrap());
+        assert!(!q.is_known_copy(path, 11, 100).unwrap());
+        assert!(!q.is_known_copy(path, 10, 101).unwrap());
+        assert!(!q.is_known_copy(Path::new("/watch/b.rar"), 10, 100).unwrap());
+        q.set_status(&id, Status::Failed, Some("x")).unwrap();
+        assert!(
+            !q.is_known_copy(path, 10, 100).unwrap(),
+            "a failed job retries"
+        );
+    }
+
+    #[test]
+    fn migrates_a_queue_made_before_stamps() {
+        let dir = tempfile::TempDir::new().unwrap();
+        let db = dir.path().join("q.db");
+        {
+            let conn = rusqlite::Connection::open(&db).unwrap();
+            conn.execute_batch(
+                "CREATE TABLE jobs (
+                    id TEXT PRIMARY KEY, file_path TEXT NOT NULL, file_hash TEXT NOT NULL,
+                    status TEXT NOT NULL, strategy TEXT NOT NULL, destinations TEXT NOT NULL,
+                    retry_count INTEGER NOT NULL DEFAULT 0, created_at INTEGER NOT NULL,
+                    updated_at INTEGER NOT NULL, error TEXT);
+                 INSERT INTO jobs VALUES
+                    ('1', '/w/old.rar', 'h', 'done', 'disk', '[]', 0, 0, 0, NULL);",
+            )
+            .unwrap();
+        }
+        let q = JobQueue::new(&db).unwrap();
+        assert!(q.is_duplicate("h").unwrap());
+        assert!(!q.is_known_copy(Path::new("/w/old.rar"), 0, 0).unwrap());
+        // Opening again finds the columns already there.
+        drop(q);
+        JobQueue::new(&db).unwrap();
     }
 
     #[test]

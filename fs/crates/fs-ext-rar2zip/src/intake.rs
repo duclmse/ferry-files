@@ -105,20 +105,38 @@ fn old_style_complete(dir: &Path, base: &str) -> bool {
 // Hashing
 // ---------------------------------------------------------------------------
 
-/// Stream-read a file with a 64 KB buffer and return its SHA-256 hex digest.
+/// The file's SHA-256 as hex. On a blocking thread: tokio's file reads make
+/// one round trip to the blocking pool per read, and hashing is CPU work.
 pub async fn hash_file(path: &Path) -> Result<String> {
-    use tokio::io::AsyncReadExt;
-    let mut file = tokio::fs::File::open(path).await.map_err(AppError::Io)?;
-    let mut hasher = Sha256::new();
-    let mut buf = vec![0u8; 65536];
-    loop {
-        let n = file.read(&mut buf).await.map_err(AppError::Io)?;
-        if n == 0 {
-            break;
+    let path = path.to_path_buf();
+    tokio::task::spawn_blocking(move || {
+        use std::io::Read;
+        let mut file = std::fs::File::open(&path).map_err(AppError::Io)?;
+        let mut hasher = Sha256::new();
+        let mut buf = vec![0u8; 1 << 20];
+        loop {
+            let n = file.read(&mut buf).map_err(AppError::Io)?;
+            if n == 0 {
+                break;
+            }
+            hasher.update(&buf[..n]);
         }
-        hasher.update(&buf[..n]);
-    }
-    Ok(hex::encode(hasher.finalize()))
+        Ok(hex::encode(hasher.finalize()))
+    })
+    .await
+    .map_err(|e| AppError::Io(std::io::Error::other(e)))?
+}
+
+/// `(size, mtime)` in seconds, to recognise a file seen before.
+fn stamp(path: &Path) -> Option<(u64, i64)> {
+    let meta = std::fs::metadata(path).ok()?;
+    let mtime = meta
+        .modified()
+        .ok()?
+        .duration_since(std::time::UNIX_EPOCH)
+        .ok()?
+        .as_secs() as i64;
+    Some((meta.len(), mtime))
 }
 
 // ---------------------------------------------------------------------------
@@ -243,6 +261,13 @@ impl IntakeProcessor {
     }
 
     async fn enqueue_path(&self, path: &Path, cfg: &Config) -> Result<()> {
+        let stamp = stamp(path);
+        if let Some((size, mtime)) = stamp {
+            if self.queue.is_known_copy(path, size, mtime)? {
+                tracing::debug!("already queued, unchanged: {}", path.display());
+                return Ok(());
+            }
+        }
         let hash = hash_file(path).await?;
 
         // Dedup check
@@ -255,7 +280,7 @@ impl IntakeProcessor {
             return Ok(());
         }
 
-        let size = std::fs::metadata(path).map(|m| m.len()).unwrap_or(0);
+        let size = stamp.map_or(0, |(size, _)| size);
         let dests: Vec<String> = cfg.destinations.iter().map(|d| d.host.clone()).collect();
         let strategy = select_strategy(
             size,
@@ -263,7 +288,9 @@ impl IntakeProcessor {
             dests.len(),
         );
 
-        let id = self.queue.enqueue(path, &hash, strategy.clone(), &dests)?;
+        let id = self
+            .queue
+            .enqueue_stamped(path, &hash, stamp, strategy.clone(), &dests)?;
         tracing::info!(
             "enqueued job {id} for {} ({:?}, {} dests)",
             path.display(),
@@ -311,6 +338,21 @@ mod tests {
         let path = dir.path().join(name);
         std::fs::write(&path, b"dummy archive content").unwrap();
         path
+    }
+
+    #[tokio::test]
+    async fn an_unchanged_file_seen_again_is_not_queued_twice() {
+        let dir = TempDir::new().unwrap();
+        let qdir = TempDir::new().unwrap();
+        let queue = make_queue(&qdir);
+        let proc = IntakeProcessor::new(Arc::clone(&queue), make_config(dir.path()));
+
+        let path = write_file(&dir, "again.rar");
+        proc.process(path.clone()).await.unwrap();
+        proc.process(path).await.unwrap();
+
+        let depth = queue.queue_depth().unwrap();
+        assert_eq!(depth.get("pending").copied().unwrap_or(0), 1);
     }
 
     #[tokio::test]
