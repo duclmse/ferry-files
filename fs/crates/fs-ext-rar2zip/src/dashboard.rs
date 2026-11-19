@@ -32,7 +32,7 @@ pub fn render(
             let error_short = j
                 .error
                 .as_deref()
-                .map(|e| html_escape(&e[..80.min(e.len())]))
+                .map(|e| html_escape(truncate_chars(e, 80)))
                 .unwrap_or_default();
             let (badge_bg, badge_fg) = status_badge(j.status.as_str());
             format!(
@@ -109,9 +109,70 @@ fn status_badge(status: &str) -> (&'static str, &'static str) {
     }
 }
 
+/// Error text often names a file, so slicing by bytes could split a
+/// character and panic the handler.
+fn truncate_chars(s: &str, max: usize) -> &str {
+    s.char_indices().nth(max).map_or(s, |(at, _)| &s[..at])
+}
+
 fn html_escape(s: &str) -> String {
     s.replace('&', "&amp;")
         .replace('<', "&lt;")
         .replace('>', "&gt;")
         .replace('"', "&quot;")
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::queue::{Status, Strategy};
+    use std::path::PathBuf;
+
+    fn job(name: &str, status: Status, error: Option<&str>) -> Job {
+        Job {
+            id: "0123456789abcdef".into(),
+            file_path: PathBuf::from("/watch").join(name),
+            file_hash: String::new(),
+            status,
+            strategy: Strategy::Disk,
+            destinations: vec![],
+            retry_count: 2,
+            created_at: 0,
+            updated_at: 1_700_000_000,
+            error: error.map(str::to_owned),
+        }
+    }
+
+    #[test]
+    fn shows_counts_metrics_and_jobs_and_refreshes_itself() {
+        let depth = HashMap::from([("pending".to_owned(), 3), ("failed".to_owned(), 1)]);
+        let metrics = Metrics::new();
+        metrics.files_processed.store(42, Ordering::Relaxed);
+        let html = render(
+            &depth,
+            &[job("<b>.rar", Status::Failed, Some("bad \"crc\""))],
+            &metrics,
+        );
+        assert!(html.contains("<tr><td>pending</td><td>3</td></tr>"));
+        assert!(html.contains("<tr><td>converting</td><td>0</td></tr>"));
+        assert!(html.contains("<td>files processed</td><td>42</td>"));
+        assert!(html.contains("&lt;b&gt;.rar"));
+        assert!(!html.contains("<b>.rar"));
+        assert!(html.contains("bad &quot;crc&quot;"));
+        assert!(html.contains(">01234567</td>"));
+        assert!(html.contains("location.reload()"));
+    }
+
+    #[test]
+    fn long_non_ascii_errors_are_cut_on_a_character() {
+        let error = format!("open x {}: denied", "tệp".repeat(40));
+        assert!(!error.is_char_boundary(80));
+        let html = render(
+            &HashMap::new(),
+            &[job("a.rar", Status::Failed, Some(&error))],
+            &Metrics::new(),
+        );
+        let cut: String = error.chars().take(80).collect();
+        assert!(html.contains(&format!(">{cut}</td>")));
+    }
 }

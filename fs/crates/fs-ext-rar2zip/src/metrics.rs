@@ -151,4 +151,42 @@ mod tests {
         assert!(text.contains("rar2zip_transfer_failures_total 2"));
         assert!(text.contains("rar2zip_queue_depth 5"));
     }
+
+    fn get(addr: std::net::SocketAddr, path: &str) -> String {
+        use std::io::{Read, Write};
+        let mut conn = std::net::TcpStream::connect(addr).unwrap();
+        write!(
+            conn,
+            "GET {path} HTTP/1.1\r\nHost: x\r\nConnection: close\r\n\r\n"
+        )
+        .unwrap();
+        let mut out = String::new();
+        conn.read_to_string(&mut out).unwrap();
+        out
+    }
+
+    #[test]
+    fn routes_answer_over_http() {
+        let dir = tempfile::tempdir().unwrap();
+        let queue = JobQueue::new(&dir.path().join("q.db")).unwrap();
+        let metrics = Metrics::default();
+        metrics.files_processed.store(3, Ordering::Relaxed);
+        let server = tiny_http::Server::http("127.0.0.1:0").unwrap();
+        let addr = server.server_addr().to_ip().unwrap();
+        let paths = ["/metrics", "/ui/", "/health", "/nope"];
+        let client = std::thread::spawn(move || paths.map(|p| get(addr, p)));
+        for _ in paths {
+            handle_request(server.recv().unwrap(), &metrics, &queue);
+        }
+        let [prom, ui, health, missing] = client.join().unwrap();
+
+        assert!(prom.starts_with("HTTP/1.1 200"));
+        assert!(prom.contains("Content-Type: text/plain; version=0.0.4"));
+        assert!(prom.contains("rar2zip_files_processed_total 3"));
+        assert!(ui.starts_with("HTTP/1.1 200"));
+        assert!(ui.contains("Content-Type: text/html"));
+        assert!(ui.contains("location.reload()"));
+        assert!(health.contains(r#"{"status":"ok","queue_depth":0}"#));
+        assert!(missing.starts_with("HTTP/1.1 404"));
+    }
 }

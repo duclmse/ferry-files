@@ -448,8 +448,10 @@ inside the closure: `.map_err(Box::new)`.
       appears in `failed_folder` or on remote.
 - [ ] End-to-end smoke test (Stream): drop a large `.rar` → no zip created on
       disk; source archive deleted after remote checksum passes.
-- [ ] `GET /metrics` returns Prometheus text.
-- [ ] `GET /ui` returns HTML with auto-refresh.
+- [x] `GET /metrics` returns Prometheus text.
+      *(`metrics::tests::routes_answer_over_http`)*
+- [x] `GET /ui` returns HTML with auto-refresh.
+      *(same test, plus `dashboard::tests`)*
 - [x] No `unwrap()` in any conversion or transfer code.
 - [x] `cargo clippy -- -D warnings` clean.
 

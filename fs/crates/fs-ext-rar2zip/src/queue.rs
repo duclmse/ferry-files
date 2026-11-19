@@ -297,6 +297,23 @@ impl JobQueue {
         Ok(())
     }
 
+    /// `add_part` with a chosen arrival time, so tests can age a group.
+    #[cfg(test)]
+    pub(crate) fn add_part_at(
+        &self,
+        group_id: &str,
+        part_path: &Path,
+        arrived_at: i64,
+    ) -> Result<()> {
+        let path_str = part_path.to_string_lossy();
+        self.get_conn()?.execute(
+            "INSERT OR IGNORE INTO multipart_groups (group_id, part_path, arrived_at)
+             VALUES (?1, ?2, ?3)",
+            rusqlite::params![group_id, path_str.as_ref(), arrived_at],
+        )?;
+        Ok(())
+    }
+
     pub fn get_parts(&self, group_id: &str) -> Result<Vec<PathBuf>> {
         let conn = self.get_conn()?;
         let mut stmt = conn.prepare("SELECT part_path FROM multipart_groups WHERE group_id = ?")?;
@@ -343,7 +360,7 @@ impl JobQueue {
 // Helpers
 // ---------------------------------------------------------------------------
 
-fn now_secs() -> i64 {
+pub(crate) fn now_secs() -> i64 {
     SystemTime::now()
         .duration_since(UNIX_EPOCH)
         .unwrap_or_default()

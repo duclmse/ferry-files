@@ -439,17 +439,118 @@ fn expire_multipart(queue: &JobQueue, config: &Config) {
         }
     };
 
+    if expired.is_empty() {
+        return;
+    }
+    if let Err(e) = std::fs::create_dir_all(&config.failed_folder) {
+        tracing::warn!(
+            "create failed_folder {}: {e}",
+            config.failed_folder.display()
+        );
+        return;
+    }
+
     for group_id in expired {
         tracing::warn!("expiring timed-out multipart group: {group_id}");
-        let parts = queue.get_parts(&group_id).unwrap_or_default();
+        let parts = match queue.get_parts(&group_id) {
+            Ok(p) => p,
+            Err(e) => {
+                tracing::warn!("expire: parts of {group_id}: {e}");
+                continue;
+            }
+        };
+        let mut all_moved = true;
         for part in parts {
-            if let Ok(name) = part.file_name().map(|n| n.to_os_string()).ok_or(()) {
-                let dst = config.failed_folder.join(name);
-                if let Err(e) = std::fs::rename(&part, &dst) {
+            let Some(name) = part.file_name() else {
+                continue;
+            };
+            match std::fs::rename(&part, config.failed_folder.join(name)) {
+                Ok(()) => {}
+                Err(e) if e.kind() == std::io::ErrorKind::NotFound => {}
+                Err(e) => {
                     tracing::warn!("expire: move {}: {e}", part.display());
+                    all_moved = false;
                 }
             }
         }
-        let _ = queue.clear_parts(&group_id);
+        // A group still holding unmoved parts is retried on the next pass;
+        // clearing it would leave those parts in the watch folder untracked.
+        if all_moved {
+            if let Err(e) = queue.clear_parts(&group_id) {
+                tracing::warn!("expire: clear {group_id}: {e}");
+            }
+        }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::config::{ConversionConfig, ObservabilityConfig, TransferConfig};
+    use tempfile::TempDir;
+
+    fn config(watch: &std::path::Path, timeout_hours: u64) -> Config {
+        Config {
+            watch_folder: watch.to_path_buf(),
+            failed_folder: watch.join("failed"),
+            exclude_patterns: vec![],
+            include_extensions: vec!["rar".into()],
+            watch_subdirs: None,
+            min_file_age_secs: 0,
+            conversion: ConversionConfig {
+                multipart_timeout_hours: timeout_hours,
+                ..ConversionConfig::default()
+            },
+            destinations: vec![],
+            transfer: TransferConfig::default(),
+            observability: ObservabilityConfig::default(),
+            smtp: None,
+        }
+    }
+
+    #[test]
+    fn expired_multipart_parts_move_to_a_new_failed_folder() {
+        let watch = TempDir::new().unwrap();
+        let qdir = TempDir::new().unwrap();
+        let queue = JobQueue::new(&qdir.path().join("q.db")).unwrap();
+        let cfg = config(watch.path(), 24);
+        let old = crate::queue::now_secs() - 25 * 3600;
+        let mut parts = Vec::new();
+        for name in ["set.part1.rar", "set.part2.rar"] {
+            let p = watch.path().join(name);
+            std::fs::write(&p, b"part").unwrap();
+            queue.add_part_at("set", &p, old).unwrap();
+            parts.push(p);
+        }
+        let fresh = watch.path().join("new.part1.rar");
+        std::fs::write(&fresh, b"part").unwrap();
+        queue.add_part("new", &fresh).unwrap();
+        assert!(!cfg.failed_folder.exists());
+
+        expire_multipart(&queue, &cfg);
+
+        for p in &parts {
+            assert!(!p.exists(), "{} left in the watch folder", p.display());
+            assert!(cfg.failed_folder.join(p.file_name().unwrap()).exists());
+        }
+        assert!(queue.get_parts("set").unwrap().is_empty());
+        assert!(fresh.exists(), "a group within the timeout is kept");
+        assert_eq!(queue.get_parts("new").unwrap(), [fresh]);
+    }
+
+    #[test]
+    fn zero_timeout_never_expires_a_group() {
+        let watch = TempDir::new().unwrap();
+        let qdir = TempDir::new().unwrap();
+        let queue = JobQueue::new(&qdir.path().join("q.db")).unwrap();
+        let cfg = config(watch.path(), 0);
+        let p = watch.path().join("old.part1.rar");
+        std::fs::write(&p, b"part").unwrap();
+        queue.add_part_at("old", &p, 0).unwrap();
+
+        expire_multipart(&queue, &cfg);
+
+        assert!(p.exists());
+        assert_eq!(queue.get_parts("old").unwrap(), [p]);
     }
 }

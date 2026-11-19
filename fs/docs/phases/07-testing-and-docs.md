@@ -173,9 +173,10 @@ They serve as the primary reference for users.
 
 ### Both projects
 
-- [ ] `cargo build --release` succeeds with zero warnings (workspace).
-- [ ] `cargo test` passes all unit tests (workspace).
-- [ ] `cargo clippy -- -D warnings` produces no output.
+- [x] `cargo build --release` succeeds with zero warnings (workspace).
+      *(macOS, Nov 2026)*
+- [x] `cargo test` passes all unit tests (workspace).
+- [x] `cargo clippy -- -D warnings` produces no output.
 - [x] `cargo doc --no-deps` generates docs without warnings.
 - [x] No `unwrap()` or `todo!()` in any production path.
 - [x] No `#[allow(dead_code)]` or `#[allow(unused)]` in final code.
@@ -208,8 +209,12 @@ They serve as the primary reference for users.
 ### rar2zip
 
 - [ ] All modules listed in spec section 1 implemented (no stubs).
-- [ ] `validate-config` exits 0 on valid `config.toml`.
-- [ ] `multipart_timeout_hours` respected: expired groups moved to `failed/`.
+- [x] `validate-config` exits 0 on valid `config.toml`.
+      *(now `fs-ext-rar2zip --config <file> validate`; exits 1 and prints one
+      problem per line otherwise)*
+- [x] `multipart_timeout_hours` respected: expired groups moved to `failed/`.
+      *(`app::tests`; `failed/` is created if missing, and a group whose parts
+      could not be moved is kept for the next pass)*
 - [ ] `Strategy::Stream` confirmed: no zip file created for large archives.
 - [ ] README covers all 8 sections.
 - [ ] Builds on Windows only (Windows Service code must compile).
