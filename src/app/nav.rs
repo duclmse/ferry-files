@@ -66,6 +66,9 @@ impl Ctx {
                         self.stop_compare();
                     }
                     p.found.set(None);
+                    if moved {
+                        self.note_recent(src, &path);
+                    }
                     p.cwd.set(path);
                     p.all.set(entries);
                     p.arrange();

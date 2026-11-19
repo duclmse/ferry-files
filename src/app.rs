@@ -23,6 +23,7 @@ mod icons;
 mod layout;
 mod menu;
 mod nav;
+mod palette;
 mod pane;
 mod preview;
 mod safety;
@@ -44,6 +45,7 @@ use editor::*;
 use icons::{ico, Icon};
 use layout::*;
 use menu::*;
+use palette::*;
 use pane::*;
 use preview::*;
 use safety::*;
@@ -544,6 +546,8 @@ enum Panel {
     Library(Src, String),
     /// The books in every place's book folder.
     AllBooks,
+    /// The command palette.
+    Palette,
     /// Reading a book; the folder is the library to go back to.
     Reader(Src, String, Option<String>),
 }
@@ -947,6 +951,11 @@ pub fn App() -> impl IntoView {
                     ctx.new_tab(p, p.src.get_untracked(), p.cwd.get_untracked());
                     return;
                 }
+                "k" => {
+                    e.prevent_default();
+                    ctx.panel.set(Some(Panel::Palette));
+                    return;
+                }
                 "w" if p.tabs.with_untracked(Vec::len) > 1 => {
                     e.prevent_default();
                     ctx.close_tab(p, p.tab.get_untracked());
@@ -1015,7 +1024,7 @@ pub fn App() -> impl IntoView {
                 e.prevent_default();
                 ctx.quick_look(p);
             }
-            ("f", true) | ("k", true) | ("/", false) => {
+            ("f", true) | ("/", false) => {
                 e.prevent_default();
                 if let Some(el) = document().query_selector(".pane.active .filter").ok().flatten() {
                     let _ = el.unchecked_into::<web_sys::HtmlElement>().focus();
@@ -1164,6 +1173,7 @@ pub fn App() -> impl IntoView {
             Panel::Import(pane, from, targets) => view! { <ImportPhotos pane from targets/> }.into_any(),
             Panel::Library(src, dir) => view! { <Library src=src dir=dir/> }.into_any(),
             Panel::AllBooks => view! { <AllBooks/> }.into_any(),
+            Panel::Palette => view! { <Palette/> }.into_any(),
             Panel::Reader(src, path, back) => view! { <Reader src=src path=path back=back/> }.into_any(),
         })}
     }

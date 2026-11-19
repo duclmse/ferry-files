@@ -188,10 +188,16 @@ Built:
 
 ## Phase 4 — Interface
 
-### 12. Command palette ☐
-- ⌘K: fuzzy list of actions (every menu action, with its shortcut), favourites, devices, recent
-  folders, settings. Enter runs; acts on the active pane.
-- Built from the same `Act` items the menus use, so new actions appear automatically.
+### 12. Command palette ☑
+- ⌘K (also from the filter) opens it; ⌘K or Esc closes. Typed letters match in order (runs and
+  word starts score higher); ↑ ↓ choose, ↵ runs on the active pane.
+- Choices: the menu for what's picked (File / Folder / Picked), the folder's menu (Here), app
+  commands (Settings, Keyboard shortcuts, Backups, History, Refresh devices, Connect over Wi-Fi,
+  Go up), favourites, devices with their quick folders, recent folders and sync pairs.
+- Built from `menu_items`, so new menu actions show up by themselves; only enabled items appear,
+  and ✓ items read as "View as …" / "Show/Hide the … column".
+- Recent folders: the last 20 opened, kept in `ferry-files.recent` (devices by name, shown only
+  while connected). ⌘K no longer focuses the filter (⌘F and / still do).
 
 ### 13. Saved workspaces ☐
 - Restore tabs, folders, split and widths on launch (setting), for devices by serial so a phone's
