@@ -137,7 +137,9 @@ jobs:
 
   # The file table pays off only for a root that is most of a volume, so
   # this crawls all of C:\, both ways, with content indexing off so the two
-  # runs differ only in enumeration. A measurement, not a gate.
+  # runs differ only in enumeration. A measurement, not a gate. The file
+  # table runs first, on a cold cache: run second, after the walk had read
+  # every directory, it measured 20x faster, and some of that may be cache.
   windows-whole-volume:
     name: whole-volume crawl (Windows)
     runs-on: windows-latest
@@ -148,24 +150,24 @@ jobs:
       - uses: Swatinem/rust-cache@v2
       - name: Build fsd
         run: cargo build --release -p fs-server
-      - name: Crawl C:\ by walking directories
-        timeout-minutes: 60
-        shell: pwsh
-        run: >
-          .\scripts\bench-windows.ps1 -TargetDir C:\ -NoContent -CrawlTimeout 3000
-          -OutDir target\volume-walk -LoadSeconds 5 -IdleSeconds 3 -Iterations 3
       - name: Crawl C:\ from the file table
-        if: always()
         timeout-minutes: 60
         shell: pwsh
         run: >
           .\scripts\bench-windows.ps1 -TargetDir C:\ -NoContent -UseMft -CrawlTimeout 3000
           -OutDir target\volume-mft -LoadSeconds 5 -IdleSeconds 3 -Iterations 3
+      - name: Crawl C:\ by walking directories
+        if: always()
+        timeout-minutes: 60
+        shell: pwsh
+        run: >
+          .\scripts\bench-windows.ps1 -TargetDir C:\ -NoContent -CrawlTimeout 3000
+          -OutDir target\volume-walk -LoadSeconds 5 -IdleSeconds 3 -Iterations 3
       - name: Summaries
         if: always()
         shell: pwsh
         run: |
-          foreach ($run in "volume-walk", "volume-mft") {
+          foreach ($run in "volume-mft", "volume-walk") {
             $f = "target\$run\summary.txt"
             if (Test-Path $f) {
               "### $run" | Add-Content $env:GITHUB_STEP_SUMMARY
