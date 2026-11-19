@@ -43,8 +43,11 @@ impl Ctx {
                     }
                     // An empty root (nothing set yet, e.g. a launch straight into column view)
                     // counts as containing everything, so it has to be set here.
+                    // A tab shown on another side brought its own root along.
+                    let kept = p.root_src.with_value(|s| *s == Some(src));
+                    p.root_src.set_value(None);
                     let root = p.root.get_untracked();
-                    if reroot || new_src || root.is_empty() || !within(&path, &root) {
+                    if reroot || (new_src && !kept) || root.is_empty() || !within(&path, &root) {
                         p.root.set(path.clone());
                     }
                     p.cols.update(|c| {
@@ -441,6 +444,7 @@ impl Ctx {
         let Some(t) = p.tabs.with_untracked(|ts| ts.get(p.tab.get_untracked()).cloned()) else { return };
         p.view.set(t.view);
         p.root.set(t.root);
+        p.root_src.set_value(Some(t.src));
         match self.src_info(t.src) {
             Some(info) if !t.cwd.is_empty() => self.load_or(p, t.src, t.cwd, t.selected, Some(info.default_dir)),
             Some(_) => self.open_remembered(p, t.src),

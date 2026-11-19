@@ -381,6 +381,9 @@ struct Pane {
     /// Set before opening a sidebar place: when that folder loads, it becomes the column view's
     /// first column.
     reroot: StoredValue<Option<String>>,
+    /// Set when a tab is shown: the side its `root` is on, so landing there from another side
+    /// keeps that root.
+    root_src: StoredValue<Option<Src>>,
     /// The item whose name is being edited in place.
     renaming: RwSignal<Option<String>>,
     /// Whether the preview is shown to the right of the files.
@@ -461,6 +464,7 @@ impl Pane {
             last: StoredValue::new(HashMap::new()),
             root: RwSignal::new(String::new()),
             reroot: StoredValue::new(None),
+            root_src: StoredValue::new(None),
             renaming: RwSignal::new(None),
             preview: RwSignal::new(stored_flag(&format!("ferry-files.preview.{id}"), true)),
             preview_w: stored_px(&format!("ferry-files.preview-w.{id}")),

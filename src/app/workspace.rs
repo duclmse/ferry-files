@@ -15,6 +15,9 @@ struct SavedTab {
     side: Side,
     cwd: String,
     view: String,
+    /// The column view's first column; missing in workspaces saved before it was kept.
+    #[serde(default)]
+    root: String,
 }
 
 #[derive(Clone, PartialEq, Default, serde::Serialize, serde::Deserialize)]
@@ -64,7 +67,8 @@ thread_local! {
 }
 
 fn tab_of(src: Src, t: &SavedTab) -> Tab {
-    Tab { src, cwd: t.cwd.clone(), selected: None, view: view_of(&t.view), root: t.cwd.clone() }
+    let root = if t.root.is_empty() || !within(&t.cwd, &t.root) { &t.cwd } else { &t.root };
+    Tab { src, cwd: t.cwd.clone(), selected: None, view: view_of(&t.view), root: root.clone() }
 }
 
 /// A hidden pane given other tabs: it lists its shown tab when it's shown (`set_split`), and
@@ -131,11 +135,11 @@ impl Ctx {
                 for (at, t) in ts.iter().enumerate() {
                     // The shown tab's entry is brought up to date only when leaving it.
                     // While a listing is on its way, the tab is where it's going.
-                    let (src, cwd, view) = if at == shown && live {
+                    let (src, cwd, view, root) = if at == shown && live {
                         let (src, cwd) = p.going_to.get_value().unwrap_or_else(|| (p.src.get_untracked(), p.cwd.get_untracked()));
-                        (src, cwd, p.view.get_untracked())
+                        (src, cwd, p.view.get_untracked(), p.root.get_untracked())
                     } else {
-                        (t.src, t.cwd.clone(), t.view)
+                        (t.src, t.cwd.clone(), t.view, t.root.clone())
                     };
                     // A tab left on a phone that's gone can't be found again.
                     if src != Src::Mac && self.src_info(src).is_none() {
@@ -148,7 +152,7 @@ impl Ctx {
                         },
                         None => at,
                     };
-                    all.push((place, SavedTab { side: self.side(src), cwd, view: view.key().into() }, u8::from(at == shown)));
+                    all.push((place, SavedTab { side: self.side(src), cwd, view: view.key().into(), root }, u8::from(at == shown)));
                 }
             });
             WAITING.with_borrow(|w| {
@@ -248,6 +252,7 @@ impl Ctx {
                 p.cwd.track();
                 p.src.track();
                 p.view.track();
+                p.root.track();
             }
             self.split.track();
             self.active.track();
