@@ -104,6 +104,9 @@ jobs:
             (Get-Service FsDaemon).WaitForStatus("Stopped", [TimeSpan]::FromSeconds(60))
             Write-Host "Service stopped cleanly"
           } finally {
+            sc.exe qc FsDaemon
+            Get-WinEvent -FilterHashtable @{ LogName = "System"; ProviderName = "Service Control Manager"; StartTime = (Get-Date).AddMinutes(-10) } -ErrorAction SilentlyContinue |
+              Select-Object -First 10 | Format-List TimeCreated, Id, Message
             Get-ChildItem "$dir\logs" | Get-Content -Tail 30
             & $fsd uninstall-service
           }

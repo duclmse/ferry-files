@@ -169,10 +169,13 @@ function Read-Shared([string]$path) {
     try { return (New-Object IO.StreamReader($fs)).ReadToEnd() } finally { $fs.Dispose() }
 }
 
+# fsd logs plain text lines ("<time>  INFO <target>: <message>") to stderr,
+# one file per daemon run, so a check never sees an earlier run's lines.
 function Get-LogMessages($d) {
-    $text = Read-Shared $d.Out
-    $re = [regex]'"message":"((?:[^"\\]|\\.)*)"'
-    @($re.Matches($text) | ForEach-Object { $_.Groups[1].Value -replace '\\\\', '\' })
+    $esc = [char]27
+    $text = (Read-Shared $d.Err) -replace "$esc\[[0-9;]*m", ''
+    $re = [regex]'(?m)^\S+\s+(?:TRACE|DEBUG|INFO|WARN|ERROR)\s+\S+:\s(.*?)\r?$'
+    @($re.Matches($text) | ForEach-Object { $_.Groups[1].Value })
 }
 
 function Find-Log($d, [string]$pattern) {
