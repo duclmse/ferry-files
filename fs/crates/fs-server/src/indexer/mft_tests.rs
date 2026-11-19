@@ -384,3 +384,19 @@ fn only_lettered_drives_are_accepted_off_windows() {
     assert!(drive_of(root).is_err());
     assert!(MftCache::default().for_root(root).is_err());
 }
+
+#[cfg(windows)]
+#[test]
+fn volume_roots_are_whole_drives_only() {
+    assert!(is_volume_root(Path::new(r"C:\")));
+    assert!(is_volume_root(Path::new(r"\\?\D:\")));
+    assert!(!is_volume_root(Path::new(r"C:\Windows")));
+    assert!(!is_volume_root(Path::new(r"C:")));
+    assert!(!is_volume_root(Path::new(r"\\server\share\")));
+}
+
+#[test]
+fn unix_paths_are_never_volume_roots() {
+    assert!(!is_volume_root(Path::new("/")));
+    assert!(!is_volume_root(Path::new("/mnt/c")));
+}

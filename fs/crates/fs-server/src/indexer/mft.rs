@@ -479,7 +479,22 @@ impl Volume for NoVolume {
 #[derive(Default)]
 pub struct MftCache(HashMap<String, Arc<MftIndex>>);
 
+/// Whether `path` is a whole volume, such as `C:\`.
+pub fn is_volume_root(path: &Path) -> bool {
+    let mut parts = path.components();
+    matches!(
+        (parts.next(), parts.next(), parts.next()),
+        (Some(Component::Prefix(p)), Some(Component::RootDir), None)
+            if matches!(p.kind(), std::path::Prefix::Disk(_) | std::path::Prefix::VerbatimDisk(_))
+    )
+}
+
 impl MftCache {
+    /// Whether this drive's table has been read already.
+    pub fn has_drive_of(&self, root: &Path) -> bool {
+        drive_of(root).is_ok_and(|d| self.0.contains_key(&d))
+    }
+
     pub fn for_root(&mut self, root: &Path) -> Result<Arc<MftIndex>, String> {
         let drive = drive_of(root)?;
         if let Some(index) = self.0.get(&drive) {

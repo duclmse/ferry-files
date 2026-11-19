@@ -146,10 +146,13 @@ max_fuzzy_candidates = 50000
 # Default: half the available CPU cores.
 crawl_threads = 4
 
-# Build the first index from the NTFS file table instead of walking directories.
+# Build a full crawl from the NTFS file table instead of walking directories:
+# true, false, or "auto" (default) for roots that are a whole drive such as
+# C:\ (33 s against 650 s for the walk over all of C:). Reading the table costs
+# about the same for a small folder, where the walk is faster.
 # Needs administrator rights; falls back to the walk if the table is unusable.
 # Unlike the walk, it does not honour .ignore files.
-use_mft = false
+use_mft = "auto"
 
 # Number of threads for parallel content extraction during crawl.
 content_threads = 4

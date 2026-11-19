@@ -6,7 +6,7 @@ use tokio::sync::RwLock;
 use tokio_util::sync::CancellationToken;
 
 use crate::api::archive::ArchiveRegistry;
-use crate::config::Config;
+use crate::config::{Config, MftMode};
 use crate::error::{AppError, Result};
 use crate::store::{tantivy_store::TantivyStore, FileRecord, FileStore};
 
@@ -344,7 +344,14 @@ pub async fn full_crawl(
             let side_workers =
                 spawn_side_workers(content_threads, &side_work, side_rx, &shutdown_w);
 
-            let from_mft = use_mft
+            let try_mft = match use_mft {
+                MftMode::On => true,
+                MftMode::Off => false,
+                MftMode::Auto => {
+                    super::mft::is_volume_root(watch_path) || mft_cache.has_drive_of(watch_path)
+                }
+            };
+            let from_mft = try_mft
                 && crawl_from_mft(
                     watch_path,
                     &mut mft_cache,

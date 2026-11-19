@@ -335,11 +335,45 @@ pub struct IndexerConfig {
     #[serde(default = "default_event_batch_size")]
     pub event_batch_size: usize,
 
-    /// Windows: build the first index from the NTFS file table rather than
-    /// by walking directories. Needs administrator rights; any failure falls
-    /// back to the walk. Off by default until proven on real volumes.
+    /// Windows: build a full crawl from the NTFS file table rather than by
+    /// walking directories. Needs administrator rights; any failure falls
+    /// back to the walk. See [`MftMode`].
     #[serde(default)]
-    pub use_mft: bool,
+    pub use_mft: MftMode,
+}
+
+/// `indexer.use_mft`: `true`, `false` or `"auto"`.
+///
+/// Reading the table costs about the same however much of the volume a root
+/// covers (10 s for `C:` on a CI runner), while the walk costs per entry:
+/// over all of `C:` the table took 33 s against 650 s, over System32 9.9 s
+/// against 2.2 s. So `auto` reads it for a root that is a whole volume, and
+/// for any root on a drive whose table this crawl has already read.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub enum MftMode {
+    #[default]
+    Auto,
+    On,
+    Off,
+}
+
+impl<'de> Deserialize<'de> for MftMode {
+    fn deserialize<D: serde::Deserializer<'de>>(d: D) -> std::result::Result<Self, D::Error> {
+        #[derive(Deserialize)]
+        #[serde(untagged)]
+        enum Raw {
+            Flag(bool),
+            Word(String),
+        }
+        match Raw::deserialize(d)? {
+            Raw::Flag(true) => Ok(MftMode::On),
+            Raw::Flag(false) => Ok(MftMode::Off),
+            Raw::Word(w) if w.eq_ignore_ascii_case("auto") => Ok(MftMode::Auto),
+            Raw::Word(w) => Err(serde::de::Error::custom(format!(
+                "indexer.use_mft must be true, false or \"auto\", not {w:?}"
+            ))),
+        }
+    }
 }
 
 fn default_threads() -> usize {
@@ -363,7 +397,7 @@ impl Default for IndexerConfig {
             content_threads: default_threads(),
             commit_interval_secs: default_commit_interval(),
             event_batch_size: default_event_batch_size(),
-            use_mft: false,
+            use_mft: MftMode::Auto,
         }
     }
 }
@@ -706,6 +740,24 @@ log_dir     = "{dir}/logs"
         assert_eq!(cfg.api.rest_port, 7700);
         assert_eq!(cfg.api.grpc_port, 7701);
         assert!((cfg.search.fuzzy_threshold - 0.7).abs() < f32::EPSILON);
+    }
+
+    #[test]
+    fn use_mft_takes_a_flag_or_auto() {
+        let dir = tempfile::tempdir().unwrap();
+        let base = minimal_config_toml(dir.path());
+        let parse = |extra: &str| load(write_config(&format!("{base}{extra}")).path());
+        assert_eq!(parse("").unwrap().indexer.use_mft, MftMode::Auto);
+        for (value, mode) in [
+            ("true", MftMode::On),
+            ("false", MftMode::Off),
+            ("\"auto\"", MftMode::Auto),
+            ("\"AUTO\"", MftMode::Auto),
+        ] {
+            let cfg = parse(&format!("[indexer]\nuse_mft = {value}\n")).unwrap();
+            assert_eq!(cfg.indexer.use_mft, mode, "{value}");
+        }
+        assert!(parse("[indexer]\nuse_mft = \"sometimes\"\n").is_err());
     }
 
     #[test]
