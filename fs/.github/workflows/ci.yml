@@ -46,19 +46,25 @@ jobs:
       - uses: Swatinem/rust-cache@v2
       - name: Build fsd
         run: cargo build --release -p fs-server
-      - name: Crawl from the file table
-        shell: pwsh
-        run: >
-          .\scripts\bench-windows.ps1 -TargetDir C:\Windows\System32 -UseMft
-          -OutDir target\bench-mft -LoadSeconds 5 -IdleSeconds 3 -Iterations 3
+      # The walk first: it is the known path, so a failure there is not the
+      # file table's. -CrawlTimeout makes the script fail on its own and keep
+      # the daemon logs for the artifact; timeout-minutes is the backstop.
       - name: Crawl by walking directories
-        if: always()
+        timeout-minutes: 20
         shell: pwsh
         run: >
-          .\scripts\bench-windows.ps1 -TargetDir C:\Windows\System32
+          .\scripts\bench-windows.ps1 -TargetDir C:\Windows\System32 -CrawlTimeout 600
           -OutDir target\bench-walk -LoadSeconds 5 -IdleSeconds 3 -Iterations 3
+      - name: Crawl from the file table
+        if: always()
+        timeout-minutes: 20
+        shell: pwsh
+        run: >
+          .\scripts\bench-windows.ps1 -TargetDir C:\Windows\System32 -UseMft -CrawlTimeout 600
+          -OutDir target\bench-mft -LoadSeconds 5 -IdleSeconds 3 -Iterations 3
       - name: Run as a Windows Service
         if: always()
+        timeout-minutes: 10
         shell: pwsh
         run: |
           $ErrorActionPreference = "Stop"
@@ -105,7 +111,7 @@ jobs:
         if: always()
         shell: pwsh
         run: |
-          foreach ($run in "bench-mft", "bench-walk") {
+          foreach ($run in "bench-walk", "bench-mft") {
             $f = "target\$run\summary.txt"
             if (Test-Path $f) {
               "### $run" | Add-Content $env:GITHUB_STEP_SUMMARY
@@ -113,11 +119,15 @@ jobs:
               Get-Content $f | Add-Content $env:GITHUB_STEP_SUMMARY
               '```' | Add-Content $env:GITHUB_STEP_SUMMARY
             }
+            Get-ChildItem "target\$run\daemon.*.log" -ErrorAction SilentlyContinue | ForEach-Object {
+              Write-Host "==== $($_.FullName)"
+              Get-Content $_.FullName -Tail 40
+            }
           }
       - uses: actions/upload-artifact@v4
         if: always()
         with:
           name: windows-crawl
           path: |
-            target/bench-mft
             target/bench-walk
+            target/bench-mft
