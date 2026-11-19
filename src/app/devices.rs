@@ -93,7 +93,8 @@ impl Ctx {
     pub(super) fn connect(self, f: UsbDevice, show: bool) {
         self.busy.set(true);
         self.connecting.set(Some(f.usb.clone()));
-        self.conn_error.set(None);
+        // The last error stays until this one's done: an automatic connect (a phone that came back
+        // at another USB address) mustn't wipe it before it's been read.
         spawn_local(async move {
             match call::<Info>("connect", json!({ "transport": f.transport, "which": f.which, "serial": f.serial })).await {
                 Ok(info) => {
@@ -170,19 +171,20 @@ impl Ctx {
 #[component]
 pub(super) fn DeviceFinder() -> impl IntoView {
     let ctx = expect_context::<Ctx>();
+    let auto = AutoDismiss::new(move || ctx.conn_error.with(Option::is_some), move || ctx.conn_error.set(None));
     move || {
         // With Try again, when the device that failed is still there.
         let error = move || {
             ctx.conn_error.get().map(|e| {
                 let again = ctx.failed.get_value().filter(|f| ctx.devices.with(|d| d.as_ref().is_some_and(|d| d.found.contains(f))));
                 view! {
-                    <div class="conn-error">
+                    <div class="conn-error" on:mouseover=move |_| auto.hover() on:mouseleave=move |_| auto.leave()>
                         <p class="error">{e}</p>
                         {again.map(|f| view! {
                             <button class="btn small" disabled=move || ctx.busy.get()
                                 on:click=move |_| ctx.connect(f.clone(), true)>{ico(Icon::Refresh)}"Try again"</button>
                         })}
-                        <button class="btn small" on:click=move |_| ctx.conn_error.set(None)>"Dismiss"</button>
+                        <button class="btn small icon-only" title="Dismiss" aria-label="Dismiss" on:click=move |_| ctx.conn_error.set(None)>{ico(Icon::Close)}</button>
                     </div>
                 }
             })

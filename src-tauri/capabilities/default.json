@@ -6,6 +6,7 @@
   "permissions": [
     "core:default",
     "allow-devices",
+    "allow-pop-out",
     "allow-connect",
     "allow-disconnect",
     "allow-adb-pair",

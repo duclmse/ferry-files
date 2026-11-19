@@ -485,6 +485,28 @@ pub(super) async fn zip_list(state: State<'_, AppState>, src: Option<String>, pa
     blocking(move || crate::archive::list(size, &mut |at, len| dev.read_range(&path, at, len).map_err(msg))).await
 }
 
+/// The files on the system clipboard (copied in Finder or File Explorer), as app paths.
+#[tauri::command(rename_all = "snake_case")]
+pub(super) fn clip_files() -> Vec<String> {
+    arboard::Clipboard::new()
+        .and_then(|mut c| c.get().file_list())
+        .map(|v| v.iter().map(|p| crate::platform::app_path(p)).collect())
+        .unwrap_or_default()
+}
+
+/// Puts files on the system clipboard, for Finder to paste: `paths` (app paths on the
+/// computer), or when there are none (they're on a phone), `text` (their names).
+#[tauri::command(rename_all = "snake_case")]
+pub(super) fn clip_set(paths: Vec<String>, text: String) -> Result<(), String> {
+    let mut c = arboard::Clipboard::new().map_err(|e| format!("Couldn't use the clipboard: {e}"))?;
+    let r = if paths.is_empty() {
+        c.set_text(text)
+    } else {
+        c.set().file_list(&paths.iter().map(|p| crate::platform::native(p)).collect::<Vec<_>>())
+    };
+    r.map_err(|e| format!("Couldn't copy: {e}"))
+}
+
 /// Puts text on the clipboard.
 #[tauri::command(rename_all = "snake_case")]
 pub(super) fn copy_text(app: AppHandle, text: String) -> Result<(), String> {

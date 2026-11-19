@@ -94,53 +94,105 @@ impl Ctx {
         }
     }
 
-    /// Keeps the picked items for Paste.
-    pub(super) fn copy_items(self, p: Pane) {
+    /// Keeps the picked items for Paste, which copies them (moves them, when `moving`). Items on
+    /// the computer go on the system clipboard too, for Finder.
+    pub(super) fn copy_items(self, p: Pane, moving: bool) {
         let items: Vec<String> = p.picked().into_iter().map(|e| e.path).collect();
         if items.is_empty() {
             return;
+        }
+        if moving && !self.renamable(p) {
+            return p.error("These can't be moved from here.");
         }
         let what = match items.as_slice() {
             [one] => format!("“{}”", base(one)),
             _ => format!("{} items", items.len()),
         };
-        self.clip.set(Some((self.side(p.src.get_untracked()), items)));
+        let src = p.src.get_untracked();
+        // Finder gets the files; for a phone's, the clipboard gets their names instead, so what
+        // Finder copied before isn't pasted in their place.
+        let mac: Vec<String> = if src == Src::Mac { items.clone() } else { vec![] };
+        let names = items.iter().map(|x| base(x)).collect::<Vec<_>>().join("\n");
+        self.wrote.set_value(mac.clone());
+        self.finder.set(vec![]);
+        spawn_local(async move {
+            let _ = call::<()>("clip_set", json!({ "paths": mac, "text": names })).await;
+        });
+        self.clip.set(Some(Clip { side: self.side(src), items, moving }));
         let key = match self.key_label("paste") {
             k if k.is_empty() => String::new(),
             k => format!(" ({k})"),
         };
-        p.notice.set(Notice::Ok(format!("Copied {what}: paste it into another folder{key}.")));
+        let verb = if moving { "Cut" } else { "Copied" };
+        let how = if moving { "move it" } else { "paste it" };
+        p.notice.set(Notice::Ok(format!("{verb} {what}: paste to {how} into another folder{key}.")));
     }
 
-    /// Paste, with what it pastes: "Paste “name”" or "Paste 3 items".
+    /// Looks at the system clipboard for files copied in Finder since the app's last Copy, which
+    /// Paste then pastes instead.
+    pub(super) fn check_clipboard(self) {
+        spawn_local(async move {
+            let files = call::<Vec<String>>("clip_files", json!({})).await.unwrap_or_default();
+            let theirs = if files == self.wrote.get_value() { vec![] } else { files };
+            if self.finder.get_untracked() != theirs {
+                self.finder.set(theirs);
+            }
+        });
+    }
+
+    /// Whether Paste has something to paste.
+    pub(super) fn can_paste(self) -> bool {
+        !self.finder.with_untracked(Vec::is_empty) || self.clip.with_untracked(Option::is_some)
+    }
+
+    /// Paste, with what it pastes: "Paste “name”", "Paste 3 items", or "Move …" after Cut.
     pub(super) fn paste_label(self) -> String {
-        self.clip.with_untracked(|c| match c.as_ref().map(|(_, items)| items.as_slice()) {
-            Some([one]) => format!("Paste “{}”", base(one)),
-            Some(items) if !items.is_empty() => format!("Paste {} items", items.len()),
-            _ => "Paste".into(),
-        })
+        let finder = self.finder.get_untracked();
+        let (items, moving) = match self.clip.get_untracked() {
+            _ if !finder.is_empty() => (finder, false),
+            Some(c) => (c.items, c.moving),
+            None => (vec![], false),
+        };
+        let verb = if moving { "Move" } else { "Paste" };
+        match items.as_slice() {
+            [one] => format!("{verb} “{}”", base(one)),
+            [] => verb.into(),
+            _ => format!("{verb} {} items", items.len()),
+        }
     }
 
-    /// Copies what Copy kept into `dir` (None: the pane's folder).
+    /// Copies (or, after Cut, moves) what was copied into `dir` (None: the pane's folder): files
+    /// copied in Finder since the app's last Copy, else what Copy kept.
     pub(super) fn paste(self, p: Pane, dir: Option<String>) {
-        let Some((side, items)) = self.clip.get_untracked() else {
-            p.error("Nothing to paste: pick files or folders and Copy them first.");
-            return;
-        };
-        let from = match self.src_of(&side) {
-            Ok(s) => s,
-            Err(e) => return p.error(e),
-        };
-        let (to_src, to_dir) = (p.src.get_untracked(), dir.unwrap_or_else(|| p.cwd.get_untracked()));
-        if from == to_src {
-            if items.iter().any(|x| *x == to_dir || to_dir.starts_with(&format!("{}/", x.trim_end_matches('/')))) {
-                return p.error("A folder can't be pasted into itself.");
+        spawn_local(async move {
+            let files = call::<Vec<String>>("clip_files", json!({})).await.unwrap_or_default();
+            let finder = if files == self.wrote.get_value() { vec![] } else { files };
+            self.finder.set(finder.clone());
+            let clip = match self.clip.get_untracked() {
+                _ if !finder.is_empty() => Clip { side: Side::Mac, items: finder, moving: false },
+                Some(c) => c,
+                None => return p.error("Nothing to paste: pick files or folders and Copy them first."),
+            };
+            let from = match self.src_of(&clip.side) {
+                Ok(s) => s,
+                Err(e) => return p.error(e),
+            };
+            let (to_src, to_dir) = (p.src.get_untracked(), dir.unwrap_or_else(|| p.cwd.get_untracked()));
+            let items = clip.items;
+            if from == to_src {
+                if items.iter().any(|x| *x == to_dir || to_dir.starts_with(&format!("{}/", x.trim_end_matches('/')))) {
+                    return p.error("A folder can't be pasted into itself.");
+                }
+                if items.iter().all(|x| parent(x) == to_dir) {
+                    return p.error("That's already in this folder. Open another folder to paste it into.");
+                }
             }
-            if items.iter().all(|x| parent(x) == to_dir) {
-                return p.error("That's already in this folder. Open another folder to paste it into.");
+            // What was cut is moved once; after that it isn't where it was.
+            if clip.moving {
+                self.clip.set(None);
             }
-        }
-        self.transfer(p, from, items, to_src, to_dir, false);
+            self.transfer(p, from, items, to_src, to_dir, clip.moving);
+        });
     }
 
     pub(super) fn menu_items(self, p: Pane, entry: Option<&Entry>) -> Vec<MenuItem> {
@@ -149,7 +201,7 @@ impl Ctx {
         let Some(e) = entry else {
             let here = self.in_storage(p);
             let mut v = vec![
-                MenuItem::Do { label: self.paste_label(), key: "paste", act: Act::Paste, danger: false, enabled: here && self.clip.with_untracked(Option::is_some) },
+                MenuItem::Do { label: self.paste_label(), key: "paste", act: Act::Paste, danger: false, enabled: here && self.can_paste() },
                 MenuItem::Sep,
                 MenuItem::Do { label: "New folder…".into(), key: "", act: Act::NewFolder, danger: false, enabled: here },
                 MenuItem::Do { label: "New text file…".into(), key: "", act: Act::NewFile, danger: false, enabled: here },
@@ -223,7 +275,11 @@ impl Ctx {
         };
         let picked = p.picked().len();
         if picked > 1 {
-            let mut v = vec![item(format!("Copy {picked} items"), "copy_items", Act::CopyItems), MenuItem::Sep];
+            let mut v = vec![
+                MenuItem::Do { label: format!("Cut {picked} items"), key: "cut_items", act: Act::CutItems, danger: false, enabled: self.renamable(p) },
+                item(format!("Copy {picked} items"), "copy_items", Act::CopyItems),
+                MenuItem::Sep,
+            ];
             if split {
                 let enabled = self.in_storage(self.other(p));
                 v.push(MenuItem::Do { label: self.to_label(p, "Copy", picked), key: "copy", act: Act::Copy, danger: false, enabled });
@@ -263,8 +319,9 @@ impl Ctx {
         if device && !e.dir {
             v.push(item(format!("Download to {}…", crate::os::computer()), "", Act::Download));
         }
+        v.push(MenuItem::Do { label: "Cut".into(), key: "cut_items", act: Act::CutItems, danger: false, enabled: self.renamable(p) });
         v.push(item("Copy", "copy_items", Act::CopyItems));
-        if e.dir && self.clip.with_untracked(Option::is_some) {
+        if e.dir && self.can_paste() {
             v.push(item(format!("{} into “{}”", self.paste_label(), e.name), "", Act::Paste));
         }
         if split {
@@ -329,7 +386,8 @@ impl Ctx {
             (Act::Split, _) => self.set_split(!self.split.get_untracked()),
             (Act::Sidebar, _) => self.set_side(!self.side.get_untracked()),
             (Act::Undo, _) => self.undo_last(),
-            (Act::CopyItems, Some(_)) => self.copy_items(p),
+            (Act::CopyItems, Some(_)) => self.copy_items(p, false),
+            (Act::CutItems, Some(_)) => self.copy_items(p, true),
             (Act::Paste, Some(e)) if e.dir => self.paste(p, Some(e.path)),
             (Act::Paste, None) => self.paste(p, None),
             (Act::CopyName, Some(e)) => copy_text(p, e.name),

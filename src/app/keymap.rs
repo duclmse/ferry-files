@@ -26,6 +26,10 @@ pub(super) const COMMANDS: &[Command] = &[
     c("open", "Open", &["Enter", "cmd+ArrowDown"], false),
     c("up", "Up a folder", &["cmd+ArrowUp", "Backspace"], false),
     c("quick_look", "Quick Look", &["Space"], false),
+    c("media_play", "Play or pause the video or sound in the preview", &["KeyK"], false),
+    c("media_back", "Back 5 seconds in the preview's video or sound", &["KeyJ"], false),
+    c("media_forward", "Forward 10 seconds in the preview's video or sound (hold for 2×)", &["KeyL"], false),
+    c("media_mute", "Sound on or off for the preview's video or sound", &["KeyM"], false),
     c("palette", "Commands: every action, favourites, devices, recent folders", &["cmd+KeyK"], true),
     c("filter", "Filter; Enter searches subfolders", &["cmd+KeyF", "Slash"], false),
     c("type_path", "Type a path", &["cmd+KeyL"], false),
@@ -35,8 +39,9 @@ pub(super) const COMMANDS: &[Command] = &[
     c("delete", "Delete", &["cmd+Backspace", "Delete"], false),
     c("copy", "Copy to the other pane", &["F5"], false),
     c("move", "Move to the other pane", &["F6"], false),
-    c("copy_items", "Copy, to paste in another folder", &["cmd+KeyC"], false),
-    c("paste", "Paste what was copied into this folder", &["cmd+KeyV"], false),
+    c("copy_items", "Copy, to paste in another folder (or in Finder)", &["cmd+KeyC"], false),
+    c("cut_items", "Cut, to move to another folder with Paste", &["cmd+KeyX"], false),
+    c("paste", "Paste what was copied (here or in Finder) into this folder", &["cmd+KeyV"], false),
     c("pick_all", "Pick everything", &["cmd+KeyA"], false),
     c("undo", "Undo the last rename, new item, delete, copy or move", &["cmd+KeyZ"], false),
     c("other_pane", "The other pane", &["Tab"], false),
@@ -299,20 +304,20 @@ pub(super) fn ShortcutsEditor() -> impl IntoView {
                                     <span class="chip">
                                         <kbd>{shown.clone()}</kbd>
                                         <button class="unbind" title=format!("Remove {shown}") aria-label=format!("Remove {shown}")
-                                            on:click=move |_| ctx.unbind(id, &ch)>"×"</button>
+                                            on:click=move |_| ctx.unbind(id, &ch)>{ico(Icon::Close)}</button>
                                     </span>
                                 }
                             }).collect_view()}
                             <button class="bind" class:waiting=waiting
-                                title=move || if waiting() { "Press the keys, or Esc to stop" } else { "Add a key" }
+                                title=move || if waiting() { "Press the keys, or Esc to stop" } else { "Add a key" } aria-label="Add a key"
                                 on:click=move |_| ctx.capturing.set(if waiting() { None } else { Some(id) })>
-                                {move || if waiting() { "Press keys…" } else { "+" }}
+                                {move || if waiting() { "Press keys…".into_any() } else { ico(Icon::Plus).into_any() }}
                             </button>
                         </dt>
                         <dd>
                             {what(c.what)}
                             {move || mine().then(|| view! {
-                                <button class="reset" title="Back to the default keys" on:click=move |_| ctx.reset_keys(Some(id))>"Reset"</button>
+                                <button class="reset" title="Reset: back to the default keys" aria-label="Reset" on:click=move |_| ctx.reset_keys(Some(id))>{ico(Icon::Restore)}</button>
                             })}
                         </dd>
                     }

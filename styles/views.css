@@ -756,3 +756,174 @@ td.name input.rename {
   color: var(--muted);
   font-size: 11px;
 }
+
+/* A video with its own controls under it (video.rs), in the preview and popped out. */
+.vplayer {
+  flex: 1 1 0;
+  min-height: 0;
+  width: 100%;
+  display: flex;
+  flex-direction: column;
+  border-radius: 6px;
+  overflow: hidden;
+  background: #000;
+  outline: none;
+}
+
+.vplayer:focus-visible {
+  box-shadow: 0 0 0 2px var(--accent);
+}
+
+/* The video and its controls; turned as one when the controls turn with the video (centred,
+   with its width and height swapped on its side). */
+.vplayer {
+  position: relative;
+}
+
+.vplayer .vbox {
+  flex: 1 1 0;
+  min-height: 0;
+  width: 100%;
+  display: flex;
+  flex-direction: column;
+  transition: transform 0.12s ease-out;
+}
+
+.vplayer .vbox.turned {
+  position: absolute;
+  top: 50%;
+  left: 50%;
+  height: 100%;
+}
+
+/* The video and the room it has: turned on its side, it's scaled to fill that room. The
+   controls aren't in it, so they stay level. */
+.vplayer .vstage {
+  position: relative;
+  flex: 1 1 0;
+  min-height: 0;
+  width: 100%;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  overflow: hidden;
+}
+
+.vplayer .vstage video.play {
+  width: 100%;
+  height: auto;
+  max-height: 100%;
+  border-radius: 0;
+  object-fit: contain;
+  background: #000;
+  cursor: pointer;
+  transition: transform 0.12s ease-out;
+}
+
+/* "2×" while the video is held, "+10s" after a skip. */
+.vplayer .badge {
+  position: absolute;
+  top: 12px;
+  left: 50%;
+  transform: translateX(-50%);
+  padding: 3px 10px;
+  border-radius: 12px;
+  background: rgba(0, 0, 0, 0.65);
+  color: #fff;
+  font-size: 12px;
+  font-weight: 600;
+  white-space: nowrap;
+  pointer-events: none;
+}
+
+.vplayer .vcontrols {
+  flex: none;
+  padding: 2px 8px 6px;
+  background: #111;
+  color: #eee;
+}
+
+.vplayer .seek {
+  position: relative;
+  display: flex;
+}
+
+.vplayer .seek input[type="range"] {
+  flex: 1;
+  margin: 4px 0;
+  accent-color: var(--accent);
+  cursor: pointer;
+}
+
+.vplayer .vbuttons {
+  display: flex;
+  align-items: center;
+  gap: 2px;
+}
+
+.vplayer .vbuttons .grow {
+  flex: 1;
+}
+
+.vplayer .vbuttons .btn {
+  background: transparent;
+  border-color: transparent;
+  color: #eee;
+}
+
+.vplayer .vbuttons .btn:hover {
+  background: rgba(255, 255, 255, 0.14);
+}
+
+.vplayer .vtime {
+  margin-left: 6px;
+  font-size: 11px;
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+}
+
+/* The moment under the mouse on the seek bar. */
+.vplayer .peek-tip {
+  position: absolute;
+  bottom: calc(100% + 4px);
+  transform: translateX(-50%);
+  pointer-events: none;
+  z-index: 2;
+}
+
+.vplayer .peek-frame {
+  position: relative;
+  overflow: hidden;
+  border: 1px solid rgba(255, 255, 255, 0.5);
+  border-radius: 4px;
+  background: #000;
+}
+
+.vplayer .peek-frame video {
+  position: absolute;
+  top: 50%;
+  left: 50%;
+  object-fit: contain;
+}
+
+.vplayer .peek-time {
+  display: block;
+  margin-top: 2px;
+  text-align: center;
+  font-size: 11px;
+  font-variant-numeric: tabular-nums;
+  color: #fff;
+  text-shadow: 0 0 3px #000;
+}
+
+/* A video popped out into a window of its own. */
+.popout {
+  position: fixed;
+  inset: 0;
+  display: flex;
+  background: #000;
+}
+
+.popout .vplayer {
+  border-radius: 0;
+}

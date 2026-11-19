@@ -139,7 +139,7 @@ pub(super) fn WifiDialog() -> impl IntoView {
                 <div class="wifi-found">
                     <div class="wifi-head">
                         <b>"On this network"</b>
-                        <button class="btn small" disabled=move || found.with(Option::is_none) on:click=move |_| look()>{ico(Icon::Refresh)}"Look again"</button>
+                        <button class="btn small icon-only" title="Look again" aria-label="Look again" disabled=move || found.with(Option::is_none) on:click=move |_| look()>{ico(Icon::Refresh)}</button>
                     </div>
                     {move || match found.get() {
                         None => view! { <p class="hint"><span class="spin"></span>" Looking…"</p> }.into_any(),

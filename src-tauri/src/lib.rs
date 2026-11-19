@@ -24,6 +24,7 @@ mod import;
 mod editor;
 mod files;
 mod library;
+mod player;
 mod safety;
 mod settings;
 mod transfer;
@@ -174,6 +175,7 @@ pub fn run() {
             std::thread::spawn(move || responder.respond(protocol::handle(&app, request)));
         })
         .invoke_handler(tauri::generate_handler![
+            player::pop_out,
             connect::devices,
             connect::connect,
             connect::disconnect,
@@ -191,6 +193,8 @@ pub fn run() {
             files::peek_bytes,
             files::zip_list,
             files::copy_text,
+            files::clip_files,
+            files::clip_set,
             files::write_text,
             files::mkdir,
             files::remove,

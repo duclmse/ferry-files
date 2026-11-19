@@ -325,3 +325,81 @@ pub(super) fn kind_label(e: &Entry) -> String {
 pub(super) fn text_selected() -> bool {
     window().get_selection().ok().flatten().is_some_and(|s| !s.is_collapsed())
 }
+
+/// How long an error stays up while the pointer isn't over it.
+const DISMISS_AFTER: std::time::Duration = std::time::Duration::from_secs(15);
+
+/// Closes a notice `DISMISS_AFTER` after it's shown, or after the pointer leaves it: never while
+/// the pointer is over it. Each new notice starts the time again. Made once per place notices show.
+#[derive(Clone, Copy)]
+pub(super) struct AutoDismiss {
+    shown: Signal<bool>,
+    close: Callback<()>,
+    timer: StoredValue<Option<TimeoutHandle>, LocalStorage>,
+    hovered: StoredValue<bool>,
+}
+
+impl AutoDismiss {
+    /// `shown` reads the notice (so every new one is seen); `close` takes it down.
+    pub(super) fn new(shown: impl Fn() -> bool + Send + Sync + 'static, close: impl Fn() + Send + Sync + 'static) -> Self {
+        let d = AutoDismiss {
+            shown: Signal::derive(shown),
+            close: Callback::new(move |()| close()),
+            timer: StoredValue::new_local(None),
+            hovered: StoredValue::new(false),
+        };
+        Effect::new(move |_| {
+            // A new notice is a new element: the pointer isn't over it until it moves there (one
+            // dismissed under the pointer never got its mouseleave).
+            d.hovered.set_value(false);
+            if d.shown.get() {
+                d.start();
+            } else {
+                d.stop();
+            }
+        });
+        on_cleanup(move || d.stop());
+        d
+    }
+
+    fn start(self) {
+        self.stop();
+        if self.hovered.get_value() {
+            return;
+        }
+        if let Ok(h) = set_timeout_with_handle(
+            move || {
+                let _ = self.timer.try_set_value(None);
+                if !self.hovered.try_get_value().unwrap_or(true) {
+                    self.close.run(());
+                }
+            },
+            DISMISS_AFTER,
+        ) {
+            self.timer.set_value(Some(h));
+        }
+    }
+
+    fn stop(self) {
+        if let Some(h) = self.timer.try_update_value(Option::take).flatten() {
+            h.clear();
+        }
+    }
+
+    /// For the notice's `mouseover` (not only `mouseenter`: one that appears under a still pointer
+    /// gets it on the first move).
+    pub(super) fn hover(self) {
+        if !self.hovered.get_value() {
+            self.hovered.set_value(true);
+            self.stop();
+        }
+    }
+
+    /// For the notice's `mouseleave`.
+    pub(super) fn leave(self) {
+        self.hovered.set_value(false);
+        if self.shown.get_untracked() {
+            self.start();
+        }
+    }
+}

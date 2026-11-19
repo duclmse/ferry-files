@@ -196,8 +196,8 @@ pub(super) fn History() -> impl IntoView {
                         }
                         h.into_iter().enumerate().rev().map(|(i, op)| {
                             let undo = (op.undo.is_some() && !op.undone).then(|| view! {
-                                <button class="btn small" title="Do the opposite, if nothing has changed since"
-                                    on:click=move |_| ctx.undo(i, ctx.act())>{ico(Icon::Restore)}"Undo"</button>
+                                <button class="btn small icon-only" title="Undo: do the opposite, if nothing has changed since" aria-label="Undo"
+                                    on:click=move |_| ctx.undo(i, ctx.act())>{ico(Icon::Restore)}</button>
                             });
                             view! {
                                 <div class="event" class:undone=op.undone>

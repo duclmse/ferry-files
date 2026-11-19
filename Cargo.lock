@@ -1305,6 +1305,7 @@ dependencies = [
 name = "ferry-files"
 version = "0.1.0"
 dependencies = [
+ "arboard",
  "chrono",
  "dirs 6.0.0",
  "image",

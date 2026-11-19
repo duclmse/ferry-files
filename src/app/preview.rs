@@ -1,5 +1,6 @@
-//! The preview to the right of the files: pictures (zoom, turn, pan), video and audio (skip,
-//! speed), text and hex (loaded as they're scrolled), PDFs, fonts, what's in a ZIP, and details.
+//! The preview to the right of the files: pictures (zoom, turn, pan), video and audio
+//! (video.rs), text and hex (loaded as they're scrolled), PDFs, fonts,
+//! what's in a ZIP, and details.
 
 use super::*;
 use crate::api::{Bytes, Listing, MediaInfo, Peek};
@@ -42,6 +43,8 @@ pub(super) fn has_ext(e: &Entry, exts: &[&str]) -> bool {
 #[component]
 pub(super) fn Preview(pane: Pane) -> impl IntoView {
     let p = pane;
+    // Kept as the preview moves from one picture to the next, and from one video to the next.
+    let (pic_turn, video_turn) = (Turn::new(), Turn::new());
     // Only a different item (or a different "show as") rebuilds it, so a reload doesn't restart
     // a playing video.
     let shown = Memo::new(move |_| {
@@ -88,11 +91,11 @@ pub(super) fn Preview(pane: Pane) -> impl IntoView {
                     let body = match (forced, media(&e)) {
                         (Some(PeekAs::Text), _) => view! { <TextPeek src entry=e.clone()/> }.into_any(),
                         (Some(PeekAs::Hex), _) => view! { <HexPeek src entry=e.clone()/> }.into_any(),
-                        (None, Some(Media::Image)) => view! { <FullImage pane=p src entry=e.clone() info/> }.into_any(),
-                        (None, Some(Media::Video)) => view! { <Player pane=p entry=e.clone() url=stream_url(src, &e) video=true info/> }.into_any(),
+                        (None, Some(Media::Image)) => view! { <FullImage pane=p src entry=e.clone() info turn=pic_turn/> }.into_any(),
+                        (None, Some(Media::Video)) => view! { <Player pane=p entry=e.clone() url=stream_url(src, &e) video=true info turn=video_turn/> }.into_any(),
                         (None, Some(Media::Audio)) => view! {
                             {thumb(&e)}
-                            <Player pane=p entry=e.clone() url=stream_url(src, &e) video=false info/>
+                            <Player pane=p entry=e.clone() url=stream_url(src, &e) video=false info turn=video_turn/>
                         }.into_any(),
                         _ if has_ext(&e, PDF_EXTS) && e.size <= WHOLE_MAX => view! {
                             <iframe class="pdf" src=stream_url(src, &e) title="PDF"></iframe>
@@ -181,7 +184,7 @@ fn neighbours(p: Pane, e: &Entry) -> impl IntoView {
 
 /// Extra scale for a quarter turn, so a `w` × `h` picture turned on its side fits where it was.
 fn turn_fit(turn: i32, w: u32, h: u32) -> f64 {
-    if turn % 2 == 0 || w == 0 || h == 0 {
+    if turn.rem_euclid(2) == 0 || w == 0 || h == 0 {
         1.0
     } else {
         w.min(h) as f64 / w.max(h) as f64
@@ -229,12 +232,11 @@ fn BigCover(src: Src, entry: Entry) -> impl IntoView {
 /// A big photo comes shrunk to about what the preview shows (`fit_url`), and the file itself
 /// replaces it when it's zoomed in. Sizes and zoom levels are always of the photo's own pixels.
 #[component]
-fn FullImage(pane: Pane, src: Src, entry: Entry, info: RwSignal<MediaInfo>, #[prop(optional)] url: Option<String>) -> impl IntoView {
+fn FullImage(pane: Pane, src: Src, entry: Entry, info: RwSignal<MediaInfo>, turn: Turn, #[prop(optional)] url: Option<String>) -> impl IntoView {
     let alone = url.is_some();
     let loaded = RwSignal::new(false);
     let natural = RwSignal::new((0u32, 0u32));
     let zoom = RwSignal::new(1.0f64);
-    let turn = RwSignal::new(0i32);
     let pan = RwSignal::new((0.0f64, 0.0f64));
     let shrunk_url = if alone { None } else { fit_url(src, &entry) };
     let url = url.unwrap_or_else(|| stream_url(src, &entry));
@@ -330,7 +332,7 @@ fn FullImage(pane: Pane, src: Src, entry: Entry, info: RwSignal<MediaInfo>, #[pr
         let (x, y) = pan.get();
         let (w, h) = natural.get();
         let s = zoom.get() * turn_fit(turn.get(), w, h);
-        format!("transform: translate({x}px, {y}px) scale({s}) rotate({}deg)", turn.get() * 90)
+        format!("transform: translate({x}px, {y}px) scale({s}) rotate({}deg){}", turn.get() * 90, turn.css())
     };
     // Dragging a zoomed picture around.
     let listeners = StoredValue::new_local(None::<(WindowListenerHandle, WindowListenerHandle)>);
@@ -374,7 +376,7 @@ fn FullImage(pane: Pane, src: Src, entry: Entry, info: RwSignal<MediaInfo>, #[pr
             on:dblclick=move |ev| { ev.stop_propagation(); fit_or_actual(); }>
             {let e = entry.clone(); move || (!loaded.get() && !alone).then(|| view! { <Thumbnail src entry=e.clone()/> })}
             <img class="full" node_ref=img_ref src=move || shown.get() alt="" draggable="false" class:pending=move || !loaded.get()
-                style=style on:load=load/>
+                style=style on:load=load on:transitionend=move |_| turn.settle()/>
         </div>
         <div class="viewer-bar">
             {(!alone).then(|| view! { {neighbours(pane, &entry)} <span class="gap"></span> })}
@@ -385,101 +387,33 @@ fn FullImage(pane: Pane, src: Src, entry: Entry, info: RwSignal<MediaInfo>, #[pr
             </button>
             <button class="btn" title="Zoom in (or pinch)" aria-label="Zoom in" on:click=move |_| set_zoom(zoom.get_untracked() * 1.25)>{ico(Icon::ZoomIn)}</button>
             <span class="gap"></span>
-            <button class="btn" title="Turn left" aria-label="Turn left" on:click=move |_| turn.update(|t| *t = (*t + 3) % 4)>{ico(Icon::TurnLeft)}</button>
-            <button class="btn" title="Turn right" aria-label="Turn right" on:click=move |_| turn.update(|t| *t = (*t + 1) % 4)>{ico(Icon::TurnRight)}</button>
+            <button class="btn" title="Turn left" aria-label="Turn left" on:click=move |_| turn.by(-1)>{ico(Icon::TurnLeft)}</button>
+            <button class="btn" title="Turn right" aria-label="Turn right" on:click=move |_| turn.by(1)>{ico(Icon::TurnRight)}</button>
         </div>
     }
 }
 
-/// A video or audio player streaming from the device, with skips, speeds and (video) turning.
-/// When the preview moves on, it stops and lets go of the file, so the web view drops what it
-/// buffered.
-#[component]
+/// A video or audio player streaming from the device (video.rs), with ‹ › under it. It takes
+/// the pane's media keys, and goes on from where the file was stopped last time.
 /// `alone`: no ‹ › (a file in a ZIP).
-fn Player(pane: Pane, entry: Entry, url: String, video: bool, info: RwSignal<MediaInfo>, #[prop(optional)] alone: bool) -> impl IntoView {
-    let el = StoredValue::new_local(None::<web_sys::HtmlMediaElement>);
-    let keep = move |e: &web_sys::HtmlMediaElement| el.set_value(Some(e.clone()));
-    on_cleanup(move || {
-        if let Some(m) = el.try_update_value(Option::take).flatten() {
-            let _ = m.pause();
-            let _ = m.remove_attribute("src");
-            m.load();
-        }
-    });
-    let turn = RwSignal::new(0i32);
-    let natural = RwSignal::new((0u32, 0u32));
-    // What the header didn't give, from the player once it has read the start of the file.
-    let meta = move |ev: web_sys::Event| {
-        let Some(m) = ev.target().and_then(|t| t.dyn_into::<web_sys::HtmlMediaElement>().ok()) else { return };
-        let d = m.duration();
-        let v = m.dyn_into::<web_sys::HtmlVideoElement>().ok();
-        if let Some(v) = &v {
-            natural.set((v.video_width(), v.video_height()));
-        }
-        let _ = info.try_update(|i| {
-            if i.duration.is_none() && d.is_finite() && d > 0.0 {
-                i.duration = Some(d);
-            }
-            // 0 × 0 for a file with sound only.
-            if let Some(v) = v.filter(|v| v.video_width() > 0) {
-                if i.width.is_none() {
-                    (i.width, i.height) = (Some(v.video_width()), Some(v.video_height()));
-                }
-            }
-        });
-    };
-    let skip = move |by: f64| {
-        el.with_value(|m| {
-            if let Some(m) = m {
-                let to = (m.current_time() + by).max(0.0);
-                let d = m.duration();
-                m.set_current_time(if d.is_finite() { to.min(d) } else { to });
-            }
-        })
-    };
-    let speed = RwSignal::new(1.0f64);
-    let set_speed = move |s: f64| {
-        speed.set(s);
-        el.with_value(|m| {
-            if let Some(m) = m {
-                m.set_playback_rate(s);
-            }
-        });
-    };
-    let video_ref = NodeRef::<html::Video>::new();
-    let audio_ref = NodeRef::<html::Audio>::new();
-    video_ref.on_load(move |v| keep(&v));
-    audio_ref.on_load(move |a| keep(&a));
-    let style = move || {
-        let (w, h) = natural.get();
-        format!("transform: rotate({}deg) scale({})", turn.get() * 90, turn_fit(turn.get(), w, h))
-    };
+#[component]
+fn Player(pane: Pane, entry: Entry, url: String, video: bool, info: RwSignal<MediaInfo>, turn: Turn, #[prop(optional)] alone: bool) -> impl IntoView {
+    let key = resume_key(&entry);
     let player = if video {
-        view! {
-            <video class="play" controls preload="metadata" src=url node_ref=video_ref style=style on:loadedmetadata=meta></video>
-        }
-        .into_any()
+        let pop = Callback::new(|video: Popped| {
+            spawn_local(async move {
+                if let Err(e) = call::<()>("pop_out", json!({ "video": video })).await {
+                    web_sys::console::error_1(&e.into());
+                }
+            });
+        });
+        view! { <VideoPlayer url key title=entry.name.clone() info turn pane=pane.id pop/> }.into_any()
     } else {
-        view! { <audio class="play" controls preload="metadata" src=url node_ref=audio_ref on:loadedmetadata=meta></audio> }.into_any()
+        view! { <SoundPlayer url key info pane=pane.id/> }.into_any()
     };
     view! {
         {player}
-        <div class="viewer-bar">
-            {(!alone).then(|| view! { {neighbours(pane, &entry)} <span class="gap"></span> })}
-            <button class="btn" title="Back 10 seconds" on:click=move |_| skip(-10.0)>"−10s"</button>
-            <button class="btn" title="Forward 10 seconds" on:click=move |_| skip(10.0)>"+10s"</button>
-            <button class="btn" title="Forward 30 seconds" on:click=move |_| skip(30.0)>"+30s"</button>
-            <span class="gap"></span>
-            <span class="seg" title="Speed">
-                {[1.0, 1.25, 1.5, 2.0].map(|s| view! {
-                    <button class:active=move || speed.get() == s on:click=move |_| set_speed(s)>{format!("{s}×")}</button>
-                })}
-            </span>
-            {video.then(|| view! {
-                <span class="gap"></span>
-                <button class="btn" title="Turn" aria-label="Turn" on:click=move |_| turn.update(|t| *t = (*t + 1) % 4)>{ico(Icon::TurnRight)}</button>
-            })}
-        </div>
+        {(!alone).then(|| view! { <div class="viewer-bar">{neighbours(pane, &entry)}</div> })}
     }
 }
 
@@ -661,6 +595,7 @@ fn Zipped(pane: Pane, src: Src, zip: Entry, name: String, size: u64) -> impl Int
         String::from(js_sys::encode_uri_component(&name)),
     ));
     let inner = Inner { name: name.clone(), zip_size: zip.size };
+    let (pic_turn, video_turn) = (Turn::new(), Turn::new());
     let info = RwSignal::new(MediaInfo::default());
     let forced = RwSignal::new(None::<PeekAs>);
     let body = move || {
@@ -671,9 +606,9 @@ fn Zipped(pane: Pane, src: Src, zip: Entry, name: String, size: u64) -> impl Int
         match (forced.get(), media(&e)) {
             (Some(PeekAs::Text), _) => view! { <TextPeek src entry=e inner/> }.into_any(),
             (Some(PeekAs::Hex), _) => view! { <HexPeek src entry=e inner/> }.into_any(),
-            (None, Some(Media::Image)) => view! { <FullImage pane=p src entry=e info url/> }.into_any(),
-            (None, Some(Media::Video)) => view! { <Player pane=p entry=e url video=true info alone=true/> }.into_any(),
-            (None, Some(Media::Audio)) => view! { <Player pane=p entry=e url video=false info alone=true/> }.into_any(),
+            (None, Some(Media::Image)) => view! { <FullImage pane=p src entry=e info turn=pic_turn url/> }.into_any(),
+            (None, Some(Media::Video)) => view! { <Player pane=p entry=e url video=true info turn=video_turn alone=true/> }.into_any(),
+            (None, Some(Media::Audio)) => view! { <Player pane=p entry=e url video=false info turn=video_turn alone=true/> }.into_any(),
             _ if has_ext(&e, PDF_EXTS) => view! { <iframe class="pdf" src=url title="PDF"></iframe> }.into_any(),
             _ if is_text(&e) => view! { <TextPeek src entry=e inner/> }.into_any(),
             _ => view! {

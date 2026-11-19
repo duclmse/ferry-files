@@ -35,6 +35,7 @@ mod sidebar;
 mod transfer;
 mod undo;
 mod util;
+mod video;
 mod views;
 mod wifi;
 mod workspace;
@@ -58,6 +59,8 @@ use safety::*;
 use search::*;
 use sidebar::*;
 use transfer::*;
+use video::*;
+pub use video::{popped_out, PopOut};
 use undo::*;
 use util::*;
 use views::*;
@@ -259,8 +262,10 @@ enum Act {
     Split,
     CopyName,
     CopyPath,
-    /// Keeps the picked items to paste somewhere else (in this app, not the system clipboard).
+    /// Keeps the picked items to paste somewhere else.
     CopyItems,
+    /// Keeps the picked items to move somewhere else with Paste.
+    CutItems,
     /// Copies the items kept by `CopyItems` into the folder (or the pane's folder).
     Paste,
     ShowAs(PeekAs),
@@ -617,6 +622,14 @@ enum Side {
     Phone { serial: Option<String>, id: String, label: String },
 }
 
+/// What Copy or Cut kept: where it is, its paths, and whether Paste moves them.
+#[derive(Clone)]
+struct Clip {
+    side: Side,
+    items: Vec<String>,
+    moving: bool,
+}
+
 /// What a job does.
 #[derive(Clone, PartialEq, serde::Serialize, serde::Deserialize)]
 enum Work {
@@ -740,8 +753,12 @@ struct Ctx {
     panel: RwSignal<Option<Panel>>,
     /// What's being dragged from a pane: its side and paths.
     drag: StoredValue<Option<(Src, Vec<String>)>>,
-    /// What Copy kept, for Paste: where it is and its paths.
-    clip: RwSignal<Option<(Side, Vec<String>)>>,
+    /// What Copy or Cut kept, for Paste.
+    clip: RwSignal<Option<Clip>>,
+    /// The computer's files the last Copy put on the system clipboard.
+    wrote: StoredValue<Vec<String>>,
+    /// Files copied in Finder since then (on the system clipboard), which Paste pastes instead.
+    finder: RwSignal<Vec<String>>,
     /// Where a drag would drop now ("pane:folder"), to highlight it.
     drop_at: RwSignal<Option<String>>,
     /// Widths the user dragged (0: the default): the sidebar, and the left pane when there are two.
@@ -804,6 +821,8 @@ impl Ctx {
             workspaces: RwSignal::new(saved_workspaces()),
             drag: StoredValue::new(None),
             clip: RwSignal::new(None),
+            wrote: StoredValue::new(vec![]),
+            finder: RwSignal::new(vec![]),
             drop_at: RwSignal::new(None),
             side_w: stored_px(SIDE_W_KEY),
             pane_w: stored_px(PANE_W_KEY),
@@ -897,6 +916,7 @@ pub fn App() -> impl IntoView {
     let ctx = Ctx::new();
     apply_theme(&ctx.theme.get_untracked());
     provide_context(ctx);
+    provide_context(VideoPrefs::load());
     let ep = ctx.ep;
     provide_context(ep);
     // Closing a book goes back to the panes, which may have changed (a save writes the file and its backup).
@@ -948,6 +968,13 @@ pub fn App() -> impl IntoView {
     // Keyboard. ⌘S saves in the editors. Elsewhere the shortcuts are the user's (keymap.rs), but
     // for arrows, which move (←/→ also go up/in in the column view and move across in the
     // thumbnail view), and Escape, which unpicks.
+    // Letting go of the forward key: a skip, or the end of 2×.
+    let _keys_up = window_event_listener(ev::keyup, move |e| {
+        let bound = chord_of(&e).and_then(|c| ctx.command_for(&c));
+        if bound.is_some_and(|b| b.id == "media_forward") && media_key(ctx.act().id, MediaKey::ForwardUp) {
+            e.prevent_default();
+        }
+    });
     let _keys = window_event_listener(ev::keydown, move |e| {
         let meta = e.meta_key() || e.ctrl_key();
         if ctx.menu.get_untracked().is_some() {
@@ -1071,8 +1098,8 @@ pub fn App() -> impl IntoView {
                     true
                 }
                 // Not while text is selected (in a preview): ⌘C copies that.
-                "copy_items" if !text_selected() => {
-                    ctx.copy_items(p);
+                "copy_items" | "cut_items" if !text_selected() => {
+                    ctx.copy_items(p, b.id == "cut_items");
                     true
                 }
                 "paste" => {
@@ -1099,6 +1126,11 @@ pub fn App() -> impl IntoView {
                     ctx.quick_look(p);
                     true
                 }
+                "media_play" => media_key(p.id, MediaKey::Play),
+                "media_back" => media_key(p.id, MediaKey::Back),
+                // Held: once, then repeats, which the player ignores until it's let go.
+                "media_forward" => e.repeat() || media_key(p.id, MediaKey::ForwardDown),
+                "media_mute" => media_key(p.id, MediaKey::Mute),
                 "filter" => {
                     ctx.open_search(p, false);
                     true
@@ -1188,6 +1220,9 @@ pub fn App() -> impl IntoView {
         }
     });
     let _blur = window_event_listener(ev::blur, move |_| ctx.menu.set(None));
+    // Back from Finder, maybe with files copied there to paste.
+    let _focus = window_event_listener(ev::focus, move |_| ctx.check_clipboard());
+    ctx.check_clipboard();
     let _resize = window_event_listener(ev::resize, move |_| ctx.menu.set(None));
     // No browser menu (Reload, Inspect…) outside text fields; the panes have their own.
     let _ctx_menu = window_event_listener(ev::contextmenu, move |e| {

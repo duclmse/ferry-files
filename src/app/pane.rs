@@ -151,16 +151,17 @@ pub(super) fn Notices(pane: Pane) -> impl IntoView {
     let p = pane;
     let name = RwSignal::new(String::new());
     let dismiss = move |_| p.notice.set(Notice::None);
+    let auto = AutoDismiss::new(move || p.notice.with(|n| matches!(n, Notice::Error(_))), move || p.notice.set(Notice::None));
     view! {
         {move || match p.notice.get() {
             Notice::None => ().into_any(),
             Notice::Error(m) => view! {
-                <div class="notice error"><span class="text">{m}</span>
-                    <button class="btn" on:click=dismiss>"Dismiss"</button></div>
+                <div class="notice error" on:mouseover=move |_| auto.hover() on:mouseleave=move |_| auto.leave()><span class="text">{m}</span>
+                    <button class="btn icon-only" title="Dismiss" aria-label="Dismiss" on:click=dismiss>{ico(Icon::Close)}</button></div>
             }.into_any(),
             Notice::Ok(m) => view! {
                 <div class="notice ok"><span class="text">{m}</span>
-                    <button class="btn" on:click=dismiss>"Dismiss"</button></div>
+                    <button class="btn icon-only" title="Dismiss" aria-label="Dismiss" on:click=dismiss>{ico(Icon::Close)}</button></div>
             }.into_any(),
             Notice::ConfirmDelete(items) => {
                 let place = ctx.place(p.src.get_untracked());
@@ -512,21 +513,27 @@ pub(super) fn empty_note(p: Pane) -> impl IntoView {
 pub(super) fn ListStatus(pane: Pane) -> impl IntoView {
     let ctx = expect_context::<Ctx>();
     let p = pane;
+    // Counts with a folder or file icon; the words are in the tooltip and for screen readers.
+    let count = |icon: Icon, c: usize, one: &'static str, many: &'static str| {
+        let words = format!("{c} {}", if c == 1 { one } else { many });
+        view! { <span class="count" title=words.clone() aria-label=words>{ico(icon)}{c}</span> }
+    };
     let summary = move || {
         if p.loading.get() {
-            return "Loading…".to_string();
+            return "Loading…".into_any();
         }
         p.entries.with(|es| {
             let folders = es.iter().filter(|e| e.dir).count();
             let files = es.len() - folders;
             let bytes: u64 = es.iter().filter(|e| !e.dir).map(|e| e.size).sum();
-            let n = |c: usize, one: &str, many: &str| format!("{c} {}", if c == 1 { one } else { many });
-            match (folders, files) {
-                (0, 0) => "Empty folder".to_string(),
-                (_, 0) => n(folders, "folder", "folders"),
-                (0, _) => format!("{} · {}", n(files, "file", "files"), human_size(bytes)),
-                _ => format!("{}, {} · {}", n(folders, "folder", "folders"), n(files, "file", "files"), human_size(bytes)),
+            if folders + files == 0 {
+                return "Empty folder".into_any();
             }
+            view! {
+                {(folders > 0).then(|| count(Icon::Folder, folders, "folder", "folders"))}
+                {(files > 0).then(|| view! { {count(Icon::File, files, "file", "files")}<span class="size">{format!("· {}", human_size(bytes))}</span> })}
+            }
+            .into_any()
         })
     };
     let selection = move || {
@@ -556,7 +563,7 @@ pub(super) fn ListStatus(pane: Pane) -> impl IntoView {
     view! {
         <div class="statusbar">
             {search}
-            <span>{summary}</span>
+            <span class="summary">{summary}</span>
             <span class="sel">{selection}</span>
             <span class="spacer"></span>
             <span class="free">{move || ctx.free_text(p)}</span>
@@ -625,12 +632,12 @@ fn Tabs(pane: Pane) -> impl IntoView {
                         <span class="name">{name}</span>
                         <button class="close" title=move || ctx.with_key("Close tab", "close_tab") aria-label="Close tab"
                             hidden=move || p.tabs.with(Vec::len) < 2
-                            on:click=move |ev| { ev.stop_propagation(); ctx.close_tab(p, i) }>"×"</button>
+                            on:click=move |ev| { ev.stop_propagation(); ctx.close_tab(p, i) }>{ico(Icon::Close)}</button>
                     </div>
                 }
             }).collect_view()}
             <button class="add" title=move || ctx.with_key("New tab", "new_tab") aria-label="New tab"
-                on:click=move |_| ctx.new_tab(p, p.src.get_untracked(), p.cwd.get_untracked())>"+"</button>
+                on:click=move |_| ctx.new_tab(p, p.src.get_untracked(), p.cwd.get_untracked())>{ico(Icon::Plus)}</button>
             <span class="tabs-gap"></span>
             {(p.id == 0).then(|| view! {
                 <button class="btn icon-only tab-tool" class:active=move || ctx.split.get()

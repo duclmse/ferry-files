@@ -13,6 +13,7 @@ pub(super) enum Icon {
     Settings,
     Trash,
     Folder,
+    File,
     Book,
     Edit,
     Check,
@@ -33,8 +34,15 @@ pub(super) enum Icon {
     Binary,
     Wifi,
     Search,
+    Eject,
     /// Points right; turned down (in CSS) when what it opens is open.
     Chevron,
+    Play,
+    Pause,
+    SoundOn,
+    SoundOff,
+    PopOut,
+    FullScreen,
 }
 
 impl Icon {
@@ -50,6 +58,7 @@ impl Icon {
             Icon::Trash => r#"<path d="M2.5 4.5h11M6.5 4.5V3h3v1.5M4 4.5l.7 9h6.6l.7-9"/>"#,
             Icon::Folder => r#"<path d="M1.5 12.5v-9a1 1 0 0 1 1-1h3.5l1.5 2h6a1 1 0 0 1 1 1v7a1 1 0 0 1-1 1h-11a1 1 0 0 1-1-1z"/>"#,
             Icon::Book => r#"<path d="M8 4.5C6.5 3.5 4.5 3 2 3v9.5c2.5 0 4.5.5 6 1.5 1.5-1 3.5-1.5 6-1.5V3c-2.5 0-4.5.5-6 1.5zM8 4.5V14"/>"#,
+            Icon::File => r#"<path d="M3.5 1.5h6l3 3v10h-9z"/><path d="M9.5 1.5v3h3"/>"#,
             Icon::Edit => r#"<path d="M10.5 2.5l3 3-8 8h-3v-3z"/>"#,
             Icon::Check => r#"<path d="M3 8.5l3 3 7-7"/>"#,
             Icon::Stop => r#"<rect x="4" y="4" width="8" height="8" rx="1"/>"#,
@@ -67,7 +76,14 @@ impl Icon {
             Icon::Refresh => r#"<path d="M13 8a5 5 0 1 1-1.5-3.6"/><path d="M13 2.5v3h-3"/>"#,
             Icon::Text => r#"<path d="M3 3.5h10M8 3.5v9.5"/>"#,
             Icon::Wifi => r#"<path d="M1.5 6a9.5 9.5 0 0 1 13 0M3.8 8.6a6.2 6.2 0 0 1 8.4 0M6.1 11.1a2.9 2.9 0 0 1 3.8 0M8 13.5h.01"/>"#,
+            Icon::Eject => r#"<path d="M3.5 9.5 8 4.5l4.5 5z"/><path d="M3.5 12.5h9"/>"#,
             Icon::Chevron => r#"<path d="M6 3.5 10.5 8 6 12.5"/>"#,
+            Icon::Play => r#"<path d="M5 3.5v9l7.5-4.5z"/>"#,
+            Icon::Pause => r#"<path d="M5.5 3.5v9M10.5 3.5v9"/>"#,
+            Icon::SoundOn => r#"<path d="M2.5 6v4h2.5l3.5 3V3L5 6z"/><path d="M10.5 6a2.5 2.5 0 0 1 0 4M12 4.5a5 5 0 0 1 0 7"/>"#,
+            Icon::SoundOff => r#"<path d="M2.5 6v4h2.5l3.5 3V3L5 6z"/><path d="M10.5 6.5l3 3M13.5 6.5l-3 3"/>"#,
+            Icon::PopOut => r#"<rect x="1.5" y="3" width="13" height="10" rx="1"/><rect x="8" y="8" width="5" height="3.5"/>"#,
+            Icon::FullScreen => r#"<path d="M2.5 6V2.5H6M10 2.5h3.5V6M13.5 10v3.5H10M6 13.5H2.5V10"/>"#,
             Icon::Search => r#"<circle cx="7" cy="7" r="4.5"/><path d="M10.5 10.5 14 14"/>"#,
             Icon::Binary => r#"<rect x="2" y="3.5" width="4" height="9" rx="2"/><path d="M10 5l2-1.5v9"/>"#,
         }

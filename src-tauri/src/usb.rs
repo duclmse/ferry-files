@@ -120,57 +120,72 @@ pub struct Holder {
 
 /// The programs holding the USB device at libusb's (bus, address) or one of its interfaces (an
 /// interface is what an MTP session claims), from ioreg; `None` if ioreg couldn't be read. macOS's
-/// own drivers, which have no pid, aren't counted.
+/// own drivers, which have no pid, aren't counted. libusb can be behind ioreg on the address (a
+/// phone that was reset comes back at another), so failing that it's the only device on the bus
+/// with this vendor and product id.
 #[cfg(target_os = "macos")]
-pub fn holders(bus: u32, address: u32) -> Option<Vec<Holder>> {
+pub fn holders(bus: u32, address: u32, vendor: u16, product: u16) -> Option<Vec<Holder>> {
     let out = crate::platform::command("ioreg")
         .args(["-r", "-c", "IOUSBHostDevice", "-l", "-w0"])
         .stdin(std::process::Stdio::null())
         .output()
         .ok()?;
-    out.status.success().then(|| parse_holders(&String::from_utf8_lossy(&out.stdout), bus, address))
+    out.status.success().then(|| parse_holders(&String::from_utf8_lossy(&out.stdout), bus, address, vendor, product))
 }
 
 /// `holders` from ioreg's text: each device entry, its properties, then the entries under it
 /// (interfaces) with theirs.
-pub(crate) fn parse_holders(text: &str, bus: u32, address: u32) -> Vec<Holder> {
-    let (mut location, mut addr, mut found) = (None::<u32>, None::<u32>, vec![]);
-    let mut out: Vec<Holder> = vec![];
-    let mut take = |location: Option<u32>, addr: Option<u32>, found: &mut Vec<Holder>| {
-        let here = location.is_some_and(|l| l >> 24 == bus) && addr == Some(address);
-        for h in found.drain(..) {
-            if here && !out.contains(&h) {
-                out.push(h);
-            }
-        }
-    };
+pub(crate) fn parse_holders(text: &str, bus: u32, address: u32, vendor: u16, product: u16) -> Vec<Holder> {
+    #[derive(Default)]
+    struct Dev {
+        location: Option<u32>,
+        address: Option<u32>,
+        vendor: Option<u16>,
+        product: Option<u16>,
+        holders: Vec<Holder>,
+    }
+    let mut devs: Vec<Dev> = vec![];
     for line in text.lines() {
         if let Some(rest) = line.split_once("+-o ").map(|(_, r)| r) {
             if rest.contains("<class IOUSBHostDevice") || rest.contains("<class IOUSBDevice") {
-                take(location.take(), addr.take(), &mut found);
+                devs.push(Dev::default());
             }
             continue;
         }
+        let Some(d) = devs.last_mut() else { continue };
         let Some((key, value)) = line.split_once(" = ") else { continue };
         let key = key.trim_start_matches([' ', '|']).trim_matches('"');
+        let num = || value.trim().parse::<u64>().ok();
+        // The device's own properties come first; its interfaces repeat some of them.
         match key {
-            // An interface's locationID is its device's.
-            "locationID" if location.is_none() => location = value.trim().parse().ok(),
-            "USB Address" if addr.is_none() => addr = value.trim().parse().ok(),
+            "locationID" if d.location.is_none() => d.location = num().map(|n| n as u32),
+            "USB Address" if d.address.is_none() => d.address = num().map(|n| n as u32),
+            "idVendor" if d.vendor.is_none() => d.vendor = num().map(|n| n as u16),
+            "idProduct" if d.product.is_none() => d.product = num().map(|n| n as u16),
             "UsbExclusiveOwner" => {
                 // "pid 13235, ptpcamerad"
                 let v = value.trim().trim_matches('"');
                 if let Some((pid, name)) = v.strip_prefix("pid ").and_then(|r| r.split_once(", ")) {
                     if let Ok(pid) = pid.parse() {
-                        found.push(Holder { pid, name: name.to_string() });
+                        let h = Holder { pid, name: name.to_string() };
+                        if !d.holders.contains(&h) {
+                            d.holders.push(h);
+                        }
                     }
                 }
             }
             _ => {}
         }
     }
-    take(location, addr, &mut found);
-    out
+    devs.retain(|d| d.location.is_some_and(|l| l >> 24 == bus));
+    if let Some(i) = devs.iter().position(|d| d.address == Some(address)) {
+        return devs.swap_remove(i).holders;
+    }
+    let mut same = devs.into_iter().filter(|d| d.vendor == Some(vendor) && d.product == Some(product));
+    match (same.next(), same.next()) {
+        (Some(d), None) => d.holders,
+        _ => vec![],
+    }
 }
 
 /// The serial of the USB device at libusb's (bus, address), or failing that, of the only device
@@ -225,6 +240,8 @@ mod tests {
         let text = r#"+-o SAMSUNG_Android@01100000  <class IOUSBHostDevice, id 0x1000222f4, registered>
   |   "USB Serial Number" = "R3CR406TEMA"
   |   "USB Address" = 1
+  |   "idVendor" = 1256
+  |   "idProduct" = 26720
   |   "UsbExclusiveOwner" = "pid 91884, ferry-files"
   |   "locationID" = 17825792
   +-o AppleUSBCDCCompositeDevice  <class AppleUSBCDCCompositeDevice, id 0x1000222f7>
@@ -241,9 +258,12 @@ mod tests {
   |   "locationID" = 34603008
 "#;
         let h = |pid, name: &str| Holder { pid, name: name.into() };
-        assert_eq!(parse_holders(text, 1, 1), [h(91884, "ferry-files"), h(13235, "ptpcamerad")]);
-        assert_eq!(parse_holders(text, 2, 1), [h(500, "other")]);
-        assert_eq!(parse_holders(text, 1, 2), []);
+        assert_eq!(parse_holders(text, 1, 1, 0x04e8, 0x6860), [h(91884, "ferry-files"), h(13235, "ptpcamerad")]);
+        assert_eq!(parse_holders(text, 2, 1, 0, 0), [h(500, "other")]);
+        assert_eq!(parse_holders(text, 1, 2, 0, 0), []);
+        // libusb still has the address from before the phone was reset: the only one with its id.
+        assert_eq!(parse_holders(text, 1, 2, 0x04e8, 0x6860), [h(91884, "ferry-files"), h(13235, "ptpcamerad")]);
+        assert_eq!(parse_holders(text, 2, 2, 0x04e8, 0x6860), []);
     }
 
     #[test]

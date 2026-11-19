@@ -19,9 +19,16 @@ files and disks too, so books can be copied between them.
   read a piece at a time as you scroll (up to 8 MB). Pictures zoom (− and +,
   pinch, or double-click; the % is of the picture's own pixels, and clicking it
   or double-clicking switches between fitted and 100%), drag around when zoomed,
-  and turn (⟲ ⟳); videos and audio skip back 10 s or ahead 10 or 30 s and play
-  at 1×, 1.25×, 1.5× or 2×, and videos turn. ‹ and › (or ← and → in the list) go
-  to the previous and next picture, video or sound in the folder. PDFs (up to 64
+  and turn (⟲ ⟳). Videos have their own controls: click to play or pause, hold
+  for 2× (or the speed set in Settings > Video), double-click the left side to go
+  back 5 s and the right side to go 10 s ahead, hover the seek bar to see that
+  moment, turn them (the controls stay level, or turn too, as set in Settings),
+  play them full screen, or pop them out into a small window that stays on top.
+  K plays or pauses the preview's video or sound, J goes back 5 s, L goes ahead
+  10 s (held: faster), M turns the sound off or on; a clicked player also takes
+  Space, ← → and F. Videos and sounds go on from where they were stopped. ‹ and ›
+  (or ← and → in the list) go to the previous and next picture, video or sound in
+  the folder. PDFs (up to 64
   MB) show in the preview, fonts (TTF, OTF, WOFF, WOFF2) as samples, EPUBs as
   their cover (the cover itself once the preview is bigger than its thumbnail),
   and ZIP, APK and JAR files as the list of what's in them (read from the end of
@@ -48,8 +55,10 @@ files and disks too, so books can be copied between them.
   up, like any delete), so a move on the same device takes as long as a copy.
 - Copy (⌘C, or Copy in the right-click menu) keeps the picked items; Paste (⌘V,
   or Paste on empty space or on a folder) copies them into the folder, on any
-  device, as copying to the other pane does. What's copied stays in the app
-  (not the system clipboard), and ⌘C still copies text selected in a preview.
+  device, as copying to the other pane does. Cut (⌘X) then Paste moves them
+  instead. Files copied on the Mac go on the system clipboard too, so Finder can
+  paste them, and files copied in Finder paste into any folder here, phones
+  included. ⌘C still copies text selected in a preview.
 - Drag items between panes, onto a folder, or onto a place in the sidebar. As in
   Finder, dragging to the same device moves and to another device copies; hold ⌥
   to copy or ⌘ to move. Files dragged in from Finder are copied.

@@ -283,12 +283,20 @@
   visibility: visible;
 }
 
+.device .eject,
+.tree-row .act,
 .tree-row .unfav {
-  font-size: 11px;
+  display: inline-grid;
+  place-items: center;
 }
 
-.device .eject {
-  font-size: 13px;
+.tree-row .unfav .ico {
+  width: 10px;
+  height: 10px;
+}
+
+.side-buttons .btn {
+  justify-content: center;
 }
 
 .device .eject:hover,

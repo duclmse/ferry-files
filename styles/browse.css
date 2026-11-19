@@ -460,3 +460,24 @@ tr[data-cmp="same"] > td,
 .tile[data-cmp="same"] {
   opacity: 0.55;
 }
+
+.statusbar .summary {
+  display: inline-flex;
+  align-items: center;
+  gap: 10px;
+}
+
+.statusbar .count {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+}
+
+.statusbar .count .ico {
+  width: 12px;
+  height: 12px;
+}
+
+.statusbar .summary .size {
+  margin-left: -4px;
+}

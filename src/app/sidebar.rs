@@ -104,7 +104,7 @@ pub(super) fn Sidebar() -> impl IntoView {
                     }
                 }
                 <button class="eject" title=format!("Disconnect {}", i.label) aria-label="Disconnect"
-                    on:click=move |_| ctx.disconnect(src)>"⏏"</button>
+                    on:click=move |_| ctx.disconnect(src)>{ico(Icon::Eject)}</button>
             </div>
             {move || open.get().then(|| view! {
                 <div class="dev-dirs">
@@ -125,7 +125,7 @@ pub(super) fn Sidebar() -> impl IntoView {
                             <span class="twisty none"></span>
                             <button class="item" title=tip on:click=move |_| ctx.open_workspace(w1.clone())>{w.name.clone()}</button>
                             <button class="unfav" title="Delete this workspace" aria-label="Delete this workspace"
-                                on:click=move |_| ctx.set_workspaces(ctx.workspaces.get_untracked().into_iter().filter(|x| x.name != name).collect())>"✕"</button>
+                                on:click=move |_| ctx.set_workspaces(ctx.workspaces.get_untracked().into_iter().filter(|x| x.name != name).collect())>{ico(Icon::Close)}</button>
                         </div>
                     }
                 }).collect_view()}
@@ -178,7 +178,7 @@ pub(super) fn Sidebar() -> impl IntoView {
                         let f = f.clone();
                         view! {
                             <button class="unfav" title="Remove from Favourites" aria-label="Remove from Favourites"
-                                on:click=move |_| ctx.set_favs(ctx.favs.get_untracked().into_iter().filter(|x| *x != f).collect())>"✕"</button>
+                                on:click=move |_| ctx.set_favs(ctx.favs.get_untracked().into_iter().filter(|x| *x != f).collect())>{ico(Icon::Close)}</button>
                         }
                     });
                     match src {
@@ -207,7 +207,7 @@ pub(super) fn Sidebar() -> impl IntoView {
                             <span class="twisty none"></span>
                             <button class="item" title=tip on:click=move |_| ctx.open_pair(&p1)>{name}</button>
                             <button class="unfav" title="Remove this sync pair" aria-label="Remove this sync pair"
-                                on:click=move |_| ctx.set_pairs(ctx.sync_pairs.get_untracked().into_iter().filter(|x| *x != p2).collect())>"✕"</button>
+                                on:click=move |_| ctx.set_pairs(ctx.sync_pairs.get_untracked().into_iter().filter(|x| *x != p2).collect())>{ico(Icon::Close)}</button>
                         </div>
                     }
                 }).collect_view())}
@@ -220,7 +220,7 @@ pub(super) fn Sidebar() -> impl IntoView {
                     let (tip, at) = (format!("Eject {name}"), path.clone());
                     let eject = ViewFn::from(move || {
                         let (tip, at) = (tip.clone(), at.clone());
-                        view! { <button class="act" title=tip aria-label="Eject" on:click=move |_| ctx.eject(at.clone())>"⏏"</button> }
+                        view! { <button class="act" title=tip aria-label="Eject" on:click=move |_| ctx.eject(at.clone())>{ico(Icon::Eject)}</button> }
                     });
                     view! { <TreeNode src=Src::Mac name path depth=1 class="drive" extra=eject/> }
                 }).collect_view()}
@@ -232,12 +232,12 @@ pub(super) fn Sidebar() -> impl IntoView {
             })}
             <span class="grow"></span>
             <div class="side-buttons">
-                <button class="btn" title="Files replaced or deleted by the app, which can be put back"
-                    on:click=move |_| ctx.panel.set(Some(Panel::Backups))>{ico(Icon::Backups)}"Backups"</button>
-                <button class="btn" title="What was done since the app started"
-                    on:click=move |_| ctx.panel.set(Some(Panel::History))>{ico(Icon::History)}"History"</button>
+                <button class="btn icon-only" title="Backups: files replaced or deleted by the app, which can be put back" aria-label="Backups"
+                    on:click=move |_| ctx.panel.set(Some(Panel::Backups))>{ico(Icon::Backups)}</button>
+                <button class="btn icon-only" title="History: what was done since the app started" aria-label="History"
+                    on:click=move |_| ctx.panel.set(Some(Panel::History))>{ico(Icon::History)}</button>
+                <button class="btn icon-only" title="Settings" aria-label="Settings" on:click=move |_| ctx.settings.set(true)>{ico(Icon::Settings)}</button>
             </div>
-            <button class="btn" on:click=move |_| ctx.settings.set(true)>{ico(Icon::Settings)}"Settings"</button>
         </nav>
     }
 }
@@ -330,6 +330,7 @@ pub(super) struct Folder {
 #[component]
 pub(super) fn Settings() -> impl IntoView {
     let ctx = expect_context::<Ctx>();
+    let prefs = expect_context::<VideoPrefs>();
     let folders = RwSignal::new(None::<Result<HashMap<String, Folder>, String>>);
     let restore = RwSignal::new(stored_flag(RESTORE_KEY, true));
     let load = move || spawn_local(async move { folders.set(Some(call("app_folders", json!({})).await)) });
@@ -404,6 +405,22 @@ pub(super) fn Settings() -> impl IntoView {
         {check(ctx.phone_thumbs.into(), Ctx::set_phone_thumbs, "Thumbnails of phone files")}
         <p class="hint">{format!("Each phone thumbnail reads the whole image or EPUB over USB, once; then it's cached on {}. Files on {} always get thumbnails.", crate::os::the_computer(), crate::os::the_computer())}</p>
     }.into_any();
+    let video = move || view! {
+        <label class="row">
+            "Hold to play at"
+            <select prop:value=move || prefs.hold_speed.get().to_string()
+                on:change=move |e| if let Ok(s) = event_target_value(&e).parse() { prefs.set_hold_speed(s) }>
+                {HOLD_SPEEDS.iter().map(|s| view! { <option value=s.to_string()>{speed_label(*s)}</option> }).collect_view()}
+            </select>
+        </label>
+        <p class="hint">"The speed while the video is held down, or → or L is held."</p>
+        <label class="check">
+            <input type="checkbox" prop:checked=move || prefs.turn_controls.get()
+                on:change=move |e| prefs.set_turn_controls(event_target_checked(&e))/>
+            "Turn the controls with the video"
+        </label>
+        <p class="hint">"On: the controls stay along the bottom of the picture, so they're on its side when the video is. Off: they stay level under it."</p>
+    }.into_any();
     let storage = move || view! {
         {folder("backups", "Backups", "Copies of files from before they were replaced or deleted. Kept until you clear them in Backups, which moves them to the Trash.")}
         {folder("thumbs", "Thumbnail cache", "Made again when needed, so it's safe to clear.")}
@@ -411,10 +428,11 @@ pub(super) fn Settings() -> impl IntoView {
         {move || error.get().map(|e| view! { <p class="error">{e}</p> })}
     }.into_any();
     let storage_name = format!("On {}", crate::os::this_computer());
-    let sections: [(&'static str, String); 5] = [
+    let sections: [(&'static str, String); 6] = [
         ("general", "General".into()),
         ("files", "Files".into()),
         ("phones", "Phones".into()),
+        ("video", "Video".into()),
         ("keys", "Keyboard".into()),
         ("storage", storage_name),
     ];
@@ -436,6 +454,7 @@ pub(super) fn Settings() -> impl IntoView {
                         {move || match ctx.settings_tab.get() {
                             "files" => files(),
                             "phones" => phones(),
+                            "video" => video(),
                             "keys" => view! { <ShortcutsEditor/> }.into_any(),
                             "storage" => storage(),
                             _ => general(),
