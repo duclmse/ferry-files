@@ -81,13 +81,51 @@ pub(super) fn apply_migrations(conn: &rusqlite::Connection) -> rusqlite::Result<
 // ---------------------------------------------------------------------------
 
 /// Derive the parent directory path from a file path.
-/// Works for both real paths (`/a/b/c.rs` → `/a/b`) and virtual archive paths
-/// (`/a/arc.zip!/src/c.rs` → `/a/arc.zip!/src`).
+/// Works for both real paths (`/a/b/c.rs` → `/a/b`, `C:\a\b.rs` → `C:\a`)
+/// and virtual archive paths (`/a/arc.zip!/src/c.rs` → `/a/arc.zip!/src`).
+/// Splits on `\` as well, like the memory store: Windows paths use it, and
+/// a root written with `/` gets children joined with `\`.
 pub(super) fn parent_of(path: &str) -> String {
-    match path.rfind('/') {
+    match path.rfind(['/', '\\']) {
         None | Some(0) => String::new(),
         Some(i) => path[..i].to_owned(),
     }
+}
+
+const PARENT_REPAIR_KEY: &str = "parent_splits_backslash";
+
+/// Rows written while `parent_of` split on `/` only have an empty or wrong
+/// `parent` for any path with `\`, which hid their children from directory
+/// listings and from the catch-up scan's deletion check. Runs once.
+pub(super) fn repair_backslash_parents(conn: &rusqlite::Connection) -> rusqlite::Result<()> {
+    use rusqlite::OptionalExtension;
+    let done = conn
+        .query_row(
+            "SELECT 1 FROM index_meta WHERE key = ?",
+            [PARENT_REPAIR_KEY],
+            |_| Ok(()),
+        )
+        .optional()?
+        .is_some();
+    if done {
+        return Ok(());
+    }
+    let tx = conn.unchecked_transaction()?;
+    let rows: Vec<(i64, String)> = tx
+        .prepare("SELECT id, path FROM files WHERE instr(path, '\\') > 0")?
+        .query_map([], |r| Ok((r.get(0)?, r.get(1)?)))?
+        .collect::<rusqlite::Result<_>>()?;
+    {
+        let mut update = tx.prepare("UPDATE files SET parent = ?1 WHERE id = ?2")?;
+        for (id, path) in &rows {
+            update.execute(rusqlite::params![parent_of(path), id])?;
+        }
+    }
+    tx.execute(
+        "INSERT OR REPLACE INTO index_meta (key, value) VALUES (?1, '1')",
+        [PARENT_REPAIR_KEY],
+    )?;
+    tx.commit()
 }
 
 // ---------------------------------------------------------------------------

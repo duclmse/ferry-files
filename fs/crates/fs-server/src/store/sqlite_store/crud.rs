@@ -35,6 +35,7 @@ impl SqliteStore {
         let conn = pool.get().map_err(|e| AppError::Index(e.to_string()))?;
         conn.execute_batch(SCHEMA)?;
         apply_migrations(&conn)?;
+        super::schema::repair_backslash_parents(&conn)?;
         sync_optional_indexes(&conn, indexes)?;
 
         Ok(Self {

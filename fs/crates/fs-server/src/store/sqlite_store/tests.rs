@@ -220,6 +220,58 @@ fn schema_includes_parent_column() {
 }
 
 #[test]
+fn parent_of_splits_on_either_separator() {
+    assert_eq!(parent_of(r"C:\a\b.txt"), r"C:\a");
+    assert_eq!(
+        parent_of(r"C:/Windows/System32\x.dll"),
+        "C:/Windows/System32"
+    );
+    assert_eq!(parent_of(r"C:\a\arc.zip!/src/c.rs"), r"C:\a\arc.zip!/src");
+}
+
+#[test]
+fn backslash_parents_written_before_the_fix_are_repaired_once() {
+    let dir = tempfile::tempdir().unwrap();
+    let db = dir.path().join("index.db");
+    {
+        let store = SqliteStore::new(&db).unwrap();
+        for p in [r"C:\w\a.txt", "/u/b.txt"] {
+            store.upsert_file(&sample_record(p)).unwrap();
+        }
+        let conn = store.get_conn().unwrap();
+        // What the old parent_of stored for a Windows path.
+        conn.execute(
+            "UPDATE files SET parent = '' WHERE path = ?",
+            [r"C:\w\a.txt"],
+        )
+        .unwrap();
+        conn.execute(
+            "DELETE FROM index_meta WHERE key = 'parent_splits_backslash'",
+            [],
+        )
+        .unwrap();
+    }
+    let store = SqliteStore::new(&db).unwrap();
+    let parent = |p: &str| -> String {
+        store
+            .get_conn()
+            .unwrap()
+            .query_row("SELECT parent FROM files WHERE path = ?", [p], |r| r.get(0))
+            .unwrap()
+    };
+    assert_eq!(parent(r"C:\w\a.txt"), r"C:\w");
+    assert_eq!(parent("/u/b.txt"), "/u");
+    assert_eq!(store.children_of(r"C:\w").unwrap(), [r"C:\w\a.txt"]);
+    assert_eq!(
+        store
+            .get_meta("parent_splits_backslash")
+            .unwrap()
+            .as_deref(),
+        Some("1")
+    );
+}
+
+#[test]
 fn parent_of_archive_entry() {
     assert_eq!(parent_of("/a/arc.zip!/src/main.rs"), "/a/arc.zip!/src");
     assert_eq!(parent_of("/a/b/c.rs"), "/a/b");
