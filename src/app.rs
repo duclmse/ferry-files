@@ -10,6 +10,7 @@ use serde_json::json;
 use std::collections::{HashMap, HashSet};
 use wasm_bindgen::JsCast;
 
+mod allbooks;
 mod batch;
 mod books;
 mod compare;
@@ -32,6 +33,7 @@ mod util;
 mod views;
 mod wifi;
 
+use allbooks::*;
 use batch::*;
 use books::*;
 use compare::*;
@@ -265,6 +267,8 @@ enum Act {
     Dupes,
     /// Imports the photos in this folder into dated folders.
     Import,
+    /// The books on every place, side by side.
+    AllBooks,
 }
 
 enum MenuItem {
@@ -538,6 +542,8 @@ enum Panel {
     History,
     /// The books under a folder.
     Library(Src, String),
+    /// The books in every place's book folder.
+    AllBooks,
     /// Reading a book; the folder is the library to go back to.
     Reader(Src, String, Option<String>),
 }
@@ -1157,6 +1163,7 @@ pub fn App() -> impl IntoView {
             Panel::Dupes(folders) => view! { <Duplicates folders=folders/> }.into_any(),
             Panel::Import(pane, from, targets) => view! { <ImportPhotos pane from targets/> }.into_any(),
             Panel::Library(src, dir) => view! { <Library src=src dir=dir/> }.into_any(),
+            Panel::AllBooks => view! { <AllBooks/> }.into_any(),
             Panel::Reader(src, path, back) => view! { <Reader src=src path=path back=back/> }.into_any(),
         })}
     }

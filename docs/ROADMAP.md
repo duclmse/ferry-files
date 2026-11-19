@@ -174,10 +174,17 @@ Built:
 - Imported before = a file of the same name and size already in its dated folder (the same check
   as resuming a copy); those originals are kept even when moving. No stored per-phone list.
 
-### 11. Library across devices ☐
-- One Library view over the computer's book folder(s) and each connected device's books, merged by
-  identifier/title; shows where each book is.
-- "Send to <device>" / "Copy to computer" per book or selection; missing-on-device filter.
+### 11. Library across devices ☑
+- Each place (the computer, each device by serial) has a book folder: the folder Books was last
+  opened on there (`ferry-files.book-dirs`).
+- "Books on all devices…" (folder menu, and "All devices…" in the Books window) lists the books
+  of every connected place's book folder, merged by title and first author (else the file name),
+  each with where it is (✓ place) and "Copy to <place>" for places without it.
+- Filter by title/author/file, "Missing on <place>", and pick several to "Copy picked to <place>":
+  copies go through the transfer queue, from the computer when it has the book. Places not
+  connected are named.
+- Frontend only (`library` + `book_info`). Not done: the EPUB identifier isn't read, so two
+  editions with the same title and author count as one book.
 
 ## Phase 4 — Interface
 

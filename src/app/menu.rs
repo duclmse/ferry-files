@@ -114,6 +114,7 @@ impl Ctx {
                 danger: false,
                 enabled: !p.cwd.get_untracked().is_empty(),
             });
+            v.push(item("Books on all devices…", "", Act::AllBooks));
             v.extend([MenuItem::Sep, item("New tab", "⌘T", Act::NewTab), item(fav, "", Act::Favourite), item("Refresh", "", Act::Refresh)]);
             v.push(MenuItem::Do {
                 label: "Import photos…".into(),
@@ -245,6 +246,7 @@ impl Ctx {
             (Act::Sync, _) => self.compare(p),
             (Act::Compare, _) => self.compare_marks(p),
             (Act::Import, _) => self.ask_import(p),
+            (Act::AllBooks, _) => self.panel.set(Some(Panel::AllBooks)),
             (Act::Dupes, _) => {
                 let mut folders: Vec<(Src, String)> = vec![(p.src.get_untracked(), p.cwd.get_untracked())];
                 let o = self.other(p);
