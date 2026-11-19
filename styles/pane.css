@@ -15,6 +15,96 @@
   min-height: 48px;
 }
 
+/* The pane's tabs, above its bar, when there's more than one. They share the width. */
+.tabs {
+  display: flex;
+  align-items: stretch;
+  gap: 1px;
+  padding: 4px 8px 0;
+  background: var(--bg);
+  border-bottom: 1px solid var(--line);
+  min-width: 0;
+}
+
+.tabs .tab {
+  flex: 1 1 0;
+  min-width: 0;
+  max-width: 220px;
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  height: 28px;
+  padding: 0 4px 0 10px;
+  border: 1px solid transparent;
+  border-bottom: 0;
+  border-radius: 6px 6px 0 0;
+  color: var(--muted);
+  font-size: 12px;
+  cursor: default;
+}
+
+.tabs .tab:hover {
+  background: var(--hover);
+}
+
+.tabs .tab.shown {
+  background: var(--panel);
+  border-color: var(--line);
+  color: var(--ink);
+  font-weight: 600;
+  /* Over the strip's bottom line, so the tab joins the bar below. */
+  margin-bottom: -1px;
+}
+
+.tabs .name {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.tabs .close,
+.tabs .add {
+  flex: none;
+  display: grid;
+  place-items: center;
+  width: 18px;
+  height: 18px;
+  padding: 0;
+  border: 0;
+  border-radius: 4px;
+  background: none;
+  color: var(--muted);
+  font: inherit;
+  font-size: 14px;
+  line-height: 1;
+  cursor: pointer;
+}
+
+.tabs .close {
+  visibility: hidden;
+}
+
+.tabs .tab:hover .close,
+.tabs .tab.shown .close {
+  visibility: visible;
+}
+
+.tabs .add {
+  align-self: center;
+  width: 24px;
+  height: 24px;
+  margin-left: 4px;
+  font-size: 16px;
+}
+
+.tabs .close:hover,
+.tabs .add:hover {
+  background: var(--line);
+  color: var(--ink);
+}
+
 /* The path on one line; what doesn't fit folds into "…" (pane.rs). */
 .crumbs {
   display: flex;

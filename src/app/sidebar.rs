@@ -355,6 +355,9 @@ pub(super) fn Shortcuts() -> impl IntoView {
         ("Esc", "Unpick, or close"),
         ("Tab", "The other pane"),
         ("⌘\\", "Show or hide the second pane"),
+        ("⌘T", "New tab"),
+        ("⌘W", "Close tab"),
+        ("⌘⇧] / ⌘⇧[", "Next or previous tab"),
         ("⌘S", "Save, in the editor"),
         ("?", "This list"),
     ];

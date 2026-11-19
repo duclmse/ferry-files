@@ -304,6 +304,7 @@ pub(super) fn PaneView(pane: Pane) -> impl IntoView {
                 w if w > 0.0 && p.id == 0 && ctx.split.get() => format!("flex: 0 1 {w}px"),
                 _ => String::new(),
             }>
+            {move || (p.tabs.with(Vec::len) > 1).then(|| view! { <Tabs pane=p/> })}
             <div class="bar">
                 <button class="btn" title=format!("Up ({})", crate::os::keys("⌘↑")) disabled=move || p.cwd.get() == "/" on:click=move |_| ctx.go_up(p)>"↑"</button>
                 <Crumbs pane=p/>
@@ -547,6 +548,54 @@ pub(super) fn ListStatus(pane: Pane) -> impl IntoView {
                 }>
                 <svg viewBox="0 0 16 16" aria-hidden="true"><rect x="1.5" y="2.5" width="13" height="11" rx="1.5"/><path d="M9.5 2.5v11"/></svg>
             </button>
+        </div>
+    }
+}
+
+/// The pane's tabs, shown when there's more than one: each folder's name, × to close, + for a new one.
+#[component]
+fn Tabs(pane: Pane) -> impl IntoView {
+    let ctx = expect_context::<Ctx>();
+    let p = pane;
+    let n = move || p.tabs.with(Vec::len);
+    view! {
+        <div class="tabs" role="tablist">
+            {move || (0..n()).map(|i| {
+                let shown = move || p.tab.get() == i;
+                // The shown tab follows the pane; the others are where they were left.
+                let place = move || {
+                    if shown() {
+                        (p.src.get(), p.cwd.get())
+                    } else {
+                        p.tabs.with(|ts| ts.get(i).map(|t| (t.src, t.cwd.clone())).unwrap_or((Src::Mac, String::new())))
+                    }
+                };
+                let name = move || {
+                    let (src, cwd) = place();
+                    match cwd.as_str() {
+                        "" => "…".to_string(),
+                        "/" => ctx.src_info(src).map_or_else(|| "/".into(), |i| i.label),
+                        _ => base(&cwd),
+                    }
+                };
+                let title = move || {
+                    let (src, cwd) = place();
+                    let label = ctx.src_info(src).map_or_else(String::new, |i| i.label);
+                    if src == Src::Mac { crate::os::native_path(&cwd) } else { format!("{label}: {cwd}") }
+                };
+                view! {
+                    <div class="tab" class:shown=shown role="tab" aria-selected=move || shown().to_string() title=title
+                        on:click=move |_| ctx.show_tab(p, i)
+                        // A middle click closes it.
+                        on:auxclick=move |ev| if ev.button() == 1 { ev.prevent_default(); ctx.close_tab(p, i) }>
+                        <span class="name">{name}</span>
+                        <button class="close" title=format!("Close tab ({})", crate::os::keys("⌘W")) aria-label="Close tab"
+                            on:click=move |ev| { ev.stop_propagation(); ctx.close_tab(p, i) }>"×"</button>
+                    </div>
+                }
+            }).collect_view()}
+            <button class="add" title=format!("New tab ({})", crate::os::keys("⌘T")) aria-label="New tab"
+                on:click=move |_| ctx.new_tab(p, p.src.get_untracked(), p.cwd.get_untracked())>"+"</button>
         </div>
     }
 }

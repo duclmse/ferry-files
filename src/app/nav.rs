@@ -288,6 +288,100 @@ impl Ctx {
         self.open_remembered(p, src);
     }
 
+    /// Leaves the editor before the pane shows something else; false (and asks) if it has
+    /// unsaved changes.
+    fn may_leave(self) -> bool {
+        if self.editor.get_untracked().is_some() {
+            if self.dirty() {
+                self.confirm_discard.set(true);
+                return false;
+            }
+            self.leave_editor();
+        }
+        true
+    }
+
+    /// Brings the shown tab's entry up to date with where the pane is.
+    fn save_tab(self, p: Pane) {
+        let here = Tab {
+            src: p.src.get_untracked(),
+            cwd: p.cwd.get_untracked(),
+            selected: p.selected.get_untracked(),
+            view: p.view.get_untracked(),
+            root: p.root.get_untracked(),
+        };
+        let i = p.tab.get_untracked();
+        p.tabs.update(|ts| {
+            if let Some(t) = ts.get_mut(i) {
+                *t = here;
+            }
+        });
+    }
+
+    /// Opens folder `path` on `src` in a new tab after the shown one, and shows it.
+    pub(super) fn new_tab(self, p: Pane, src: Src, path: String) {
+        if path.is_empty() || !self.may_leave() {
+            return;
+        }
+        self.save_tab(p);
+        let at = p.tab.get_untracked() + 1;
+        let view = p.view.get_untracked();
+        p.tabs.update(|ts| ts.insert(at, Tab { src, cwd: path.clone(), selected: None, view, root: path.clone() }));
+        p.tab.set(at);
+        p.reroot.set_value(Some(path.clone()));
+        self.load_select(p, src, path, None);
+    }
+
+    /// Shows tab `i`.
+    pub(super) fn show_tab(self, p: Pane, i: usize) {
+        if i == p.tab.get_untracked() || i >= p.tabs.with_untracked(Vec::len) || !self.may_leave() {
+            return;
+        }
+        self.save_tab(p);
+        p.tab.set(i);
+        self.go_to_tab(p);
+    }
+
+    /// Shows the tab `delta` places along, wrapping around.
+    pub(super) fn step_tab(self, p: Pane, delta: isize) {
+        let n = p.tabs.with_untracked(Vec::len) as isize;
+        if n > 1 {
+            self.show_tab(p, (p.tab.get_untracked() as isize + delta).rem_euclid(n) as usize);
+        }
+    }
+
+    /// Closes tab `i`; the last one stays.
+    pub(super) fn close_tab(self, p: Pane, i: usize) {
+        let (n, shown) = (p.tabs.with_untracked(Vec::len), p.tab.get_untracked());
+        if n < 2 || i >= n {
+            return;
+        }
+        if i == shown && !self.may_leave() {
+            return;
+        }
+        p.tabs.update(|ts| {
+            ts.remove(i);
+        });
+        if i == shown {
+            p.tab.set(i.min(n - 2));
+            self.go_to_tab(p);
+        } else if i < shown {
+            p.tab.set(shown - 1);
+        }
+    }
+
+    /// Lists the shown tab's folder. A tab whose device is gone opens the Mac instead.
+    fn go_to_tab(self, p: Pane) {
+        let Some(t) = p.tabs.with_untracked(|ts| ts.get(p.tab.get_untracked()).cloned()) else { return };
+        p.view.set(t.view);
+        p.root.set(t.root);
+        match self.src_info(t.src) {
+            Some(info) if !t.cwd.is_empty() => self.load_or(p, t.src, t.cwd, t.selected, Some(info.default_dir)),
+            Some(_) => self.open_remembered(p, t.src),
+            None => self.open_remembered(p, Src::Mac),
+        }
+    }
+
     /// New files and folders can't go in "/" over MTP: it lists the device's storages.
     pub(super) fn in_storage(self, p: Pane) -> bool {
         p.cwd.get() != "/" || self.src_info(p.src.get()).is_some_and(|i| i.transport != "mtp")

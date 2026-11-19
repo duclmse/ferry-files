@@ -91,7 +91,7 @@ impl Ctx {
                 danger: false,
                 enabled: !p.cwd.get_untracked().is_empty(),
             });
-            v.extend([MenuItem::Sep, item(fav, "", Act::Favourite), item("Refresh", "", Act::Refresh)]);
+            v.extend([MenuItem::Sep, item("New tab", "⌘T", Act::NewTab), item(fav, "", Act::Favourite), item("Refresh", "", Act::Refresh)]);
             v.push(MenuItem::Do {
                 label: "Sync to the other pane…".into(),
                 key: "",
@@ -135,6 +135,9 @@ impl Ctx {
             v.push(item("Read", "", Act::Read));
         }
         v.push(item(open, "↵", Act::Open));
+        if e.dir {
+            v.push(item("Open in new tab", "", Act::NewTab));
+        }
         if kind(e) == Kind::Epub {
             v.push(item("Check book", "", Act::Check));
         }
@@ -190,6 +193,8 @@ impl Ctx {
             (Act::Read, Some(e)) => self.panel.set(Some(Panel::Reader(p.src.get_untracked(), e.path, None))),
             (Act::Check, Some(e)) => self.check_book(p, e),
             (Act::Library, _) => self.panel.set(Some(Panel::Library(p.src.get_untracked(), p.cwd.get_untracked()))),
+            (Act::NewTab, Some(e)) if e.dir => self.new_tab(p, p.src.get_untracked(), e.path),
+            (Act::NewTab, None) => self.new_tab(p, p.src.get_untracked(), p.cwd.get_untracked()),
             (Act::Refresh, _) => self.refresh(p),
             (Act::View(v), _) => self.set_view(p, v),
             (Act::Split, _) => self.set_split(!self.split.get_untracked()),

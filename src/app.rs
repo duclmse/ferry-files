@@ -219,6 +219,8 @@ enum Act {
     ResetColumns,
     /// Goes to one of the menu's `folders`.
     Go(usize),
+    /// Opens the folder (or the pane's folder) in a new tab.
+    NewTab,
 }
 
 enum MenuItem {
@@ -306,6 +308,21 @@ struct Pane {
     zip_pick: RwSignal<Option<(Src, String, String, u64)>>,
     /// Whether the path above the files is being typed in.
     editing_path: RwSignal<bool>,
+    /// The pane's tabs. The shown one's entry is only brought up to date when another is shown;
+    /// until then the pane's own signals are where it is.
+    tabs: RwSignal<Vec<Tab>>,
+    /// Which of `tabs` is shown.
+    tab: RwSignal<usize>,
+}
+
+/// Where a tab was when another was shown.
+#[derive(Clone)]
+struct Tab {
+    src: Src,
+    cwd: String,
+    selected: Option<String>,
+    view: ViewMode,
+    root: String,
 }
 
 impl Pane {
@@ -337,6 +354,8 @@ impl Pane {
             peek_as: RwSignal::new(None),
             zip_pick: RwSignal::new(None),
             editing_path: RwSignal::new(false),
+            tabs: RwSignal::new(vec![Tab { src: Src::Mac, cwd: String::new(), selected: None, view: ViewMode::stored(id), root: String::new() }]),
+            tab: RwSignal::new(0),
         }
     }
 
@@ -676,7 +695,7 @@ pub fn App() -> impl IntoView {
     // Keyboard. ⌘S saves. In the panes: Tab switches pane, ⌘\ shows or hides the second one, arrows
     // move (←/→ also go up/in in the column view and move across in the thumbnail view), Enter or
     // ⌘↓ opens, ⌘↑ or Backspace goes up, ⌘⌫ deletes, F2 renames, F5 copies and F6 moves to the
-    // other pane, ⌘A picks everything, Escape unpicks.
+    // other pane, ⌘A picks everything, Escape unpicks. ⌘T, ⌘W and ⌘⇧] / ⌘⇧[ are for tabs.
     let _keys = window_event_listener(ev::keydown, move |e| {
         let meta = e.meta_key() || e.ctrl_key();
         if ctx.menu.get_untracked().is_some() {
@@ -726,6 +745,35 @@ pub fn App() -> impl IntoView {
         let p = ctx.act();
         if !matches!(p.notice.get_untracked(), Notice::None | Notice::Ok(_) | Notice::Error(_)) {
             return;
+        }
+        // Tabs, even from the filter: ⌘T opens one, ⌘W closes it (the last one closes the
+        // window, as the menu does), ⌘⇧] / ⌘⇧[ and Ctrl+Tab / Ctrl+Shift+Tab move between them.
+        let cmd = crate::os::cmd(e.meta_key(), e.ctrl_key());
+        let tab_step = match e.key().as_str() {
+            "]" | "}" if cmd && e.shift_key() => Some(1),
+            "[" | "{" if cmd && e.shift_key() => Some(-1),
+            "Tab" if e.ctrl_key() => Some(if e.shift_key() { -1 } else { 1 }),
+            _ => None,
+        };
+        if let Some(d) = tab_step {
+            e.prevent_default();
+            ctx.step_tab(p, d);
+            return;
+        }
+        if cmd && !e.shift_key() && !e.alt_key() {
+            match e.key().to_lowercase().as_str() {
+                "t" => {
+                    e.prevent_default();
+                    ctx.new_tab(p, p.src.get_untracked(), p.cwd.get_untracked());
+                    return;
+                }
+                "w" if p.tabs.with_untracked(Vec::len) > 1 => {
+                    e.prevent_default();
+                    ctx.close_tab(p, p.tab.get_untracked());
+                    return;
+                }
+                _ => {}
+            }
         }
         // Typing in a field (the filter) is the field's.
         let typing = e

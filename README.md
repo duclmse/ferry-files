@@ -58,6 +58,13 @@ copied between them.
 - Click the empty part of the path above the files (or press ⌘L) to type a
   path; Enter goes there, Escape cancels. A path too long for its room folds
   its first folders into …, which lists them.
+- Tabs: each pane can have several. ⌘T (or "New tab" on empty space) opens one
+  on the same folder, and "Open in new tab" on a folder opens it in one. The
+  tabs show above the pane's bar once there are two; click one to go to it,
+  × or a middle click closes it, and + opens another. ⌘W closes the tab (the
+  window, when it's the last one), ⌘⇧] and ⌘⇧[ (or Ctrl+Tab and
+  Ctrl+Shift+Tab) go to the next and previous one. Each tab keeps its folder,
+  selection and view; tabs aren't kept after quitting.
 - ? lists the keyboard shortcuts (also in Settings). Delete or ⌘⌫ deletes.
 - Settings: appearance (as the Mac, light or dark).
 - Space opens Quick Look (phone files are copied to the Mac first).
