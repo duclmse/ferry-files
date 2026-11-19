@@ -41,6 +41,7 @@ impl SqliteStore {
             pool,
             name_bounds: Default::default(),
             name_index: indexes.contains(&SqliteIndex::Name),
+            ext_index: indexes.contains(&SqliteIndex::Extension),
         })
     }
 

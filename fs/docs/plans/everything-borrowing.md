@@ -1,6 +1,6 @@
 # Plan: Borrowing Everything's Techniques
 
-> **Status:** phases 1-5 and 7 implemented (phase 5: FSEvents replay on macOS, USN journal replay on Windows, timestamp scan on Linux and as the Windows fallback); phase 3 follow-up: parent-pointer tree; phase 6 crawl-writer fix, platform enumeration measured and not built; open: Windows MFT enumeration (Nov 2026). Background:
+> **Status:** phases 1-5 and 7 implemented (phase 5: FSEvents replay on macOS, USN journal replay on Windows, timestamp scan on Linux and as the Windows fallback); phase 3 follow-up: parent-pointer tree; phase 6 crawl-writer fix, platform enumeration measured and not built, NTFS file table crawl built behind `indexer.use_mft` (off by default, tested only on synthetic volume images); open: proving the file table crawl on real Windows volumes (Nov 2026). Background:
 > [research/everything-internals.md](../research/everything-internals.md).
 > Measurements: RSS and CPU time sampled every 250 ms plus `/usr/bin/time -l`
 > peaks, on `~/projects` (2.38M files, 191k dirs), macOS, 8 cores, with 8
@@ -383,7 +383,12 @@ with a prototype; the other two turned out to have little to gain:
   directories but needs administrator rights, and needs the raw `$MFT` for
   sizes and times. Since the USN replay (phase 5), a Windows warm start
   walks only when the replay fails, so this would only shorten initial
-  crawls. It cannot be measured here and stays open.
+  crawls. Built afterwards as a raw `$MFT` reader (`indexer/mft.rs`), since
+  `FSCTL_ENUM_USN_DATA` gives names and parents but no sizes or dates. It is
+  off by default (`indexer.use_mft`), falls back to the walk on any failure,
+  does not honour `.ignore` files, and rejects an `$MFT` split across
+  records. It has been tested only against synthetic volume images; timing
+  it on real volumes stays open.
 
 ## Phase 7 - Optional extras (Everything §2.4) - done
 
@@ -464,9 +469,23 @@ two runs of three warm calls each:
 | `*.pdf`  | 77-121 ms | 59-129 ms |
 
 `*.pdf` is unchanged: its matches are spread thinly over every range, so
-`LIMIT` is reached only near the end. Answering it from `idx_files_extension`
-like `ext:pdf` (1 ms) would need the glob rewritten into an extension test
-that matches exactly the same names, which is left open.
+`LIMIT` is reached only near the end.
+
+Follow-up, done: `*.ext` now asks `idx_files_extension` first
+(`search.rs`, `glob_extension`). The extension column cannot replace the
+glob, since folders and names such as `.pdf` have none, so the glob stays in
+the query and every row it returns is a real match. A full page is the
+answer; a short one may be missing those names and falls through to the
+regular search. Synthetic 2M-row database (`populate_for_bench` plus 200
+`.pdf` names spread over every name range), warm, `limit=100`:
+
+| Query   | Name index only | + extension index |
+| ------- | --------------: | ----------------: |
+| `*.pdf` |          829 ms |           0.07 ms |
+| `*.md`  |         0.97 ms |           0.09 ms |
+| `*.zzz` |          896 ms |  900 ms (must scan everything) |
+
+Sorted queries still read every match and do not take the shortcut.
 
 Use the default unless writes matter more than queries, for example a large
 tree under constant churn. Remove `attrib` first, since no common query uses

@@ -39,6 +39,20 @@ fn is_name_condition(c: &SqlCondition) -> bool {
     )
 }
 
+/// The extension a `*.ext` glob ends in, so `idx_files_extension` can answer
+/// it. The column cannot replace the glob: folders and names such as `.pdf`
+/// have no extension, so the glob stays and the indexed search returns only
+/// real matches. Only a full page proves that nothing was missed; a short one
+/// falls through to the full search.
+fn glob_extension(c: &SqlCondition) -> Option<String> {
+    let SqlCondition::NameGlobNoCase(p) = c else {
+        return None;
+    };
+    let ext = p.strip_prefix("*.")?;
+    let plain = !ext.is_empty() && !ext.contains(['*', '?', '[', ']', '.']);
+    plain.then(|| ext.to_ascii_lowercase())
+}
+
 /// The planner emits `NameLike("%")` as a catch-all for OR / NOT.
 fn is_match_all(c: &SqlCondition) -> bool {
     matches!(c, SqlCondition::NameLike(p) if p == "%")
@@ -300,23 +314,38 @@ impl SqliteStore {
         if conds.is_empty() {
             return self.search_meta(&MetaFilters::default(), limit);
         }
+        let bulk_loading = self.bulk_loading()?;
+        if self.ext_index && !bulk_loading {
+            if let Some(ext) = conds.iter().find_map(glob_extension) {
+                let mut with_ext = Vec::with_capacity(conds.len() + 1);
+                with_ext.push(SqlCondition::ExtIn(vec![ext]));
+                with_ext.extend_from_slice(conds);
+                let rows = self.search_plain(&with_ext, limit)?;
+                if rows.len() >= limit {
+                    return Ok(rows);
+                }
+            }
+        }
         let (name_conds, other_conds): (Vec<SqlCondition>, Vec<SqlCondition>) =
             conds.iter().cloned().partition(is_name_condition);
-        if name_conds.iter().all(is_match_all) || !self.name_index || self.bulk_loading()? {
-            let (where_extra, params) = build_conditions(conds);
-            let sql = format!(
-                "SELECT id, path, name, extension, size_bytes, mtime, ctime,
-                        is_dir, is_hidden, is_symlink, attrib_bitmask,
-                        content_indexed, tantivy_id, indexed_at, archive_path
-                 FROM files WHERE 1=1 {where_extra} LIMIT ?"
-            );
-            let conn = self.get_conn()?;
-            let mut stmt = conn.prepare(&sql)?;
-            let mut all_params = params;
-            all_params.push(Value::Integer(limit as i64));
-            return query_records(&mut stmt, all_params);
+        if name_conds.iter().all(is_match_all) || !self.name_index || bulk_loading {
+            return self.search_plain(conds, limit);
         }
         self.search_by_name_index(&name_conds, &other_conds, limit)
+    }
+
+    fn search_plain(&self, conds: &[SqlCondition], limit: usize) -> Result<Vec<FileRecord>> {
+        let (where_extra, mut params) = build_conditions(conds);
+        let sql = format!(
+            "SELECT id, path, name, extension, size_bytes, mtime, ctime,
+                    is_dir, is_hidden, is_symlink, attrib_bitmask,
+                    content_indexed, tantivy_id, indexed_at, archive_path
+             FROM files WHERE 1=1 {where_extra} LIMIT ?"
+        );
+        let conn = self.get_conn()?;
+        let mut stmt = conn.prepare(&sql)?;
+        params.push(Value::Integer(limit as i64));
+        query_records(&mut stmt, params)
     }
 
     /// Every match has to be ordered, so unlike name searches this cannot

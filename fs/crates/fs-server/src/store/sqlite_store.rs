@@ -18,4 +18,7 @@ pub struct SqliteStore {
     /// Whether `idx_files_name` is configured; the name searches name it in
     /// `INDEXED BY` and need a plain scan without it.
     name_index: bool,
+    /// Whether `idx_files_extension` is configured; without it the `*.ext`
+    /// shortcut would scan the table on top of the regular search.
+    ext_index: bool,
 }

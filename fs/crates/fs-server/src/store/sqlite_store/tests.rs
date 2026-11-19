@@ -481,3 +481,54 @@ fn memory_and_sqlite_agree_on_escaped_like_patterns() {
     check_path(glob_to_like("*lead*"), &["_lead", "%lead"]);
     check_path(glob_to_like("lead"), &[]);
 }
+
+#[test]
+fn extension_glob_finds_folders_and_dot_names_the_column_lacks() {
+    use crate::store::SqlCondition;
+
+    let dir = tempfile::tempdir().unwrap();
+    let with_index = SqliteStore::new(&dir.path().join("a.db")).unwrap();
+    let without = SqliteStore::with_indexes(&dir.path().join("b.db"), &[]).unwrap();
+    for store in [&with_index, &without] {
+        let gen = store.begin_crawl_generation().unwrap();
+        let mut batch: Vec<(FileRecord, String)> = (0..50)
+            .map(|i| {
+                let mut r = sample_record(&format!("/r/doc{i}.PDF"));
+                r.extension = Some("pdf".into());
+                (r, "/r".to_owned())
+            })
+            .collect();
+        let mut folder = sample_record("/r/books.pdf");
+        folder.is_dir = true;
+        folder.extension = None;
+        let mut dot = sample_record("/r/.pdf");
+        dot.extension = None;
+        let mut other = sample_record("/r/notes.txt");
+        other.extension = Some("txt".into());
+        batch.extend([folder, dot, other].map(|r| (r, "/r".to_owned())));
+        store.batch_upsert_crawl(&batch, gen).unwrap();
+
+        let glob = [SqlCondition::NameGlobNoCase("*.pdf".into())];
+        let page = store.search_conditions(&glob, 10).unwrap();
+        assert_eq!(page.len(), 10);
+        assert!(page.iter().all(|r| r.name.to_lowercase().ends_with(".pdf")));
+
+        let mut all: Vec<String> = store
+            .search_conditions(&glob, 100)
+            .unwrap()
+            .into_iter()
+            .map(|r| r.name)
+            .collect();
+        all.sort();
+        assert_eq!(all.len(), 52);
+        assert_eq!(all[0], ".pdf");
+        assert!(all.contains(&"books.pdf".to_owned()));
+        assert!(!all.contains(&"notes.txt".to_owned()));
+
+        let folders = store
+            .search_conditions(&[glob[0].clone(), SqlCondition::IsDir(true)], 1)
+            .unwrap();
+        assert_eq!(folders.len(), 1);
+        assert_eq!(folders[0].name, "books.pdf");
+    }
+}
