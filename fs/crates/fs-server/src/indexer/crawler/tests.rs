@@ -230,3 +230,39 @@ async fn a_crawl_records_how_many_entries_each_root_had() {
     // The root folder and its three files.
     assert_eq!(last_entries(&store, &root), 4);
 }
+
+#[test]
+fn excluded_paths_drop_out_of_watcher_events() {
+    use crate::config::ExclusionConfig;
+    let excl = ExclusionEngine::new(&ExclusionConfig {
+        path_patterns: vec!["**/data/**".into()],
+        ..Default::default()
+    })
+    .unwrap();
+    let p = |s: &str| std::path::PathBuf::from(s);
+    let events = without_excluded(
+        vec![
+            IndexEvent::Modified(p("/w/data/files.db-wal")),
+            IndexEvent::Created(p("/w/a.txt")),
+            IndexEvent::Renamed {
+                from: p("/w/b.txt"),
+                to: p("/w/data/b.txt"),
+            },
+            IndexEvent::Renamed {
+                from: p("/w/data/c.txt"),
+                to: p("/w/c.txt"),
+            },
+            IndexEvent::Deleted(p("/w/data/seg.idx")),
+        ],
+        &excl,
+    );
+    let shown: Vec<String> = events.iter().map(|e| format!("{e:?}")).collect();
+    assert_eq!(
+        shown,
+        [
+            r#"Created("/w/a.txt")"#,
+            r#"Deleted("/w/b.txt")"#,
+            r#"Created("/w/c.txt")"#
+        ]
+    );
+}

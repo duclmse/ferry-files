@@ -540,6 +540,13 @@ fn remove_path(sqlite: &FileStore, tantivy: &TantivyStore, path: &str) {
     }
 }
 
+fn log_if_slow(start: std::time::Instant, what: &str, path: &str) {
+    let took = start.elapsed();
+    if took > SLOW {
+        tracing::info!("{what} {path} in {:.1}s", took.as_secs_f64());
+    }
+}
+
 /// Whether `path` is indexed as a folder: one row lookup, where asking for
 /// the subtree of every deleted or renamed file cost a query each.
 fn indexed_dir(sqlite: &FileStore, path: &str) -> bool {
@@ -573,7 +580,9 @@ fn apply_file_events(events: Vec<IndexEvent>, cfg: &Config, stores: &Stores) {
         let Some(meta) = meta else {
             if indexed_dir(&stores.sqlite, &path_str) {
                 batch.flush(cfg, stores);
+                let start = std::time::Instant::now();
                 remove_path(&stores.sqlite, &stores.tantivy, &path_str);
+                log_if_slow(start, "removed folder", &path_str);
             } else {
                 batch.remove(path_str);
             }
@@ -588,9 +597,11 @@ fn apply_file_events(events: Vec<IndexEvent>, cfg: &Config, stores: &Stores) {
         {
             match ExclusionEngine::shared(&cfg.exclusions) {
                 Ok(excl) => {
+                    let start = std::time::Instant::now();
                     for child in records_under(&path, &excl) {
                         batch.upsert(child);
                     }
+                    log_if_slow(start, "walked unseen folder", &record.path);
                 }
                 Err(e) => tracing::warn!("exclusions: {e}"),
             }
@@ -710,6 +721,16 @@ pub async fn process_events(
         metrics,
         registry,
     };
+    let start = std::time::Instant::now();
+    let received = events.len();
+    let events = match ExclusionEngine::shared(&cfg.exclusions) {
+        Ok(excl) => without_excluded(events, &excl),
+        Err(e) => {
+            tracing::warn!("exclusions: {e}");
+            events
+        }
+    };
+    let kept = events.len();
     let mut run = Vec::new();
     for event in events {
         if matches!(
@@ -731,6 +752,41 @@ pub async fn process_events(
         .await;
     }
     flush_run(&mut run, &cfg, &stores).await;
+    let took = start.elapsed();
+    if took > SLOW {
+        tracing::info!(
+            "slow event batch: {kept} of {received} events applied in {:.1}s",
+            took.as_secs_f64()
+        );
+    }
+}
+
+/// An event batch or folder operation slower than this is logged, so a
+/// stall in the single event consumer can be traced to its cause.
+const SLOW: std::time::Duration = std::time::Duration::from_secs(1);
+
+/// Drops events for paths the crawl excludes, as the crawl does. Without
+/// this, a data folder inside a watched tree (`C:\` as a root) fed its own
+/// database and index writes back in as events, each causing more writes.
+/// A rename across the boundary becomes the side that stays visible.
+fn without_excluded(events: Vec<IndexEvent>, excl: &ExclusionEngine) -> Vec<IndexEvent> {
+    let out = |p: &Path| excl.should_exclude(p, is_hidden_name(p));
+    events
+        .into_iter()
+        .filter_map(|event| match event {
+            IndexEvent::Renamed { from, to } => match (out(&from), out(&to)) {
+                (false, false) => Some(IndexEvent::Renamed { from, to }),
+                (false, true) => Some(IndexEvent::Deleted(from)),
+                (true, false) => Some(IndexEvent::Created(to)),
+                (true, true) => None,
+            },
+            IndexEvent::Created(ref p)
+            | IndexEvent::Modified(ref p)
+            | IndexEvent::Deleted(ref p)
+            | IndexEvent::ArchiveModified(ref p)
+            | IndexEvent::ArchiveDeleted(ref p) => (!out(p)).then_some(event),
+        })
+        .collect()
 }
 
 async fn flush_run(run: &mut Vec<IndexEvent>, cfg: &Arc<Config>, stores: &Stores) {
