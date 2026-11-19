@@ -9,7 +9,7 @@
 #   scripts\bench-windows.ps1 [-TargetDir <path>] [-Store sqlite|memory]
 #       [-DataDir <path>] [-OutDir <path>] [-RootStyle forward|backslash]
 #       [-Clients 8] [-LoadSeconds 20] [-IdleSeconds 15] [-Iterations 5]
-#       [-CrawlTimeout 3600] [-UseMft]
+#       [-CrawlTimeout 3600] [-UseMft] [-NoContent]
 #
 # Catch-up has two paths on Windows, and one run exercises only one of them:
 #   - USN journal replay needs admin rights, as the service's LocalSystem
@@ -31,6 +31,10 @@
 # -UseMft sets indexer.use_mft, so a cold crawl reads the NTFS file table
 # instead of walking directories. It needs an elevated prompt; otherwise the
 # daemon falls back to the walk. The summary says which one ran per root.
+#
+# -NoContent turns off full-text content extraction, so a crawl measures
+# enumeration and the index writes alone, as when comparing -UseMft over a
+# whole volume.
 #
 # The script exits 1 when a catch-up check fails, or with -UseMft when no root
 # was read from the file table, so CI can run it as a test.
@@ -56,7 +60,8 @@ param(
     [int]$IdleSeconds = 15,
     [int]$Iterations = 5,
     [int]$CrawlTimeout = 3600,
-    [switch]$UseMft
+    [switch]$UseMft,
+    [switch]$NoContent
 )
 
 $ErrorActionPreference = "Stop"
@@ -483,6 +488,7 @@ enabled = false
 
 [indexer]
 use_mft = $(if ($UseMft) { 'true' } else { 'false' })
+$(if ($NoContent) { "`n[content.extension_limits]`n`"*`" = 0" })
 
 [api]
 rest_port    = $restPort
@@ -520,6 +526,7 @@ try {
     Say "Elevated:     $isAdmin $(if ($isAdmin) {'(USN replay expected)'} else {'(timestamp scan expected)'})"
     Say "Store:        $Store"
     Say "File table:   $(if ($UseMft) {'requested (indexer.use_mft)'} else {'off'})"
+    Say "Content:      $(if ($NoContent) {'off'} else {'indexed'})"
     Say "Roots:        $TargetDir, $fixture  [$RootStyle separators]"
     Say "Volumes:      $fsTypes"
     Say "Work dir:     $workDir$(if ($keepData) {' (kept)'})"

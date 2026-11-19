@@ -134,3 +134,50 @@ jobs:
           path: |
             target/bench-walk
             target/bench-mft
+
+  # The file table pays off only for a root that is most of a volume, so
+  # this crawls all of C:\, both ways, with content indexing off so the two
+  # runs differ only in enumeration. A measurement, not a gate.
+  windows-whole-volume:
+    name: whole-volume crawl (Windows)
+    runs-on: windows-latest
+    continue-on-error: true
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+      - name: Build fsd
+        run: cargo build --release -p fs-server
+      - name: Crawl C:\ by walking directories
+        timeout-minutes: 60
+        shell: pwsh
+        run: >
+          .\scripts\bench-windows.ps1 -TargetDir C:\ -NoContent -CrawlTimeout 3000
+          -OutDir target\volume-walk -LoadSeconds 5 -IdleSeconds 3 -Iterations 3
+      - name: Crawl C:\ from the file table
+        if: always()
+        timeout-minutes: 60
+        shell: pwsh
+        run: >
+          .\scripts\bench-windows.ps1 -TargetDir C:\ -NoContent -UseMft -CrawlTimeout 3000
+          -OutDir target\volume-mft -LoadSeconds 5 -IdleSeconds 3 -Iterations 3
+      - name: Summaries
+        if: always()
+        shell: pwsh
+        run: |
+          foreach ($run in "volume-walk", "volume-mft") {
+            $f = "target\$run\summary.txt"
+            if (Test-Path $f) {
+              "### $run" | Add-Content $env:GITHUB_STEP_SUMMARY
+              '```' | Add-Content $env:GITHUB_STEP_SUMMARY
+              Get-Content $f | Add-Content $env:GITHUB_STEP_SUMMARY
+              '```' | Add-Content $env:GITHUB_STEP_SUMMARY
+            }
+          }
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: windows-whole-volume
+          path: |
+            target/volume-walk
+            target/volume-mft
