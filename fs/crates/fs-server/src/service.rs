@@ -138,31 +138,65 @@ pub mod windows {
             ServiceManager::local_computer(None::<&str>, ServiceManagerAccess::CREATE_SERVICE)
                 .map_err(|e| AppError::Config(format!("open service manager: {e}")))?;
 
-        let binary_path = std::ffi::OsString::from(format!(
-            "\"{}\" --config \"{}\" daemon --service",
-            exe_path.display(),
-            config_path.display(),
-        ));
+        manager
+            .create_service(
+                &service_info(exe_path, config_path),
+                ServiceAccess::CHANGE_CONFIG,
+            )
+            .map_err(|e| AppError::Config(format!("create service: {e}")))?;
 
-        let info = ServiceInfo {
+        tracing::info!("service '{}' installed", SERVICE_NAME);
+        Ok(())
+    }
+
+    /// The executable and its arguments stay separate: windows-service quotes
+    /// each one, so a whole command line passed as the path became a single
+    /// quoted "file name" and the service could never start.
+    fn service_info(exe_path: &std::path::Path, config_path: &std::path::Path) -> ServiceInfo {
+        ServiceInfo {
             name: OsString::from(SERVICE_NAME),
             display_name: OsString::from(SERVICE_DISPLAY),
             service_type: ServiceType::OWN_PROCESS,
             start_type: ServiceStartType::AutoStart,
             error_control: ServiceErrorControl::Normal,
-            executable_path: PathBuf::from(&binary_path),
-            launch_arguments: vec![],
+            executable_path: exe_path.to_path_buf(),
+            launch_arguments: vec![
+                OsString::from("--config"),
+                config_path.as_os_str().to_owned(),
+                OsString::from("daemon"),
+                OsString::from("--service"),
+            ],
             dependencies: vec![],
             account_name: None,
             account_password: None,
-        };
+        }
+    }
 
-        manager
-            .create_service(&info, ServiceAccess::CHANGE_CONFIG)
-            .map_err(|e| AppError::Config(format!("create service: {e}")))?;
+    #[cfg(test)]
+    mod tests {
+        use super::*;
 
-        tracing::info!("service '{}' installed", SERVICE_NAME);
-        Ok(())
+        #[test]
+        fn path_and_arguments_are_separate() {
+            let info = service_info(
+                std::path::Path::new(r"C:\Program Files\fs\fsd.exe"),
+                std::path::Path::new(r"C:\ProgramData\fs\config.toml"),
+            );
+            assert_eq!(
+                info.executable_path,
+                PathBuf::from(r"C:\Program Files\fs\fsd.exe")
+            );
+            assert_eq!(
+                info.launch_arguments,
+                [
+                    "--config",
+                    r"C:\ProgramData\fs\config.toml",
+                    "daemon",
+                    "--service"
+                ]
+                .map(OsString::from)
+            );
+        }
     }
 
     /// Remove the service from the Windows SCM.
