@@ -259,6 +259,10 @@ enum Act {
     Split,
     CopyName,
     CopyPath,
+    /// Keeps the picked items to paste somewhere else (in this app, not the system clipboard).
+    CopyItems,
+    /// Copies the items kept by `CopyItems` into the folder (or the pane's folder).
+    Paste,
     ShowAs(PeekAs),
     /// Shows or hides one of the list's columns (an index into `LIST_COLS`).
     Column(usize),
@@ -736,6 +740,8 @@ struct Ctx {
     panel: RwSignal<Option<Panel>>,
     /// What's being dragged from a pane: its side and paths.
     drag: StoredValue<Option<(Src, Vec<String>)>>,
+    /// What Copy kept, for Paste: where it is and its paths.
+    clip: RwSignal<Option<(Side, Vec<String>)>>,
     /// Where a drag would drop now ("pane:folder"), to highlight it.
     drop_at: RwSignal<Option<String>>,
     /// Widths the user dragged (0: the default): the sidebar, and the left pane when there are two.
@@ -797,6 +803,7 @@ impl Ctx {
             sync_pairs: RwSignal::new(stored(SYNC_PAIRS_KEY).and_then(|s| serde_json::from_str(&s).ok()).unwrap_or_default()),
             workspaces: RwSignal::new(saved_workspaces()),
             drag: StoredValue::new(None),
+            clip: RwSignal::new(None),
             drop_at: RwSignal::new(None),
             side_w: stored_px(SIDE_W_KEY),
             pane_w: stored_px(PANE_W_KEY),
@@ -1061,6 +1068,15 @@ pub fn App() -> impl IntoView {
                 }
                 "copy" | "move" => {
                     ctx.send_to_other(p, b.id == "move");
+                    true
+                }
+                // Not while text is selected (in a preview): ⌘C copies that.
+                "copy_items" if !text_selected() => {
+                    ctx.copy_items(p);
+                    true
+                }
+                "paste" => {
+                    ctx.paste(p, None);
                     true
                 }
                 "rename" => {

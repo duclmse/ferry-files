@@ -94,12 +94,63 @@ impl Ctx {
         }
     }
 
+    /// Keeps the picked items for Paste.
+    pub(super) fn copy_items(self, p: Pane) {
+        let items: Vec<String> = p.picked().into_iter().map(|e| e.path).collect();
+        if items.is_empty() {
+            return;
+        }
+        let what = match items.as_slice() {
+            [one] => format!("“{}”", base(one)),
+            _ => format!("{} items", items.len()),
+        };
+        self.clip.set(Some((self.side(p.src.get_untracked()), items)));
+        let key = match self.key_label("paste") {
+            k if k.is_empty() => String::new(),
+            k => format!(" ({k})"),
+        };
+        p.notice.set(Notice::Ok(format!("Copied {what}: paste it into another folder{key}.")));
+    }
+
+    /// Paste, with what it pastes: "Paste “name”" or "Paste 3 items".
+    pub(super) fn paste_label(self) -> String {
+        self.clip.with_untracked(|c| match c.as_ref().map(|(_, items)| items.as_slice()) {
+            Some([one]) => format!("Paste “{}”", base(one)),
+            Some(items) if !items.is_empty() => format!("Paste {} items", items.len()),
+            _ => "Paste".into(),
+        })
+    }
+
+    /// Copies what Copy kept into `dir` (None: the pane's folder).
+    pub(super) fn paste(self, p: Pane, dir: Option<String>) {
+        let Some((side, items)) = self.clip.get_untracked() else {
+            p.error("Nothing to paste: pick files or folders and Copy them first.");
+            return;
+        };
+        let from = match self.src_of(&side) {
+            Ok(s) => s,
+            Err(e) => return p.error(e),
+        };
+        let (to_src, to_dir) = (p.src.get_untracked(), dir.unwrap_or_else(|| p.cwd.get_untracked()));
+        if from == to_src {
+            if items.iter().any(|x| *x == to_dir || to_dir.starts_with(&format!("{}/", x.trim_end_matches('/')))) {
+                return p.error("A folder can't be pasted into itself.");
+            }
+            if items.iter().all(|x| parent(x) == to_dir) {
+                return p.error("That's already in this folder. Open another folder to paste it into.");
+            }
+        }
+        self.transfer(p, from, items, to_src, to_dir, false);
+    }
+
     pub(super) fn menu_items(self, p: Pane, entry: Option<&Entry>) -> Vec<MenuItem> {
         let device = p.src.get_untracked() != Src::Mac;
         let split = self.split.get_untracked();
         let Some(e) = entry else {
             let here = self.in_storage(p);
             let mut v = vec![
+                MenuItem::Do { label: self.paste_label(), key: "paste", act: Act::Paste, danger: false, enabled: here && self.clip.with_untracked(Option::is_some) },
+                MenuItem::Sep,
                 MenuItem::Do { label: "New folder…".into(), key: "", act: Act::NewFolder, danger: false, enabled: here },
                 MenuItem::Do { label: "New text file…".into(), key: "", act: Act::NewFile, danger: false, enabled: here },
             ];
@@ -172,7 +223,7 @@ impl Ctx {
         };
         let picked = p.picked().len();
         if picked > 1 {
-            let mut v = vec![];
+            let mut v = vec![item(format!("Copy {picked} items"), "copy_items", Act::CopyItems), MenuItem::Sep];
             if split {
                 let enabled = self.in_storage(self.other(p));
                 v.push(MenuItem::Do { label: self.to_label(p, "Copy", picked), key: "copy", act: Act::Copy, danger: false, enabled });
@@ -211,6 +262,10 @@ impl Ctx {
         }
         if device && !e.dir {
             v.push(item(format!("Download to {}…", crate::os::computer()), "", Act::Download));
+        }
+        v.push(item("Copy", "copy_items", Act::CopyItems));
+        if e.dir && self.clip.with_untracked(Option::is_some) {
+            v.push(item(format!("{} into “{}”", self.paste_label(), e.name), "", Act::Paste));
         }
         if split {
             let enabled = self.in_storage(self.other(p));
@@ -274,6 +329,9 @@ impl Ctx {
             (Act::Split, _) => self.set_split(!self.split.get_untracked()),
             (Act::Sidebar, _) => self.set_side(!self.side.get_untracked()),
             (Act::Undo, _) => self.undo_last(),
+            (Act::CopyItems, Some(_)) => self.copy_items(p),
+            (Act::Paste, Some(e)) if e.dir => self.paste(p, Some(e.path)),
+            (Act::Paste, None) => self.paste(p, None),
             (Act::CopyName, Some(e)) => copy_text(p, e.name),
             (Act::CopyPath, Some(e)) => copy_text(p, if p.src.get_untracked() == Src::Mac { crate::os::native_path(&e.path) } else { e.path }),
             (Act::Column(c), _) if c < LIST_COLS.len() => {

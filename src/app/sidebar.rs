@@ -1,4 +1,4 @@
-//! The sidebar (places, devices, favourites) and the settings window.
+//! The sidebar (workspaces, favourites, places, devices) and the settings window.
 
 use super::*;
 
@@ -115,6 +115,54 @@ pub(super) fn Sidebar() -> impl IntoView {
     };
     view! {
         <nav class="side">
+            {ws_heading()}
+            {move || ws_open.get().then(|| view! {
+                {move || ctx.workspaces.get().into_iter().map(|w| {
+                    let tip = ctx.workspace_tip(&w);
+                    let (w1, name) = (w.clone(), w.name.clone());
+                    view! {
+                        <div class="tree-row fav" style="--depth: 1">
+                            <span class="twisty none"></span>
+                            <button class="item" title=tip on:click=move |_| ctx.open_workspace(w1.clone())>{w.name.clone()}</button>
+                            <button class="unfav" title="Delete this workspace" aria-label="Delete this workspace"
+                                on:click=move |_| ctx.set_workspaces(ctx.workspaces.get_untracked().into_iter().filter(|x| x.name != name).collect())>"✕"</button>
+                        </div>
+                    }
+                }).collect_view()}
+                {move || match ws_name.get() {
+                    None => view! {
+                        <div class="tree-row" style="--depth: 1">
+                            <span class="twisty none"></span>
+                            <button class="item add" title="Keep these tabs, the split and the widths under a name"
+                                on:click=move |_| ws_name.set(Some(String::new()))>"Save these tabs…"</button>
+                        </div>
+                    }.into_any(),
+                    Some(_) => {
+                        let save = move || {
+                            if let Some(n) = ws_name.get_untracked() {
+                                ctx.save_workspace(&n);
+                            }
+                            ws_name.set(None);
+                        };
+                        let input = NodeRef::<html::Input>::new();
+                        input.on_load(move |el| { request_animation_frame(move || { let _ = el.focus(); }); });
+                        view! {
+                            <div class="ws-save">
+                                <input node_ref=input type="text" placeholder="Name, e.g. Phone photos" aria-label="Workspace name"
+                                    prop:value=move || ws_name.get().unwrap_or_default()
+                                    on:input=move |e| ws_name.set(Some(event_target_value(&e)))
+                                    on:keydown=move |e| match e.key().as_str() {
+                                        "Enter" => save(),
+                                        "Escape" => { e.stop_propagation(); ws_name.set(None) }
+                                        _ => {}
+                                    }/>
+                                <button class="btn small" disabled=move || ws_name.with(|n| n.as_deref().is_none_or(|n| n.trim().is_empty()))
+                                    on:click=move |_| save()>"Save"</button>
+                            </div>
+                        }.into_any()
+                    }
+                }}
+            })}
             {move || (!ctx.favs.with(|f| f.is_empty())).then(|| view! {
                 {fav_heading()}
                 {move || fav_open.get().then(|| ctx.favs.get().into_iter().map(|f| {
@@ -163,54 +211,6 @@ pub(super) fn Sidebar() -> impl IntoView {
                         </div>
                     }
                 }).collect_view())}
-            })}
-            {ws_heading()}
-            {move || ws_open.get().then(|| view! {
-                {move || ctx.workspaces.get().into_iter().map(|w| {
-                    let tip = ctx.workspace_tip(&w);
-                    let (w1, name) = (w.clone(), w.name.clone());
-                    view! {
-                        <div class="tree-row fav" style="--depth: 1">
-                            <span class="twisty none"></span>
-                            <button class="item" title=tip on:click=move |_| ctx.open_workspace(w1.clone())>{w.name.clone()}</button>
-                            <button class="unfav" title="Delete this workspace" aria-label="Delete this workspace"
-                                on:click=move |_| ctx.set_workspaces(ctx.workspaces.get_untracked().into_iter().filter(|x| x.name != name).collect())>"✕"</button>
-                        </div>
-                    }
-                }).collect_view()}
-                {move || match ws_name.get() {
-                    None => view! {
-                        <div class="tree-row" style="--depth: 1">
-                            <span class="twisty none"></span>
-                            <button class="item add" title="Keep these tabs, the split and the widths under a name"
-                                on:click=move |_| ws_name.set(Some(String::new()))>"Save these tabs…"</button>
-                        </div>
-                    }.into_any(),
-                    Some(_) => {
-                        let save = move || {
-                            if let Some(n) = ws_name.get_untracked() {
-                                ctx.save_workspace(&n);
-                            }
-                            ws_name.set(None);
-                        };
-                        let input = NodeRef::<html::Input>::new();
-                        input.on_load(move |el| { request_animation_frame(move || { let _ = el.focus(); }); });
-                        view! {
-                            <div class="ws-save">
-                                <input node_ref=input type="text" placeholder="Name, e.g. Phone photos" aria-label="Workspace name"
-                                    prop:value=move || ws_name.get().unwrap_or_default()
-                                    on:input=move |e| ws_name.set(Some(event_target_value(&e)))
-                                    on:keydown=move |e| match e.key().as_str() {
-                                        "Enter" => save(),
-                                        "Escape" => { e.stop_propagation(); ws_name.set(None) }
-                                        _ => {}
-                                    }/>
-                                <button class="btn small" disabled=move || ws_name.with(|n| n.as_deref().is_none_or(|n| n.trim().is_empty()))
-                                    on:click=move |_| save()>"Save"</button>
-                            </div>
-                        }.into_any()
-                    }
-                }}
             })}
             {mac_heading()}
             {move || mac_open.get().then(|| view! {

@@ -35,6 +35,8 @@ pub(super) const COMMANDS: &[Command] = &[
     c("delete", "Delete", &["cmd+Backspace", "Delete"], false),
     c("copy", "Copy to the other pane", &["F5"], false),
     c("move", "Move to the other pane", &["F6"], false),
+    c("copy_items", "Copy, to paste in another folder", &["cmd+KeyC"], false),
+    c("paste", "Paste what was copied into this folder", &["cmd+KeyV"], false),
     c("pick_all", "Pick everything", &["cmd+KeyA"], false),
     c("undo", "Undo the last rename, new item, delete, copy or move", &["cmd+KeyZ"], false),
     c("other_pane", "The other pane", &["Tab"], false),

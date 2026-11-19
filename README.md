@@ -46,6 +46,10 @@ files and disks too, so books can be copied between them.
   never replaced. Progress shows below the panes, with Cancel (it stops after
   the current file). Moving copies each file, then deletes the original (backed
   up, like any delete), so a move on the same device takes as long as a copy.
+- Copy (⌘C, or Copy in the right-click menu) keeps the picked items; Paste (⌘V,
+  or Paste on empty space or on a folder) copies them into the folder, on any
+  device, as copying to the other pane does. What's copied stays in the app
+  (not the system clipboard), and ⌘C still copies text selected in a preview.
 - Drag items between panes, onto a folder, or onto a place in the sidebar. As in
   Finder, dragging to the same device moves and to another device copies; hold ⌥
   to copy or ⌘ to move. Files dragged in from Finder are copied.

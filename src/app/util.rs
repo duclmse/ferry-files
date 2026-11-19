@@ -320,3 +320,8 @@ pub(super) fn kind_label(e: &Entry) -> String {
         },
     }
 }
+
+/// Whether some text on the page is selected (⌘C then copies it).
+pub(super) fn text_selected() -> bool {
+    window().get_selection().ok().flatten().is_some_and(|s| !s.is_collapsed())
+}
