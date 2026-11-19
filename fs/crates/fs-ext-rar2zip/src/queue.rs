@@ -136,8 +136,12 @@ impl JobQueue {
             )?;
             Ok(())
         });
+        // Each connection to ":memory:" is a database of its own; the tests'
+        // queues passed only while the pool happened to hand back the one
+        // connection that had the schema.
+        let in_memory = db_path == Path::new(":memory:");
         let pool = r2d2::Pool::builder()
-            .max_size(16)
+            .max_size(if in_memory { 1 } else { 16 })
             .build(manager)
             .map_err(|e| AppError::Config(e.to_string()))?;
 
