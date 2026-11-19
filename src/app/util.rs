@@ -192,6 +192,8 @@ pub(super) const SPLIT_KEY: &str = "ferry-files.split";
 pub(super) const SIDE_KEY: &str = "ferry-files.sidebar";
 /// Phones connected over Wi-Fi before: [(name, address)].
 pub(super) const WIFI_KEY: &str = "ferry-files.wifi";
+/// Transfers not finished when the app quit, to resume.
+pub(super) const JOBS_KEY: &str = "ferry-files.jobs";
 pub(super) const SEARCHES_KEY: &str = "ferry-files.searches";
 pub(super) const THEME_KEY: &str = "ferry-files.theme";
 

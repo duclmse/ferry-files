@@ -38,6 +38,9 @@ pub struct Progress {
 #[derive(Clone, Debug, PartialEq, Deserialize)]
 pub struct TransferReport {
     pub copied: u32,
+    /// With resume: files found already copied (same size) and left as they were.
+    #[serde(default)]
+    pub already: u32,
     pub skipped: Vec<(String, String)>,
     pub cancelled: bool,
     pub backups: Vec<String>,

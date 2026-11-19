@@ -41,7 +41,7 @@ impl Ctx {
 
     /// Ejects a disk. Panes showing it go back to the home folder first.
     pub(super) fn eject(self, path: String) {
-        if self.job.with_untracked(|j| j.is_some()) {
+        if self.running() {
             self.act().error("Wait for the copy to finish before ejecting.");
             return;
         }

@@ -30,6 +30,8 @@ pub(super) fn Sidebar() -> impl IntoView {
                     on:click=move |_| ctx.refresh_devices()>
                     <svg viewBox="0 0 16 16" aria-hidden="true"><path d="M13 8a5 5 0 1 1-1.5-3.6"/><path d="M13 2.5v3h-3"/></svg>
                 </button>
+                <button class="refresh" title="Connect a phone over Wi-Fi (adb Wireless debugging)" aria-label="Connect over Wi-Fi"
+                    on:click=move |_| ctx.wifi.set(true)>{ico(Icon::Wifi)}</button>
             })}</h2>
             }
         };
@@ -157,8 +159,6 @@ pub(super) fn Sidebar() -> impl IntoView {
             {move || dev_open.get().then(|| view! {
                 {ctx.phones.get().into_iter().map(device).collect_view()}
                 <DeviceFinder/>
-                <button class="btn small wifi-open" title="Pair or connect a phone over Wi-Fi (adb Wireless debugging)"
-                    on:click=move |_| ctx.wifi.set(true)>{ico(Icon::Wifi)}"Connect over Wi-Fi…"</button>
             })}
             <span class="grow"></span>
             <div class="side-buttons">

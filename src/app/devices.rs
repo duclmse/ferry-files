@@ -20,7 +20,7 @@ impl Ctx {
     /// Looks for devices on USB and disks on the Mac. When the app is busy or a look is under way,
     /// it's done later.
     pub(super) fn scan(self) {
-        if self.busy.get_untracked() || self.scanning.get_value() || self.job.with_untracked(|j| j.is_some()) {
+        if self.busy.get_untracked() || self.scanning.get_value() || self.running() {
             self.scan_again.set_value(true);
             return;
         }

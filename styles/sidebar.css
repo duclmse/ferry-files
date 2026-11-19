@@ -377,11 +377,6 @@
 }
 
 /* Connect over Wi-Fi (wifi.rs). */
-.wifi-open {
-  margin: 2px 6px 6px 26px;
-  align-self: flex-start;
-}
-
 .dialog.wifi {
   width: min(560px, 100%);
 }

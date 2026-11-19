@@ -471,12 +471,45 @@ enum Panel {
     Reader(Src, String, Option<String>),
 }
 
-/// The copy or move running now (one at a time).
+/// A side of a job: the computer, or a phone found again by its serial (by its id when it has none,
+/// which only holds while it stays connected).
+#[derive(Clone, PartialEq, serde::Serialize, serde::Deserialize)]
+enum Side {
+    Mac,
+    Phone { serial: Option<String>, id: String, label: String },
+}
+
+/// What a job does.
+#[derive(Clone, PartialEq, serde::Serialize, serde::Deserialize)]
+enum Work {
+    /// Copies (or moves) `items` into `to_dir`.
+    Copy { from: Side, items: Vec<String>, to: Side, to_dir: String, moving: bool },
+    /// Copies what's missing from `to_dir` out of `from_dir`.
+    Sync { from: Side, from_dir: String, to: Side, to_dir: String, hidden: bool },
+}
+
+#[derive(Clone, PartialEq)]
+enum JobState {
+    Queued,
+    Running,
+    /// Not finished when the app last quit: resumed only when asked.
+    Paused,
+    /// Finished with something left to do (cancelled, or files skipped): what happened.
+    Stopped(String),
+    Failed(String),
+}
+
+/// A copy, move or sync in the queue. One runs at a time, in order.
 #[derive(Clone, PartialEq)]
 struct Job {
     id: u32,
-    moving: bool,
+    work: Work,
+    /// The pane its report goes to.
+    pane: usize,
+    state: JobState,
     progress: Option<Progress>,
+    /// Running it again: files already there with the same size count as done.
+    resume: bool,
 }
 
 #[derive(Clone, Copy)]
@@ -524,7 +557,8 @@ struct Ctx {
     show_hidden: RwSignal<bool>,
     /// Settings: make thumbnails of phone files (each one reads the whole file over USB).
     phone_thumbs: RwSignal<bool>,
-    job: RwSignal<Option<Job>>,
+    /// The transfer queue: running, waiting, and stopped ones to retry.
+    jobs: RwSignal<Vec<Job>>,
     next_job: StoredValue<u32>,
     favs: RwSignal<Vec<Fav>>,
     /// Free space per storage, by side ("mac", "d1", ...).
@@ -579,7 +613,7 @@ impl Ctx {
             auto_connect: RwSignal::new(stored_flag(AUTO_CONNECT_KEY, true)),
             tried: StoredValue::new(HashSet::new()),
             seen: StoredValue::new((HashSet::new(), 0)),
-            job: RwSignal::new(None),
+            jobs: RwSignal::new(vec![]),
             next_job: StoredValue::new(1),
             space: RwSignal::new(HashMap::new()),
             history: RwSignal::new(vec![]),
@@ -696,6 +730,7 @@ pub fn App() -> impl IntoView {
     // no phone is connected.
     ctx.scan();
     ctx.reconnect_wifi();
+    ctx.load_jobs();
     let watching = StoredValue::new(false);
     spawn_local(async move {
         if let Ok(on) = call::<bool>("watch_devices", json!({})).await {
@@ -949,8 +984,8 @@ pub fn App() -> impl IntoView {
     });
 
     crate::api::listen("transfer", move |pr: Progress| {
-        ctx.job.update(|j| {
-            if let Some(j) = j.as_mut().filter(|j| j.id == pr.job) {
+        ctx.jobs.update(|js| {
+            if let Some(j) = js.iter_mut().find(|j| j.id == pr.job) {
                 j.progress = Some(pr);
             }
         });

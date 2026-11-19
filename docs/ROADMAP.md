@@ -51,20 +51,24 @@ on USB and Wi-Fi (same `ro.serialno`: compare and refuse to connect twice).
 
 Tests: parsing of `adb mdns services` and `adb connect` output (unit tests, no phone).
 
-### 2. Transfer queue ☐
+### 2. Transfer queue ☑
 Goal: start more copies while one runs; see, retry and resume them.
 
-- Frontend: `Ctx::job` becomes `jobs: RwSignal<Vec<Job>>` with states Queued / Running / Done /
-  Failed / Cancelled; the runner starts the next queued job when one ends. `transfer()` enqueues
-  instead of refusing "Another copy is running".
-- Transfer bar → a collapsible queue: each job with progress, Cancel, Remove; finished jobs show
-  "Retry skipped" (re-runs only the items that failed, from `TransferReport.skipped`, which gains
-  the full source path) .
-- Backend: `TransferReport.skipped` carries the source path; no other change (jobs are already
-  separate by id). Optional: a byte-level partial-file guard — today a cancel only happens between
-  files, so no partial files are left.
-- Resume after quitting: the queue (not progress) is kept in localStorage; on launch, unfinished
-  jobs are offered as "Resume" (existing files are skipped, so it continues where it stopped).
+Built:
+- `Ctx::jobs: RwSignal<Vec<Job>>`, each a `Work` (Copy or Sync) with a state: Queued, Running,
+  Paused (interrupted by quitting), Stopped (cancelled or something skipped), Failed. One runs at a
+  time; the next starts when it ends. Jobs that finish cleanly leave the list (their report is in
+  the pane and in History).
+- Devices are kept by serial (`Side::Phone`), so a job finds its phone again after a reconnect,
+  or says "… isn't connected".
+- The bar below the panes lists the jobs: the running one with progress and Cancel; waiting ones
+  with Remove; stopped/failed/interrupted ones with Retry (or Resume) and Remove.
+- Retry and Resume run the job again with `resume`: the backend counts a file already at the
+  target with the same size as done (`TransferReport.already`) instead of reporting it skipped;
+  a different file with the same name is still skipped, never replaced. When moving, originals of
+  files found already there are kept (they may be from an earlier copy, not this move).
+- Unfinished jobs are kept in localStorage (`ferry-files.jobs`) and come back as "Not finished
+  when the app quit" at launch.
 
 ### 3. Verify after copy ☐
 Goal: know a copy arrived intact.

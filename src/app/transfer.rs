@@ -18,63 +18,16 @@ impl Ctx {
         self.transfer(p, from_src, items, to_src, to_dir, moving);
     }
 
-    /// Copies (or moves) files and folders into `to_dir`, with progress below the panes.
-    /// Files already there are skipped, never replaced. The report shows in pane `p`.
+    /// Copies (or moves) files and folders into `to_dir`, with progress below the panes. Files
+    /// already there are skipped, never replaced. Queued behind any copy already running; the
+    /// report shows in pane `p`.
     pub(super) fn transfer(self, p: Pane, from_src: Src, items: Vec<String>, to_src: Src, to_dir: String, moving: bool) {
-        if self.job.with_untracked(|j| j.is_some()) {
-            p.error("Another copy is running. Wait for it to finish, or cancel it.");
-            return;
-        }
         if to_dir == "/" && self.src_info(to_src).is_some_and(|i| i.transport == "mtp") {
             p.error("Open a storage first: files can't go at the top level over MTP.");
             return;
         }
-        let id = self.next_job.get_value();
-        self.next_job.set_value(id + 1);
-        self.job.set(Some(Job { id, moving, progress: None }));
-        p.notice.set(Notice::None);
-        let froms: Vec<String> = items.iter().map(|x| parent(x)).collect();
-        spawn_local(async move {
-            let args = json!({
-                "job": id, "from_src": from_src.key(), "paths": items, "to_src": to_src.key(), "to_dir": to_dir,
-                "mode": if moving { "move" } else { "copy" },
-            });
-            match call::<TransferReport>("transfer", args).await {
-                Ok(r) => {
-                    let n = |c: u32| format!("{c} {}", if c == 1 { "file" } else { "files" });
-                    let verb = if moving { "Moved" } else { "Copied" };
-                    let mut lines = vec![format!("{verb} {} to {}.", n(r.copied), to_dir)];
-                    if r.cancelled {
-                        lines.push("Cancelled: the rest wasn't copied.".into());
-                    }
-                    if moving && !r.backups.is_empty() {
-                        lines.push(format!("The originals are backed up on {}.", crate::os::the_computer()));
-                    }
-                    let shown = 5;
-                    for (name, why) in r.skipped.iter().take(shown) {
-                        lines.push(format!("Skipped {name}: {why}"));
-                    }
-                    if r.skipped.len() > shown {
-                        lines.push(format!("…and {} more skipped.", r.skipped.len() - shown));
-                    }
-                    self.log(lines[0].clone());
-                    let msg = lines.join("\n");
-                    p.notice.set(if r.skipped.is_empty() { Notice::Ok(msg) } else { Notice::Error(msg) });
-                }
-                Err(e) => p.error(e),
-            }
-            self.job.set(None);
-            self.changed(to_src, &to_dir);
-            if moving {
-                let mut seen = vec![];
-                for d in froms {
-                    if !seen.contains(&d) {
-                        self.changed(from_src, &d);
-                        seen.push(d);
-                    }
-                }
-            }
-        });
+        let work = Work::Copy { from: self.side(from_src), items, to: self.side(to_src), to_dir, moving };
+        self.enqueue(p.id, work, false);
     }
 
     /// Compares this pane's folder with the other pane's, and asks before copying what's missing.
@@ -97,76 +50,292 @@ impl Ctx {
         });
     }
 
-    /// Copies what `compare` found missing. Runs as a transfer, with progress and Cancel.
+    /// Copies what `compare` found missing, as a queued job.
     pub(super) fn sync(self, p: Pane, from: (Src, String), to: (Src, String)) {
-        if self.job.with_untracked(|j| j.is_some()) {
-            p.error("Another copy is running. Wait for it to finish, or cancel it.");
-            return;
-        }
-        let id = self.next_job.get_value();
-        self.next_job.set_value(id + 1);
-        self.job.set(Some(Job { id, moving: false, progress: None }));
         p.notice.set(Notice::None);
-        let hidden = self.show_hidden.get_untracked();
-        spawn_local(async move {
-            let args = json!({
-                "job": id, "from_src": from.0.key(), "from_dir": from.1, "to_src": to.0.key(), "to_dir": to.1, "hidden": hidden,
-            });
-            match call::<TransferReport>("sync", args).await {
-                Ok(r) => {
-                    let mut lines = vec![format!("Synced {} into {}: copied {} {}.", base(&from.1), to.1, r.copied, if r.copied == 1 { "file" } else { "files" })];
-                    if r.cancelled {
-                        lines.push("Cancelled: the rest wasn't copied.".into());
-                    }
-                    for (name, why) in r.skipped.iter().take(5) {
-                        lines.push(format!("Skipped {name}: {why}"));
-                    }
-                    if r.skipped.len() > 5 {
-                        lines.push(format!("…and {} more skipped.", r.skipped.len() - 5));
-                    }
-                    self.log(lines[0].clone());
-                    let msg = lines.join("\n");
-                    p.notice.set(if r.skipped.is_empty() { Notice::Ok(msg) } else { Notice::Error(msg) });
-                }
-                Err(e) => p.error(e),
-            }
-            self.job.set(None);
-            self.changed(to.0, &to.1);
-        });
+        let work = Work::Sync { from: self.side(from.0), from_dir: from.1, to: self.side(to.0), to_dir: to.1, hidden: self.show_hidden.get_untracked() };
+        self.enqueue(p.id, work, false);
     }
 
-    pub(super) fn cancel_transfer(self) {
-        if let Some(j) = self.job.get_untracked() {
+    /// Whether a job is running now.
+    pub(super) fn running(self) -> bool {
+        self.jobs.with_untracked(|js| js.iter().any(|j| j.state == JobState::Running))
+    }
+
+    /// How a job finds `src` again.
+    fn side(self, src: Src) -> Side {
+        match (src, self.src_info(src)) {
+            (Src::Dev(_), Some(i)) => Side::Phone { serial: i.serial, id: i.id, label: i.label },
+            _ => Side::Mac,
+        }
+    }
+
+    /// Where `side` is now: the computer, or the phone with that serial if it's connected.
+    fn src_of(self, side: &Side) -> Result<Src, String> {
+        match side {
+            Side::Mac => Ok(Src::Mac),
+            Side::Phone { serial, id, label } => self
+                .phones
+                .with_untracked(|ps| {
+                    ps.iter().find(|i| if serial.is_some() { i.serial == *serial } else { i.id == *id }).map(|i| Src::of(&i.id))
+                })
+                .ok_or_else(|| format!("{label} isn't connected. Connect it, then retry.")),
+        }
+    }
+
+    fn enqueue(self, pane: usize, work: Work, resume: bool) {
+        let id = self.next_job.get_value();
+        self.next_job.set_value(id + 1);
+        self.jobs.update(|js| js.push(Job { id, work, pane, state: JobState::Queued, progress: None, resume }));
+        if self.running() {
+            self.panes[pane].notice.set(Notice::Ok("Queued: it starts when the copy before it is done.".into()));
+        }
+        self.save_jobs();
+        self.pump();
+    }
+
+    /// Starts the first waiting job, unless one is running.
+    fn pump(self) {
+        if self.running() {
+            return;
+        }
+        let Some(job) = self.jobs.with_untracked(|js| js.iter().find(|j| j.state == JobState::Queued).cloned()) else { return };
+        self.set_state(job.id, JobState::Running);
+        spawn_local(async move { self.run_job(job).await });
+    }
+
+    fn set_state(self, id: u32, state: JobState) {
+        self.jobs.update(|js| {
+            if let Some(j) = js.iter_mut().find(|j| j.id == id) {
+                j.state = state;
+            }
+        });
+        self.save_jobs();
+    }
+
+    async fn run_job(self, job: Job) {
+        let p = self.panes[job.pane];
+        let (from, to) = match &job.work {
+            Work::Copy { from, to, .. } | Work::Sync { from, to, .. } => (self.src_of(from), self.src_of(to)),
+        };
+        let (from_src, to_src) = match (from, to) {
+            (Ok(a), Ok(b)) => (a, b),
+            (Err(e), _) | (_, Err(e)) => {
+                p.error(e.clone());
+                self.set_state(job.id, JobState::Failed(e));
+                self.pump();
+                return;
+            }
+        };
+        let r = match &job.work {
+            Work::Copy { items, to_dir, moving, .. } => {
+                let args = json!({
+                    "job": job.id, "from_src": from_src.key(), "paths": items, "to_src": to_src.key(), "to_dir": to_dir,
+                    "mode": if *moving { "move" } else { "copy" }, "resume": job.resume,
+                });
+                call::<TransferReport>("transfer", args).await
+            }
+            Work::Sync { from_dir, to_dir, hidden, .. } => {
+                let args = json!({
+                    "job": job.id, "from_src": from_src.key(), "from_dir": from_dir, "to_src": to_src.key(), "to_dir": to_dir, "hidden": hidden,
+                });
+                call::<TransferReport>("sync", args).await
+            }
+        };
+        let state = match r {
+            Ok(r) => {
+                let lines = report_lines(&job.work, &r);
+                self.log(lines[0].clone());
+                let msg = lines.join("\n");
+                let left = r.cancelled || !r.skipped.is_empty();
+                p.notice.set(if r.skipped.is_empty() { Notice::Ok(msg) } else { Notice::Error(msg) });
+                left.then(|| JobState::Stopped(lines[1..].first().cloned().unwrap_or_else(|| lines[0].clone())))
+            }
+            Err(e) => {
+                p.error(e.clone());
+                Some(JobState::Failed(e))
+            }
+        };
+        match state {
+            Some(s) => self.set_state(job.id, s),
+            // Done: it leaves the queue (the report is in the pane and History).
+            None => self.drop_job(job.id),
+        }
+        match &job.work {
+            Work::Copy { items, to_dir, moving, .. } => {
+                self.changed(to_src, to_dir);
+                if *moving {
+                    let mut seen = vec![];
+                    for d in items.iter().map(|x| parent(x)) {
+                        if !seen.contains(&d) {
+                            self.changed(from_src, &d);
+                            seen.push(d);
+                        }
+                    }
+                }
+            }
+            Work::Sync { to_dir, .. } => self.changed(to_src, to_dir),
+        }
+        self.pump();
+    }
+
+    /// Runs a stopped, failed or interrupted job again, at the end of the queue. Files it already
+    /// copied are counted as done, not copied again.
+    pub(super) fn retry_job(self, id: u32) {
+        let Some(j) = self.jobs.with_untracked(|js| js.iter().find(|j| j.id == id).cloned()) else { return };
+        self.drop_job(id);
+        self.enqueue(j.pane, j.work, true);
+    }
+
+    /// Cancels a job: a waiting one leaves the queue; a running one stops after its current file.
+    pub(super) fn cancel_job(self, id: u32) {
+        let running = self.jobs.with_untracked(|js| js.iter().any(|j| j.id == id && j.state == JobState::Running));
+        if running {
             spawn_local(async move {
-                let _ = call::<()>("cancel_transfer", json!({ "job": j.id })).await;
+                let _ = call::<()>("cancel_transfer", json!({ "job": id })).await;
             });
+        } else {
+            self.drop_job(id);
+        }
+    }
+
+    pub(super) fn drop_job(self, id: u32) {
+        self.jobs.update(|js| js.retain(|j| j.id != id));
+        self.save_jobs();
+    }
+
+    /// Keeps the unfinished jobs (waiting, running, interrupted) for the next launch. Phones
+    /// without a serial can't be found again then, so their jobs aren't kept.
+    fn save_jobs(self) {
+        let keep: Vec<Work> = self.jobs.with_untracked(|js| {
+            js.iter()
+                .filter(|j| matches!(j.state, JobState::Queued | JobState::Running | JobState::Paused))
+                .map(|j| j.work.clone())
+                .filter(|w| {
+                    let (a, b) = match w {
+                        Work::Copy { from, to, .. } | Work::Sync { from, to, .. } => (from, to),
+                    };
+                    [a, b].iter().all(|s| !matches!(s, Side::Phone { serial: None, .. }))
+                })
+                .collect()
+        });
+        store(JOBS_KEY, &serde_json::to_string(&keep).unwrap_or_default());
+    }
+
+    /// At launch: jobs the app quit during, offered to resume.
+    pub(super) fn load_jobs(self) {
+        let works: Vec<Work> = stored(JOBS_KEY).and_then(|s| serde_json::from_str(&s).ok()).unwrap_or_default();
+        for work in works {
+            let id = self.next_job.get_value();
+            self.next_job.set_value(id + 1);
+            self.jobs.update(|js| js.push(Job { id, work, pane: 0, state: JobState::Paused, progress: None, resume: true }));
         }
     }
 }
 
-/// The copy or move under way: what it's on, how far it is, and Cancel.
+/// The report of a finished job, first line first.
+fn report_lines(work: &Work, r: &TransferReport) -> Vec<String> {
+    let n = |c: u32| format!("{c} {}", if c == 1 { "file" } else { "files" });
+    let mut lines = vec![match work {
+        Work::Copy { moving, to_dir, .. } => format!("{} {} to {}.", if *moving { "Moved" } else { "Copied" }, n(r.copied), to_dir),
+        Work::Sync { from_dir, to_dir, .. } => format!("Synced {} into {}: copied {}.", base(from_dir), to_dir, n(r.copied)),
+    }];
+    let moving = matches!(work, Work::Copy { moving: true, .. });
+    if r.already > 0 {
+        lines.push(format!("{} already there from before{}.", n(r.already), if moving { "; their originals were kept" } else { "" }));
+    }
+    if r.cancelled {
+        lines.push("Cancelled: the rest wasn't copied.".into());
+    }
+    if moving && !r.backups.is_empty() {
+        lines.push(format!("The originals are backed up on {}.", crate::os::the_computer()));
+    }
+    let shown = 5;
+    for (name, why) in r.skipped.iter().take(shown) {
+        lines.push(format!("Skipped {name}: {why}"));
+    }
+    if r.skipped.len() > shown {
+        lines.push(format!("…and {} more skipped.", r.skipped.len() - shown));
+    }
+    lines
+}
+
+/// A job in a few words: "Copy 3 items to Download".
+fn job_title(w: &Work) -> String {
+    match w {
+        Work::Copy { items, to_dir, moving, .. } => {
+            let what = match items.as_slice() {
+                [one] => base(one),
+                many => format!("{} items", many.len()),
+            };
+            format!("{} {what} to {}", if *moving { "Move" } else { "Copy" }, base(to_dir))
+        }
+        Work::Sync { from_dir, to_dir, .. } => format!("Sync {} into {}", base(from_dir), base(to_dir)),
+    }
+}
+
+/// The transfer queue below the panes: the running job with its progress, then the waiting ones,
+/// and the ones to retry.
 #[component]
 pub(super) fn TransferBar() -> impl IntoView {
     let ctx = expect_context::<Ctx>();
-    move || ctx.job.get().map(|j| {
-        let verb = if j.moving { "Moving" } else { "Copying" };
-        let (text, pct) = match &j.progress {
-            None => (format!("{verb}: looking at what to copy…"), 0.0),
-            Some(pr) => {
-                let pct = if pr.bytes_total > 0 { pr.bytes_done as f64 * 100.0 / pr.bytes_total as f64 } else { 0.0 };
-                let now = if pr.current.is_empty() { String::new() } else { format!(" {}", pr.current) };
-                (format!("{verb}{now} · {} of {} files · {} of {}", pr.files_done, pr.files_total,
-                    human_size(pr.bytes_done), human_size(pr.bytes_total)), pct)
-            }
-        };
-        view! {
-            <div class="transfer">
-                <span class="spin"></span>
-                <span class="text">{text}</span>
-                <div class="meter"><div style=format!("width:{pct:.1}%")></div></div>
-                <button class="btn" title="Stops after the file being copied now"
-                    on:click=move |_| ctx.cancel_transfer()>{ico(Icon::Stop)}"Cancel"</button>
+    move || {
+        let jobs = ctx.jobs.get();
+        (!jobs.is_empty()).then(|| view! {
+            <div class="transfers">
+                {jobs.into_iter().map(|j| {
+                    let id = j.id;
+                    let title = job_title(&j.work);
+                    match j.state {
+                        JobState::Running => {
+                            let verb = match &j.work {
+                                Work::Copy { moving: true, .. } => "Moving",
+                                Work::Copy { .. } => "Copying",
+                                Work::Sync { .. } => "Syncing",
+                            };
+                            let (text, pct) = match &j.progress {
+                                None => (format!("{verb}: looking at what to copy…"), 0.0),
+                                Some(pr) => {
+                                    let pct = if pr.bytes_total > 0 { pr.bytes_done as f64 * 100.0 / pr.bytes_total as f64 } else { 0.0 };
+                                    let now = if pr.current.is_empty() { String::new() } else { format!(" {}", pr.current) };
+                                    (format!("{verb}{now} · {} of {} files · {} of {}", pr.files_done, pr.files_total,
+                                        human_size(pr.bytes_done), human_size(pr.bytes_total)), pct)
+                                }
+                            };
+                            view! {
+                                <div class="transfer">
+                                    <span class="spin"></span>
+                                    <span class="text" title=title>{text}</span>
+                                    <div class="meter"><div style=format!("width:{pct:.1}%")></div></div>
+                                    <button class="btn" title="Stops after the file being copied now"
+                                        on:click=move |_| ctx.cancel_job(id)>{ico(Icon::Stop)}"Cancel"</button>
+                                </div>
+                            }.into_any()
+                        }
+                        state => {
+                            let (what, retry) = match state {
+                                JobState::Queued => ("Waiting".to_string(), None),
+                                JobState::Paused => ("Not finished when the app quit".to_string(), Some("Resume")),
+                                JobState::Stopped(why) => (why, Some("Retry")),
+                                JobState::Failed(why) => (why, Some("Retry")),
+                                JobState::Running => unreachable!(),
+                            };
+                            let tip = format!("{title}: {what}");
+                            view! {
+                                <div class="transfer queued">
+                                    <span class="text" title=tip><b>{title}</b>" · "{what}</span>
+                                    {retry.map(|label| view! {
+                                        <button class="btn small" title="Run it again: files already copied are kept, the rest is copied"
+                                            on:click=move |_| ctx.retry_job(id)>{ico(Icon::Refresh)}{label}</button>
+                                    })}
+                                    <button class="btn small" title="Take it off the list" aria-label="Remove"
+                                        on:click=move |_| ctx.cancel_job(id)>{ico(Icon::Close)}</button>
+                                </div>
+                            }.into_any()
+                        }
+                    }
+                }).collect_view()}
             </div>
-        }
-    })
+        })
+    }
 }

@@ -203,3 +203,25 @@ td.name .where {
   padding: 0 8px;
   font-size: 11px;
 }
+
+/* The transfer queue (transfer.rs): the running job, then waiting and stopped ones. */
+.transfers {
+  display: flex;
+  flex-direction: column;
+  max-height: 30vh;
+  overflow: auto;
+}
+
+.transfers .transfer + .transfer {
+  border-top-style: dashed;
+}
+
+.transfer.queued {
+  padding-block: 4px;
+  color: var(--muted);
+}
+
+.transfer.queued b {
+  color: var(--ink);
+  font-weight: 600;
+}
