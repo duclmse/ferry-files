@@ -154,7 +154,7 @@ impl Ctx {
     async fn run_job(self, job: Job) {
         let p = self.panes[job.pane];
         let (from, to) = match &job.work {
-            Work::Copy { from, to, .. } | Work::Sync { from, to, .. } => (self.src_of(from), self.src_of(to)),
+            Work::Copy { from, to, .. } | Work::Sync { from, to, .. } | Work::Import { from, to, .. } => (self.src_of(from), self.src_of(to)),
         };
         let (from_src, to_src) = match (from, to) {
             (Ok(a), Ok(b)) => (a, b),
@@ -180,6 +180,13 @@ impl Ctx {
                     "verify": self.verify.get_untracked(), "mode": if mode.is_empty() { "copy" } else { mode }, "remove": remove,
                 });
                 call::<TransferReport>("sync", args).await
+            }
+            Work::Import { from_dir, to_dir, pattern, moving, .. } => {
+                let args = json!({
+                    "job": job.id, "from_src": from_src.key(), "from_dir": from_dir, "to_src": to_src.key(), "to_dir": to_dir,
+                    "pattern": pattern, "hidden": self.show_hidden.get_untracked(), "moving": moving, "verify": self.verify.get_untracked(),
+                });
+                call::<TransferReport>("import_photos", args).await
             }
         };
         let state = match r {
@@ -228,6 +235,12 @@ impl Ctx {
                 }
             }
             Work::Sync { to_dir, .. } => self.changed(to_src, to_dir),
+            Work::Import { from_dir, to_dir, moving, .. } => {
+                self.changed(to_src, to_dir);
+                if *moving {
+                    self.changed(from_src, from_dir);
+                }
+            }
         }
         self.pump();
     }
@@ -266,7 +279,7 @@ impl Ctx {
                 .map(|j| j.work.clone())
                 .filter(|w| {
                     let (a, b) = match w {
-                        Work::Copy { from, to, .. } | Work::Sync { from, to, .. } => (from, to),
+                        Work::Copy { from, to, .. } | Work::Sync { from, to, .. } | Work::Import { from, to, .. } => (from, to),
                     };
                     [a, b].iter().all(|s| !matches!(s, Side::Phone { serial: None, .. }))
                 })
@@ -296,11 +309,12 @@ fn report_lines(work: &Work, r: &TransferReport) -> Vec<String> {
             let removed = if r.removed > 0 { format!(", removed {} {}", r.removed, if r.removed == 1 { "item" } else { "items" }) } else { String::new() };
             format!("Synced {} into {}: copied {}{removed}.", base(from_dir), to_dir, n(r.copied))
         }
+        Work::Import { to_dir, moving, .. } => format!("{} {} into {}.", if *moving { "Imported and removed" } else { "Imported" }, n(r.copied), to_dir),
     }];
     if matches!(work, Work::Sync { .. }) && (!r.backups.is_empty() || r.removed > 0) {
         lines.push(format!("What was replaced or removed is in Backups on {}.", crate::os::the_computer()));
     }
-    let moving = matches!(work, Work::Copy { moving: true, .. });
+    let moving = matches!(work, Work::Copy { moving: true, .. } | Work::Import { moving: true, .. });
     if r.already > 0 {
         lines.push(format!("{} already there from before{}.", n(r.already), if moving { "; their originals were kept" } else { "" }));
     }
@@ -341,6 +355,7 @@ fn job_title(w: &Work) -> String {
             };
             format!("{verb} {} into {}", base(from_dir), base(to_dir))
         }
+        Work::Import { from_dir, to_dir, .. } => format!("Import photos from {} into {}", base(from_dir), base(to_dir)),
     }
 }
 
@@ -363,6 +378,7 @@ pub(super) fn TransferBar() -> impl IntoView {
                                 Work::Copy { replace: true, .. } => "Replacing",
                                 Work::Copy { .. } => "Copying",
                                 Work::Sync { .. } => "Syncing",
+                                Work::Import { .. } => "Importing",
                             };
                             let (text, pct) = match &j.progress {
                                 None => (format!("{verb}: looking at what to copy…"), 0.0),

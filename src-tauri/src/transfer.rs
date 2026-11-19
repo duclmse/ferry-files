@@ -18,14 +18,14 @@ pub(super) struct Progress {
 
 #[derive(Serialize, Default)]
 pub(super) struct TransferReport {
-    copied: u32,
+    pub(super) copied: u32,
     /// Name and reason, for each item that wasn't copied (or moved).
     skipped: Vec<(String, String)>,
-    cancelled: bool,
+    pub(super) cancelled: bool,
     /// Backups of moved files, made when their originals were removed, and of replaced files.
     backups: Vec<String>,
     /// Resuming: files already at the target with the same size, left as they are.
-    already: u32,
+    pub(super) already: u32,
     /// Syncing as a mirror: items removed from the target (each file backed up first).
     removed: u32,
     /// What the transfer made at the target's top level that wasn't there before (a file, or a
@@ -41,6 +41,20 @@ pub(super) struct Item {
     size: u64,
     /// Write over the file at `to` (backed up first), whatever `Opts::replace` says.
     replace: bool,
+}
+
+impl Item {
+    /// A file to copy from `from` to `to`.
+    pub(super) fn file(from: String, to: String, size: u64) -> Item {
+        Item { from, to, dir: false, size, replace: false }
+    }
+}
+
+impl Progress {
+    /// Before any file is copied: what's being done meanwhile.
+    pub(super) fn looking(job: u32, current: String) -> Progress {
+        Progress { job, files_done: 0, files_total: 0, bytes_done: 0, bytes_total: 0, current }
+    }
 }
 
 /// Lists everything under `from` (itself first), with where it goes under `to_dir`.

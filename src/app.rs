@@ -17,6 +17,7 @@ mod devices;
 mod dupes;
 mod editor;
 mod files;
+mod import;
 mod icons;
 mod layout;
 mod menu;
@@ -35,6 +36,7 @@ use batch::*;
 use books::*;
 use compare::*;
 use dupes::*;
+use import::*;
 use devices::*;
 use editor::*;
 use icons::{ico, Icon};
@@ -261,6 +263,8 @@ enum Act {
     Compare,
     /// Finds duplicate files in the panes' folders.
     Dupes,
+    /// Imports the photos in this folder into dated folders.
+    Import,
 }
 
 enum MenuItem {
@@ -529,6 +533,8 @@ enum Panel {
     Rename(usize, Vec<Entry>),
     /// Finding duplicate files, starting with these folders.
     Dupes(Vec<(Src, String)>),
+    /// Importing photos for a pane (by its id): from a folder, into one of the targets.
+    Import(usize, (Src, String), Vec<(Src, String)>),
     History,
     /// The books under a folder.
     Library(Src, String),
@@ -571,6 +577,9 @@ enum Work {
         #[serde(default)]
         remove: Vec<String>,
     },
+    /// Copies (or moves) the photos and videos under `from_dir` into folders by date under
+    /// `to_dir`, named by `pattern`.
+    Import { from: Side, from_dir: String, to: Side, to_dir: String, pattern: String, moving: bool },
 }
 
 #[derive(Clone, PartialEq)]
@@ -1146,6 +1155,7 @@ pub fn App() -> impl IntoView {
             Panel::History => view! { <History/> }.into_any(),
             Panel::Rename(pane, items) => view! { <BatchRename pane=pane items=items/> }.into_any(),
             Panel::Dupes(folders) => view! { <Duplicates folders=folders/> }.into_any(),
+            Panel::Import(pane, from, targets) => view! { <ImportPhotos pane from targets/> }.into_any(),
             Panel::Library(src, dir) => view! { <Library src=src dir=dir/> }.into_any(),
             Panel::Reader(src, path, back) => view! { <Reader src=src path=path back=back/> }.into_any(),
         })}

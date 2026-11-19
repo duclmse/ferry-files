@@ -116,6 +116,13 @@ impl Ctx {
             });
             v.extend([MenuItem::Sep, item("New tab", "⌘T", Act::NewTab), item(fav, "", Act::Favourite), item("Refresh", "", Act::Refresh)]);
             v.push(MenuItem::Do {
+                label: "Import photos…".into(),
+                key: "",
+                act: Act::Import,
+                danger: false,
+                enabled: !p.cwd.get_untracked().is_empty(),
+            });
+            v.push(MenuItem::Do {
                 label: "Find duplicates…".into(),
                 key: "",
                 act: Act::Dupes,
@@ -237,6 +244,7 @@ impl Ctx {
             (Act::Upload, _) => self.upload(p),
             (Act::Sync, _) => self.compare(p),
             (Act::Compare, _) => self.compare_marks(p),
+            (Act::Import, _) => self.ask_import(p),
             (Act::Dupes, _) => {
                 let mut folders: Vec<(Src, String)> = vec![(p.src.get_untracked(), p.cwd.get_untracked())];
                 let o = self.other(p);

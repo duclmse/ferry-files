@@ -20,6 +20,7 @@ pub mod usb;
 pub mod xml;
 mod connect;
 mod dupes;
+mod import;
 mod editor;
 mod files;
 mod library;
@@ -181,6 +182,7 @@ pub fn run() {
             transfer::compare,
             transfer::compare_marks,
             dupes::duplicates,
+            import::import_photos,
             transfer::sync,
             library::library,
             library::book_info,

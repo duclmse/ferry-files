@@ -2,7 +2,7 @@ fn main() {
     // Declaring the app's commands makes them need a permission, granted to the main window
     // in capabilities/default.json.
     tauri_build::try_build(tauri_build::Attributes::new().app_manifest(tauri_build::AppManifest::new().commands(&[
-        "devices", "connect", "disconnect", "connections", "info", "watch_devices", "adb_pair", "adb_connect", "adb_discover", "list", "refresh", "read_text", "peek_text", "media_info", "peek_bytes", "zip_list", "copy_text", "write_text", "mkdir", "remove", "remove_tree", "download", "upload", "backups", "restore", "clear_backups", "eject", "quick_look", "find", "transfer", "cancel_transfer", "compare", "compare_marks", "duplicates", "sync", "library", "book_info", "book_check", "book_change", "book_shrink", "rename", "space", "open_file", "app_folders", "open_folder", "clear_cache",
+        "devices", "connect", "disconnect", "connections", "info", "watch_devices", "adb_pair", "adb_connect", "adb_discover", "list", "refresh", "read_text", "peek_text", "media_info", "peek_bytes", "zip_list", "copy_text", "write_text", "mkdir", "remove", "remove_tree", "download", "upload", "backups", "restore", "clear_backups", "eject", "quick_look", "find", "transfer", "cancel_transfer", "compare", "compare_marks", "duplicates", "import_photos", "sync", "library", "book_info", "book_check", "book_change", "book_shrink", "rename", "space", "open_file", "app_folders", "open_folder", "clear_cache",
         "epub_open", "epub_chapter", "epub_set_source", "epub_set_body", "epub_set_meta", "epub_cover", "epub_find", "epub_replace", "epub_save", "epub_export", "epub_close",
     ])))
     .expect("failed to run tauri-build");

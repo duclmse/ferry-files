@@ -163,12 +163,16 @@ Built:
 
 ## Phase 3 — Media and books
 
-### 10. Photo import ☐
-- media.rs: read EXIF `DateTimeOriginal` (JPEG/HEIC header, already partly parsed) and video
-  creation time (MP4 `mvhd`), falling back to the file's time.
-- "Import photos…" on a device's DCIM: target folder pattern (`YYYY/MM`, `YYYY-MM-DD`), skip
-  already-imported (name + size, or a stored import list per phone), optional "remove from phone
-  after import" (moves, backed up). Runs as a queue job.
+### 10. Photo import ☑
+- media.rs `taken`: EXIF `DateTimeOriginal` (else `DateTime`) from a JPEG's APP1 or a HEIC's
+  Exif item (found through `iinf`/`iloc`), and an MP4/MOV's `mvhd` creation time (only the start
+  of `moov` is read). Falls back to the file's date; with none, "Undated".
+- "Import photos…" (folder menu) opens a window: into the other pane's folder or Pictures on the
+  computer, folders as `2024/05`, `2024-05-14`, `2024/2024-05-14` or all in one, and "remove them
+  from the phone once imported" (a move: originals backed up). New command `import_photos` runs as
+  a queue job (`Work::Import`) with progress, cancel, verify and retry.
+- Imported before = a file of the same name and size already in its dated folder (the same check
+  as resuming a copy); those originals are kept even when moving. No stored per-phone list.
 
 ### 11. Library across devices ☐
 - One Library view over the computer's book folder(s) and each connected device's books, merged by

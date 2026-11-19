@@ -217,3 +217,17 @@
   color: var(--muted);
   word-break: break-all;
 }
+
+/* Import photos: the label column lines up, the choices take the rest. */
+.dialog.import {
+  width: min(560px, 92vw);
+}
+
+.dialog.import label.row {
+  margin: 8px 0;
+}
+
+.dialog.import label.row select {
+  flex: 1;
+  min-width: 0;
+}

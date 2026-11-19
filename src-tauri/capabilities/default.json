@@ -39,6 +39,7 @@
     "allow-compare",
     "allow-compare-marks",
     "allow-duplicates",
+    "allow-import-photos",
     "allow-sync",
     "allow-library",
     "allow-book-info",
