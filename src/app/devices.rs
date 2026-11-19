@@ -187,9 +187,9 @@ pub(super) fn DeviceFinder() -> impl IntoView {
             if !ctx.phones.with(|p| p.is_empty()) {
                 return view! { {waiting} {error} }.into_any();
             }
-            let mut notes = vec!["No phone found. Plug one in by USB, then allow USB debugging (for adb) or set the USB mode to File transfer (for MTP).".to_string()];
+            let mut notes = vec!["No phone found. Plug one in by USB with debugging (adb) or File transfer mode (MTP).".to_string()];
             if !d.adb_found {
-                notes.push("adb isn't installed: brew install --cask android-platform-tools".into());
+                notes.push(format!("adb isn't installed. {}", crate::os::adb_install()));
             }
             notes.extend(d.mtp_error.clone());
             return view! {

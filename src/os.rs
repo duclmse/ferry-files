@@ -61,6 +61,15 @@ pub fn this_computer() -> &'static str {
     }
 }
 
+/// How to install adb, as a sentence.
+pub fn adb_install() -> &'static str {
+    match os() {
+        Os::Mac => "Install it with: brew install --cask android-platform-tools",
+        Os::Windows => "Install it with: winget install Google.PlatformTools",
+        Os::Linux => "Install it with your package manager (adb on Debian and Ubuntu, android-tools on Fedora and Arch).",
+    }
+}
+
 /// "Finder", "File Explorer" or "Files".
 pub fn file_manager() -> &'static str {
     match os() {

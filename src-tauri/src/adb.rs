@@ -16,8 +16,9 @@ pub fn adb_path() -> Option<PathBuf> {
         bins.extend(["/opt/homebrew/bin", "/usr/local/bin"].map(PathBuf::from));
     } else if cfg!(windows) {
         sdks.extend(dirs::data_local_dir().map(|d| d.join("Android").join("Sdk")));
-        // Scoop's shims.
+        // Scoop's shims, and winget's links (on PATH, but not for an app started before the install).
         bins.push(home.join("scoop").join("shims"));
+        bins.extend(dirs::data_local_dir().map(|d| d.join("Microsoft").join("WinGet").join("Links")));
     } else {
         sdks.push(home.join("Android/Sdk"));
         bins.extend(["/usr/bin", "/usr/local/bin", "/snap/bin"].map(PathBuf::from));
@@ -90,7 +91,7 @@ pub struct Adb {
 impl Adb {
     pub fn open(serial: Option<String>) -> Result<Adb> {
         let Some(adb) = adb_path() else {
-            return err("adb not found. Install it with: brew install --cask android-platform-tools");
+            return err(format!("adb not found. {}", crate::platform::ADB_INSTALL));
         };
         let mut dev = Adb { adb, serial, model: String::new() };
         dev.run(&["get-state"])?; // fails early with adb's own message if there's no device

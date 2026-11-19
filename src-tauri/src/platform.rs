@@ -34,6 +34,15 @@ pub fn command(program: impl AsRef<OsStr>) -> Command {
     c
 }
 
+/// How to install adb, as a sentence.
+pub const ADB_INSTALL: &str = if cfg!(target_os = "macos") {
+    "Install it with: brew install --cask android-platform-tools"
+} else if cfg!(windows) {
+    "Install it with: winget install Google.PlatformTools"
+} else {
+    "Install it with your package manager (adb on Debian and Ubuntu, android-tools on Fedora and Arch)."
+};
+
 /// Where backups of replaced and deleted files go. On macOS it's the folder yomi-files.py uses
 /// too, so backups from both are in one place. Elsewhere it's with the app's data rather than
 /// its cache, since a cache may be cleared by the system.
