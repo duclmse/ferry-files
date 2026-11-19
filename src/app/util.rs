@@ -128,6 +128,18 @@ pub(super) fn stream_url(src: Src, e: &Entry) -> String {
     crate::os::served(&format!("file?src={}&p={p}&s={}&m={}", src.key(), e.size, e.mtime))
 }
 
+/// Photos at least this big are shrunk by the backend for the preview (see `fit_url`).
+const FIT_FROM: u64 = 2 * 1024 * 1024;
+
+/// URL of a big photo shrunk to about what the preview can show, and upright: its full-size
+/// pixels would take far more memory than it needs. `None` for other files.
+pub(super) fn fit_url(src: Src, e: &Entry) -> Option<String> {
+    (e.size >= FIT_FROM && e.size <= THUMB_MAX && ["jpg", "jpeg", "png", "webp"].contains(&ext(&e.name).as_str())).then(|| {
+        let p = String::from(js_sys::encode_uri_component(&e.path));
+        crate::os::served(&format!("fit?src={}&p={p}&s={}&m={}", src.key(), e.size, e.mtime))
+    })
+}
+
 /// Thumbnail URL for images and EPUBs (their cover), served by the backend's `ferry://` scheme.
 pub(super) fn thumb_url(src: Src, e: &Entry) -> Option<String> {
     (!e.dir && e.size <= THUMB_MAX && THUMB_EXTS.contains(&ext(&e.name).as_str())).then(|| {
@@ -261,6 +273,16 @@ pub(super) fn js_regex(source: &str, flags: &str) -> Result<js_sys::RegExp, Stri
         Ok(v) => Ok(v.unchecked_into()),
         Err(e) => Err(format!("That pattern doesn't work: {}", e.dyn_ref::<js_sys::Error>().map(|e| String::from(e.message())).unwrap_or_default())),
     }
+}
+
+/// Whether `name` contains `lower` (already lowercase) in any case. Most names are ASCII, and
+/// are compared as they are rather than copied lowercase.
+pub(super) fn contains_any_case(name: &str, lower: &str) -> bool {
+    if !name.is_ascii() {
+        return name.to_lowercase().contains(lower);
+    }
+    let (n, t) = (name.as_bytes(), lower.as_bytes());
+    t.is_empty() || n.windows(t.len()).any(|w| w.iter().zip(t).all(|(a, b)| a.to_ascii_lowercase() == *b))
 }
 
 /// A pattern with * and ? as the source of a regular expression that matches whole names.

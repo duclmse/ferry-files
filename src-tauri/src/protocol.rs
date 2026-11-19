@@ -3,6 +3,8 @@
 //!       files from open EPUBs, so the chapter view can load the book's images, styles and fonts.
 //!   GET ferry://localhost/thumb?src={mac|device id}&p={path}&s={size}&m={mtime}
 //!       a thumbnail of an image file or an EPUB's cover (see thumbs.rs).
+//!   GET ferry://localhost/fit?src={mac|device id}&p={path}&s={size}&m={mtime}
+//!       a photo for the preview, shrunk when it's bigger than the preview could show (thumbs.rs).
 //!   GET ferry://localhost/file?src={mac|device id}&p={path}&s={size}&m={mtime}
 //!       a file itself, for the preview's image, video and audio. Honours Range, and reads only the
 //!       part asked for, so a video starts and seeks without copying the file to the Mac.
@@ -59,6 +61,9 @@ pub fn handle(app: &AppHandle, req: Request<Vec<u8>>) -> Response<Vec<u8>> {
     if path == "/zipped" {
         let range = req.headers().get("range").and_then(|v| v.to_str().ok()).map(str::to_string);
         return zipped(app, req.uri().query().unwrap_or(""), range.as_deref());
+    }
+    if path == "/fit" {
+        return fit(app, req.uri().query().unwrap_or(""));
     }
     if path == "/cover" {
         return cover(app, req.uri().query().unwrap_or(""));
@@ -127,6 +132,24 @@ fn thumb(app: &AppHandle, q: &str) -> Response<Vec<u8>> {
     let made = thumbs::make(&key, &dev, &path, size, mtime);
     match made {
         Ok(t) => thumb_response(t),
+        Err(e) => respond(StatusCode::INTERNAL_SERVER_ERROR, "text/plain", e.into_bytes()),
+    }
+}
+
+/// A photo for the preview: shrunk (and cached) when it's big, otherwise the file itself.
+fn fit(app: &AppHandle, q: &str) -> Response<Vec<u8>> {
+    let bad = || respond(StatusCode::BAD_REQUEST, "text/plain", b"Bad request.".to_vec());
+    let (Some(path), Some(src)) = (query_param(q, "p"), query_param(q, "src")) else { return bad() };
+    let Some(size) = query_param(q, "s").and_then(|s| s.parse::<u64>().ok()) else { return bad() };
+    let Some(mtime) = query_param(q, "m").and_then(|s| s.parse::<i64>().ok()) else { return bad() };
+    let dev = match crate::state(app).source(Some(&src)) {
+        Ok(d) => d,
+        Err(e) => return respond(StatusCode::NOT_FOUND, "text/plain", e.into_bytes()),
+    };
+    let key = if src != "mac" { format!("{}:{}", dev.kind(), dev.label()) } else { "mac".to_string() };
+    match thumbs::fitted(&key, &dev, &path, size, mtime) {
+        Ok(thumbs::Fitted::Smaller(data, mime)) => respond(StatusCode::OK, mime, data),
+        Ok(thumbs::Fitted::Original(data)) => respond(StatusCode::OK, media_type(&path), data),
         Err(e) => respond(StatusCode::INTERNAL_SERVER_ERROR, "text/plain", e.into_bytes()),
     }
 }

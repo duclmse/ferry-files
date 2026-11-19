@@ -59,7 +59,7 @@ pub(super) fn Preview(pane: Pane) -> impl IntoView {
             _ => String::new(),
         }>
             {move || match shown.get() {
-                None => view! { <span class="hint">{move || match p.marked.with(Vec::len) {
+                None => view! { <span class="hint">{move || match p.marked.with(HashSet::len) {
                     0 | 1 => "Pick an item to see it here.".to_string(),
                     n => format!("{n} items picked."),
                 }}</span> }.into_any(),
@@ -222,9 +222,13 @@ fn BigCover(src: Src, entry: Entry) -> impl IntoView {
 /// The image itself, as big as the preview allows (never bigger than it is). Its thumbnail shows
 /// while the whole file is read, which can take a while from a phone. It can be zoomed (buttons,
 /// pinch, double-click), dragged when zoomed, and turned.
-#[component]
+///
 /// With `url`, a picture from somewhere else than the file (one in a ZIP): no thumbnail while it
 /// loads, and no ‹ ›.
+///
+/// A big photo comes shrunk to about what the preview shows (`fit_url`), and the file itself
+/// replaces it when it's zoomed in. Sizes and zoom levels are always of the photo's own pixels.
+#[component]
 fn FullImage(pane: Pane, src: Src, entry: Entry, info: RwSignal<MediaInfo>, #[prop(optional)] url: Option<String>) -> impl IntoView {
     let alone = url.is_some();
     let loaded = RwSignal::new(false);
@@ -232,7 +236,26 @@ fn FullImage(pane: Pane, src: Src, entry: Entry, info: RwSignal<MediaInfo>, #[pr
     let zoom = RwSignal::new(1.0f64);
     let turn = RwSignal::new(0i32);
     let pan = RwSignal::new((0.0f64, 0.0f64));
+    let shrunk_url = if alone { None } else { fit_url(src, &entry) };
     let url = url.unwrap_or_else(|| stream_url(src, &entry));
+    // Showing the shrunk photo; and how many of the photo's pixels each of its pixels stands for.
+    let shrunk = RwSignal::new(shrunk_url.is_some());
+    let shown = RwSignal::new(shrunk_url.unwrap_or_else(|| url.clone()));
+    let per_px = RwSignal::new(1.0f64);
+    let full = StoredValue::new(url.clone());
+    // The shown image's own pixels.
+    let raw = RwSignal::new((0u32, 0u32));
+    // The photo's size, from the shrunk one's and the size in the details (which may come later).
+    Effect::new(move || {
+        let (w, h) = raw.get();
+        if w == 0 || !shrunk.get() {
+            return;
+        }
+        let own = info.with(|i| i.width.zip(i.height).map(|(a, b)| a.max(b)));
+        let k = own.map_or(1.0, |own| (own as f64 / w.max(h) as f64).max(1.0));
+        per_px.set(k);
+        natural.set(((w as f64 * k).round() as u32, (h as f64 * k).round() as u32));
+    });
     // How big the picture shows when it fits, against its own size (at most 1): `zoom` is on top
     // of that, so the picture is at zoom × fit (× the turn's) of its pixels. Measured again when
     // the preview changes size.
@@ -241,10 +264,15 @@ fn FullImage(pane: Pane, src: Src, entry: Entry, info: RwSignal<MediaInfo>, #[pr
     let measure = move || {
         if let Some(img) = img_ref.try_get_untracked().flatten() {
             if img.natural_width() > 0 && img.offset_width() > 0 {
-                fit.set(img.offset_width() as f64 / img.natural_width() as f64);
+                fit.set(img.offset_width() as f64 / (img.natural_width() as f64 * per_px.get_untracked()));
             }
         }
     };
+    // Again when the photo's size is known.
+    Effect::new(move || {
+        per_px.track();
+        measure();
+    });
     let watcher = StoredValue::new_local(None::<(web_sys::ResizeObserver, Closure<dyn Fn()>)>);
     Effect::new(move |_| {
         let Some(img) = img_ref.get() else { return };
@@ -263,12 +291,18 @@ fn FullImage(pane: Pane, src: Src, entry: Entry, info: RwSignal<MediaInfo>, #[pr
     });
     let load = move |ev: web_sys::Event| {
         if let Some(img) = ev.target().and_then(|t| t.dyn_into::<web_sys::HtmlImageElement>().ok()) {
-            natural.set((img.natural_width(), img.natural_height()));
-            let _ = info.try_update(|i| {
-                if i.width.is_none() {
-                    (i.width, i.height) = (Some(img.natural_width()), Some(img.natural_height()));
-                }
-            });
+            let (w, h) = (img.natural_width(), img.natural_height());
+            if shrunk.get_untracked() {
+                raw.set((w, h)); // The effect above works out the photo's size.
+            } else {
+                per_px.set(1.0);
+                natural.set((w, h));
+                let _ = info.try_update(|i| {
+                    if i.width.is_none() {
+                        (i.width, i.height) = (Some(w), Some(h));
+                    }
+                });
+            }
         }
         loaded.set(true);
         request_animation_frame(measure);
@@ -282,6 +316,12 @@ fn FullImage(pane: Pane, src: Src, entry: Entry, info: RwSignal<MediaInfo>, #[pr
     let set_zoom = move |z: f64| {
         let z = z.clamp(1.0, (8.0 / base()).max(1.0));
         zoom.set(z);
+        // Zoomed in: the shrunk photo would blur, so the file itself takes its place (which
+        // keeps showing until the file has loaded).
+        if z > 1.0 && shrunk.get_untracked() {
+            shrunk.set(false);
+            shown.set(full.get_value());
+        }
         if z == 1.0 {
             pan.set((0.0, 0.0));
         }
@@ -333,7 +373,7 @@ fn FullImage(pane: Pane, src: Src, entry: Entry, info: RwSignal<MediaInfo>, #[pr
             on:mousedown=down on:wheel=wheel
             on:dblclick=move |ev| { ev.stop_propagation(); fit_or_actual(); }>
             {let e = entry.clone(); move || (!loaded.get() && !alone).then(|| view! { <Thumbnail src entry=e.clone()/> })}
-            <img class="full" node_ref=img_ref src=url alt="" draggable="false" class:pending=move || !loaded.get()
+            <img class="full" node_ref=img_ref src=move || shown.get() alt="" draggable="false" class:pending=move || !loaded.get()
                 style=style on:load=load/>
         </div>
         <div class="viewer-bar">

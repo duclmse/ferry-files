@@ -56,7 +56,7 @@ impl Ctx {
                     store(&self.last_key(p, src), &path);
                     let moved = p.cwd.get_untracked() != path || new_src;
                     if moved {
-                        p.marked.set(vec![]);
+                        p.marked.set(HashSet::new());
                         p.filter.set(String::new());
                     }
                     // Marks from comparing hold for these two folders only; the same folder again

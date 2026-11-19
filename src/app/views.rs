@@ -210,11 +210,16 @@ fn renaming(p: Pane, e: &Entry) -> impl Fn() -> bool + Copy + 'static {
     move || p.renaming.with(|r| path.with_value(|x| r.as_ref() == Some(x)))
 }
 
+/// How long a tile stays in view before its thumbnail is asked for.
+const THUMB_DELAY: std::time::Duration = std::time::Duration::from_millis(150);
+
 /// The file's icon, replaced by its thumbnail (an image, or an EPUB's cover) once that has loaded.
 /// Files with no thumbnail, or whose thumbnail fails, keep the icon.
 ///
 /// The picture is only there while the tile is in view: scrolled away, it's let go (and the icon
 /// shows again), so a folder of thousands of photos doesn't keep every one it has shown in memory.
+/// It's asked for once the tile has stayed in view a moment: scrolling fast past thousands of
+/// photos would otherwise queue a request for each.
 #[component]
 pub(super) fn Thumbnail(src: Src, entry: Entry) -> impl IntoView {
     let ctx = expect_context::<Ctx>();
@@ -226,7 +231,14 @@ pub(super) fn Thumbnail(src: Src, entry: Entry) -> impl IntoView {
     let allowed = move || src == Src::Mac || ctx.phone_thumbs.get();
     let img = NodeRef::<html::Img>::new();
     let watching = StoredValue::new_local(None::<(web_sys::Element, u32)>);
+    let soon = StoredValue::new_local(None::<TimeoutHandle>);
+    let wait = move || {
+        if let Some(h) = soon.try_update_value(Option::take).flatten() {
+            h.clear();
+        }
+    };
     let stop = move || {
+        wait();
         if let Some((el, id)) = watching.try_update_value(Option::take).flatten() {
             near::unwatch(&el, id);
         }
@@ -236,8 +248,15 @@ pub(super) fn Thumbnail(src: Src, entry: Entry) -> impl IntoView {
         stop();
         let el: web_sys::Element = el.into();
         let id = near::watch(&el, move |on| {
-            shown.set(on);
-            if !on && state.get_untracked() == 1 {
+            wait();
+            if on {
+                if let Ok(h) = set_timeout_with_handle(move || { let _ = shown.try_set(true); }, THUMB_DELAY) {
+                    soon.set_value(Some(h));
+                }
+                return;
+            }
+            shown.set(false);
+            if state.get_untracked() == 1 {
                 state.set(0);
             }
         });

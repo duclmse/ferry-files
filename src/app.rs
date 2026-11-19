@@ -328,7 +328,7 @@ struct Pane {
     selected: RwSignal<Option<String>>,
     /// Items picked with ⌘-click, Shift-click or ⌘A. When any are, they're what actions act on;
     /// otherwise the selected item is.
-    marked: RwSignal<Vec<String>>,
+    marked: RwSignal<HashSet<String>>,
     /// The folder's listing (or search results), before the filter.
     all: RwSignal<Vec<Entry>>,
     /// Shows only names containing this (or matching it, with `regex`).
@@ -429,7 +429,7 @@ impl Pane {
             entries: RwSignal::new(vec![]),
             loading: RwSignal::new(false),
             selected: RwSignal::new(None),
-            marked: RwSignal::new(vec![]),
+            marked: RwSignal::new(HashSet::new()),
             all: RwSignal::new(vec![]),
             filter: RwSignal::new(String::new()),
             regex: RwSignal::new(stored_flag(&format!("{REGEX_KEY}.{id}"), false)),
@@ -479,38 +479,46 @@ impl Pane {
 
     /// Sorts and filters `all` into `entries`, dropping marks on items no longer shown.
     fn arrange(self) {
-        let mut es = self.all.get_untracked();
-        self.sort.get_untracked().apply(&mut es);
         let f = self.filter.get_untracked();
         let mut bad = None;
+        // What the box asks for: a pattern, or else text the name contains in any case.
+        let mut re = None;
+        let mut text = None;
         if !f.is_empty() {
             if self.regex.get_untracked() {
                 // A pattern that doesn't work filters nothing out, and says why.
                 match js_regex(&f, "i") {
-                    Ok(re) => es.retain(|e| re.test(&e.name)),
+                    Ok(r) => re = Some(r),
                     Err(e) => bad = Some(e),
                 }
             } else if f.contains('*') || f.contains('?') {
                 // A pattern, as the search takes it: * any run of characters, ? one.
-                if let Ok(re) = js_regex(&glob_source(&f), "i") {
-                    es.retain(|e| re.test(&e.name));
-                }
+                re = js_regex(&glob_source(&f), "i").ok();
             } else {
-                let f = f.to_lowercase();
-                es.retain(|e| e.name.to_lowercase().contains(&f));
+                text = Some(f.to_lowercase());
             }
         }
         if self.bad_filter.get_untracked() != bad {
             self.bad_filter.set(bad);
         }
-        if self.diff_only.get_untracked() {
-            self.cmp.with_untracked(|m| {
-                if let Some(m) = m {
-                    es.retain(|e| m.get(&e.name).is_some_and(|x| x != "same"));
-                }
-            });
+        let diff_only = self.diff_only.get_untracked();
+        // Filtered before sorting, and only what's kept is copied.
+        let mut es: Vec<Entry> = self.cmp.with_untracked(|cmp| {
+            let cmp = cmp.as_ref().filter(|_| diff_only);
+            self.all.with_untracked(|all| {
+                all.iter()
+                    .filter(|e| re.as_ref().is_none_or(|re| re.test(&e.name)))
+                    .filter(|e| text.as_deref().is_none_or(|t| contains_any_case(&e.name, t)))
+                    .filter(|e| cmp.is_none_or(|m| m.get(&e.name).is_some_and(|x| x != "same")))
+                    .cloned()
+                    .collect()
+            })
+        });
+        self.sort.get_untracked().apply(&mut es);
+        if !self.marked.with_untracked(HashSet::is_empty) {
+            let shown: HashSet<&str> = es.iter().map(|e| e.path.as_str()).collect();
+            self.marked.update(|m| m.retain(|x| shown.contains(x.as_str())));
         }
-        self.marked.update(|m| m.retain(|x| es.iter().any(|e| &e.path == x)));
         self.entries.set(es);
     }
 
@@ -526,7 +534,7 @@ impl Pane {
 
     /// Whether `path` is one of the items actions act on (tracked, for highlighting).
     fn is_picked(self, path: &str) -> bool {
-        let marked = self.marked.with(|m| (!m.is_empty()).then(|| m.iter().any(|x| x == path)));
+        let marked = self.marked.with(|m| (!m.is_empty()).then(|| m.contains(path)));
         marked.unwrap_or_else(|| self.selected.get().as_deref() == Some(path))
     }
 
@@ -544,7 +552,7 @@ impl Pane {
 
     /// Selects one item, unmarking the rest.
     fn select_only(self, path: Option<String>) {
-        self.marked.set(vec![]);
+        self.marked.set(HashSet::new());
         self.selected.set(path);
     }
 
@@ -556,11 +564,8 @@ impl Pane {
                 if m.is_empty() {
                     m.extend(sel);
                 }
-                match m.iter().position(|x| x == path) {
-                    Some(i) => {
-                        m.remove(i);
-                    }
-                    None => m.push(path.to_string()),
+                if !m.remove(path) {
+                    m.insert(path.to_string());
                 }
             });
             self.selected.set(Some(path.to_string()));
@@ -570,7 +575,7 @@ impl Pane {
                 let at = |p: &str| es.iter().position(|e| e.path == p);
                 match (at(&anchor), at(path)) {
                     (Some(a), Some(b)) => es[a.min(b)..=a.max(b)].iter().map(|e| e.path.clone()).collect(),
-                    _ => vec![path.to_string()],
+                    _ => HashSet::from([path.to_string()]),
                 }
             });
             self.marked.set(range);
@@ -1118,7 +1123,7 @@ pub fn App() -> impl IntoView {
         }
         // Moving around isn't changeable.
         match (e.key().as_str(), meta) {
-            ("Escape", false) => p.marked.set(vec![]),
+            ("Escape", false) => p.marked.set(HashSet::new()),
             // In the list, ← and → go to the previous and next picture, video or sound.
             ("ArrowRight", false) | ("ArrowLeft", false) if view == ViewMode::List => {
                 if let Some(x) = current.filter(|x| media(x).is_some()) {

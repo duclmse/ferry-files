@@ -139,6 +139,7 @@ async fn blocking<T: Send + 'static>(f: impl FnOnce() -> Result<T, String> + Sen
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     migrate::run();
+    std::thread::spawn(thumbs::trim_caches);
     tauri::Builder::default()
         .plugin(tauri_plugin_dialog::init())
         .plugin(tauri_plugin_clipboard_manager::init())
