@@ -517,13 +517,13 @@ This matches the spec's "no recursion" rule and avoids infinite loops.
 
 - [x] `cargo test -p filesearch query` passes all parser + evaluator tests.
 - [x] All acceptance test queries from spec section 13 parse without error.
-- [x] `dm:today` produces `MtimeRange` SQL condition (unit-tested; live index TBD).
+- [x] `dm:today` produces `MtimeRange` SQL condition (unit-tested; checked on a live index, Nov 2026).
 - [x] `audio:` returns the same extension list as Everything's built-in filter (live index).
       *(unit test compares against the §1.5 table in `docs/reference/query-language.md`)*
 - [x] `size:large` produces `SizeRange(1048577, 16777216)` (unit-tested).
-- [x] `dupe:` produces `DupeSearch` strategy (unit-tested; live index TBD).
+- [x] `dupe:` produces `DupeSearch` strategy (unit-tested; checked on a live index, Nov 2026).
 - [x] `content:TODO` delegates to Tantivy with `TantivyThenSqlite` strategy (unit-tested).
-- [x] `fuzzy:mian` produces `FuzzyFilter` strategy (unit-tested; live scoring TBD).
+- [x] `fuzzy:mian` produces `FuzzyFilter` strategy (unit-tested; checked on a live index, Nov 2026).
 - [x] `fuzzy:config ext:toml` produces AND of FuzzyFilter + ExtIn (unit-tested).
 - [x] `archive: *.rs` produces `IsArchiveEntry` condition (unit-tested).
 - [x] `noarchive: *.log` produces `ArchiveExclude` post-filter (unit-tested).

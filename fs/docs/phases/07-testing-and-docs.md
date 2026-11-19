@@ -208,7 +208,10 @@ They serve as the primary reference for users.
 
 ### rar2zip
 
-- [ ] All modules listed in spec section 1 implemented (no stubs).
+- [x] All modules listed in spec section 1 implemented (no stubs).
+      *(except `service.rs` and `install-service.ps1`, removed by design:
+      rar2zip runs as an `fsd` extension and `fsd` owns the Windows Service;
+      `hostkey.rs` was added)*
 - [x] `validate-config` exits 0 on valid `config.toml`.
       *(now `fs-ext-rar2zip --config <file> validate`; exits 1 and prints one
       problem per line otherwise)*
@@ -217,12 +220,14 @@ They serve as the primary reference for users.
       could not be moved is kept for the next pass)*
 - [x] `Strategy::Stream` confirmed: no zip file created for large archives.
       *(`tests/sftpd.rs::stream_strategy_uploads_without_a_local_zip`)*
-- [ ] README covers all 8 sections.
+- [x] README covers all 8 sections.
+      *(section 5 is now Host keys, since Windows Service belongs to `fsd`)*
 - [ ] Builds on Windows only (Windows Service code must compile).
 - [x] `VERSIONS.md` populated with all resolved crate versions.
 - [x] Integration test passes for both Disk and Stream strategies.
       *(`tests/sftpd.rs`, against the sftpd extension; the env-gated
-      `tests/integration.rs` against an external server has not been run)*
+      `tests/integration.rs` also passed against a local sftpd with
+      `TEST_SFTP_PORT`, Nov 2026)*
 
 ---
 

@@ -413,7 +413,9 @@ All four subcommands:
 
 ### rar2zip
 
-- [ ] `run` (non-service mode) starts, watches folder, processes an archive.
+- [x] `run` (non-service mode) starts, watches folder, processes an archive.
+      *(as an `fsd` extension: an archive dropped into the watch folder was
+      converted and sent to the sftpd extension, Nov 2026)*
       *(code complete; requires real RAR archive + SFTP destination to verify end-to-end)*
 - [x] `status` prints queue depth table. *(code complete; `queue_depth()` covered by unit tests)*
 - [x] `retry-failed` resets failed jobs. *(code complete; `reset_failed()` covered by unit tests)*

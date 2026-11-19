@@ -10,7 +10,7 @@ with bandwidth throttling and retry logic.
     │  (RAR/7Z/TAR)   │
     └─────────────────┘
           |
-          | Create
+          | created, moved in, or present at start
           ▼
     ┌──────────────┐
     │   Watcher    │
@@ -53,15 +53,10 @@ Prometheus    JSON          Dashboard
 
 | Requirement | Notes |
 |-------------|-------|
-| Rust ≥ 1.78 | For building |
-| `unrar.dll` | From WinRAR ≥ 5.0 on `PATH` or in the binary directory |
-| SSH key pair | Private key for each SFTP destination |
-| `sha256sum` on remote | Standard on Linux; install `coreutils` if missing |
-
-To check `unrar.dll` is available:
-```powershell
-where.exe unrar.dll
-```
+| Rust ≥ 1.78 and a C++ compiler | For building; the RARLAB UnRAR source is compiled in, so no `unrar.dll` is needed |
+| SSH key pair | Private key for each SFTP destination; public-key login only |
+| The server's host key | In `known_hosts` or pinned in `host_keys` (see [Host keys](#5-host-keys)) |
+| `sha256sum` and `rm` on the remote | Run over SSH exec to check and clean up uploads. Standard on Linux; the `sftpd` extension provides both |
 
 ---
 
@@ -96,6 +91,7 @@ port         = 22
 user         = "deploy"
 remote_path  = "/srv/uploads"
 ssh_key_path = 'C:\Users\me\.ssh\id_ed25519'
+# host_keys  = ["SHA256:..."]   # pin instead of using known_hosts
 
 [extensions.rar2zip.conversion]
 compression_level               = 6
@@ -107,6 +103,7 @@ max_concurrent       = 3
 max_retries          = 3
 retry_delay_secs     = 10
 bandwidth_limit_kbps = 0   # 0 = unlimited
+host_key_check       = "strict"
 
 [extensions.rar2zip.observability]
 metrics_port = 9090
@@ -129,6 +126,8 @@ webhook_url  = "https://hooks.slack.com/services/..."
 | `destinations[].user` | `string` | *(required)* | SSH username |
 | `destinations[].remote_path` | `string` | *(required)* | Remote upload directory |
 | `destinations[].ssh_key_path` | `string` | *(required)* | Private key file path |
+| `destinations[].host_key_check` | `string` | *(transfer's)* | Overrides `transfer.host_key_check` |
+| `destinations[].host_keys` | `[string]` | `[]` | Pinned `SHA256:` fingerprints; when set, `known_hosts` is not used |
 | `conversion.compression_level` | `int` | `6` | ZIP deflate level (0–9) |
 | `conversion.archive_password` | `string` | *(none)* | Password for encrypted archives |
 | `conversion.stream_to_transfer_threshold_mb` | `int` | `500` | Files above this use Stream strategy |
@@ -137,6 +136,8 @@ webhook_url  = "https://hooks.slack.com/services/..."
 | `transfer.max_retries` | `int` | `3` | Retry attempts per destination |
 | `transfer.retry_delay_secs` | `int` | `10` | Base delay for exponential backoff |
 | `transfer.bandwidth_limit_kbps` | `int` | `0` | Upload rate limit (0 = unlimited) |
+| `transfer.host_key_check` | `string` | `strict` | `strict`, `accept-new` or `off` |
+| `transfer.known_hosts` | `string` | `~/.ssh/known_hosts` | OpenSSH known_hosts file |
 | `observability.bind` | `ip` | `127.0.0.1` | Address for the metrics and dashboard servers |
 | `observability.metrics_port` | `int` | `9090` | Prometheus metrics HTTP port |
 | `observability.dashboard_port` | `int` | `8080` | HTML dashboard HTTP port |
@@ -169,6 +170,36 @@ fs --config config.toml ext rar2zip retry-failed
 ```
 
 Log output goes to the daemon's log (`fs.log` in `log_dir`).
+
+Archives are picked up when they are created in `watch_folder` or a subfolder,
+moved or renamed into it (downloaders that finish by renaming `x.part` work),
+or already there when rar2zip starts. `failed_folder` is skipped even when it
+is inside `watch_folder`. A file whose content is already queued, running or
+done is skipped; copying a failed one back in retries it.
+
+---
+
+## 5. Host keys
+
+Before it authenticates, rar2zip checks the server's host key:
+
+| `host_key_check` | Unknown host | Changed key |
+|------------------|--------------|-------------|
+| `strict` (default) | refused | refused |
+| `accept-new` | recorded in `known_hosts` and used | refused |
+| `off` | used, with a warning on every connection | used |
+
+A destination with `host_keys` is checked against those fingerprints only.
+To trust a server under `strict`, add it to `known_hosts`:
+
+```sh
+ssh-keyscan -p 22 sftp.example.com >> ~/.ssh/known_hosts
+ssh-keyscan -p 22 sftp.example.com | ssh-keygen -lf -   # fingerprint for host_keys
+```
+
+`fs-ext-rar2zip --config config.toml validate` lists destinations that
+`strict` would refuse. Use the known_hosts file of the account `fsd` runs as,
+or set `transfer.known_hosts`.
 
 ---
 
@@ -248,7 +279,9 @@ every 5 seconds and shows:
 
 | Symptom | Cause | Fix |
 |---------|-------|-----|
-| `unrar.dll not found` | DLL not on PATH | Install WinRAR and add its directory to PATH, or copy `unrar.dll` next to `rar2zip.exe` |
+| `host key SHA256:... is not in <file>` | Server not in known_hosts under `strict` | Add it with `ssh-keyscan`, pin `host_keys`, or use `accept-new` once |
+| `HOST KEY CHANGED` | Server key differs from known_hosts | Confirm the change with the server's owner, then remove the old line from known_hosts |
+| `matches none of the pinned host_keys` | Wrong or outdated pin | Recheck the fingerprint (`ssh-keyscan ... \| ssh-keygen -lf -`) |
 | SSH auth failure | Wrong key or user | Verify `ssh_key_path`, `user`, and that the public key is in `~/.ssh/authorized_keys` on the remote |
 | `sha256sum: command not found` | Remote is not Linux | Install `coreutils` on the remote, or use a compatible `sha256sum` binary |
 | Port already in use | Metrics/dashboard port conflict | Change `observability.metrics_port` or `observability.dashboard_port` |
