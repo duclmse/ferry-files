@@ -37,15 +37,36 @@ pub(crate) enum Kind {
     Tag = 7,
     Attr = 8,
     Heading = 9,
+    /// A link's text and brackets.
+    Link = 10,
+    /// A link's address.
+    Url = 11,
+    Bold = 12,
+    Italic = 13,
+    Quote = 14,
+    /// A list's bullet or number.
+    ListMark = 15,
+    /// Code in prose: `inline`, fenced or indented.
+    Code = 16,
 }
 
 /// Scope prefixes and their kinds, checked from the innermost scope out. `None` passes the scope
 /// over (punctuation inside a comment is still the comment); `Some(Plain)` stops there.
 const RULES: &[(&str, Option<Kind>)] = &[
     ("punctuation", None),
+    // Markdown (and other markup): a heading's text is its heading, not a name.
+    ("entity.name.section", None),
+    ("markup.underline.link", Some(Kind::Url)),
+    ("meta.link", Some(Kind::Link)),
+    ("markup.list.unnumbered.bullet", Some(Kind::ListMark)),
+    ("markup.list.numbered.bullet", Some(Kind::ListMark)),
+    ("markup.bold", Some(Kind::Bold)),
+    ("markup.italic", Some(Kind::Italic)),
+    ("markup.quote", Some(Kind::Quote)),
+    ("markup.raw", Some(Kind::Code)),
+    ("meta.separator", Some(Kind::Comment)),
     ("comment", Some(Kind::Comment)),
     ("string", Some(Kind::Str)),
-    ("markup.raw", Some(Kind::Str)),
     ("constant.character.escape", Some(Kind::Str)),
     ("constant.numeric", Some(Kind::Number)),
     ("constant.language", Some(Kind::Number)),
@@ -76,18 +97,44 @@ fn syntaxes() -> &'static SyntaxSet {
 /// None for plain text.
 fn syntax_for<'a>(ss: &'a SyntaxSet, name: &str, first_line: &str) -> Option<&'a SyntaxReference> {
     let file = name.rsplit('/').next().unwrap_or(name);
+    let lower = file.to_ascii_lowercase();
+    // Files known by name that no grammar lists.
+    let by_name = match lower.as_str() {
+        "podfile" | "fastfile" => Some("rb"),
+        "justfile" | "gnumakefile" => Some("mk"),
+        ".zshrc" | ".zprofile" | ".zshenv" | ".envrc" => Some("sh"),
+        n if n == "dockerfile" || n == "containerfile" || n.starts_with("dockerfile.") || n.ends_with(".dockerfile") => {
+            Some("sh")
+        }
+        n if n == ".env" || n.starts_with(".env.") => Some("sh"),
+        _ => None,
+    };
     let ext = file.rsplit_once('.').map(|(_, e)| e.to_ascii_lowercase());
-    // Close enough to a grammar that's there.
+    // Languages without a grammar of their own take the closest one there is: comments, strings and
+    // numbers come out right, and most keywords.
     let ext = ext.map(|e| match e.as_str() {
         "ts" | "tsx" | "mts" | "cts" | "jsx" | "mjs" | "cjs" => "js".to_string(),
         "jsonc" | "json5" | "webmanifest" => "json".to_string(),
-        "kt" | "kts" => "java".to_string(),
-        "zsh" | "fish" => "sh".to_string(),
-        "htm" | "xhtml" => "html".to_string(),
-        "opf" | "ncx" | "svg" | "plist" => "xml".to_string(),
+        "kt" | "kts" | "dart" | "proto" => "java".to_string(),
+        "swift" => "go".to_string(),
+        "zig" => "rs".to_string(),
+        "nim" | "jl" => "py".to_string(),
+        "ex" | "exs" => "rb".to_string(),
+        "fs" | "fsx" | "fsi" => "ml".to_string(),
+        "cljs" | "cljc" | "edn" => "clj".to_string(),
+        "sc" => "scala".to_string(),
+        "ino" => "cpp".to_string(),
+        "zsh" | "fish" | "command" | "ps1" | "psm1" | "env" => "sh".to_string(),
+        "scss" | "less" => "css".to_string(),
+        "htm" | "xhtml" | "vue" | "svelte" => "html".to_string(),
+        "opf" | "ncx" | "svg" | "plist" | "xsl" => "xml".to_string(),
+        "toml" | "ini" | "cfg" => "properties".to_string(),
         _ => e,
     });
-    ss.find_syntax_by_extension(file)
+    by_name
+        .and_then(|e| ss.find_syntax_by_extension(e))
+        .or_else(|| ss.find_syntax_by_extension(file))
+        .or_else(|| ss.find_syntax_by_extension(&lower))
         .or_else(|| ext.and_then(|e| ss.find_syntax_by_extension(&e)))
         .or_else(|| ss.find_syntax_by_first_line(first_line))
         .filter(|s| s.name != "Plain Text")
@@ -244,6 +291,17 @@ mod tests {
         assert_eq!(syntax_for(ss, "Makefile", "").map(|s| s.name.as_str()), Some("Makefile"));
         assert_eq!(syntax_for(ss, "run", "#!/usr/bin/env python3").map(|s| s.name.as_str()), Some("Python"));
         assert!(syntax_for(ss, "notes.txt", "hello").is_none());
+        let name = |n: &str| syntax_for(ss, n, "").map(|s| s.name.clone());
+        assert_eq!(name("gnumakefile").as_deref(), Some("Makefile"));
+        assert_eq!(name("Dockerfile.dev").as_deref(), Some("Bourne Again Shell (bash)"));
+        assert_eq!(name(".env.local").as_deref(), Some("Bourne Again Shell (bash)"));
+        assert_eq!(name("Podfile").as_deref(), Some("Ruby"));
+        assert_eq!(name("Main.kt").as_deref(), Some("Java"));
+        assert_eq!(name("lib.zig").as_deref(), Some("Rust"));
+        assert_eq!(name("App.vue").as_deref(), Some("HTML"));
+        assert_eq!(name("Cargo.toml").as_deref(), Some("Java Properties"));
+        assert_eq!(name("main.c").as_deref(), Some("C"));
+        assert_eq!(name("x.go").as_deref(), Some("Go"));
         assert_eq!(colour("t1", "notes.txt", 0, "hello\n", None), Colours::default());
     }
 
@@ -257,6 +315,20 @@ mod tests {
         let cb = colour("t2", "x.rs", a.len() as u64, b, None);
         assert_eq!(of_kind(b, &cb, Kind::Comment), ["two */"]);
         assert_eq!(of_kind(b, &cb, Kind::Number), ["1"]);
+    }
+
+    #[test]
+    fn markdown_lists_links_and_code() {
+        let md = "# Title\n\n- item **bold** and *it*\n1. one `code` x\n\n[text](http://a.b) <http://c.d>\n\n```\nfn x() {}\n```\n\n> said\n";
+        let c = colour("t5", "a.md", 0, md, None);
+        assert_eq!(of_kind(md, &c, Kind::Heading), ["# Title\n"]);
+        assert_eq!(of_kind(md, &c, Kind::ListMark), ["-", "1."]);
+        assert_eq!(of_kind(md, &c, Kind::Bold), ["**bold**"]);
+        assert_eq!(of_kind(md, &c, Kind::Italic), ["*it*"]);
+        assert_eq!(of_kind(md, &c, Kind::Code), ["`code`", "```\nfn x() {}\n```\n"]);
+        assert_eq!(of_kind(md, &c, Kind::Link), ["[text](", ")", "<", ">"]);
+        assert_eq!(of_kind(md, &c, Kind::Url), ["http://a.b", "http://c.d"]);
+        assert_eq!(of_kind(md, &c, Kind::Quote), ["> said\n"]);
     }
 
     #[test]

@@ -15,8 +15,10 @@ files and disks too, so books can be copied between them.
   (its thumbnail shows while the file is read), details (width × height of
   images and videos, read from the file's header, and the length of videos and
   audio), videos and audio that play straight from the device without copying
-  them first (GIF, HEIC, AVIF and SVG images too), and the text of text files,
-  read a piece at a time as you scroll (up to 8 MB), with code in colour
+  them first (GIF, HEIC, AVIF and SVG images too), and the text of text files
+  and source code (about 50 languages by extension, plus files like
+  `Makefile`, `Dockerfile` and `.gitignore`; the Kind column names the
+  language), read a piece at a time as you scroll (up to 8 MB), with code in colour
   (keywords, strings, comments; by extension or a `#!` first line, the first
   2 MB; Settings → Files turns it off). Pictures zoom (− and +,
   pinch, or double-click; the % is of the picture's own pixels, and clicking it

@@ -9,6 +9,105 @@ pub(super) const TEXT_EXTS: &[&str] = &[
 ];
 pub(super) const TEXT_MAX: u64 = 5 * 1024 * 1024;
 
+/// Source code by extension, with the language the Kind column names.
+const CODE_EXTS: &[(&[&str], &str)] = &[
+    (&["rs"], "Rust"),
+    (&["c", "h"], "C"),
+    (&["cpp", "cc", "cxx", "hpp", "hh", "hxx", "ino"], "C++"),
+    (&["m", "mm"], "Objective-C"),
+    (&["cs"], "C#"),
+    (&["go"], "Go"),
+    (&["swift"], "Swift"),
+    (&["java"], "Java"),
+    (&["kt", "kts"], "Kotlin"),
+    (&["scala", "sc"], "Scala"),
+    (&["groovy", "gradle"], "Groovy"),
+    (&["dart"], "Dart"),
+    (&["js", "mjs", "cjs", "jsx"], "JavaScript"),
+    (&["ts", "mts", "cts", "tsx"], "TypeScript"),
+    (&["vue", "svelte"], "Component"),
+    (&["py", "pyw", "pyi"], "Python"),
+    (&["rb", "rake", "gemspec"], "Ruby"),
+    (&["php"], "PHP"),
+    (&["pl", "pm"], "Perl"),
+    (&["lua"], "Lua"),
+    (&["r"], "R"),
+    (&["jl"], "Julia"),
+    (&["hs"], "Haskell"),
+    (&["ml", "mli"], "OCaml"),
+    (&["fs", "fsx"], "F#"),
+    (&["ex", "exs"], "Elixir"),
+    (&["erl", "hrl"], "Erlang"),
+    (&["clj", "cljs", "edn"], "Clojure"),
+    (&["lisp", "el", "scm"], "Lisp"),
+    (&["zig"], "Zig"),
+    (&["nim"], "Nim"),
+    (&["d"], "D"),
+    (&["pas"], "Pascal"),
+    (&["sh", "bash", "zsh", "fish", "command"], "Shell"),
+    (&["ps1", "psm1"], "PowerShell"),
+    (&["bat", "cmd"], "Batch"),
+    (&["sql"], "SQL"),
+    (&["html", "htm", "xhtml"], "HTML"),
+    (&["css", "scss", "sass", "less"], "CSS"),
+    (&["json", "jsonc", "json5"], "JSON"),
+    (&["xml", "plist", "xsd", "xsl"], "XML"),
+    (&["yaml", "yml"], "YAML"),
+    (&["toml"], "TOML"),
+    (&["tex", "sty", "bib"], "LaTeX"),
+    (&["diff", "patch"], "Diff"),
+    (&["proto"], "Protobuf"),
+    (&["graphql", "gql"], "GraphQL"),
+    (&["tf"], "Terraform"),
+    (&["cmake"], "CMake"),
+    (&["mk"], "Makefile"),
+];
+
+/// Source files known by their whole name.
+const CODE_NAMES: &[(&str, &str)] = &[
+    ("makefile", "Makefile"),
+    ("gnumakefile", "Makefile"),
+    ("dockerfile", "Dockerfile"),
+    ("containerfile", "Dockerfile"),
+    ("cmakelists.txt", "CMake"),
+    ("gemfile", "Ruby"),
+    ("rakefile", "Ruby"),
+    ("podfile", "Ruby"),
+    ("vagrantfile", "Ruby"),
+    ("justfile", "Makefile"),
+];
+
+/// Text without an extension worth naming: dotfiles (".gitignore") and the usual project files.
+const TEXT_NAMES: &[&str] = &[
+    "readme", "license", "licence", "copying", "authors", "changelog", "notice", "todo", "procfile",
+    ".gitignore", ".gitattributes", ".gitmodules", ".editorconfig", ".npmrc", ".nvmrc", ".prettierrc",
+    ".eslintrc", ".babelrc", ".dockerignore", ".bashrc", ".zshrc", ".profile", ".bash_profile", ".vimrc",
+    ".env", ".flake8", ".clang-format",
+];
+
+/// The language of a source file, by its name or extension.
+pub(super) fn code_language(name: &str) -> Option<&'static str> {
+    let lower = name.to_lowercase();
+    if let Some((_, l)) = CODE_NAMES.iter().find(|(n, _)| *n == lower) {
+        return Some(l);
+    }
+    // "Dockerfile.dev", "app.Dockerfile"
+    if lower.starts_with("dockerfile.") || lower.ends_with(".dockerfile") {
+        return Some("Dockerfile");
+    }
+    let x = ext(name);
+    CODE_EXTS.iter().find(|(xs, _)| xs.contains(&x.as_str())).map(|(_, l)| *l)
+}
+
+/// Whether a file of this name is text the preview and editor can show.
+pub(super) fn is_text_name(name: &str) -> bool {
+    let lower = name.to_lowercase();
+    TEXT_EXTS.contains(&ext(name).as_str())
+        || code_language(name).is_some()
+        || TEXT_NAMES.contains(&lower.as_str())
+        || lower.starts_with(".env.")
+}
+
 pub(super) fn ext(name: &str) -> String {
     name.rsplit_once('.').map(|(_, e)| e.to_lowercase()).unwrap_or_default()
 }
@@ -27,7 +126,7 @@ pub(super) fn kind(e: &Entry) -> Kind {
         Kind::Folder
     } else if x == "epub" {
         Kind::Epub
-    } else if TEXT_EXTS.contains(&x.as_str()) && e.size <= TEXT_MAX {
+    } else if is_text_name(&e.name) && e.size <= TEXT_MAX {
         Kind::Text
     } else {
         Kind::Other
@@ -220,6 +319,8 @@ pub(super) fn apply_theme(theme: &str) {
 }
 pub(super) const HIDDEN_KEY: &str = "ferry-files.hidden";
 pub(super) const COLOUR_KEY: &str = "ferry-files.colour-code";
+pub(super) const WRAP_KEY: &str = "ferry-files.wrap-text";
+pub(super) const LINE_NUMBERS_KEY: &str = "ferry-files.line-numbers";
 pub(super) const PHONE_THUMBS_KEY: &str = "ferry-files.phone-thumbs";
 pub(super) const AUTO_CONNECT_KEY: &str = "ferry-files.auto-connect";
 pub(super) const VERIFY_KEY: &str = "ferry-files.verify";
@@ -309,12 +410,13 @@ pub(super) fn stored_flag(key: &str, default: bool) -> bool {
     stored(key).map_or(default, |v| v == "1")
 }
 
-/// "Folder", "EPUB book", "Text", or the file's extension ("PDF").
+/// "Folder", "EPUB book", the language of source code ("Rust"), "Text", or the file's extension
+/// ("PDF").
 pub(super) fn kind_label(e: &Entry) -> String {
     match kind(e) {
         Kind::Folder => "Folder".into(),
         Kind::Epub => "EPUB book".into(),
-        Kind::Text => "Text".into(),
+        Kind::Text => code_language(&e.name).unwrap_or("Text").into(),
         Kind::Other => match ext(&e.name) {
             x if x.is_empty() => "File".into(),
             x => x.to_uppercase(),
@@ -325,6 +427,23 @@ pub(super) fn kind_label(e: &Entry) -> String {
 /// Whether some text on the page is selected (⌘C then copies it).
 pub(super) fn text_selected() -> bool {
     window().get_selection().ok().flatten().is_some_and(|s| !s.is_collapsed())
+}
+
+/// When some of a text preview is selected, selects all of it (as far as it's loaded) and says so;
+/// ⌘A then picks text, not files.
+pub(super) fn select_all_peek() -> bool {
+    let Some(sel) = window().get_selection().ok().flatten() else { return false };
+    if sel.is_collapsed() {
+        return false;
+    }
+    let Some(pre) = sel
+        .anchor_node()
+        .and_then(|n| n.dyn_ref::<web_sys::Element>().cloned().or_else(|| n.parent_element()))
+        .and_then(|e| e.closest(".peek pre").ok().flatten())
+    else {
+        return false;
+    };
+    sel.select_all_children(&pre).is_ok()
 }
 
 /// How long an error stays up while the pointer isn't over it.

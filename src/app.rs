@@ -742,6 +742,10 @@ struct Ctx {
     show_hidden: RwSignal<bool>,
     /// Colour code in the text preview.
     colour_code: RwSignal<bool>,
+    /// The text preview wraps long lines (else they scroll sideways).
+    wrap_text: RwSignal<bool>,
+    /// The text preview numbers its lines.
+    line_numbers: RwSignal<bool>,
     /// Settings: make thumbnails of phone files (each one reads the whole file over USB).
     phone_thumbs: RwSignal<bool>,
     /// The transfer queue: running, waiting, and stopped ones to retry.
@@ -810,6 +814,8 @@ impl Ctx {
             conn_error: RwSignal::new(None),
             show_hidden: RwSignal::new(stored_flag(HIDDEN_KEY, false)),
             colour_code: RwSignal::new(stored_flag(COLOUR_KEY, true)),
+            wrap_text: RwSignal::new(stored_flag(WRAP_KEY, true)),
+            line_numbers: RwSignal::new(stored_flag(LINE_NUMBERS_KEY, true)),
             phone_thumbs: RwSignal::new(stored_flag(PHONE_THUMBS_KEY, true)),
             auto_connect: RwSignal::new(stored_flag(AUTO_CONNECT_KEY, true)),
             verify: RwSignal::new(stored_flag(VERIFY_KEY, false)),
@@ -866,6 +872,16 @@ impl Ctx {
     fn set_colour_code(self, on: bool) {
         self.colour_code.set(on);
         store(COLOUR_KEY, if on { "1" } else { "0" });
+    }
+
+    fn set_wrap_text(self, on: bool) {
+        self.wrap_text.set(on);
+        store(WRAP_KEY, if on { "1" } else { "0" });
+    }
+
+    fn set_line_numbers(self, on: bool) {
+        self.line_numbers.set(on);
+        store(LINE_NUMBERS_KEY, if on { "1" } else { "0" });
     }
 
     fn set_phone_thumbs(self, on: bool) {
@@ -1130,6 +1146,7 @@ pub fn App() -> impl IntoView {
                     ctx.undo_last();
                     true
                 }
+                "pick_all" if select_all_peek() => true,
                 "pick_all" => {
                     p.marked.set(entries.iter().map(|x| x.path.clone()).collect());
                     true

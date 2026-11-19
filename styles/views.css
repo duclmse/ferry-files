@@ -368,6 +368,10 @@
   background: var(--bg);
   border: 1px solid var(--line);
   border-radius: 6px;
+  /* Selectable, to copy with ⌘C. */
+  -webkit-user-select: text;
+  user-select: text;
+  cursor: text;
 }
 
 /* Code colours in the text preview (kinds from the backend's highlight.rs). */
@@ -406,6 +410,101 @@
 
 .peek .tok-heading {
   font-weight: 600;
+}
+
+.peek .tok-link,
+.peek .tok-list {
+  color: var(--accent);
+}
+
+.peek .tok-url {
+  color: var(--accent);
+  text-decoration: underline;
+}
+
+.peek .tok-bold {
+  font-weight: 600;
+}
+
+.peek .tok-italic {
+  font-style: italic;
+}
+
+.peek .tok-quote {
+  color: var(--muted);
+  font-style: italic;
+}
+
+.peek .tok-code {
+  color: var(--tok-string);
+  background: var(--hover);
+  border-radius: 3px;
+}
+
+/* Wrap and line-number toggles, above the text. */
+.preview .peek .peek-tools {
+  align-self: stretch;
+  display: flex;
+  justify-content: flex-end;
+  gap: 2px;
+}
+
+.preview .peek pre.nowrap {
+  white-space: pre;
+  word-break: normal;
+}
+
+/* A line: an inline-block, so copying gives just the text and its own line ends. */
+.preview .peek pre .ln {
+  display: inline-block;
+  box-sizing: border-box;
+  width: 100%;
+  vertical-align: top;
+}
+
+/* Unwrapped, every line is as wide as the longest (so each number can stay put while scrolled
+   sideways), and a block, so the next line still starts below. */
+.preview .peek pre.nowrap .lines {
+  display: block;
+  width: max-content;
+  min-width: 100%;
+}
+
+.preview .peek pre.nowrap .ln {
+  display: block;
+  width: auto;
+}
+
+/* The number is CSS content: it can't be selected or copied. Wrapped lines hang under the
+   text, not the number. */
+.preview .peek pre.numbered .ln {
+  position: relative;
+  padding-left: calc(var(--ln-w, 1ch) + 1.5ch);
+}
+
+.preview .peek pre.numbered .ln::before {
+  content: attr(data-n);
+  position: absolute;
+  left: 0;
+  width: var(--ln-w, 1ch);
+  text-align: right;
+  color: var(--muted);
+}
+
+/* Scrolled sideways, the numbers stay put. */
+.preview .peek pre.numbered.nowrap .ln {
+  padding-left: 0;
+}
+
+.preview .peek pre.numbered.nowrap .ln::before {
+  position: sticky;
+  display: inline-block;
+  box-sizing: content-box;
+  padding-right: 1.5ch;
+  background: var(--bg);
+  /* Covers the pre's left padding too, so no text shows to the left of the number. */
+  box-shadow: -12px 0 0 var(--bg);
+  z-index: 1;
 }
 
 .preview .peek .more {

@@ -156,7 +156,7 @@ fn length(secs: f64) -> String {
 
 /// Text files the preview shows the start of: any size, as only the start is read.
 fn is_text(e: &Entry) -> bool {
-    !e.dir && TEXT_EXTS.contains(&ext(&e.name).as_str())
+    !e.dir && is_text_name(&e.name)
 }
 
 /// Selects the picture, video or sound before (`-1`) or after (`1`) `e` in the pane, skipping
@@ -492,27 +492,78 @@ struct Piece {
     runs: Option<Vec<(u8, u32)>>,
     /// Colours stopped in this piece: the rest is plain.
     stopped: bool,
+    /// The number of the piece's first line (from 1).
+    line: usize,
+    /// The first line goes on from the last piece (a line longer than a piece): it has no number.
+    cont: bool,
+}
+
+impl Piece {
+    /// Where the piece after this one starts counting lines.
+    fn next_line(&self) -> (usize, bool) {
+        (self.line + self.text.matches('\n').count(), !self.text.is_empty() && !self.text.ends_with('\n'))
+    }
 }
 
 /// The class of each kind of run (`highlight::Kind` in the backend); plain text has none.
-const TOKEN_CLASSES: [&str; 10] = ["", "tok-comment", "tok-string", "tok-number", "tok-keyword", "tok-type", "tok-function", "tok-tag", "tok-attr", "tok-heading"];
+const TOKEN_CLASSES: [&str; 17] = [
+    "", "tok-comment", "tok-string", "tok-number", "tok-keyword", "tok-type", "tok-function", "tok-tag", "tok-attr", "tok-heading",
+    "tok-link", "tok-url", "tok-bold", "tok-italic", "tok-quote", "tok-list", "tok-code",
+];
 
-/// A piece's text, with a `<span>` per coloured run. The text is only ever text, never HTML.
-fn piece_text(p: &Piece) -> AnyView {
-    let Some(runs) = &p.runs else { return p.text.clone().into_any() };
+/// The piece as (class, text) runs; plain when the runs don't fit the text.
+fn segments(p: &Piece) -> Vec<(&'static str, &str)> {
+    let plain = || vec![("", p.text.as_str())];
+    let Some(runs) = &p.runs else { return plain() };
     let mut at = 0;
-    let mut out = Vec::with_capacity(runs.len());
+    let mut out = Vec::with_capacity(runs.len() + 1);
     for &(kind, len) in runs {
         let end = (at + len as usize).min(p.text.len());
-        let Some(s) = p.text.get(at..end) else { return p.text.clone().into_any() };
-        let class = TOKEN_CLASSES.get(kind as usize).copied().unwrap_or("");
-        out.push(if class.is_empty() { s.to_string().into_any() } else { view! { <span class=class>{s.to_string()}</span> }.into_any() });
+        let Some(s) = p.text.get(at..end) else { return plain() };
+        out.push((TOKEN_CLASSES.get(kind as usize).copied().unwrap_or(""), s));
         at = end;
     }
     if let Some(rest) = p.text.get(at..).filter(|r| !r.is_empty()) {
-        out.push(rest.to_string().into_any());
+        out.push(("", rest));
     }
-    out.collect_view().into_any()
+    out
+}
+
+fn segment_view(class: &'static str, s: &str) -> AnyView {
+    if class.is_empty() { s.to_string().into_any() } else { view! { <span class=class>{s.to_string()}</span> }.into_any() }
+}
+
+/// A piece's text, with a `<span>` per coloured run. The text is only ever text, never HTML.
+/// `lines`: each line in a `<span class="ln">` whose number CSS shows (and copying leaves out).
+fn piece_text(p: &Piece, lines: bool) -> AnyView {
+    let segs = segments(p);
+    if !lines {
+        return segs.into_iter().map(|(c, s)| segment_view(c, s)).collect_view().into_any();
+    }
+    let mut out = vec![];
+    let mut line = vec![];
+    for (class, s) in segs {
+        let mut rest = s;
+        while let Some(i) = rest.find('\n') {
+            line.push(segment_view(class, &rest[..=i]));
+            out.push(std::mem::take(&mut line));
+            rest = &rest[i + 1..];
+        }
+        if !rest.is_empty() {
+            line.push(segment_view(class, rest));
+        }
+    }
+    if !line.is_empty() {
+        out.push(line);
+    }
+    out.into_iter()
+        .enumerate()
+        .map(|(k, segs)| {
+            let n = if k == 0 && p.cont { String::new() } else { (p.line + k).to_string() };
+            view! { <span class="ln" data-n=n>{segs.collect_view()}</span> }
+        })
+        .collect_view()
+        .into_any()
 }
 
 /// Pieces of a file loaded one after another as the end is scrolled near, up to `cap` bytes, and
@@ -536,8 +587,12 @@ where
         spawn_local(async move {
             // The preview may show something else by now: then these are gone and nothing is set.
             match get(start).await {
-                Ok((text, n)) => {
-                    if pieces.try_update(|v| v.push(text)).is_some() {
+                Ok((mut text, n)) => {
+                    let numbered = pieces.try_update(|v| {
+                        (text.line, text.cont) = v.last().map_or((1, false), Piece::next_line);
+                        v.push(text)
+                    });
+                    if numbered.is_some() {
                         next.set(n);
                     }
                 }
@@ -570,10 +625,25 @@ fn piece_view(
     cap: u64,
     hex: bool,
 ) -> impl IntoView {
+    let ctx = expect_context::<Ctx>();
     let empty = move || pieces.with(|v| v.len() == 1 && v[0].text.trim().is_empty()) && next.get().is_none();
     let stopped = move || pieces.with(|v| v.iter().any(|p| p.stopped));
+    // Room for the longest line number so far.
+    let digits = move || pieces.with(|v| v.last().map_or(1, |p| p.next_line().0.max(1).to_string().len()));
+    let (wrap, numbers) = (ctx.wrap_text, ctx.line_numbers);
+    let tools = (!hex).then(|| view! {
+        <div class="peek-tools">
+            <button class="filter-opt" class:on=move || wrap.get() aria-pressed=move || wrap.get().to_string()
+                aria-label="Wrap long lines" title=move || if wrap.get() { "Wrap long lines: on" } else { "Wrap long lines: off" }
+                on:click=move |_| ctx.set_wrap_text(!wrap.get_untracked())>{ico(Icon::Wrap)}</button>
+            <button class="filter-opt" class:on=move || numbers.get() aria-pressed=move || numbers.get().to_string()
+                aria-label="Line numbers" title=move || if numbers.get() { "Line numbers: on" } else { "Line numbers: off" }
+                on:click=move |_| ctx.set_line_numbers(!numbers.get_untracked())>{ico(Icon::LineNumbers)}</button>
+        </div>
+    });
     view! {
         <div class="peek" class:hex=hex>
+            {tools}
             {move || if pieces.with(Vec::is_empty) {
                 match error.get() {
                     Some(e) => view! { <span class="hint">{e}</span> }.into_any(),
@@ -583,9 +653,12 @@ fn piece_view(
                 view! { <span class="hint">"Empty"</span> }.into_any()
             } else {
                 view! {
-                    <pre on:scroll=scrolled>
-                        <For each=move || 0..pieces.with(Vec::len) key=|i| *i
-                            children=move |i| pieces.with_untracked(|v| piece_text(&v[i]))/>
+                    <pre on:scroll=scrolled class:nowrap=move || !hex && !wrap.get() class:numbered=move || !hex && numbers.get()
+                        style:--ln-w=move || format!("{}ch", digits())>
+                        <span class="lines">
+                            <For each=move || 0..pieces.with(Vec::len) key=|i| *i
+                                children=move |i| pieces.with_untracked(|v| piece_text(&v[i], !hex))/>
+                        </span>
                     </pre>
                     {move || stopped().then(|| view! { <span class="more">{format!("Colours stop partway (after {}, or where colouring got slow); the rest is plain.", human_size(COLOUR_MAX))}</span> })}
                     {move || if let Some(e) = error.get() {
@@ -684,7 +757,7 @@ fn TextPeek(src: Src, entry: Entry, #[prop(optional)] inner: Option<Inner>) -> i
         let get = move |start: u64| async move {
             let path = path.try_get_value().unwrap_or_default();
             let p = call::<Peek>("peek_text", json!({ "src": src.key(), "path": path, "start": start, "inner": inner.try_get_value().flatten().map(|i| i.name), "zipSize": inner.try_get_value().flatten().map(|i| i.zip_size), "colour": colour })).await?;
-            Ok((Piece { text: p.text, runs: p.runs, stopped: p.colours_stopped }, p.next))
+            Ok((Piece { text: p.text, runs: p.runs, stopped: p.colours_stopped, ..Piece::default() }, p.next))
         };
         pieces(get, TEXT_CAP, false)
     }
