@@ -130,6 +130,10 @@ upgrading, because stored watch roots no longer carry the `\\?\` prefix.
 - [Performance & Memory Update](plans/performance-memory-update.md) -
   implemented, section 7 included; bounded crawl/fuzzy/content search,
   stream fan-out, postcard IPC, content worker pool, single SQLite writer
+- [Performance Assessment: Events and Crawl](plans/performance-assessment.md) -
+  measured before and after: ordered batched watcher events, indexed subtree
+  queries, `globset` exclusions, idle commits skipped, walk threads,
+  `use_mft = "auto"` for large roots
 - [Borrowing Everything's Techniques](plans/everything-borrowing.md) - phases
   1-5 and 7 implemented (snapshot metadata, name-only fuzzy, compact memory
   store with a parent-pointer tree, SQLite bulk load, change catch-up on

@@ -296,11 +296,11 @@ pub struct SearchConfig {
 
 #[derive(Debug, Clone, Deserialize)]
 pub struct IndexerConfig {
-    pub crawl_threads:         usize,  // default num_cpus / 2; walker threads
+    pub crawl_threads:         usize,  // default num_cpus, at most 12; walker threads
     pub content_threads:       usize,  // default num_cpus / 2; content + archive workers
-    pub use_mft:               MftMode, // Windows: true | false | "auto" (default: whole-drive roots)
+    pub use_mft:               MftMode, // Windows: true | false | "auto" (default: whole-drive roots, roots >= 200k entries)
     pub commit_interval_secs:  u64,    // default 5
-    pub event_batch_size:      usize,  // default 100
+    pub event_batch_size:      usize,  // default 100; events per write transaction, applied in order
 }
 
 #[derive(Debug, Clone, Deserialize)]

@@ -177,5 +177,12 @@ disk. The commit loop in `daemon.rs` runs every `commit_interval_secs`.
   the directory alone. `process_event` walks or removes the subtree; keep
   that when changing event handling. FSEvents may report a deletion as a
   modification of a vanished path.
+- Watcher events are applied by one consumer in arrival order
+  (`process_events`), in batches of `indexer.event_batch_size`; do not
+  reintroduce concurrent per-event tasks, which reorder a path's events.
+- SQLite subtree predicates must stay index ranges (`UNDER_DIR_1`):
+  `LIKE` is case-insensitive here and scans the whole table.
+- Walkers come from `indexer::walk_builder`, which keeps git ignore rules
+  out of the crawl.
 - Tantivy's `IndexWriter` holds a lock file. Only one writer per index
   directory. The daemon enforces a PID file check before acquiring the writer.
