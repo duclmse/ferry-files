@@ -230,7 +230,10 @@ impl SqliteStore {
     /// non-crawl purposes; full-crawl stale detection should use generation methods.
     pub fn paths_under(&self, dir: &str) -> Result<Vec<String>> {
         let conn = self.get_conn()?;
-        let mut stmt = conn.prepare("SELECT path FROM files WHERE path LIKE ? || '/%'")?;
+        let mut stmt = conn.prepare(&format!(
+            "SELECT path FROM files WHERE {}",
+            super::schema::UNDER_DIR_1
+        ))?;
         let rows = stmt.query_map([dir], |row| row.get(0))?;
         rows.map(|r| r.map_err(AppError::Database)).collect()
     }

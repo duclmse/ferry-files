@@ -584,3 +584,69 @@ fn extension_glob_finds_folders_and_dot_names_the_column_lacks() {
         assert_eq!(folders[0].name, "books.pdf");
     }
 }
+
+#[test]
+fn windows_paths_have_subtrees_in_both_stores() {
+    use crate::store::{memory_store::MemoryStore, CmpOp, SqlCondition};
+
+    let paths = [
+        r"C:\w",
+        r"C:\w\a.txt",
+        r"C:\w\sub",
+        r"C:\w\sub\b.txt",
+        r"C:\wx\c.txt",
+        r"C:\w\arc.zip!/in/d.txt",
+    ];
+    let sqlite = make_store();
+    let memory = MemoryStore::new(std::path::Path::new(":memory-test:")).unwrap();
+    for p in paths {
+        let mut r = sample_record(p);
+        r.is_dir = !p.ends_with(".txt");
+        sqlite.upsert_file(&r).unwrap();
+        memory.upsert_file(&r);
+    }
+    let sorted = |mut v: Vec<String>| {
+        v.sort();
+        v
+    };
+    let expected_under = sorted(
+        [
+            r"C:\w\a.txt",
+            r"C:\w\arc.zip!/in/d.txt",
+            r"C:\w\sub",
+            r"C:\w\sub\b.txt",
+        ]
+        .map(String::from)
+        .to_vec(),
+    );
+    assert_eq!(sorted(sqlite.paths_under(r"C:\w").unwrap()), expected_under);
+    assert_eq!(sorted(memory.paths_under(r"C:\w").unwrap()), expected_under);
+    assert_eq!(
+        sqlite.children_of(r"C:\w").unwrap().len(),
+        2,
+        "a.txt and sub"
+    );
+
+    // parent:C:\w plans to these two conditions.
+    let direct = [
+        SqlCondition::ParentPath(r"C:\w".into()),
+        SqlCondition::DepthOp(CmpOp::Eq, 2),
+    ];
+    let names = |rows: Vec<FileRecord>| sorted(rows.into_iter().map(|r| r.path).collect());
+    let want = vec![r"C:\w\a.txt".to_owned(), r"C:\w\sub".to_owned()];
+    assert_eq!(names(sqlite.search_conditions(&direct, 100).unwrap()), want);
+    assert_eq!(names(memory.search_conditions(&direct, 100).unwrap()), want);
+
+    assert_eq!(sqlite.remove_directory(r"C:\w\sub").unwrap(), 1);
+    assert_eq!(memory.remove_directory(r"C:\w\sub"), 1);
+    for store_has in [
+        sqlite.get_by_path(r"C:\w\sub\b.txt").unwrap().is_some(),
+        memory.get_by_path(r"C:\w\sub\b.txt").unwrap().is_some(),
+    ] {
+        assert!(!store_has);
+    }
+    assert!(
+        sqlite.get_by_path(r"C:\wx\c.txt").unwrap().is_some(),
+        "a sibling prefix is not a parent"
+    );
+}

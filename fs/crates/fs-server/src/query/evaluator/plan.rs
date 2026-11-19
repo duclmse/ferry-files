@@ -274,8 +274,8 @@ fn emit_function(
         Function::Parent(path) => {
             // ParentPath covers the whole subtree (and the memory store's
             // per-directory fast path); the depth check keeps direct children.
-            let dir = path.trim_end_matches('/');
-            let depth = dir.bytes().filter(|&b| b == b'/').count();
+            let dir = path.trim_end_matches(['/', '\\']);
+            let depth = dir.bytes().filter(|&b| b == b'/' || b == b'\\').count();
             p.sql_conditions
                 .push(SqlCondition::ParentPath(dir.to_owned()));
             p.sql_conditions

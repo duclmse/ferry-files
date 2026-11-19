@@ -259,7 +259,10 @@ impl SqliteStore {
 
     pub fn remove_directory(&self, path: &str) -> Result<usize> {
         let conn = self.get_conn()?;
-        let n = conn.execute("DELETE FROM files WHERE path LIKE ? || '/%'", [path])?;
+        let n = conn.execute(
+            &format!("DELETE FROM files WHERE {}", super::schema::UNDER_DIR_1),
+            [path],
+        )?;
         Ok(n)
     }
 
@@ -295,7 +298,7 @@ impl SqliteStore {
         // both cases with a path prefix OR watch_root predicate.
         let n = conn.execute(
             "DELETE FROM files
-             WHERE (watch_root = ?1 OR (watch_root IS NULL AND path LIKE ?1 || '/%'))
+             WHERE (watch_root = ?1 OR (watch_root IS NULL AND (path LIKE ?1 || '/%' OR path LIKE ?1 || '\\%')))
                AND (crawl_generation IS NULL OR crawl_generation < ?2)",
             rusqlite::params![watch_root, generation],
         )?;

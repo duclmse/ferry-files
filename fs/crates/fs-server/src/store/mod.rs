@@ -180,7 +180,9 @@ impl MetaFilters {
             }
         }
         if let Some(prefix) = &self.path_prefix {
-            clauses.push("path LIKE ? || '/%'".into());
+            // Windows paths continue with `\`, all others with `/`.
+            clauses.push("(path LIKE ? || '/%' OR path LIKE ? || '\\%')".into());
+            params.push(rusqlite::types::Value::Text(prefix.clone()));
             params.push(rusqlite::types::Value::Text(prefix.clone()));
         }
 
@@ -392,20 +394,24 @@ impl SqlCondition {
                 let vals = exts.iter().map(|e| Value::Text(e.clone())).collect();
                 (format!("extension IN ({ph})"), vals)
             }
-            SqlCondition::ParentPath(p) => (
-                "path LIKE ? ESCAPE '\\'".into(),
-                vec![Value::Text(format!(
-                    "{}/%",
-                    crate::query::glob::like_escape(p)
-                ))],
-            ),
+            SqlCondition::ParentPath(p) => {
+                let dir = crate::query::glob::like_escape(p);
+                // Windows paths continue with `\` (escaped here), others with `/`.
+                (
+                    "(path LIKE ? ESCAPE '\\' OR path LIKE ? ESCAPE '\\')".into(),
+                    vec![
+                        Value::Text(format!("{dir}/%")),
+                        Value::Text(format!("{dir}\\\\%")),
+                    ],
+                )
+            }
             SqlCondition::NameLenOp(op, n) => (
                 format!("LENGTH(name) {} ?", op.as_sql()),
                 vec![Value::Integer(*n as i64)],
             ),
             SqlCondition::DepthOp(op, d) => (
                 format!(
-                    "(LENGTH(path) - LENGTH(REPLACE(path, '/', ''))) {} ?",
+                    "(LENGTH(path) - LENGTH(REPLACE(REPLACE(path, '/', ''), '\\', ''))) {} ?",
                     op.as_sql()
                 ),
                 vec![Value::Integer(*d as i64)],

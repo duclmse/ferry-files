@@ -92,6 +92,10 @@ pub(super) fn parent_of(path: &str) -> String {
     }
 }
 
+/// `path` is under the directory bound to `?1`, which a Windows path joins
+/// with `\` and every other path with `/`.
+pub(super) const UNDER_DIR_1: &str = "(path LIKE ?1 || '/%' OR path LIKE ?1 || '\\%')";
+
 const PARENT_REPAIR_KEY: &str = "parent_splits_backslash";
 
 /// Rows written while `parent_of` split on `/` only have an empty or wrong

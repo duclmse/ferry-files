@@ -230,7 +230,8 @@ fn hash_entry(entries: &[Entry], tails: &str, hasher: &DefaultHashBuilder, i: u3
 /// within their first segment.
 fn under(entries: &[Entry], tails: &str, i: u32, dir: &str) -> Option<bool> {
     let d = dir.as_bytes();
-    // The prefix to match is `dir` followed by '/'.
+    // The prefix to match is `dir` followed by '/', or '\' as Windows
+    // paths continue.
     let want = d.len() + 1;
     with_chain(entries, i, |chain| {
         let mut k = 0;
@@ -241,15 +242,18 @@ fn under(entries: &[Entry], tails: &str, i: u32, dir: &str) -> Option<bool> {
             if k < want {
                 let n = (want - k).min(t.len());
                 for &b in &t[..n] {
-                    let expect = d.get(k).copied().unwrap_or(b'/');
-                    if b != expect {
+                    let fits = match d.get(k) {
+                        Some(&e) => b == e,
+                        None => b == b'/' || b == b'\\',
+                    };
+                    if !fits {
                         return None;
                     }
                     k += 1;
                 }
                 s = n;
             }
-            if k == want && t[s..].contains(&b'/') {
+            if k == want && t[s..].iter().any(|&b| b == b'/' || b == b'\\') {
                 direct = false;
             }
         }
@@ -886,7 +890,7 @@ impl RecordView for EntryRef<'_> {
             let e = &self.st.entries[j as usize];
             n += tail_in(&self.st.tails, e)
                 .bytes()
-                .filter(|&b| b == b'/')
+                .filter(|&b| b == b'/' || b == b'\\')
                 .count();
             match e.parent {
                 NO_PARENT => return n,
