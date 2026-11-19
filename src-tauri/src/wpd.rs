@@ -122,6 +122,14 @@ fn friendly_name(manager: &IPortableDeviceManager, id: &str) -> Option<String> {
     (!s.trim().is_empty()).then(|| s.trim().to_string())
 }
 
+/// A folder's contents, and how many of its items couldn't be read (those are left out, so
+/// "not in `kids`" only means "not there" when `unreadable` is 0).
+#[derive(Clone)]
+struct Listing {
+    kids: Vec<Child>,
+    unreadable: usize,
+}
+
 #[derive(Clone)]
 struct Child {
     id: String,
@@ -211,10 +219,14 @@ impl Link {
         }
     }
 
-    fn children(&self, parent: &str) -> Vec<Child> {
-        let Ok(ids) = self.ids(parent) else { return vec![] };
+    /// The folder's contents. A folder that can't be listed is an error, not an empty folder:
+    /// writes check what's there before replacing, and an empty answer would mislead them.
+    fn children(&self, parent: &str) -> Result<Listing> {
+        let ids = self.ids(parent)?;
+        let total = ids.len();
         let want = [WPD_OBJECT_ORIGINAL_FILE_NAME, WPD_OBJECT_NAME, WPD_OBJECT_CONTENT_TYPE, WPD_OBJECT_SIZE, WPD_OBJECT_DATE_MODIFIED];
-        ids.into_iter()
+        let kids: Vec<Child> = ids
+            .into_iter()
             .filter_map(|id| {
                 let v = self.get(&id, &want).ok()?;
                 let name = string(&v, &WPD_OBJECT_ORIGINAL_FILE_NAME).or_else(|| string(&v, &WPD_OBJECT_NAME))?;
@@ -223,7 +235,8 @@ impl Link {
                 let size = if dir { 0 } else { unsafe { v.GetUnsignedLargeIntegerValue(&WPD_OBJECT_SIZE) }.unwrap_or(0) };
                 Some(Child { name: name.replace('/', "_"), dir, size, mtime: ole_date(&v, &WPD_OBJECT_DATE_MODIFIED), id })
             })
-            .collect()
+            .collect();
+        Ok(Listing { unreadable: total - kids.len(), kids })
     }
 
     fn stream(&self, id: &str) -> Result<IStream> {
@@ -367,19 +380,44 @@ fn temp_name(name: &str) -> String {
 
 struct Inner {
     link: Link,
-    cache: HashMap<String, (Instant, Vec<Child>)>,
+    cache: HashMap<String, (Instant, Listing)>,
 }
 
 impl Inner {
-    fn children(&mut self, parent: &str) -> Vec<Child> {
-        if let Some((at, kids)) = self.cache.get(parent) {
+    /// Only complete listings are cached, so after a failure (or an item that couldn't be read)
+    /// the next look tries the device again.
+    fn listing(&mut self, parent: &str) -> Result<Listing> {
+        if let Some((at, l)) = self.cache.get(parent) {
             if at.elapsed() < CACHE_TTL {
-                return kids.clone();
+                return Ok(l.clone());
             }
         }
-        let kids = self.link.children(parent);
-        self.cache.insert(parent.to_string(), (Instant::now(), kids.clone()));
-        kids
+        let l = self.link.children(parent)?;
+        if l.unreadable == 0 {
+            self.cache.insert(parent.to_string(), (Instant::now(), l.clone()));
+        }
+        Ok(l)
+    }
+
+    /// The items that could be read, for browsing and for finding an item by ID.
+    fn children(&mut self, parent: &str) -> Result<Vec<Child>> {
+        Ok(self.listing(parent)?.kids)
+    }
+
+    /// The item called `name`, or None if it isn't there. If it wasn't found but some items
+    /// couldn't be read, it may be one of those: that's an error, so a write doesn't put a
+    /// second file of the same name next to it.
+    fn find(&mut self, parent: &str, name: &str) -> Result<Option<Child>> {
+        let l = self.listing(parent)?;
+        let unreadable = l.unreadable;
+        match l.kids.into_iter().find(|k| k.name == name) {
+            Some(k) => Ok(Some(k)),
+            None if unreadable > 0 => err(format!(
+                "Couldn't read {unreadable} item{} in the folder, so can't tell whether {name} is there. Try again, or reconnect the device.",
+                if unreadable == 1 { "" } else { "s" }
+            )),
+            None => Ok(None),
+        }
     }
 
     fn invalidate(&mut self, parent: &str) {
@@ -443,26 +481,28 @@ impl Wpd {
         self.inner.lock().unwrap_or_else(|e| e.into_inner())
     }
 
-    fn resolve(&self, inner: &mut Inner, path: &str) -> Option<Node> {
+    /// The object at `path`: None if it isn't there, an error if a folder on the way can't be
+    /// listed or it might be an item that couldn't be read.
+    fn resolve(&self, inner: &mut Inner, path: &str) -> Result<Option<Node>> {
         let parts: Vec<&str> = path.split('/').filter(|p| !p.is_empty()).collect();
         let Some(first) = parts.first() else {
-            return Some(Node { storage: None, id: DEVICE.into(), dir: true, size: 0, mtime: 0, name: "/".into(), path: "/".into() });
+            return Ok(Some(Node { storage: None, id: DEVICE.into(), dir: true, size: 0, mtime: 0, name: "/".into(), path: "/".into() }));
         };
-        let sid = self.storages.iter().find(|(n, _)| n == first).map(|(_, id)| id.clone())?;
+        let Some(sid) = self.storages.iter().find(|(n, _)| n == first).map(|(_, id)| id.clone()) else { return Ok(None) };
         let mut node = Node { storage: Some(sid.clone()), id: sid.clone(), dir: true, size: 0, mtime: 0, name: first.to_string(), path: format!("/{first}") };
         for seg in &parts[1..] {
             if !node.dir {
-                return None;
+                return Ok(None);
             }
-            let kid = inner.children(&node.id).into_iter().find(|k| k.name == *seg)?;
+            let Some(kid) = inner.find(&node.id, seg)? else { return Ok(None) };
             node = Node { storage: Some(sid.clone()), id: kid.id, dir: kid.dir, size: kid.size, mtime: kid.mtime, path: join(&node.path, seg), name: kid.name };
         }
-        Some(node)
+        Ok(Some(node))
     }
 
     /// The object ID of the folder `path` goes in.
     fn parent_of(&self, inner: &mut Inner, path: &str) -> Result<String> {
-        match self.resolve(inner, &dirname(path)) {
+        match self.resolve(inner, &dirname(path))? {
             Some(Node { storage: Some(_), id, dir: true, .. }) => Ok(id),
             _ => err(format!("Files must go inside a storage folder, e.g. {}", self.default_dir())),
         }
@@ -474,7 +514,7 @@ impl Wpd {
 
     fn check_size(inner: &mut Inner, parent: &str, id: &str, size: u64, name: &str) -> Result<Child> {
         inner.invalidate(parent);
-        match inner.children(parent).into_iter().find(|k| k.id == id) {
+        match inner.children(parent)?.into_iter().find(|k| k.id == id) {
             Some(k) if k.size == size && k.name == name => Ok(k),
             _ => err(format!("Verification failed after writing {name}.")),
         }
@@ -517,7 +557,7 @@ impl Transport for Wpd {
 
     fn listdir(&self, path: &str) -> Result<Vec<Entry>> {
         let mut inner = self.inner();
-        let node = match self.resolve(&mut inner, path) {
+        let node = match self.resolve(&mut inner, path)? {
             Some(n) if n.dir => n,
             _ => return err(format!("Not a folder: {path}")),
         };
@@ -529,7 +569,7 @@ impl Transport for Wpd {
                 .collect());
         }
         Ok(inner
-            .children(&node.id)
+            .children(&node.id)?
             .into_iter()
             .map(|k| Entry { path: join(&node.path, &k.name), name: k.name, dir: k.dir, size: k.size, mtime: k.mtime })
             .collect())
@@ -537,7 +577,7 @@ impl Transport for Wpd {
 
     fn stat(&self, path: &str) -> Result<Option<Entry>> {
         let mut inner = self.inner();
-        Ok(self.resolve(&mut inner, path).map(|n| Self::public(&n)))
+        Ok(self.resolve(&mut inner, path)?.map(|n| Self::public(&n)))
     }
 
     fn version(&self, path: &str) -> Result<Option<String>> {
@@ -545,12 +585,12 @@ impl Transport for Wpd {
         if let Ok(parent) = self.parent_of(&mut inner, path) {
             inner.invalidate(&parent);
         }
-        Ok(self.resolve(&mut inner, path).filter(|n| !n.dir).map(|n| Self::version_of(&n)))
+        Ok(self.resolve(&mut inner, path)?.filter(|n| !n.dir).map(|n| Self::version_of(&n)))
     }
 
     fn read_range(&self, path: &str, start: u64, len: u64) -> Result<Vec<u8>> {
         let mut inner = self.inner();
-        let Some(node) = self.resolve(&mut inner, path).filter(|n| !n.dir) else {
+        let Some(node) = self.resolve(&mut inner, path)?.filter(|n| !n.dir) else {
             return err(format!("No such file: {path}"));
         };
         if start >= node.size || len == 0 {
@@ -565,7 +605,7 @@ impl Transport for Wpd {
         if let Ok(parent) = self.parent_of(&mut inner, path) {
             inner.invalidate(&parent);
         }
-        let Some(node) = self.resolve(&mut inner, path).filter(|n| !n.dir) else {
+        let Some(node) = self.resolve(&mut inner, path)?.filter(|n| !n.dir) else {
             return err(format!("No such file: {path}"));
         };
         let data = inner.link.download(&node.id)?;
@@ -575,32 +615,40 @@ impl Transport for Wpd {
         Ok((data, Self::version_of(&node)))
     }
 
-    /// MTP can't overwrite: upload under a temporary name, delete the old file, rename.
+    /// MTP can't overwrite: upload under a temporary name, delete the old file, rename. The new
+    /// data stays on the device at every step: a copy is only deleted once another one is there.
     fn replace(&self, path: &str, data: &[u8], exists: bool) -> Result<String> {
         let mut inner = self.inner();
         let name = basename(path).to_string();
         let parent = self.parent_of(&mut inner, path)?;
-        let old = if exists { self.resolve(&mut inner, path) } else { None };
+        // A folder that can't be listed is an error here, not "no old file": uploading anyway
+        // would put a second file of the same name next to the old one.
+        let old = if exists { self.resolve(&mut inner, path)? } else { None };
         let new_id = match old {
             None => inner.link.upload(data, &name, &parent)?,
             Some(old) => {
                 let tmp_name = temp_name(&name);
                 inner.invalidate(&parent);
-                if let Some(stale) = inner.children(&parent).into_iter().find(|k| k.name == tmp_name) {
+                if let Some(stale) = inner.find(&parent, &tmp_name)? {
                     inner.link.delete(&stale.id)?;
                 }
                 let tmp_id = inner.link.upload(data, &tmp_name, &parent)?;
                 Self::check_size(&mut inner, &parent, &tmp_id, data.len() as u64, &tmp_name)?;
                 inner.link.delete(&old.id)?;
-                let renamed = inner.link.rename(&tmp_id, &name).and_then(|()| {
-                    Self::check_size(&mut inner, &parent, &tmp_id, data.len() as u64, &name).map(|_| ())
-                });
-                match renamed {
+                inner.invalidate(&parent);
+                match inner.link.rename(&tmp_id, &name) {
+                    // Checked below; if that fails the file is kept and the error reported.
                     Ok(()) => tmp_id,
                     Err(_) => {
-                        // Some devices can't rename: upload again under the real name.
-                        inner.link.delete(&tmp_id)?;
-                        inner.link.upload(data, &name, &parent)?
+                        // Some devices can't rename: upload again under the real name, and only
+                        // then drop the temporary copy.
+                        let id = inner.link.upload(data, &name, &parent).map_err(|e| {
+                            let why = e.to_string();
+                            DevError::Msg(format!("{}. The new version is on the device as {tmp_name}.", why.trim_end_matches(['.', ' ', '\r', '\n'])))
+                        })?;
+                        let _ = inner.link.delete(&tmp_id);
+                        inner.invalidate(&parent);
+                        id
                     }
                 }
             }
@@ -611,7 +659,7 @@ impl Transport for Wpd {
 
     fn delete(&self, path: &str, _is_dir: bool) -> Result<()> {
         let mut inner = self.inner();
-        let Some(node) = self.resolve(&mut inner, path) else {
+        let Some(node) = self.resolve(&mut inner, path)? else {
             return err(format!("No such file or folder: {path}"));
         };
         if node.storage.as_deref().is_none_or(|s| s == node.id) {
@@ -633,14 +681,14 @@ impl Transport for Wpd {
 
     fn rename(&self, path: &str, new_name: &str) -> Result<()> {
         let mut inner = self.inner();
-        let node = match self.resolve(&mut inner, path) {
+        let node = match self.resolve(&mut inner, path)? {
             Some(n) if n.storage.as_deref().is_some_and(|s| s != n.id) => n,
             _ => return err(format!("{path} can't be renamed.")),
         };
         let parent = self.parent_of(&mut inner, path)?;
         inner.link.rename(&node.id, new_name)?;
         inner.invalidate(&parent);
-        if !inner.children(&parent).iter().any(|k| k.id == node.id && k.name == new_name) {
+        if !inner.children(&parent)?.iter().any(|k| k.id == node.id && k.name == new_name) {
             return err(format!("The device didn't rename {}.", node.name));
         }
         Ok(())
