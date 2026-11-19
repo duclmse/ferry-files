@@ -113,7 +113,7 @@ pub(super) fn Preview(pane: Pane) -> impl IntoView {
                     view! {
                         <div class="view">{body}</div>
                         <div class="meta">
-                            <b class="name">{e.name.clone()}</b>
+                            <b class="name" title=e.name.clone()>{e.name.clone()}</b>
                             <span class="sub">{facts}</span>
                             {(e.mtime > 0).then(|| view! { <span class="sub">{format!("Modified {}", when(e.mtime))}</span> })}
                             <span class="sub path" title=e.path.clone()>{parent(&e.path)}</span>
@@ -639,7 +639,7 @@ fn Zipped(pane: Pane, src: Src, zip: Entry, name: String, size: u64) -> impl Int
     view! {
         <div class="view">{body}</div>
         <div class="meta">
-            <b class="name">{short}</b>
+            <b class="name" title=short.clone()>{short.clone()}</b>
             <span class="sub">{facts}</span>
             <span class="sub path" title=format!("{}/{name}", zip.path)>{match name.rfind('/') { Some(at) => format!("{}/{}", zip.name, &name[..at]), None => zip.name.clone() }}</span>
             {move || forced.get().map(|_| view! {

@@ -22,18 +22,19 @@
   margin: 0 0 4px;
 }
 
-.sub {
+/* <p> only: the preview and tiles use .sub too, in their own way. */
+p.sub {
   color: var(--muted);
   margin: 0 0 10px;
   -webkit-user-select: text;
   user-select: text;
 }
 
-.sub.error {
+p.sub.error {
   color: var(--danger);
 }
 
-.sub.found {
+p.sub.found {
   margin-top: 12px;
   color: var(--ink);
   font-weight: 600;
