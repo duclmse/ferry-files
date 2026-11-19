@@ -308,6 +308,11 @@ struct Pane {
     zip_pick: RwSignal<Option<(Src, String, String, u64)>>,
     /// Whether the path above the files is being typed in.
     editing_path: RwSignal<bool>,
+    /// Counts folder listings asked for; a listing that comes back after a newer one was asked
+    /// for is dropped, so a slow device can't overwrite where the pane (or tab) went since.
+    load_seq: StoredValue<u64>,
+    /// The folder the latest listing asked for will show, until it comes back.
+    going_to: StoredValue<Option<(Src, String)>>,
     /// The pane's tabs. The shown one's entry is only brought up to date when another is shown;
     /// until then the pane's own signals are where it is.
     tabs: RwSignal<Vec<Tab>>,
@@ -354,6 +359,8 @@ impl Pane {
             peek_as: RwSignal::new(None),
             zip_pick: RwSignal::new(None),
             editing_path: RwSignal::new(false),
+            load_seq: StoredValue::new(0),
+            going_to: StoredValue::new(None),
             tabs: RwSignal::new(vec![Tab { src: Src::Mac, cwd: String::new(), selected: None, view: ViewMode::stored(id), root: String::new() }]),
             tab: RwSignal::new(0),
         }

@@ -12,8 +12,18 @@ impl Ctx {
     /// Like `load_select`, but if `path` can't be listed, lists `fallback` instead.
     pub(super) fn load_or(self, p: Pane, src: Src, path: String, select: Option<String>, fallback: Option<String>) {
         p.loading.set(true);
+        let seq = p.load_seq.with_value(|n| n + 1);
+        p.load_seq.set_value(seq);
+        p.going_to.set_value(Some((src, path.clone())));
         spawn_local(async move {
-            match call::<Vec<Entry>>("list", json!({ "src": src.key(), "path": path, "pane": p.id })).await {
+            let listed = call::<Vec<Entry>>("list", json!({ "src": src.key(), "path": path, "pane": p.id })).await;
+            // A newer listing was asked for meanwhile: it decides what the pane shows (and
+            // clears `loading`), so this one changes nothing.
+            if p.load_seq.get_value() != seq {
+                return;
+            }
+            p.going_to.set_value(None);
+            match listed {
                 Ok(entries) => {
                     let mut entries = self.visible(entries);
                     p.sort.get_untracked().apply(&mut entries);
@@ -303,10 +313,15 @@ impl Ctx {
 
     /// Brings the shown tab's entry up to date with where the pane is.
     fn save_tab(self, p: Pane) {
+        // While a listing is on its way, the tab is where it's going, not the folder still shown.
+        let (src, cwd, selected) = match p.going_to.get_value() {
+            Some((src, path)) => (src, path, None),
+            None => (p.src.get_untracked(), p.cwd.get_untracked(), p.selected.get_untracked()),
+        };
         let here = Tab {
-            src: p.src.get_untracked(),
-            cwd: p.cwd.get_untracked(),
-            selected: p.selected.get_untracked(),
+            src,
+            cwd,
+            selected,
             view: p.view.get_untracked(),
             root: p.root.get_untracked(),
         };
