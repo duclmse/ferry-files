@@ -138,3 +138,43 @@ Each connection to `:memory:` is a database of its own. The queue's pool
 held 16, and the tests passed only because the pool kept handing back the
 connection that had the schema. An in-memory queue now has one connection,
 as `fsd`'s store does.
+
+## Windows CI results and the regression they found
+
+The branch's first CI run showed that the whole-volume job (`C:\` as a root,
+`continue-on-error`) had failed 3 of 9 catch-up checks since `ef1070b`, on
+`main` too: a deleted file, a renamed file's old name and a file in a
+deleted folder stayed indexed. The job's green mark hid it. Two causes:
+
+- **8.3 short names.** `ReadDirectoryChangesW` named the fixture folder by
+  its alias (`C:\Users\RUNNER~1\...`, as `%TEMP%` spells it). `ef1070b`
+  walks a folder the index has not seen, so the alias indexed a second
+  copy of every file under it. The journal replay after a restart reports
+  long names, so its deletes left the copies. Event paths are now resolved
+  to long form on Windows. An unseen folder is walked only when its parent
+  is indexed or is a watch root, which an alias's parent never is.
+- **Excluded paths in events.** Watcher events never applied the exclusion
+  rules. A data folder inside a watched tree fed its own SQLite and Tantivy
+  writes back in as events, and from `ef1070b` each such delete also ran a
+  full-table subtree query. Excluded paths now drop out of events.
+
+Run `44598156897` (2-core `windows-latest`), after both fixes:
+
+| Crawl | Root | Time | Rate | Catch-up |
+| ----- | ---- | ---: | ---: | -------- |
+| walk | System32 (23.6k entries) | 2.2 s | 10,600/s (was ~6,000) | 9/9 |
+| file table | System32 | 11.1 s | 2,100/s | 9/9 |
+| file table, first and cold | all of C: (1.44M entries) | 28-72 s over three runs | 20,000-52,000/s | 9/9 in 1.2 s |
+| walk, after the file table | all of C: | 455-649 s over three runs | 2,200-3,200/s | 9/9 in 1.2 s |
+
+A cold file table read is still 7-20x faster than the walk over a whole
+volume, so the `auto` rule and its 200,000-entry threshold stand. The
+whole-volume walk rate varies by up to 40% between runs on the same image,
+so it does not confirm or rule out the per-entry savings; System32's
+1.8x does.
+
+**Still open.** Opening the 1.4M-row store on restart took 39-47 s on
+`main` and 63-100 s on this branch's runs, before catch-up starts. Nothing
+here changes that path, and the variance between runs is as large, but it
+needs a breakdown (schema checks, index sync, WAL replay) before anyone
+can say whether the branch added to it.
