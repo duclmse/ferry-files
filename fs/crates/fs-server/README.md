@@ -106,6 +106,7 @@ index_cache_size = 256
 | `indexer.crawl_threads`                 | `int`          | half CPU count   | Directory walker threads                          |
 | `indexer.content_threads`               | `int`          | half CPU count   | Crawl threads reading content and archives        |
 | `indexer.commit_interval_secs`          | `int`          | `5`              | Tantivy commit interval                           |
+| `indexer.use_mft`                       | `bool`/`"auto"` | `"auto"`       | Windows: crawl from the NTFS file table; `auto` for whole-drive roots |
 | `indexer.event_batch_size`              | `int`          | `100`            | Max watcher events per batch                      |
 | `api.rest_port`                         | `int`          | `7700`           | HTTP REST port                                    |
 | `api.grpc_port`                         | `int`          | `7701`           | gRPC port                                         |

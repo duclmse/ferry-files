@@ -459,9 +459,14 @@ Benchmark updates:
   candidate/path memory.
 
 Status: `benches/reconcile.rs` re-crawls 1,000,000 rows with 1% gone per
-round and prints peak RSS: 29.2 s per round on an M-series Mac with all
-five secondary indexes kept (the first crawl drops them; this is a later
-crawl), peak RSS 101 MiB. Peak memory for real crawls is recorded by
+round and prints peak RSS. It measured 29.2 s per round on an M-series Mac,
+peak RSS 101 MiB. Timing the phases showed the stale sweep at 0.6-2.4 s and
+the re-upsert at 45 s: its `DO UPDATE SET` named every column, so all five
+secondary indexes were rewritten for every row. The crawl writer now first
+runs an `UPDATE` of `watch_root` and `crawl_generation` only (no index covers
+them) where every metadata column matches, and upserts only rows that
+changed; skipped during the first crawl's bulk load. The round is now 5.9 s
+(-80%), peak RSS 102 MiB. An unchanged row keeps its old `indexed_at`. Peak memory for real crawls is recorded by
 `scripts/bench-windows.ps1` (peak working set). `fuzzy_search_500k_files`
 covers broad fuzzy; candidate bounds are asserted by unit tests rather than
 benchmarks.

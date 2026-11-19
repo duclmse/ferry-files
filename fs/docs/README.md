@@ -23,7 +23,7 @@ and installs, starts, searches through and stops the Windows Service.
 | `fsd` daemon, `fs` client, query engine | Done; Everything-compatible syntax incl. `dupe:<property>`; `*.ext` answered from the extension index, sorted or not |
 | Archive service (`.zidx`, `.dzx`, scheduler, SIMD inflate) | Done |
 | Restart catch-up | FSEvents (macOS), USN journal (Windows), timestamp scan (Linux, Windows fallback); 9/9 change checks on Windows |
-| NTFS file table crawl (`indexer.use_mft`) | Works on real volumes; 33 s against 650 s for the walk over all of `C:\` (1.43M entries); slower for a small root; off by default |
+| NTFS file table crawl (`indexer.use_mft`) | Works on real volumes; 33 s against 650 s for the walk over all of `C:\` (1.43M entries); slower for a small root; `auto` (default) uses it for whole-drive roots |
 | Windows Service | Installs, starts, stops; runs the extensions |
 | `rar2zip` extension | Done; host keys checked (`strict` by default); moved-in and pre-existing archives picked up |
 | `sftpd` extension | Done; public-key SFTP server confined to one folder |
@@ -40,7 +40,10 @@ performance plan:
   prepared statement.
 - rar2zip skips re-hashing a file it already queued unchanged, and hashes
   off the async runtime.
-- `benches/reconcile.rs`: a 1M-row re-crawl, peak RSS 101 MiB.
+- `benches/reconcile.rs`: a 1M-row re-crawl went from 29.2 s to 5.9 s once
+  unchanged rows stopped rewriting every secondary index; peak RSS ~100 MiB.
+- `indexer.use_mft` defaults to `"auto"`: the file table crawl for
+  whole-drive roots, the walk elsewhere.
 
 The same pass fixed watcher bugs. A renamed folder lost its contents, a
 moved-in folder was indexed empty, and a folder moved out left its rows.

@@ -1,6 +1,6 @@
 # Plan: Borrowing Everything's Techniques
 
-> **Status:** phases 1-5 and 7 implemented (phase 5: FSEvents replay on macOS, USN journal replay on Windows, timestamp scan on Linux and as the Windows fallback); phase 3 follow-up: parent-pointer tree; phase 6 crawl-writer fix, platform enumeration measured and not built, NTFS file table crawl built behind `indexer.use_mft` (off by default) and run on real volumes in CI: 20x faster than the walk over all of `C:\`, slower for a root that is a small part of a volume (Nov 2026). Background:
+> **Status:** phases 1-5 and 7 implemented (phase 5: FSEvents replay on macOS, USN journal replay on Windows, timestamp scan on Linux and as the Windows fallback); phase 3 follow-up: parent-pointer tree; phase 6 crawl-writer fix, platform enumeration measured and not built, NTFS file table crawl built behind `indexer.use_mft` (default `auto`: whole-drive roots only) and run on real volumes in CI: 20x faster than the walk over all of `C:\`, slower for a root that is a small part of a volume (Nov 2026). Background:
 > [research/everything-internals.md](../research/everything-internals.md).
 > Measurements: RSS and CPU time sampled every 250 ms plus `/usr/bin/time -l`
 > peaks, on `~/projects` (2.38M files, 191k dirs), macOS, 8 cores, with 8
@@ -383,8 +383,9 @@ with a prototype; the other two turned out to have little to gain:
   sizes and times. Since the USN replay (phase 5), a Windows warm start
   walks only when the replay fails, so this would only shorten initial
   crawls. Built afterwards as a raw `$MFT` reader (`indexer/mft.rs`), since
-  `FSCTL_ENUM_USN_DATA` gives names and parents but no sizes or dates. It is
-  off by default (`indexer.use_mft`), falls back to the walk on any failure,
+  `FSCTL_ENUM_USN_DATA` gives names and parents but no sizes or dates. It
+  runs per `indexer.use_mft` (`auto` by default, see below), falls back to
+  the walk on any failure,
   does not honour `.ignore` files, and rejects an `$MFT` split across
   records.
 
@@ -411,7 +412,12 @@ with a prototype; the other two turned out to have little to gain:
 
   The file table run came second, after the walk had read every directory,
   so some of its 20x may be a warm cache; the raw `$MFT` read itself is
-  sequential. Use `use_mft = true` for whole-volume roots on Windows.
+  sequential.
+
+  Since these results `use_mft` defaults to `"auto"`: the table is read for
+  a root that is a whole volume (`C:\`), and reused for any later root on a
+  drive already read in the same crawl; other roots walk. `true` and
+  `false` force either way.
 
 ## Phase 7 - Optional extras (Everything §2.4) - done
 
