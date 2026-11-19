@@ -34,6 +34,7 @@ mod rows;
 mod safety;
 mod search;
 mod connections;
+mod terminal;
 mod sidebar;
 mod transfer;
 mod undo;
@@ -61,6 +62,7 @@ use preview::*;
 use safety::*;
 use search::*;
 use connections::*;
+use terminal::*;
 use sidebar::*;
 use transfer::*;
 use video::*;
@@ -425,6 +427,11 @@ struct Pane {
     more: RwSignal<bool>,
     loading_more: RwSignal<bool>,
     got: StoredValue<usize>,
+    /// The terminal under the pane: whether it's shown, what was run in it, and the commands
+    /// typed (for ↑/↓).
+    term: RwSignal<bool>,
+    term_log: RwSignal<Vec<TermLine>>,
+    term_hist: StoredValue<Vec<String>>,
     /// The pane's tabs. The shown one's entry is only brought up to date when another is shown;
     /// until then the pane's own signals are where it is.
     tabs: RwSignal<Vec<Tab>>,
@@ -494,6 +501,9 @@ impl Pane {
             more: RwSignal::new(false),
             loading_more: RwSignal::new(false),
             got: StoredValue::new(0),
+            term: RwSignal::new(false),
+            term_log: RwSignal::new(vec![]),
+            term_hist: StoredValue::new(vec![]),
             tabs: RwSignal::new(vec![Tab { src: Src::Mac, cwd: String::new(), selected: None, view: ViewMode::stored(id), root: String::new() }]),
             tab: RwSignal::new(0),
         }
@@ -1187,6 +1197,10 @@ pub fn App() -> impl IntoView {
                 }
                 "split" => {
                     ctx.set_split(!ctx.split.get_untracked());
+                    true
+                }
+                "terminal" => {
+                    ctx.toggle_terminal(p);
                     true
                 }
                 "copy" | "move" => {

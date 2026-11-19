@@ -383,6 +383,12 @@ pub(super) fn PaneView(pane: Pane) -> impl IntoView {
                     title=move || ctx.with_key("Filter and search", "filter") aria-label="Filter and search"
                     aria-expanded=move || p.filters_open.get().to_string()
                     on:click=move |_| if p.filters_open.get_untracked() { ctx.close_search(p) } else { ctx.open_search(p, false) }>{ico(Icon::Search)}</button>
+                {move || ctx.has_shell(p.src.get()).then(|| view! {
+                    <button class="btn icon-only" class:active=move || p.term.get()
+                        title=move || ctx.with_key("Terminal", "terminal") aria-label="Terminal"
+                        aria-expanded=move || p.term.get().to_string()
+                        on:click=move |_| ctx.toggle_terminal(p)>{ico(Icon::Terminal)}</button>
+                })}
             </div>
             <SearchPane pane=p/>
             <CompareBar pane=p/>
@@ -401,6 +407,7 @@ pub(super) fn PaneView(pane: Pane) -> impl IntoView {
             </div>
             // Messages and questions about this pane, above its status bar.
             <Notices pane=p/>
+            {move || (p.term.get() && ctx.has_shell(p.src.get())).then(|| view! { <Terminal pane=p/> })}
             <ListStatus pane=p/>
         </section>
     }

@@ -104,7 +104,7 @@ impl Ctx {
             from_menu(group, self.menu_items(p, Some(e)), Some(e), &mut out);
         }
         from_menu("Here", self.menu_items(p, None), None, &mut out);
-        let app: [AppCmd; 7] = [
+        let app: [AppCmd; 8] = [
             ("Settings", "", |c| c.settings.set(true)),
             ("Keyboard shortcuts", "help", |c| c.show_shortcuts()),
             ("Backups", "", |c| c.panel.set(Some(Panel::Backups))),
@@ -112,6 +112,7 @@ impl Ctx {
             ("Refresh devices", "", |c| c.refresh_devices()),
             ("Connect over Wi-Fi…", "", |c| c.wifi.set(true)),
             ("Go up a folder", "up", |c| c.go_up(c.act())),
+            ("Terminal", "terminal", |c| c.toggle_terminal(c.act())),
         ];
         out.extend(app.into_iter().map(|(label, key, f)| Choice { group: "App", label: label.into(), key, cmd: Cmd::Do(f) }));
         let here = (p.src.get_untracked(), p.cwd.get_untracked());

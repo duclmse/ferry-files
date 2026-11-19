@@ -46,6 +46,7 @@ pub(super) const COMMANDS: &[Command] = &[
     c("undo", "Undo the last rename, new item, delete, copy or move", &["cmd+KeyZ"], false),
     c("other_pane", "The other pane", &["Tab"], false),
     c("split", "Show or hide the second pane", &["cmd+Backslash"], false),
+    c("terminal", "Show or hide the terminal (this computer, adb phones, SFTP servers)", &["ctrl+Backquote"], true),
     c("sidebar", "Show or hide the sidebar", &["alt+cmd+KeyS"], true),
     c("new_tab", "New tab", &["cmd+KeyT"], true),
     c("close_tab", "Close tab", &["cmd+KeyW"], true),

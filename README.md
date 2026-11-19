@@ -114,6 +114,12 @@ files and disks too, so books can be copied between them.
   (`smb://nas/Photos` or `\\nas\Photos`) is mounted by the system, which asks for
   the password and can keep it in its keychain; it then opens as a folder on
   this computer. ⏏ disconnects it, × takes it out of the sidebar.
+- Terminal (the pane's terminal button, ⌃` or the palette): runs a command in
+  the pane's folder on this computer, a phone connected with adb, or an SFTP
+  server, and shows what it printed. One command at a time, without input, for
+  up to 2 minutes, so programs that ask questions or draw the screen (vim, top)
+  don't work. `cd` moves the pane; ↑/↓ bring back earlier commands; the folder
+  is listed again after each command. Not offered for MTP phones or Everything.
 - Backups (sidebar): every file the app replaced or deleted, with where it came
   from. Restore puts it back where it was (when that device is connected);
   Restore here puts it in the active pane's folder. A file already there is
