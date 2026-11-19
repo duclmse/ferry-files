@@ -11,6 +11,7 @@ cargo build --release
 cargo build -p fs-server          # binary: fsd
 cargo build -p fs-cli             # binary: fs
 cargo build -p fs-ext-rar2zip     # binary: fs-ext-rar2zip
+cargo build -p fs-ext-sftpd       # binary: fs-ext-sftpd
 
 # Check only (fast)
 cargo check --workspace
@@ -24,8 +25,8 @@ cargo doc --no-deps --workspace
 
 All crates build on Windows, Linux and macOS. Only the Windows Service
 integration in `fs-server` (`service.rs`, `windows-service`) is Windows-only.
-rar2zip is an executable extension that `fsd` discovers under `extensions_dir`
-and configures from `[extensions.rar2zip]`. RAR extraction uses the `unrar`
+rar2zip and sftpd are executable extensions that `fsd` discovers under
+`extensions_dir` and configures from `[extensions.<name>]`. RAR extraction uses the `unrar`
 crate, which compiles the bundled RARLAB UnRAR C++ source, so building
 `fs-ext-rar2zip` requires a C++ compiler.
 
@@ -40,6 +41,7 @@ cargo test -p fs-server
 cargo test -p fs-cli
 cargo test -p fs-protocol
 cargo test -p fs-ext-rar2zip
+cargo test -p fs-ext-sftpd
 cargo test -p common
 
 # Single module
@@ -95,6 +97,16 @@ crates/
     metrics.rs    Prometheus (tiny_http)
     dashboard.rs  auto-refresh HTML
     alerts.rs     webhook + email
+    hostkey.rs    SSH host key policy (strict / accept-new / off, pins)
+  fs-ext-sftpd/src/
+    main.rs       extension executable (`run`, `validate`)
+    extension.rs  Extension impl (`status` command)
+    config.rs     [extensions.sftpd] section
+    server.rs     russh server: public-key auth, sftp subsystem, exec
+    sftp.rs       SFTP v3 handler over the jail
+    jail.rs       client path -> real path, refuses escapes (.., symlinks)
+    exec.rs       no shell: only `sha256sum` and `rm -f`, shell-style quoting
+    keys.rs       host key generation, authorized_keys parsing
 ```
 
 ## Key conventions
@@ -124,9 +136,14 @@ disk. The commit loop in `daemon.rs` runs every `commit_interval_secs`.
   not add fields without migrating existing indices.
 - `nucleo` - SIMD fuzzy matcher (used for `fuzzy:` queries). Called from rayon
   threads via `spawn_blocking`.
-- `russh` / `russh-sftp` - pure-Rust SSH and SFTP for rar2zip transfers.
-  Public-key auth only; no password auth. The server host key is not
-  verified yet (`SshHandler::check_server_key` accepts any key).
+- `russh` / `russh-sftp` - pure-Rust SSH and SFTP: rar2zip's client and
+  sftpd's server. Public-key auth only; no password auth. rar2zip verifies
+  server host keys in `hostkey.rs` (default `strict`).
+- rar2zip's remote commands (`sha256sum`, `rm -f`) go through `shell_quote`;
+  sftpd's `exec.rs` parses the same quoting. Change them together.
+- rar2zip's transfer tests (`tests/sftpd.rs`) run against sftpd, a
+  dev-dependency only. Extension crates must not depend on each other
+  otherwise.
 - `windows-service` - Windows SCM integration. Only compiled on Windows
   (`#[cfg(target_os = "windows")]`).
 - `tonic` / `prost` - gRPC. Uses a bundled `protoc`; stubs

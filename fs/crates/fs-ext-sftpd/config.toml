@@ -1,0 +1,30 @@
+# sftpd - example section for the fsd config file.
+# Check it with: fs-ext-sftpd --config <fsd config> validate
+
+# Top-level key of the daemon config; must appear before any [table].
+# extensions_dir = "/usr/local/lib/fs/extensions"
+
+[extensions.sftpd]
+# Address to listen on. Loopback by default; use "0.0.0.0:2222" to accept
+# connections from other machines.
+listen = "127.0.0.1:2222"
+
+# Folder served to clients as "/". Sessions cannot reach anything outside it,
+# by ".." or by symlinks.
+root = "/srv/fs/incoming"
+
+# Refuse uploads, deletes, renames and mkdir.
+read_only = false
+
+# OpenSSH private host key. An Ed25519 key is generated here on first start;
+# `fs ext sftpd status` prints its fingerprint for clients to pin.
+host_key = "/var/lib/fs/sftpd/ssh_host_ed25519_key"
+
+# Close sessions idle this long (seconds). 0 = never.
+idle_timeout_secs = 600
+
+# One block per login. Public-key authentication only. The file is reread
+# on every login, so keys can be added without a restart.
+[[extensions.sftpd.users]]
+name            = "rar2zip"
+authorized_keys = "/etc/fs/sftpd/rar2zip.authorized_keys"

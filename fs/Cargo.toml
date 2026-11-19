@@ -6,6 +6,7 @@ members = [
     "crates/fs-server",
     "crates/fs-cli",
     "crates/fs-ext-rar2zip",
+    "crates/fs-ext-sftpd",
 ]
 
 [workspace.dependencies]

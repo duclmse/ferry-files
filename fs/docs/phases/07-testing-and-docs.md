@@ -215,11 +215,14 @@ They serve as the primary reference for users.
 - [x] `multipart_timeout_hours` respected: expired groups moved to `failed/`.
       *(`app::tests`; `failed/` is created if missing, and a group whose parts
       could not be moved is kept for the next pass)*
-- [ ] `Strategy::Stream` confirmed: no zip file created for large archives.
+- [x] `Strategy::Stream` confirmed: no zip file created for large archives.
+      *(`tests/sftpd.rs::stream_strategy_uploads_without_a_local_zip`)*
 - [ ] README covers all 8 sections.
 - [ ] Builds on Windows only (Windows Service code must compile).
 - [x] `VERSIONS.md` populated with all resolved crate versions.
-- [ ] Integration test passes for both Disk and Stream strategies.
+- [x] Integration test passes for both Disk and Stream strategies.
+      *(`tests/sftpd.rs`, against the sftpd extension; the env-gated
+      `tests/integration.rs` against an external server has not been run)*
 
 ---
 

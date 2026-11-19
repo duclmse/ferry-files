@@ -422,7 +422,8 @@ All four subcommands:
       *(code complete with `#[cfg(target_os = "windows")]` guards + `install-service.ps1` created; requires Windows SCM to verify at runtime)*
 - [x] `cargo build --release -p rar2zip` succeeds on Windows with zero warnings.
       *(verified 2026-05-09 on Windows 11; 2m 08s release build, zero warnings)*
-- [ ] Strategy::Stream: large archive transferred with no zip created on disk.
+- [x] Strategy::Stream: large archive transferred with no zip created on disk.
+      *(`fs-ext-rar2zip/tests/sftpd.rs`)*
       *(code complete; requires real SFTP server + large archive to verify end-to-end)*
 
 ### Both

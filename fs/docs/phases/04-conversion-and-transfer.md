@@ -444,10 +444,13 @@ inside the closure: `.map_err(Box::new)`.
 - [x] `cargo test -p rar2zip convert` passes with fixture archives.
 - [x] `cargo test -p rar2zip transfer` passes all unit tests.
 - [x] `cargo test -p rar2zip metrics` passes.
-- [ ] End-to-end smoke test (Disk): drop a `.rar` into `watch_folder` → zip
+- [x] End-to-end smoke test (Disk): drop a `.rar` into `watch_folder` → zip
       appears in `failed_folder` or on remote.
-- [ ] End-to-end smoke test (Stream): drop a large `.rar` → no zip created on
+- [x] End-to-end smoke test (Stream): drop a large `.rar` → no zip created on
       disk; source archive deleted after remote checksum passes.
+      *(Disk: a `.tar` dropped and moved into `watch_folder` under a running
+      `fsd`, sent to the sftpd extension with `host_key_check = "strict"`,
+      checksum verified, source removed, Nov 2026. Stream: `tests/sftpd.rs`.)*
 - [x] `GET /metrics` returns Prometheus text.
       *(`metrics::tests::routes_answer_over_http`)*
 - [x] `GET /ui` returns HTML with auto-refresh.

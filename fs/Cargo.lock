@@ -1556,6 +1556,7 @@ dependencies = [
  "clap",
  "common",
  "flate2",
+ "fs-ext-sftpd",
  "glob",
  "hex",
  "lettre",
@@ -1584,6 +1585,27 @@ dependencies = [
  "ureq",
  "uuid",
  "zip",
+]
+
+[[package]]
+name = "fs-ext-sftpd"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "clap",
+ "common",
+ "hex",
+ "rand 0.10.1",
+ "russh",
+ "russh-sftp",
+ "serde",
+ "sha2 0.10.9",
+ "tempfile",
+ "tokio",
+ "tokio-util",
+ "toml",
+ "tracing",
+ "tracing-subscriber",
 ]
 
 [[package]]

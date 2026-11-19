@@ -65,6 +65,15 @@ if (Test-Path "target\release\fs-ext-rar2zip.exe") {
     Write-Host "==> To enable it, add to the top of $configFile: extensions_dir = '$Prefix\extensions'"
 }
 
+if (Test-Path "target\release\fs-ext-sftpd.exe") {
+    $extDir = Join-Path $Prefix "extensions\sftpd"
+    Write-Host "==> Installing sftpd extension to $extDir"
+    New-Item -ItemType Directory -Force -Path $extDir | Out-Null
+    Copy-Item "target\release\fs-ext-sftpd.exe" $extDir -Force
+    Copy-Item "crates\fs-ext-sftpd\extension.toml" $extDir -Force
+    Write-Host "==> To enable it, set extensions_dir = '$Prefix\extensions' and add an [extensions.sftpd] section (see crates\fs-ext-sftpd\config.toml)"
+}
+
 if (-not (Test-Path $configFile)) {
     Write-Host "==> Writing default config to $configFile (edit watch_paths before starting)"
     @"

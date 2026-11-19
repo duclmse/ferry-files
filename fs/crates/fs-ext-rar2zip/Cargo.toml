@@ -62,3 +62,5 @@ integration = []
 [dev-dependencies]
 tempfile   = "3"
 tokio-test = "0.4"
+# A real SFTP server for the transfer tests; never linked into the binary.
+fs-ext-sftpd = { path = "../fs-ext-sftpd" }

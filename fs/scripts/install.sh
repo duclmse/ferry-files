@@ -105,6 +105,16 @@ if [ -x target/release/fs-ext-rar2zip ]; then
     echo "==> To enable it, add to the top of $CONFIG_FILE: extensions_dir = \"$EXT_DIR\""
 fi
 
+if [ -x target/release/fs-ext-sftpd ]; then
+    echo "==> Installing sftpd extension to $EXT_DIR/sftpd"
+    $SUDO mkdir -p "$EXT_DIR/sftpd"
+    $SUDO chmod 755 "$EXT_DIR" "$EXT_DIR/sftpd"
+    $SUDO cp target/release/fs-ext-sftpd crates/fs-ext-sftpd/extension.toml "$EXT_DIR/sftpd/"
+    $SUDO chmod 755 "$EXT_DIR/sftpd/fs-ext-sftpd"
+    $SUDO chmod 644 "$EXT_DIR/sftpd/extension.toml"
+    echo "==> To enable it, set extensions_dir = \"$EXT_DIR\" and add an [extensions.sftpd] section (see crates/fs-ext-sftpd/config.toml)"
+fi
+
 if [ ! -f "$CONFIG_FILE" ]; then
     echo "==> Writing default config to $CONFIG_FILE (edit watch_paths before starting)"
     $SUDO tee "$CONFIG_FILE" > /dev/null <<EOF
