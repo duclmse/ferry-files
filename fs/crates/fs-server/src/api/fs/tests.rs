@@ -706,11 +706,12 @@ async fn write_to_config_file_is_forbidden() {
 #[tokio::test]
 async fn moving_a_parent_of_extensions_dir_is_forbidden() {
     let (_tmp, root, app) = protected_setup().await;
-    let body = format!(
-        "{{\"from\":\"{}\",\"to\":\"{}\"}}",
-        root.join("app").display(),
-        root.join("moved").display()
-    );
+    // Built with serde_json: Windows paths hold `\`, which needs escaping.
+    let body = serde_json::json!({
+        "from": root.join("app"),
+        "to": root.join("moved"),
+    })
+    .to_string();
     let status = status_of(app, "POST", "/fs/move".into(), axum::body::Body::from(body)).await;
     assert_eq!(status, StatusCode::FORBIDDEN);
     assert!(root.join("app/extensions").exists());

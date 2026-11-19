@@ -168,7 +168,9 @@ fn listing(index: &MftIndex, root: &str) -> Vec<(String, u64)> {
     let mut out = Vec::new();
     index
         .walk(Path::new(root), |p, f| {
-            out.push((p.to_string_lossy().into_owned(), f.size));
+            // The walk joins with the platform separator, as the directory
+            // walker does; the expectations here are written with `/`.
+            out.push((p.to_string_lossy().replace('\\', "/"), f.size));
             true
         })
         .unwrap();
