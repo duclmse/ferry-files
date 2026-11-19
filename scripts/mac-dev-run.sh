@@ -8,6 +8,11 @@
 # (~/Library/WebKit/ferry-files) by the binary's name, as before, instead of sharing the
 # built app's.
 set -euo pipefail
+if [ $# -eq 0 ]; then
+  echo "usage: $0 <binary> [args...]" >&2
+  echo "Cargo runs this for you on macOS: use cargo tauri dev (or cargo run in src-tauri)." >&2
+  exit 2
+fi
 bin="$1"
 shift
 if [ "$(basename "$bin")" != ferry-files ]; then
