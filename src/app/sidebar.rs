@@ -39,6 +39,9 @@ pub(super) fn Sidebar() -> impl IntoView {
     };
     let (fav_heading, fav_open) = section("favs", "Favourites", false);
     let (pairs_heading, pairs_open) = section("pairs", "Sync pairs", false);
+    let (ws_heading, ws_open) = section("workspaces", "Workspaces", false);
+    // Naming a workspace to save: None when not asked.
+    let ws_name = RwSignal::new(None::<String>);
     let (mac_heading, mac_open) = section("mac", crate::os::computer(), false);
     let (dev_heading, dev_open) = section("devices", "Devices", true);
     // Disks mounted on the Mac: USB drives, SD cards, disk images.
@@ -161,6 +164,54 @@ pub(super) fn Sidebar() -> impl IntoView {
                     }
                 }).collect_view())}
             })}
+            {ws_heading()}
+            {move || ws_open.get().then(|| view! {
+                {move || ctx.workspaces.get().into_iter().map(|w| {
+                    let tip = ctx.workspace_tip(&w);
+                    let (w1, name) = (w.clone(), w.name.clone());
+                    view! {
+                        <div class="tree-row fav" style="--depth: 1">
+                            <span class="twisty none"></span>
+                            <button class="item" title=tip on:click=move |_| ctx.open_workspace(w1.clone())>{w.name.clone()}</button>
+                            <button class="unfav" title="Delete this workspace" aria-label="Delete this workspace"
+                                on:click=move |_| ctx.set_workspaces(ctx.workspaces.get_untracked().into_iter().filter(|x| x.name != name).collect())>"✕"</button>
+                        </div>
+                    }
+                }).collect_view()}
+                {move || match ws_name.get() {
+                    None => view! {
+                        <div class="tree-row" style="--depth: 1">
+                            <span class="twisty none"></span>
+                            <button class="item add" title="Keep these tabs, the split and the widths under a name"
+                                on:click=move |_| ws_name.set(Some(String::new()))>"Save these tabs…"</button>
+                        </div>
+                    }.into_any(),
+                    Some(_) => {
+                        let save = move || {
+                            if let Some(n) = ws_name.get_untracked() {
+                                ctx.save_workspace(&n);
+                            }
+                            ws_name.set(None);
+                        };
+                        let input = NodeRef::<html::Input>::new();
+                        input.on_load(move |el| { request_animation_frame(move || { let _ = el.focus(); }); });
+                        view! {
+                            <div class="ws-save">
+                                <input node_ref=input type="text" placeholder="Name, e.g. Phone photos" aria-label="Workspace name"
+                                    prop:value=move || ws_name.get().unwrap_or_default()
+                                    on:input=move |e| ws_name.set(Some(event_target_value(&e)))
+                                    on:keydown=move |e| match e.key().as_str() {
+                                        "Enter" => save(),
+                                        "Escape" => { e.stop_propagation(); ws_name.set(None) }
+                                        _ => {}
+                                    }/>
+                                <button class="btn small" disabled=move || ws_name.with(|n| n.as_deref().is_none_or(|n| n.trim().is_empty()))
+                                    on:click=move |_| save()>"Save"</button>
+                            </div>
+                        }.into_any()
+                    }
+                }}
+            })}
             {mac_heading()}
             {move || mac_open.get().then(|| view! {
                 {ctx.mac.get().map(|i| i.quick_dirs).unwrap_or_default().into_iter()
@@ -280,6 +331,7 @@ pub(super) struct Folder {
 pub(super) fn Settings() -> impl IntoView {
     let ctx = expect_context::<Ctx>();
     let folders = RwSignal::new(None::<Result<HashMap<String, Folder>, String>>);
+    let restore = RwSignal::new(stored_flag(RESTORE_KEY, true));
     let load = move || spawn_local(async move { folders.set(Some(call("app_folders", json!({})).await)) });
     load();
     let error = RwSignal::new(None::<String>);
@@ -348,6 +400,12 @@ pub(super) fn Settings() -> impl IntoView {
                         on:change=move |e| ctx.set_auto_connect(event_target_checked(&e))/>
                     "Connect phones when they're plugged in (adb if allowed, else MTP)"
                 </label>
+                <label class="check">
+                    <input type="checkbox" prop:checked=restore.get_untracked()
+                        on:change=move |e| { let on = event_target_checked(&e); restore.set(on); store(RESTORE_KEY, if on { "1" } else { "0" }); }/>
+                    "Bring back the tabs at launch"
+                </label>
+                <p class="hint">"Opens the tabs, split and widths the app had when it quit. Tabs on a phone come back when it's connected."</p>
                 <label class="check">
                     <input type="checkbox" prop:checked=move || ctx.verify.get()
                         on:change=move |e| ctx.set_verify(event_target_checked(&e))/>

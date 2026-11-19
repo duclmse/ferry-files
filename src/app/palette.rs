@@ -35,6 +35,7 @@ enum Cmd {
     /// Opens a folder in the active pane.
     Go(Src, String),
     Pair(SyncPair),
+    Workspace(Workspace),
     Do(fn(Ctx)),
 }
 
@@ -139,6 +140,10 @@ impl Ctx {
                 go(&mut out, "Recent", src, f.path.clone(), label);
             }
         }
+        for w in self.workspaces.get_untracked() {
+            let label = format!("Open workspace {}", w.name);
+            out.push(Choice { group: "Workspace", label, key: "", cmd: Cmd::Workspace(w) });
+        }
         for pair in self.sync_pairs.get_untracked() {
             let label = format!("Sync {} on {} → {} on {}", base(&pair.from_dir), self.side_name(&pair.from), base(&pair.to_dir), self.side_name(&pair.to));
             out.push(Choice { group: "Sync pair", label, key: "", cmd: Cmd::Pair(pair) });
@@ -153,6 +158,7 @@ impl Ctx {
             Cmd::Act(act, entry) => self.run(p, act, entry),
             Cmd::Go(src, path) => self.open_place(src, path),
             Cmd::Pair(pair) => self.open_pair(&pair),
+            Cmd::Workspace(w) => self.open_workspace(w),
             Cmd::Do(f) => f(self),
         }
     }

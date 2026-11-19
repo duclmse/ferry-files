@@ -33,6 +33,7 @@ mod undo;
 mod util;
 mod views;
 mod wifi;
+mod workspace;
 
 use allbooks::*;
 use batch::*;
@@ -54,6 +55,7 @@ use transfer::*;
 use undo::*;
 use util::*;
 use views::*;
+use workspace::*;
 use wifi::*;
 
 /// Where a pane's files are: on the Mac, or on connected device n (the backend's "dn").
@@ -673,6 +675,8 @@ struct Ctx {
     next_job: StoredValue<u32>,
     favs: RwSignal<Vec<Fav>>,
     sync_pairs: RwSignal<Vec<SyncPair>>,
+    /// Named workspaces, in the sidebar.
+    workspaces: RwSignal<Vec<Workspace>>,
     /// Free space per storage, by side ("mac", "d1", ...).
     space: RwSignal<HashMap<String, Vec<Space>>>,
     /// What was done this session, newest last, with how to undo it.
@@ -736,6 +740,7 @@ impl Ctx {
             panel: RwSignal::new(None),
             favs: RwSignal::new(stored(FAVS_KEY).and_then(|s| serde_json::from_str(&s).ok()).unwrap_or_default()),
             sync_pairs: RwSignal::new(stored(SYNC_PAIRS_KEY).and_then(|s| serde_json::from_str(&s).ok()).unwrap_or_default()),
+            workspaces: RwSignal::new(saved_workspaces()),
             drag: StoredValue::new(None),
             drop_at: RwSignal::new(None),
             side_w: stored_px(SIDE_W_KEY),
@@ -833,7 +838,8 @@ pub fn App() -> impl IntoView {
         open
     });
 
-    // Start on the Mac's files. Pick up existing device connections after a webview reload.
+    // Pick up existing device connections after a webview reload, then bring back the last
+    // session's tabs (or start on the remembered folders).
     spawn_local(async move {
         if let Ok(Some(mac)) = call::<Option<Info>>("info", json!({ "src": "mac" })).await {
             ctx.mac.set(Some(mac));
@@ -841,11 +847,9 @@ pub fn App() -> impl IntoView {
         for info in call::<Vec<Info>>("connections", json!({})).await.unwrap_or_default() {
             ctx.connected(info, false);
         }
-        ctx.start(ctx.panes[0]);
-        if ctx.split.get_untracked() {
-            ctx.start(ctx.panes[1]);
-        }
+        ctx.restore_session();
     });
+    ctx.keep_session();
     // Look for devices and disks now, then when the backend says something was plugged in or taken
     // out. Every few seconds as well while a phone waits for USB debugging to be allowed (that's
     // not a USB change), after a look that couldn't start, and, when USB can't be watched, while

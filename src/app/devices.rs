@@ -6,11 +6,11 @@ impl Ctx {
     /// A device is connected. With `show`, the active pane goes to it.
     pub(super) fn connected(self, info: Info, show: bool) {
         let src = Src::of(&info.id);
-        self.phones.update(|ps| {
-            if !ps.iter().any(|i| i.id == info.id) {
-                ps.push(info);
-            }
-        });
+        let fresh = self.phones.with_untracked(|ps| !ps.iter().any(|i| i.id == info.id));
+        if fresh {
+            self.phones.update(|ps| ps.push(info.clone()));
+            self.tabs_back(&info);
+        }
         self.conn_error.set(None);
         if show {
             self.open_remembered(self.act(), src);

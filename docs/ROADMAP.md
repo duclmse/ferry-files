@@ -199,10 +199,17 @@ Built:
 - Recent folders: the last 20 opened, kept in `ferry-files.recent` (devices by name, shown only
   while connected). ⌘K no longer focuses the filter (⌘F and / still do).
 
-### 13. Saved workspaces ☐
-- Restore tabs, folders, split and widths on launch (setting), for devices by serial so a phone's
-  tabs come back when it reconnects.
-- Named workspaces in the sidebar: save current / open / delete.
+### 13. Saved workspaces ☑
+- The session (both panes' tabs with folder and view, the shown tab, split, active pane, sidebar
+  and widths) is kept in `ferry-files.session` as it changes, and brought back at launch when
+  "Bring back the tabs at launch" is on (Settings; on by default). Off: the remembered folder per
+  pane, as before.
+- Phones are kept by serial (by name when there's none). A tab on a phone that isn't connected
+  waits and is added back to its pane when the phone connects; waiting tabs are kept in the
+  session meanwhile. Tabs left on a phone that was unplugged aren't kept.
+- Workspaces in the sidebar: "Save these tabs…" names the current one (the same name replaces
+  it), clicking one opens it (asks first if the editor has unsaved changes), ✕ deletes. They
+  are also in the ⌘K palette.
 
 ---
 

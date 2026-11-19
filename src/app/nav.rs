@@ -327,8 +327,9 @@ impl Ctx {
         }
         if on {
             let p = self.panes[1];
+            // Its shown tab: a folder brought back from the last session, or the remembered one.
             if p.cwd.get_untracked().is_empty() {
-                self.start(p);
+                self.go_to_tab(p);
             } else {
                 self.reload(p);
             }
@@ -349,7 +350,7 @@ impl Ctx {
 
     /// Leaves the editor before the pane shows something else; false (and asks) if it has
     /// unsaved changes.
-    fn may_leave(self) -> bool {
+    pub(super) fn may_leave(self) -> bool {
         if self.editor.get_untracked().is_some() {
             if self.dirty() {
                 self.confirm_discard.set(true);
@@ -435,7 +436,7 @@ impl Ctx {
     }
 
     /// Lists the shown tab's folder. A tab whose device is gone opens the Mac instead.
-    fn go_to_tab(self, p: Pane) {
+    pub(super) fn go_to_tab(self, p: Pane) {
         let Some(t) = p.tabs.with_untracked(|ts| ts.get(p.tab.get_untracked()).cloned()) else { return };
         p.view.set(t.view);
         p.root.set(t.root);

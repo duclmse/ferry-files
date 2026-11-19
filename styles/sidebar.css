@@ -437,3 +437,29 @@
   text-overflow: ellipsis;
   white-space: nowrap;
 }
+
+/* Workspaces: saving the current one under a name. */
+.tree-row .item.add {
+  color: var(--muted);
+}
+
+.tree-row .item.add:hover {
+  color: var(--accent);
+}
+
+.ws-save {
+  display: flex;
+  gap: 6px;
+  padding: 4px 8px 4px 28px;
+}
+
+.ws-save input {
+  flex: 1;
+  min-width: 0;
+  font: inherit;
+  padding: 3px 6px;
+  border: 1px solid var(--line);
+  border-radius: 6px;
+  background: var(--bg);
+  color: var(--ink);
+}
