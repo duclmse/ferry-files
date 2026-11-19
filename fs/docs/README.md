@@ -10,11 +10,59 @@ research doc disagree, the **reference** doc wins.
 | [`plans/`](plans/)         | Cross-cutting change plans / agent handoffs           | Historical        |
 | [`research/`](research/)   | Exploratory design notes that fed the phase docs      | Not a spec        |
 
+## Status (Nov 2026)
+
+All phases (1–13) and both plans are implemented, and every checklist item
+in `phases/` is ticked. CI (`.github/workflows/ci.yml`) builds, lints and
+tests the workspace on Windows Server 2025, Ubuntu and macOS on every push,
+and on Windows also runs the benchmark with and without the file table crawl
+and installs, starts, searches through and stops the Windows Service.
+
+| Area | State |
+| ---- | ----- |
+| `fsd` daemon, `fs` client, query engine | Done; Everything-compatible syntax incl. `dupe:<property>` |
+| Archive service (`.zidx`, `.dzx`, scheduler, SIMD inflate) | Done |
+| Restart catch-up | FSEvents (macOS), USN journal (Windows), timestamp scan (Linux, Windows fallback); 9/9 change checks on Windows |
+| NTFS file table crawl (`indexer.use_mft`) | Works on real volumes; off by default, slower than the walk unless the root is most of a volume |
+| Windows Service | Installs, starts, stops; runs the extensions |
+| `rar2zip` extension | Done; host keys checked (`strict` by default); moved-in and pre-existing archives picked up |
+| `sftpd` extension | Done; public-key SFTP server confined to one folder |
+
+Open, none blocking:
+
+- Timing the file table crawl on a whole-volume root (e.g. `C:\`), where it
+  should beat the walk.
+- One cold `parent:C:\Windows\System32` query took 9.5 s in CI (later ones
+  4–17 ms); not investigated.
+- `*.ext` globs use the extension index in SQLite only; sorted queries still
+  read every match.
+
+### Testing on Windows
+
+From an elevated PowerShell in a checkout (needs Rust and MSVC):
+
+```powershell
+cargo build --release --workspace
+cargo test --workspace
+# Crawl, query load and restart catch-up; add -UseMft for the file table crawl.
+.\scripts\bench-windows.ps1 -TargetDir C:\Windows\System32
+.\scripts\bench-windows.ps1 -TargetDir C:\Windows\System32 -UseMft
+# Windows Service (FsDaemon), with a config whose paths are absolute.
+.\target\release\fsd.exe --config C:\path\config.toml install-service
+Start-Service FsDaemon; Stop-Service FsDaemon
+.\target\release\fsd.exe uninstall-service
+```
+
+Each benchmark run prints a summary and exits 1 if a catch-up check fails.
+Without elevation, catch-up uses the timestamp scan and the file table crawl
+falls back to the walk. Existing Windows indexes do one full crawl after
+upgrading, because stored watch roots no longer carry the `\\?\` prefix.
+
 ## Overview
 
-- [Overview](overview.md) - three-crate workspace (`common`, `fs`
-  daemon, `rar2zip` extension), archive service summary, resolved
-  decisions Q1–Q6 and AS1–AS6
+- [Overview](overview.md) - workspace crates (`common`, `fs-protocol`,
+  `fs-server` daemon, `fs-cli` client, `rar2zip` and `sftpd` extensions),
+  archive service summary, resolved decisions Q1–Q6 and AS1–AS6
 
 ## Reference
 
