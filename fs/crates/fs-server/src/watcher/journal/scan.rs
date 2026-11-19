@@ -256,10 +256,9 @@ mod tests {
                 .collect()
         }
         fn paths_under(&self, dir: &str) -> Vec<String> {
-            let prefix = format!("{dir}/");
             self.0
                 .iter()
-                .filter(|p| p.starts_with(&prefix))
+                .filter(|p| Path::new(p).starts_with(dir) && p.as_str() != dir)
                 .cloned()
                 .collect()
         }
@@ -296,7 +295,12 @@ mod tests {
         ] {
             std::fs::write(f, b"x").unwrap();
         }
-        let s = |p: PathBuf| p.to_str().unwrap().to_owned();
+        // Native separators, as the walker and the real index use.
+        let s = |p: PathBuf| {
+            p.to_str()
+                .unwrap()
+                .replace('/', std::path::MAIN_SEPARATOR_STR)
+        };
         let index = Fake(HashSet::from([
             s(root.clone()),
             s(root.join("keep")),
