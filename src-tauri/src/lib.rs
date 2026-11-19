@@ -19,6 +19,7 @@ pub mod thumbs;
 pub mod usb;
 pub mod xml;
 mod connect;
+mod dupes;
 mod editor;
 mod files;
 mod library;
@@ -179,6 +180,7 @@ pub fn run() {
             transfer::cancel_transfer,
             transfer::compare,
             transfer::compare_marks,
+            dupes::duplicates,
             transfer::sync,
             library::library,
             library::book_info,

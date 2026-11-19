@@ -139,11 +139,15 @@ Built:
   same folder reloading (after a copy) compares again.
 - Not done: per-file progress while comparing by content.
 
-### 8. Duplicate finder ☐
-- Pick one or more folders (any devices). Group by size, then by a hash of the first 64 KiB, then
-  by a full hash — only for files still tied.
-- Results: groups with previews; "Keep one per group" selects the rest (prefers the computer's copy
-  or the oldest); Move to Trash goes through `Device::remove` (backed up).
+### 8. Duplicate finder ☑
+- "Find duplicates…" (folder menu) opens a window with the pane folders (both, when split) to
+  look in, and a smallest size. New command `duplicates`: groups by size, then md5 of the first
+  64 KiB, then md5 of the whole file, only for files still tied. Progress comes as the "dupes"
+  event; Stop cancels (through `cancel_transfer`). Up to 200,000 files.
+- Results: groups biggest first, each copy with a thumbnail, date, device and path, and Show (opens
+  its folder in the active pane). "Keep one per group" picks all but one (the computer's copy, else
+  the oldest). Delete removes the picked files through `remove` (backed up), refusing to take every
+  copy in a group; one Undo entry per device.
 
 ### 9. Sync, more modes ☐
 Extends the existing sync:

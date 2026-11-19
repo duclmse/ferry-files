@@ -38,6 +38,7 @@
     "allow-cancel-transfer",
     "allow-compare",
     "allow-compare-marks",
+    "allow-duplicates",
     "allow-sync",
     "allow-library",
     "allow-book-info",

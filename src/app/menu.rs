@@ -116,6 +116,13 @@ impl Ctx {
             });
             v.extend([MenuItem::Sep, item("New tab", "⌘T", Act::NewTab), item(fav, "", Act::Favourite), item("Refresh", "", Act::Refresh)]);
             v.push(MenuItem::Do {
+                label: "Find duplicates…".into(),
+                key: "",
+                act: Act::Dupes,
+                danger: false,
+                enabled: !p.cwd.get_untracked().is_empty(),
+            });
+            v.push(MenuItem::Do {
                 label: "Compare with the other pane".into(),
                 key: "",
                 act: Act::Compare,
@@ -230,6 +237,15 @@ impl Ctx {
             (Act::Upload, _) => self.upload(p),
             (Act::Sync, _) => self.compare(p),
             (Act::Compare, _) => self.compare_marks(p),
+            (Act::Dupes, _) => {
+                let mut folders: Vec<(Src, String)> = vec![(p.src.get_untracked(), p.cwd.get_untracked())];
+                let o = self.other(p);
+                let theirs = (o.src.get_untracked(), o.cwd.get_untracked());
+                if self.split.get_untracked() && !theirs.1.is_empty() && !folders.contains(&theirs) {
+                    folders.push(theirs);
+                }
+                self.panel.set(Some(Panel::Dupes(folders)));
+            }
             (Act::Read, Some(e)) => self.panel.set(Some(Panel::Reader(p.src.get_untracked(), e.path, None))),
             (Act::Check, Some(e)) => self.check_book(p, e),
             (Act::Library, _) => self.panel.set(Some(Panel::Library(p.src.get_untracked(), p.cwd.get_untracked()))),

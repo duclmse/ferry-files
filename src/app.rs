@@ -1,7 +1,7 @@
 //! The file browser UI: connect screen, one or two panes of folders (each on the phone or the Mac,
 //! in a list, thumbnail or column view, with a context menu), and a text editor.
 
-use crate::api::{call, Backup, BookInfo, CompareReport, Marks, Issue, Devices, Space, Entry, FileDrop, Info, Progress, TextFile, TransferReport, UsbDevice, WriteResult};
+use crate::api::{call, Backup, BookInfo, CompareReport, DupeProgress, Dupes, Marks, Issue, Devices, Space, Entry, FileDrop, Info, Progress, TextFile, TransferReport, UsbDevice, WriteResult};
 use leptos::ev;
 use leptos::html;
 use leptos::prelude::*;
@@ -14,6 +14,7 @@ mod batch;
 mod books;
 mod compare;
 mod devices;
+mod dupes;
 mod editor;
 mod files;
 mod icons;
@@ -33,6 +34,7 @@ mod wifi;
 use batch::*;
 use books::*;
 use compare::*;
+use dupes::*;
 use devices::*;
 use editor::*;
 use icons::{ico, Icon};
@@ -239,6 +241,8 @@ enum Act {
     Undo,
     /// Marks how each item differs from the other pane's.
     Compare,
+    /// Finds duplicate files in the panes' folders.
+    Dupes,
 }
 
 enum MenuItem {
@@ -504,6 +508,8 @@ enum Panel {
     Backups,
     /// Renaming several items of a pane (by its id).
     Rename(usize, Vec<Entry>),
+    /// Finding duplicate files, starting with these folders.
+    Dupes(Vec<(Src, String)>),
     History,
     /// The books under a folder.
     Library(Src, String),
@@ -602,6 +608,8 @@ struct Ctx {
     /// Comparing the two panes now, and whether by content (else by size).
     comparing: RwSignal<bool>,
     cmp_content: RwSignal<bool>,
+    /// The duplicate search's latest progress: (job, text).
+    dupe_progress: RwSignal<Option<(u32, String)>>,
     /// Phones (`UsbDevice::key`) connected automatically once already: not again, even after a
     /// failure or a disconnect, until they're unplugged.
     tried: StoredValue<HashSet<String>>,
@@ -668,6 +676,7 @@ impl Ctx {
             verify: RwSignal::new(stored_flag(VERIFY_KEY, false)),
             comparing: RwSignal::new(false),
             cmp_content: RwSignal::new(false),
+            dupe_progress: RwSignal::new(None),
             tried: StoredValue::new(HashSet::new()),
             seen: StoredValue::new((HashSet::new(), 0)),
             jobs: RwSignal::new(vec![]),
@@ -1047,6 +1056,7 @@ pub fn App() -> impl IntoView {
         }
     });
 
+    crate::api::listen("dupes", move |d: DupeProgress| ctx.dupe_progress.set(Some((d.job, d.text))));
     crate::api::listen("transfer", move |pr: Progress| {
         ctx.jobs.update(|js| {
             if let Some(j) = js.iter_mut().find(|j| j.id == pr.job) {
@@ -1103,6 +1113,7 @@ pub fn App() -> impl IntoView {
             Panel::Backups => view! { <Backups/> }.into_any(),
             Panel::History => view! { <History/> }.into_any(),
             Panel::Rename(pane, items) => view! { <BatchRename pane=pane items=items/> }.into_any(),
+            Panel::Dupes(folders) => view! { <Duplicates folders=folders/> }.into_any(),
             Panel::Library(src, dir) => view! { <Library src=src dir=dir/> }.into_any(),
             Panel::Reader(src, path, back) => view! { <Reader src=src path=path back=back/> }.into_any(),
         })}

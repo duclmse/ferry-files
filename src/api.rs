@@ -24,6 +24,30 @@ pub fn listen<T: DeserializeOwned + 'static>(event: &str, f: impl Fn(T) + 'stati
     cb.forget();
 }
 
+/// A file in a group of duplicates; `at` indexes the folders searched.
+#[derive(Clone, Debug, PartialEq, Deserialize)]
+pub struct Dupe {
+    pub at: usize,
+    pub path: String,
+    pub name: String,
+    pub size: u64,
+    pub mtime: i64,
+}
+
+#[derive(Clone, Debug, PartialEq, Deserialize)]
+pub struct Dupes {
+    pub groups: Vec<Vec<Dupe>>,
+    pub files: u32,
+    pub complete: bool,
+}
+
+/// How far a duplicate search is, sent by the backend as it goes.
+#[derive(Clone, Debug, PartialEq, Deserialize)]
+pub struct DupeProgress {
+    pub job: u32,
+    pub text: String,
+}
+
 /// A copy or move under way: sent by the backend after each file.
 #[derive(Clone, Debug, PartialEq, Deserialize)]
 pub struct Progress {
