@@ -508,7 +508,7 @@ impl Mtp {
                 None => raws.first().copied(),
             };
             let Some(raw) = found else {
-                return err(format!("No MTP device found"));
+                return err("No MTP device found".to_string());
             };
             // Uncached: don't enumerate the whole phone on connect (slow on Android).
             let dev = unsafe { (lib.open_uncached)(raw) };
@@ -517,7 +517,7 @@ impl Mtp {
             }
             tries += 1;
             if tries == 4 {
-                return err(format!("Couldn't open the MTP device"));
+                return err("Couldn't open the MTP device".to_string());
             }
             drop(lock);
             std::thread::sleep(std::time::Duration::from_millis(1500));

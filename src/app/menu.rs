@@ -210,7 +210,7 @@ impl Ctx {
             v.push(item("Open in default app", "", Act::OpenInApp));
         }
         if device && !e.dir {
-            v.push(item(&format!("Download to {}…", crate::os::computer()), "", Act::Download));
+            v.push(item(format!("Download to {}…", crate::os::computer()), "", Act::Download));
         }
         if split {
             let enabled = self.in_storage(self.other(p));

@@ -493,9 +493,10 @@ fn ZipList(src: Src, entry: Entry) -> impl IntoView {
 const TEXT_CAP: u64 = 8 * 1024 * 1024;
 const HEX_CAP: u64 = 4 * 1024 * 1024;
 
-/// Pieces of a file loaded one after another as the end is scrolled near, up to `cap` bytes.
-/// `get(start)` fetches the piece at `start`: its text and where the next one starts.
-fn pieces<F, Fut>(get: F, cap: u64) -> (RwSignal<Vec<String>>, RwSignal<Option<u64>>, RwSignal<Option<String>>, RwSignal<bool>, impl Fn(web_sys::Event) + Copy + Send + Sync)
+/// Pieces of a file loaded one after another as the end is scrolled near, up to `cap` bytes, and
+/// shown (`piece_view`). `get(start)` fetches the piece at `start`: its text and where the next
+/// one starts.
+fn pieces<F, Fut>(get: F, cap: u64, hex: bool) -> impl IntoView
 where
     F: Fn(u64) -> Fut + Copy + Send + Sync + 'static,
     Fut: std::future::Future<Output = Result<(String, Option<u64>), String>> + 'static,
@@ -534,7 +535,7 @@ where
             _ => {}
         }
     };
-    (pieces, next, error, loading, scrolled)
+    piece_view(pieces, next, error, loading, scrolled, cap, hex)
 }
 
 /// The pieces in a `<pre>`, with a line under it saying what's going on.
@@ -658,8 +659,7 @@ fn TextPeek(src: Src, entry: Entry, #[prop(optional)] inner: Option<Inner>) -> i
         let p = call::<Peek>("peek_text", json!({ "src": src.key(), "path": path, "start": start, "inner": inner.try_get_value().flatten().map(|i| i.name), "zipSize": inner.try_get_value().flatten().map(|i| i.zip_size) })).await?;
         Ok((p.text, p.next))
     };
-    let (pieces, next, error, loading, scrolled) = pieces(get, TEXT_CAP);
-    piece_view(pieces, next, error, loading, scrolled, TEXT_CAP, false)
+    pieces(get, TEXT_CAP, false)
 }
 
 /// Any file's bytes, 16 to a line: where, in hex, and as text.
@@ -672,8 +672,7 @@ fn HexPeek(src: Src, entry: Entry, #[prop(optional)] inner: Option<Inner>) -> im
         let b = call::<Bytes>("peek_bytes", json!({ "src": src.key(), "path": path, "start": start, "inner": inner.try_get_value().flatten().map(|i| i.name), "zipSize": inner.try_get_value().flatten().map(|i| i.zip_size) })).await?;
         Ok((hex_lines(start, &b.bytes), b.next))
     };
-    let (pieces, next, error, loading, scrolled) = pieces(get, HEX_CAP);
-    piece_view(pieces, next, error, loading, scrolled, HEX_CAP, true)
+    pieces(get, HEX_CAP, true)
 }
 
 /// "00000010  48 65 6c 6c 6f 20 77 6f  72 6c 64 0a 00 00 00 00  Hello world....." per 16 bytes.
