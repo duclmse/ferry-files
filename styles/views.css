@@ -243,10 +243,11 @@
   padding: 16px;
 }
 
-/* 360px (PREVIEW_MIN) unless dragged wider; the files beside it take the rest. */
+/* 360px unless dragged (preview_w); the files beside it take the rest. In a narrow pane it gives
+   way too, down to 160px (less in a pane too narrow for both), rather than push it wider. */
 .preview {
   flex: 0 1 360px;
-  min-width: 360px;
+  min-width: min(160px, 40%);
   display: flex;
   flex-direction: column;
   align-items: center;
@@ -449,7 +450,7 @@
 
 .pane .files.beside {
   flex: 1 1 0;
-  min-width: 200px;
+  min-width: min(200px, 50%);
 }
 
 .pane .body > .grip {

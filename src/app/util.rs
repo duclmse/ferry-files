@@ -241,14 +241,16 @@ pub(super) const SEARCH_TIMES: &[(&str, i64)] = &[
     ("Over a year ago", -365),
 ];
 pub(super) const REGEX_KEY: &str = "ferry-files.filter-regex";
+/// Whether a pane's filter pane shows its kind, size and time choices.
+pub(super) const OPTIONS_KEY: &str = "ferry-files.search-options";
 pub(super) const SIDE_W_KEY: &str = "ferry-files.side-w";
 /// The narrowest the sidebar may be dragged; a narrower saved width is widened to it.
 pub(super) const SIDE_MIN: f64 = 250.0;
 pub(super) const PANE_W_KEY: &str = "ferry-files.pane-w";
 /// The narrowest the right pane may be; also `.pane[data-pane="1"]` in views.css.
 pub(super) const RIGHT_PANE_MIN: f64 = 360.0;
-/// The preview's width unless dragged, and the narrowest it may be; also `.preview` in views.css.
-pub(super) const PREVIEW_MIN: f64 = 360.0;
+/// The narrowest the preview may be dragged.
+pub(super) const PREVIEW_MIN: f64 = 200.0;
 
 /// A JavaScript regular expression, or why `source` isn't one.
 pub(super) fn js_regex(source: &str, flags: &str) -> Result<js_sys::RegExp, String> {

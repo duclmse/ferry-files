@@ -345,6 +345,8 @@ struct Pane {
     search_size: RwSignal<usize>,
     search_time: RwSignal<usize>,
     filters_open: RwSignal<bool>,
+    /// Whether the filter pane shows the kind, size and time choices.
+    search_options: RwSignal<bool>,
     /// The Replace with box is showing under the search box.
     replacing: RwSignal<bool>,
     /// What Replace with puts in place of what the search box matches.
@@ -374,7 +376,7 @@ struct Pane {
     preview: RwSignal<bool>,
     /// Widths the user dragged (0: the default): the files beside the preview, and the list's
     /// kind, date and size columns.
-    /// The preview's width; 0 is its default (`PREVIEW_MIN`, see views.css).
+    /// The preview's width; 0 is its default (360px, `.preview` in views.css).
     preview_w: RwSignal<f64>,
     /// Widths of the column view's columns, by folder, for this session.
     col_ws: StoredValue<HashMap<String, f64>>,
@@ -436,6 +438,7 @@ impl Pane {
             search_size: RwSignal::new(0),
             search_time: RwSignal::new(0),
             filters_open: RwSignal::new(false),
+            search_options: RwSignal::new(stored_flag(&format!("{OPTIONS_KEY}.{id}"), false)),
             replacing: RwSignal::new(false),
             replace: RwSignal::new(String::new()),
             replace_rows: RwSignal::new(Ok(HashMap::new())),

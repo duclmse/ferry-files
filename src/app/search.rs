@@ -141,6 +141,13 @@ pub(super) fn SearchPane(pane: Pane) -> impl IntoView {
             let _ = pending.try_set_value(Some(h));
         }
     };
+    let toggle_options = move |_| {
+        let on = !p.search_options.get_untracked();
+        p.search_options.set(on);
+        store(&format!("{OPTIONS_KEY}.{}", p.id), if on { "1" } else { "0" });
+    };
+    // Some kind, size or time is chosen (shown on the options button while they're hidden).
+    let narrowed = move || p.search_kind.get() + p.search_size.get() + p.search_time.get() > 0;
     let pick = |label: &'static str, sig: RwSignal<usize>, names: Vec<&'static str>| view! {
         <select aria-label=label prop:value=move || sig.get().to_string()
             on:change=move |e| sig.set(event_target_value(&e).parse().unwrap_or(0))>
@@ -148,91 +155,96 @@ pub(super) fn SearchPane(pane: Pane) -> impl IntoView {
         </select>
     };
 
+    // A grid: the chevron, the search and Replace with boxes one above the other (so always as
+    // wide as each other), then the buttons; the hint and the options take the rows under them.
     move || p.filters_open.get().then(|| view! {
         <div class="search-filters">
-            <div class="line">
-                <button class="filter-opt chevron" class:open=move || p.replacing.get() aria-expanded=move || p.replacing.get().to_string()
-                    title=move || ctx.with_key(if p.replacing.get() { "Hide Replace with" } else { "Replace in names" }, "replace") aria-label="Replace"
-                    on:mousedown=|ev| ev.prevent_default() on:click=move |_| ctx.toggle_replace(p)>{ico(Icon::Chevron)}</button>
-                <div class="filter-box search-box" class:bad=move || p.bad_filter.with(Option::is_some)>
-                    {ico(Icon::Search)}
-                    <datalist id=format!("searches-{}", p.id)>
-                        {move || ctx.searches.get().into_iter().map(|q| view! { <option value=q></option> }).collect_view()}
-                    </datalist>
-                    <input class="filter" type="search" list=format!("searches-{}", p.id) aria-label="Filter and search"
-                        spellcheck="false" autocomplete="off"
-                        placeholder=move || if p.regex.get() { "Filter (regex); Enter searches subfolders" } else { "Filter; Enter searches subfolders" }
-                        title=move || p.bad_filter.get().unwrap_or_else(|| {
-                            if p.regex.get() { "Names matching this regular expression, any case".into() } else { "Names containing this; * and ? make a pattern, like IMG_*.jpg".into() }
-                        })
-                        prop:value=move || p.filter.get()
-                        on:input=typed
-                        on:keydown=move |ev| match ev.key().as_str() {
-                            "Enter" => {
-                                if let Some(input) = ev.target().and_then(|t| t.dyn_into::<web_sys::HtmlInputElement>().ok()) {
-                                    apply(&input);
-                                }
-                                ctx.find(p);
+            <button class="filter-opt chevron" class:open=move || p.replacing.get() aria-expanded=move || p.replacing.get().to_string()
+                title=move || ctx.with_key(if p.replacing.get() { "Hide Replace with" } else { "Replace in names" }, "replace") aria-label="Replace"
+                on:mousedown=|ev| ev.prevent_default() on:click=move |_| ctx.toggle_replace(p)>{ico(Icon::Chevron)}</button>
+            <div class="filter-box search-box" class:bad=move || p.bad_filter.with(Option::is_some)>
+                {ico(Icon::Search)}
+                <datalist id=format!("searches-{}", p.id)>
+                    {move || ctx.searches.get().into_iter().map(|q| view! { <option value=q></option> }).collect_view()}
+                </datalist>
+                <input class="filter" type="search" list=format!("searches-{}", p.id) aria-label="Filter and search"
+                    spellcheck="false" autocomplete="off"
+                    placeholder=move || if p.regex.get() { "Filter (regex); Enter searches subfolders" } else { "Filter; Enter searches subfolders" }
+                    title=move || p.bad_filter.get().unwrap_or_else(|| {
+                        if p.regex.get() { "Names matching this regular expression, any case".into() } else { "Names containing this; * and ? make a pattern, like IMG_*.jpg".into() }
+                    })
+                    prop:value=move || p.filter.get()
+                    on:input=typed
+                    on:keydown=move |ev| match ev.key().as_str() {
+                        "Enter" => {
+                            if let Some(input) = ev.target().and_then(|t| t.dyn_into::<web_sys::HtmlInputElement>().ok()) {
+                                apply(&input);
                             }
-                            "Escape" => { cancel(); ctx.close_search(p); }
-                            _ => {}
-                        }/>
-                    {move || (!p.filter.with(String::is_empty)).then(|| view! {
-                        <button class="filter-clear" title="Clear" aria-label="Clear the filter"
-                            on:mousedown=|ev| ev.prevent_default()
-                            on:click=move |_| { cancel(); p.filter.set(String::new()); p.arrange(); }>"✕"</button>
-                    })}
-                    <button class="filter-opt regex" class:on=move || p.regex.get() aria-pressed=move || p.regex.get().to_string()
-                        title=move || if p.regex.get() { "Regular expression: on" } else { "Regular expression: off" } aria-label="Regular expression"
-                        on:mousedown=|ev| ev.prevent_default() on:click=toggle_regex>".*"</button>
-                </div>
-                {pick("Kind", p.search_kind, SEARCH_KINDS.iter().map(|x| x.0).collect())}
-                {pick("Size", p.search_size, SEARCH_SIZES.iter().map(|x| x.0).collect())}
-                {pick("Modified", p.search_time, SEARCH_TIMES.iter().map(|x| x.0).collect())}
-                <button class="btn small primary" title="Search this folder and its subfolders" on:click=move |_| ctx.find(p)>"Search"</button>
-                <button class="btn small" title="Clear the text, and back to any kind, size and time" on:click=move |_| {
-                    cancel();
-                    p.filter.set(String::new());
-                    p.search_kind.set(0);
-                    p.search_size.set(0);
-                    p.search_time.set(0);
-                    p.arrange();
-                }>"Clear"</button>
+                            ctx.find(p);
+                        }
+                        "Escape" => { cancel(); ctx.close_search(p); }
+                        _ => {}
+                    }/>
+                {move || (!p.filter.with(String::is_empty)).then(|| view! {
+                    <button class="filter-clear" title="Clear" aria-label="Clear the filter"
+                        on:mousedown=|ev| ev.prevent_default()
+                        on:click=move |_| { cancel(); p.filter.set(String::new()); p.arrange(); }>"✕"</button>
+                })}
+                <button class="filter-opt regex" class:on=move || p.regex.get() aria-pressed=move || p.regex.get().to_string()
+                    title=move || if p.regex.get() { "Regular expression: on" } else { "Regular expression: off" } aria-label="Regular expression"
+                    on:mousedown=|ev| ev.prevent_default() on:click=toggle_regex>".*"</button>
+            </div>
+            <div class="tools">
+                <button class="btn icon-only small options" class:active=move || p.search_options.get() class:narrowed=move || { narrowed() && !p.search_options.get() }
+                    aria-pressed=move || p.search_options.get().to_string() aria-label="Kind, size and time"
+                    title=move || match (p.search_options.get(), narrowed()) {
+                        (true, _) => "Hide kind, size and time",
+                        (false, true) => "Show kind, size and time (some are chosen)",
+                        (false, false) => "Show kind, size and time",
+                    }
+                    on:click=toggle_options>{ico(Icon::Settings)}</button>
                 <span class="grow"></span>
                 <button class="btn icon-only small" title="Close" aria-label="Close filter and search"
                     on:click=move |_| { cancel(); ctx.close_search(p); }>{ico(Icon::Close)}</button>
             </div>
             {move || p.replacing.get().then(|| view! {
-                <div class="line">
-                    <span class="chevron-room"></span>
-                    <div class="filter-box replace-box">
-                        <span class="replace-icon" aria-hidden="true">"⇄"</span>
-                        <input class="filter" type="text" aria-label="Replace with" spellcheck="false" autocomplete="off"
-                            placeholder=move || if p.regex.get() { "Replace with ($1 for groups)" } else { "Replace with" }
-                            prop:value=move || p.replace.get()
-                            on:input=move |ev| p.replace.set(event_target_value(&ev))
-                            on:keydown=move |ev| match ev.key().as_str() {
-                                "Enter" => ctx.replace_all(p),
-                                "Escape" => { p.replacing.set(false); focus_in(p.id, ".search-box input"); }
-                                _ => {}
-                            }/>
-                    </div>
+                <div class="filter-box replace-box">
+                    <span class="replace-icon" aria-hidden="true">"⇄"</span>
+                    <input class="filter" type="text" aria-label="Replace with" spellcheck="false" autocomplete="off"
+                        placeholder=move || if p.regex.get() { "Replace with ($1 for groups)" } else { "Replace with" }
+                        prop:value=move || p.replace.get()
+                        on:input=move |ev| p.replace.set(event_target_value(&ev))
+                        on:keydown=move |ev| match ev.key().as_str() {
+                            "Enter" => ctx.replace_all(p),
+                            "Escape" => { p.replacing.set(false); focus_in(p.id, ".search-box input"); }
+                            _ => {}
+                        }/>
+                </div>
+                <div class="tools">
                     <button class="btn small primary" disabled=move || { changes() == 0 || problems() > 0 || !ctx.renamable(p) }
                         title="Rename the shown items as previewed in the list" on:click=move |_| ctx.replace_all(p)>
                         {move || match changes() { 1 => "Rename 1 item".to_string(), n => format!("Rename {n} items") }}</button>
-                    <span class="hint" class:error=move || { problems() > 0 || replace_error().is_some() }>{move || {
-                        if let Some(e) = replace_error() {
-                            e
-                        } else if p.filter.with(String::is_empty) {
-                            "Type what to find in the box above.".into()
-                        } else if problems() > 0 {
-                            format!("{} new name{} won't work; see the list.", problems(), if problems() == 1 { "" } else { "s" })
-                        } else if changes() == 0 {
-                            "No shown name changes.".into()
-                        } else {
-                            format!("The list shows each new name. {} undoes the renames.", ctx.key_label("undo"))
-                        }
-                    }}</span>
+                </div>
+                {move || {
+                    replace_error().or_else(|| (problems() > 0).then(|| {
+                        format!("{} new name{} won't work; see the list.", problems(), if problems() == 1 { "" } else { "s" })
+                    })).map(|e| view! { <span class="hint error">{e}</span> })
+                }}
+            })}
+            {move || p.search_options.get().then(|| view! {
+                <div class="options-row">
+                    {pick("Kind", p.search_kind, SEARCH_KINDS.iter().map(|x| x.0).collect())}
+                    {pick("Size", p.search_size, SEARCH_SIZES.iter().map(|x| x.0).collect())}
+                    {pick("Modified", p.search_time, SEARCH_TIMES.iter().map(|x| x.0).collect())}
+                    <button class="btn small primary" title="Search this folder and its subfolders" on:click=move |_| ctx.find(p)>"Search"</button>
+                    <button class="btn small" title="Clear the text, and back to any kind, size and time" on:click=move |_| {
+                        cancel();
+                        p.filter.set(String::new());
+                        p.search_kind.set(0);
+                        p.search_size.set(0);
+                        p.search_time.set(0);
+                        p.arrange();
+                    }>"Clear"</button>
                 </div>
             })}
         </div>

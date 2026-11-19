@@ -250,51 +250,69 @@ td.name .where {
   font-weight: 600;
 }
 
-/* The search's filters, under a pane's toolbar (pane.rs). */
+/* The filter pane under a pane's toolbar (search.rs): the chevron, the search box with Replace
+   with under it (same column, so the same width), then the buttons. The hint and the kind, size
+   and time choices take the rows under them. Fits a narrow pane without wrapping. */
 .search-filters {
-  display: flex;
-  flex-direction: column;
+  display: grid;
+  grid-template-columns: 22px minmax(90px, 400px) 1fr;
+  align-items: center;
   gap: 6px;
   padding: 6px 10px;
   border-bottom: 1px solid var(--line);
   background: var(--panel);
 }
 
-.search-filters .line {
+.search-filters .filter-box {
+  grid-column: 2;
+  width: auto;
+  min-width: 0;
+}
+
+.search-filters .tools {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.search-filters .tools .grow {
+  flex: 1;
+}
+
+/* Under the boxes, as wide as the space after the chevron. */
+.search-filters .hint,
+.search-filters .options-row {
+  grid-column: 2 / -1;
+  min-width: 0;
+}
+
+.search-filters .options-row {
   display: flex;
   flex-wrap: wrap;
   align-items: center;
   gap: 6px;
 }
 
-.search-filters .line .grow {
-  flex: 1;
+.search-filters .hint.error {
+  color: var(--danger);
 }
 
-/* The search and Replace with boxes line up, one above the other, at the same width. */
-.search-filters .filter-box {
-  flex: 0 1 320px;
-  min-width: 160px;
-  width: auto;
+/* Some kind, size or time is chosen while they're hidden. */
+.search-filters .options.narrowed {
+  color: var(--accent);
 }
 
 /* Before the search box: opens Replace with under it, and points down while it's open. */
+.search-filters .chevron {
+  grid-column: 1;
+}
+
 .search-filters .chevron svg {
   transition: transform .15s ease;
 }
 
 .search-filters .chevron.open svg {
   transform: rotate(90deg);
-}
-
-/* Keeps Replace with under the search box, past the chevron. */
-.search-filters .chevron-room {
-  flex: none;
-  width: 22px;
-}
-
-.search-filters .hint.error {
-  color: var(--danger);
 }
 
 /* A name as Replace with would make it. */
