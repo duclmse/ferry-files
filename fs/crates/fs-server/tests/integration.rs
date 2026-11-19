@@ -400,6 +400,76 @@ async fn test_incremental_update() {
     );
 }
 
+/// Polls `query` until `ok` holds for its hits, or panics after `secs`.
+async fn wait_for_hits(
+    daemon: &TestDaemon,
+    query: &str,
+    secs: u64,
+    ok: impl Fn(&[String]) -> bool,
+) -> Vec<String> {
+    let deadline = std::time::Instant::now() + Duration::from_secs(secs);
+    loop {
+        let paths: Vec<String> = daemon
+            .search(query)
+            .await
+            .result
+            .into_iter()
+            .map(|h| h.path)
+            .collect();
+        if ok(&paths) {
+            return paths;
+        }
+        if std::time::Instant::now() > deadline {
+            panic!("{query}: still {paths:?} after {secs}s");
+        }
+        tokio::time::sleep(Duration::from_millis(200)).await;
+    }
+}
+
+/// A renamed folder's contents, and their text, move with it; a folder
+/// moved in from outside the watched tree brings its contents along.
+#[tokio::test]
+async fn test_directory_rename_and_move_in() {
+    let dir = TempDir::new().unwrap();
+    let watch_dir = TempDir::new().unwrap();
+    let outside = TempDir::new().unwrap();
+
+    let old = watch_dir.path().join("olddir");
+    std::fs::create_dir_all(old.join("sub")).unwrap();
+    std::fs::write(old.join("notes.txt"), b"zebraquartz inside").unwrap();
+    std::fs::write(old.join("sub").join("deep.rs"), b"fn x() {}").unwrap();
+
+    let daemon = TestDaemon::start(watch_dir.path(), dir).await;
+    daemon
+        .wait_until(Duration::from_secs(30), |s| s.content_indexed >= 2)
+        .await;
+    wait_for_hits(&daemon, "content:zebraquartz", 10, |p| p.len() == 1).await;
+
+    let new = watch_dir.path().join("newdir");
+    std::fs::rename(&old, &new).unwrap();
+
+    wait_for_hits(&daemon, "deep.rs", 15, |p| {
+        p.len() == 1 && p[0].contains("newdir")
+    })
+    .await;
+    wait_for_hits(&daemon, "content:zebraquartz", 15, |p| {
+        p.len() == 1 && p[0].contains("newdir")
+    })
+    .await;
+    wait_for_hits(&daemon, "olddir", 15, |p| p.is_empty()).await;
+
+    let parcel = outside.path().join("parcel");
+    std::fs::create_dir_all(parcel.join("inner")).unwrap();
+    std::fs::write(parcel.join("inner").join("cargo.md"), b"# hi").unwrap();
+    // Same volume, so this is a rename into the tree, not a copy.
+    if std::fs::rename(&parcel, watch_dir.path().join("parcel")).is_ok() {
+        wait_for_hits(&daemon, "cargo.md", 15, |p| {
+            p.len() == 1 && p[0].contains("parcel")
+        })
+        .await;
+    }
+}
+
 /// Content search: file containing "TODO: fix this" → returned by content:TODO.
 #[tokio::test]
 async fn test_content_search() {
@@ -532,7 +602,8 @@ async fn test_zip_inner_file_search() {
     assert_eq!(
         resp.result.len(),
         0,
-        "after ZIP deletion all inner entries must be removed from search"
+        "after ZIP deletion all inner entries must be removed from search: {:?}",
+        resp.result.iter().map(|h| &h.path).collect::<Vec<_>>()
     );
 }
 

@@ -2,7 +2,6 @@ use std::path::{Path, PathBuf};
 use std::sync::{atomic::Ordering, mpsc, Arc};
 
 use ignore::WalkBuilder;
-use rayon::prelude::*;
 use tokio::sync::RwLock;
 use tokio_util::sync::CancellationToken;
 
@@ -36,18 +35,50 @@ struct SideWork {
     sqlite: Arc<FileStore>,
     tantivy: Arc<TantivyStore>,
     metrics: Arc<IndexMetrics>,
-    arc_cfg: Arc<crate::config::ArchiveIndexConfig>,
-    cnt_cfg: Arc<crate::config::ContentConfig>,
-    zidx_dir: Arc<Option<PathBuf>>,
-    dzx_dir: Arc<Option<PathBuf>>,
     registry: Arc<ArchiveRegistry>,
+    arc_cfg: crate::config::ArchiveIndexConfig,
+    cnt_cfg: crate::config::ContentConfig,
+    zidx_dir: Option<PathBuf>,
+    dzx_dir: Option<PathBuf>,
     dzx_min_entry_bytes: u64,
     dzx_max_concurrent_builds: usize,
-    generation: i64,
-    root: String,
+    /// `(watch_root, generation)` during a full crawl, so archive entries
+    /// survive its stale-row sweep; `None` for watcher events.
+    tag: Option<(String, i64)>,
+}
+
+#[derive(Clone)]
+struct Stores {
+    sqlite: Arc<FileStore>,
+    tantivy: Arc<TantivyStore>,
+    metrics: Arc<IndexMetrics>,
+    registry: Arc<ArchiveRegistry>,
 }
 
 impl SideWork {
+    /// `under` picks the content limits: a network mount may have none.
+    fn new(cfg: &Config, under: &Path, stores: &Stores, tag: Option<(String, i64)>) -> Self {
+        let service = &cfg.archive_service;
+        let sidecar_dir = |dir: &Option<PathBuf>, default: &str| {
+            service
+                .enabled
+                .then(|| dir.clone().unwrap_or_else(|| cfg.data_dir.join(default)))
+        };
+        Self {
+            sqlite: Arc::clone(&stores.sqlite),
+            tantivy: Arc::clone(&stores.tantivy),
+            metrics: Arc::clone(&stores.metrics),
+            registry: Arc::clone(&stores.registry),
+            arc_cfg: cfg.archive_index.clone(),
+            cnt_cfg: super::content::effective_config(&cfg.content, &cfg.exclusions, under),
+            zidx_dir: sidecar_dir(&service.zidx_dir, "zidx"),
+            dzx_dir: sidecar_dir(&service.dzx_dir, "dzx"),
+            dzx_min_entry_bytes: service.dzx_min_entry_bytes,
+            dzx_max_concurrent_builds: service.dzx_max_concurrent_builds,
+            tag,
+        }
+    }
+
     fn is_archive(&self, path: &Path) -> bool {
         self.arc_cfg.enabled
             && path.extension().and_then(|e| e.to_str()).is_some_and(|e| {
@@ -62,27 +93,22 @@ impl SideWork {
         !is_dir && (self.is_archive(path) || content_limit(path, &self.cnt_cfg).is_some())
     }
 
-    fn run(&self, path: &Path, is_dir: bool, len: u64, record: &FileRecord) {
-        if is_dir {
+    fn run(&self, record: &FileRecord) {
+        if record.is_dir {
             return;
         }
-        // Content indexing - sync read for small files (≤1MB) in the walk closure
+        let path = Path::new(&record.path);
         if let Some(max_bytes) = content_limit(path, &self.cnt_cfg) {
-            if len <= 1024 * 1024 {
-                if let Ok(raw) = std::fs::read(path) {
-                    let end = (max_bytes as usize).min(raw.len());
-                    if let Some(text) = super::content::extract_content_from_bytes(&raw[..end]) {
-                        let mut r = record.clone();
-                        r.content_indexed = true;
-                        if self.tantivy.upsert(&r, Some(&text)).is_ok() {
-                            self.metrics.content_indexed.fetch_add(1, Ordering::Relaxed);
-                        }
-                    }
+            if let Some(text) = super::content::read_content(path, max_bytes) {
+                let mut r = record.clone();
+                r.content_indexed = true;
+                if self.tantivy.upsert(&r, Some(&text)).is_ok() {
+                    self.metrics.content_indexed.fetch_add(1, Ordering::Relaxed);
                 }
             }
         }
 
-        // Archive indexing - has its own BEGIN/COMMIT, stays inline.
+        // Archive indexing has its own BEGIN/COMMIT.
         if self.is_archive(path) {
             let crawler = ArchiveCrawler::new(&self.arc_cfg, &self.cnt_cfg);
             if let Err(e) = crawl_archive_sync(
@@ -99,7 +125,7 @@ impl SideWork {
                         .as_deref()
                         .map(|d| (d, self.dzx_min_entry_bytes, self.dzx_max_concurrent_builds)),
                 },
-                Some((self.root.as_str(), self.generation)),
+                self.tag.as_ref().map(|(root, gen)| (root.as_str(), *gen)),
             ) {
                 tracing::warn!("archive crawl error for {}: {e}", path.display());
             }
@@ -107,11 +133,43 @@ impl SideWork {
     }
 }
 
+/// Bounds the files waiting for content or archive work, so a walk that
+/// outruns the workers waits for them instead of queueing the whole tree.
+const SIDE_QUEUE: usize = 1024;
+
+/// Reads content and indexes archives for the files the walk hands over, on
+/// `content_threads` threads apart from the walkers, so the walk is not held
+/// up by file reads. After a cancel the queue is drained without work.
+fn spawn_side_workers(
+    threads: usize,
+    side_work: &Arc<SideWork>,
+    rx: mpsc::Receiver<FileRecord>,
+    shutdown: &CancellationToken,
+) -> Vec<std::thread::JoinHandle<()>> {
+    let rx = Arc::new(std::sync::Mutex::new(rx));
+    (0..threads.max(1))
+        .map(|_| {
+            let rx = Arc::clone(&rx);
+            let side_work = Arc::clone(side_work);
+            let shutdown = shutdown.clone();
+            std::thread::spawn(move || loop {
+                let next = match rx.lock() {
+                    Ok(rx) => rx.recv(),
+                    Err(_) => return,
+                };
+                let Ok(record) = next else { return };
+                if !shutdown.is_cancelled() {
+                    side_work.run(&record);
+                }
+            })
+        })
+        .collect()
+}
+
 /// Returns false, having sent nothing, if the file table cannot be used.
 ///
 /// Rows go out in walk order because the memory store shares a parent's path
-/// only with entries added after it. The slower per-file work runs in
-/// parallel afterwards, as it does on the walker's threads.
+/// only with entries added after it.
 fn crawl_from_mft(
     root: &Path,
     cache: &mut MftCache,
@@ -119,6 +177,7 @@ fn crawl_from_mft(
     tx: &mpsc::SyncSender<(FileRecord, String)>,
     root_str: &str,
     side_work: &SideWork,
+    side_tx: &mpsc::SyncSender<FileRecord>,
 ) -> bool {
     let index = match cache.for_root(root) {
         Ok(index) => index,
@@ -128,7 +187,6 @@ fn crawl_from_mft(
         }
     };
     let now = unix_now();
-    let mut extra = Vec::new();
     let mut rows = Vec::new();
     let walked = index.walk(root, |path, file| {
         let is_hidden = is_hidden_name(path);
@@ -148,14 +206,14 @@ fn crawl_from_mft(
         root.display()
     );
     for row in rows {
-        if side_work.wanted(Path::new(&row.path), row.is_dir) {
-            extra.push(row.clone());
-        }
+        let side = side_work
+            .wanted(Path::new(&row.path), row.is_dir)
+            .then(|| row.clone());
         let _ = tx.send((row, root_str.to_owned()));
+        if let Some(side) = side {
+            let _ = side_tx.send(side);
+        }
     }
-    extra.par_iter().for_each(|row| {
-        side_work.run(Path::new(&row.path), row.is_dir, row.size_bytes, row);
-    });
     true
 }
 
@@ -174,30 +232,7 @@ pub async fn full_crawl(
     let cfg = config.read().await.clone();
 
     let exclusions = Arc::new(ExclusionEngine::new(&cfg.exclusions)?);
-    let archive_cfg = Arc::new(cfg.archive_index.clone());
     let watch_paths = cfg.watch_paths.clone();
-    let zidx_dir: Arc<Option<PathBuf>> = Arc::new(if cfg.archive_service.enabled {
-        Some(
-            cfg.archive_service
-                .zidx_dir
-                .clone()
-                .unwrap_or_else(|| cfg.data_dir.join("zidx")),
-        )
-    } else {
-        None
-    });
-    let dzx_dir: Arc<Option<PathBuf>> = Arc::new(if cfg.archive_service.enabled {
-        Some(
-            cfg.archive_service
-                .dzx_dir
-                .clone()
-                .unwrap_or_else(|| cfg.data_dir.join("dzx")),
-        )
-    } else {
-        None
-    });
-    let dzx_min_entry_bytes = cfg.archive_service.dzx_min_entry_bytes;
-    let dzx_max_concurrent_builds = cfg.archive_service.dzx_max_concurrent_builds;
 
     // One generation per full crawl. Each upserted row is marked with the
     // watch_root it was found under and this generation. After each root
@@ -205,18 +240,21 @@ pub async fn full_crawl(
     // no full path list is materialised in Rust memory.
     let generation = sqlite.begin_crawl_generation()?;
 
+    let stores = Stores {
+        sqlite: Arc::clone(&sqlite),
+        tantivy: Arc::clone(&tantivy),
+        metrics: Arc::clone(&metrics),
+        registry: Arc::clone(&registry),
+    };
     let sqlite_w = Arc::clone(&sqlite);
-    let tantivy_w = Arc::clone(&tantivy);
     let metrics_w = Arc::clone(&metrics);
     let excl_w = Arc::clone(&exclusions);
-    let arc_cfg_w = Arc::clone(&archive_cfg);
-    let cnt_cfg_w = Arc::new(cfg.content.clone());
-    let zidx_dir_w = Arc::clone(&zidx_dir);
-    let dzx_dir_w = Arc::clone(&dzx_dir);
-    let registry_w = Arc::clone(&registry);
     let shutdown_w = shutdown.clone();
+    let cfg_w = cfg.clone();
 
     let use_mft = cfg.indexer.use_mft;
+    let crawl_threads = cfg.indexer.crawl_threads;
+    let content_threads = cfg.indexer.content_threads;
 
     tokio::task::spawn_blocking(move || -> Result<()> {
         let mut mft_cache = MftCache::default();
@@ -230,22 +268,22 @@ pub async fn full_crawl(
             let walker = WalkBuilder::new(watch_path)
                 .hidden(false)
                 .git_ignore(false)
+                .threads(crawl_threads)
                 .build_parallel();
-
-            let side_work = Arc::new(SideWork {
-                sqlite: Arc::clone(&sqlite_w),
-                tantivy: Arc::clone(&tantivy_w),
-                metrics: Arc::clone(&metrics_w),
-                arc_cfg: Arc::clone(&arc_cfg_w),
-                cnt_cfg: Arc::clone(&cnt_cfg_w),
-                zidx_dir: Arc::clone(&zidx_dir_w),
-                dzx_dir: Arc::clone(&dzx_dir_w),
-                registry: Arc::clone(&registry_w),
-                dzx_min_entry_bytes,
-                dzx_max_concurrent_builds,
-                generation,
-                root: watch_root.clone(),
-            });
+            let side_work = Arc::new(SideWork::new(
+                &cfg_w,
+                watch_path,
+                &stores,
+                Some((watch_root.clone(), generation)),
+            ));
+            if side_work.cnt_cfg.extension_limits.is_empty()
+                && !cfg_w.content.extension_limits.is_empty()
+            {
+                tracing::info!(
+                    "no content indexed under {}: network mount",
+                    watch_path.display()
+                );
+            }
             let excl = Arc::clone(&excl_w);
             let root_str = watch_root.clone();
 
@@ -302,6 +340,10 @@ pub async fn full_crawl(
                 })
             };
 
+            let (side_tx, side_rx) = mpsc::sync_channel::<FileRecord>(SIDE_QUEUE);
+            let side_workers =
+                spawn_side_workers(content_threads, &side_work, side_rx, &shutdown_w);
+
             let from_mft = use_mft
                 && crawl_from_mft(
                     watch_path,
@@ -310,10 +352,12 @@ pub async fn full_crawl(
                     &tx,
                     &root_str,
                     &side_work,
+                    &side_tx,
                 );
             if !from_mft {
                 walker.run(|| {
                     let tx_w = tx.clone();
+                    let side_tx = side_tx.clone();
                     let excl = Arc::clone(&excl);
                     let side_work = Arc::clone(&side_work);
                     let root_str = root_str.clone();
@@ -342,11 +386,23 @@ pub async fn full_crawl(
                         }
 
                         let record = build_file_record(path, &meta, is_hidden, unix_now());
-                        let _ = tx_w.send((record.clone(), root_str.clone()));
-                        side_work.run(path, meta.is_dir(), meta.len(), &record);
+                        let side = side_work
+                            .wanted(path, meta.is_dir())
+                            .then(|| record.clone());
+                        let _ = tx_w.send((record, root_str.clone()));
+                        if let Some(side) = side {
+                            let _ = side_tx.send(side);
+                        }
                         ignore::WalkState::Continue
                     })
                 });
+            }
+
+            // Archive entries carry this generation too, so the workers finish
+            // before the stale rows go.
+            drop(side_tx);
+            for worker in side_workers {
+                let _ = worker.join();
             }
 
             // Closing tx signals the writer thread that no more records are coming.
@@ -424,6 +480,73 @@ fn sweep_due(parent: &str) -> bool {
     }
 }
 
+/// Removes `path` and, for a folder, everything indexed under it: a folder
+/// moved out of the tree is reported alone, and its contents went with it.
+fn remove_path(sqlite: &FileStore, tantivy: &TantivyStore, path: &str) {
+    let under = sqlite.paths_under(path).unwrap_or_default();
+    for p in under
+        .iter()
+        .map(String::as_str)
+        .chain(std::iter::once(path))
+    {
+        if let Err(e) = tantivy.remove(p) {
+            tracing::warn!("tantivy remove: {e}");
+        }
+    }
+    if !under.is_empty() {
+        if let Err(e) = sqlite.remove_directory(path) {
+            tracing::warn!("remove subtree {path}: {e}");
+        }
+    }
+    if let Err(e) = sqlite.remove_file(path) {
+        tracing::warn!("remove {path}: {e}");
+    }
+}
+
+/// Removes an archive's row and its entries, from both stores.
+fn remove_archive(sqlite: &FileStore, tantivy: &TantivyStore, path: &str) {
+    let inner = sqlite.paths_in_archive(path).unwrap_or_default();
+    for p in inner
+        .iter()
+        .map(String::as_str)
+        .chain(std::iter::once(path))
+    {
+        if let Err(e) = tantivy.remove(p) {
+            tracing::warn!("tantivy remove: {e}");
+        }
+    }
+    if let Err(e) = sqlite.remove_archive_entries(path) {
+        tracing::warn!("remove entries of {path}: {e}");
+    }
+    if let Err(e) = sqlite.remove_file(path) {
+        tracing::warn!("remove {path}: {e}");
+    }
+}
+
+/// Everything under `dir`, as the crawl would record it.
+fn records_under(dir: &Path, excl: &Arc<ExclusionEngine>) -> Vec<FileRecord> {
+    let prune = Arc::clone(excl);
+    let walker = WalkBuilder::new(dir)
+        .hidden(false)
+        .git_ignore(false)
+        .filter_entry(move |e| !prune.should_exclude(e.path(), is_hidden_name(e.path())))
+        .build();
+    walker
+        .skip(1)
+        .filter_map(|entry| {
+            let entry = entry.ok()?;
+            let meta = entry.metadata().ok()?;
+            let path = entry.path();
+            Some(build_file_record(
+                path,
+                &meta,
+                is_hidden_name(path),
+                unix_now(),
+            ))
+        })
+        .collect()
+}
+
 pub async fn process_event(
     event: IndexEvent,
     config: Arc<RwLock<Config>>,
@@ -437,6 +560,16 @@ pub async fn process_event(
     match event {
         IndexEvent::Created(path) | IndexEvent::Modified(path) => {
             let Ok(meta) = std::fs::metadata(&path) else {
+                // FSEvents reports an unpaired rename's old side as a
+                // modification of a path that is gone.
+                if matches!(std::fs::symlink_metadata(&path), Err(e) if e.kind() == std::io::ErrorKind::NotFound)
+                {
+                    let path_str = path.to_string_lossy().into_owned();
+                    tokio::task::spawn_blocking(move || remove_path(&sqlite, &tantivy, &path_str))
+                        .await
+                        .ok();
+                    metrics.events_processed.fetch_add(1, Ordering::Relaxed);
+                }
                 return;
             };
             let is_hidden = is_hidden_name(&path);
@@ -450,10 +583,37 @@ pub async fn process_event(
             let tantivy_b = Arc::clone(&tantivy);
             let record_b = record.clone();
             let path_b = path.clone();
+            // A folder moved in, or renamed without a pairing the debouncer
+            // saw, is reported alone; its contents arrive with no events.
+            let subtree = meta.is_dir().then(|| {
+                let stores = Stores {
+                    sqlite: Arc::clone(&sqlite),
+                    tantivy: Arc::clone(&tantivy),
+                    metrics: Arc::clone(&metrics),
+                    registry: Arc::clone(&registry),
+                };
+                (
+                    SideWork::new(&cfg, &path, &stores, None),
+                    ExclusionEngine::new(&cfg.exclusions).map(Arc::new),
+                )
+            });
             let upserted = tokio::task::spawn_blocking(move || {
+                let unseen_dir =
+                    subtree.is_some() && matches!(sqlite_b.get_by_path(&record_b.path), Ok(None));
                 if let Err(e) = sqlite_b.upsert_file(&record_b) {
                     tracing::warn!("process_event upsert: {e}");
                     return false;
+                }
+                if let (true, Some((side_work, Ok(excl)))) = (unseen_dir, &subtree) {
+                    let children = records_under(&path_b, excl);
+                    if !children.is_empty() {
+                        if let Err(e) = sqlite_b.upsert_files(&children) {
+                            tracing::warn!("process_event subtree upsert: {e}");
+                        }
+                        for child in &children {
+                            side_work.run(child);
+                        }
+                    }
                 }
 
                 // Stale-sibling reconciliation. notify-debouncer-full's FSEvents
@@ -500,7 +660,8 @@ pub async fn process_event(
             }
 
             // Content
-            let climit = content_limit(&path, &cfg.content);
+            let cnt_cfg = super::content::effective_config(&cfg.content, &cfg.exclusions, &path);
+            let climit = content_limit(&path, &cnt_cfg);
             if let Some(max_bytes) = climit {
                 let tantivy = Arc::clone(&tantivy);
                 let metrics = Arc::clone(&metrics);
@@ -529,12 +690,57 @@ pub async fn process_event(
             let path_str = path.to_string_lossy().into_owned();
             let sqlite_b = Arc::clone(&sqlite);
             let tantivy_b = Arc::clone(&tantivy);
+            tokio::task::spawn_blocking(move || remove_path(&sqlite_b, &tantivy_b, &path_str))
+                .await
+                .ok();
+            metrics.events_processed.fetch_add(1, Ordering::Relaxed);
+        }
+
+        IndexEvent::Renamed { from, to } => {
+            let stores = Stores {
+                sqlite: Arc::clone(&sqlite),
+                tantivy: Arc::clone(&tantivy),
+                metrics: Arc::clone(&metrics),
+                registry: Arc::clone(&registry),
+            };
+            let side_work = SideWork::new(&cfg, &to, &stores, None);
+            let excl = ExclusionEngine::new(&cfg.exclusions).map(Arc::new);
             tokio::task::spawn_blocking(move || {
-                if let Err(e) = sqlite_b.remove_file(&path_str) {
-                    tracing::warn!("process_event remove: {e}");
+                let from_str = from.to_string_lossy().into_owned();
+                // Full-text documents are keyed by path, so everything under
+                // the old name goes, archive entries included.
+                let old = sqlite.paths_under(&from_str).unwrap_or_default();
+                for path in old.iter().chain(std::iter::once(&from_str)) {
+                    let _ = tantivy.remove(path);
                 }
-                if let Err(e) = tantivy_b.remove(&path_str) {
-                    tracing::warn!("tantivy remove: {e}");
+                let _ = sqlite.remove_archive_entries(&from_str);
+                let _ = sqlite.remove_file(&from_str);
+                let _ = sqlite.remove_directory(&from_str);
+                registry.unregister(&from);
+
+                let Ok(meta) = std::fs::metadata(&to) else {
+                    return;
+                };
+                let mut moved = vec![build_file_record(
+                    &to,
+                    &meta,
+                    is_hidden_name(&to),
+                    unix_now(),
+                )];
+                // A directory rename is one event: nothing is reported for
+                // its contents, which now live under the new name.
+                if meta.is_dir() {
+                    match &excl {
+                        Ok(excl) => moved.extend(records_under(&to, excl)),
+                        Err(e) => tracing::warn!("rename: exclusions: {e}"),
+                    }
+                }
+                if let Err(e) = sqlite.upsert_files(&moved) {
+                    tracing::warn!("rename upsert under {}: {e}", to.display());
+                    return;
+                }
+                for record in &moved {
+                    side_work.run(record);
                 }
             })
             .await
@@ -542,143 +748,34 @@ pub async fn process_event(
             metrics.events_processed.fetch_add(1, Ordering::Relaxed);
         }
 
-        IndexEvent::Renamed { from, to } => {
-            let from_str = from.to_string_lossy().into_owned();
-            let sqlite_b = Arc::clone(&sqlite);
-            let tantivy_b = Arc::clone(&tantivy);
-            let to_b = to.clone();
-            let to_exists = tokio::task::spawn_blocking(move || {
-                // Remove old record(s)
-                let _ = sqlite_b.remove_file(&from_str);
-                let _ = tantivy_b.remove(&from_str);
-                // If directory rename, remove all children under old prefix
-                let _ = sqlite_b.remove_directory(&from_str);
-
-                // Upsert new path
-                let Ok(meta) = std::fs::metadata(&to_b) else {
-                    return false;
-                };
-                let is_hidden = is_hidden_name(&to_b);
-                let now = unix_now();
-                let record = build_file_record(&to_b, &meta, is_hidden, now);
-                let _ = sqlite_b.upsert_file(&record);
-                true
-            })
-            .await
-            .unwrap_or(false);
-
-            if to_exists {
-                // Archive handling
-                let is_archive = to
-                    .extension()
-                    .and_then(|e| e.to_str())
-                    .map(|e| {
-                        cfg.archive_index
-                            .formats
-                            .iter()
-                            .any(|f| f.eq_ignore_ascii_case(e))
-                    })
-                    .unwrap_or(false);
-                if cfg.archive_index.enabled && is_archive {
-                    let sqlite2 = Arc::clone(&sqlite);
-                    let tantivy2 = Arc::clone(&tantivy);
-                    let metrics2 = Arc::clone(&metrics);
-                    let registry2 = Arc::clone(&registry);
-                    let arc_cfg = cfg.archive_index.clone();
-                    let cnt_cfg = cfg.content.clone();
-                    let zidx_dir = if cfg.archive_service.enabled {
-                        Some(
-                            cfg.archive_service
-                                .zidx_dir
-                                .clone()
-                                .unwrap_or_else(|| cfg.data_dir.join("zidx")),
-                        )
-                    } else {
-                        None
-                    };
-                    let dzx_dir = if cfg.archive_service.enabled {
-                        Some(
-                            cfg.archive_service
-                                .dzx_dir
-                                .clone()
-                                .unwrap_or_else(|| cfg.data_dir.join("dzx")),
-                        )
-                    } else {
-                        None
-                    };
-                    let dzx_min_entry_bytes = cfg.archive_service.dzx_min_entry_bytes;
-                    let dzx_max_concurrent_builds = cfg.archive_service.dzx_max_concurrent_builds;
-                    let to2 = to.clone();
-                    tokio::task::spawn_blocking(move || {
-                        let crawler = ArchiveCrawler::new(&arc_cfg, &cnt_cfg);
-                        let _ = crawl_archive_sync(
-                            &to2,
-                            &crawler,
-                            sqlite2.as_ref(),
-                            &tantivy2,
-                            &metrics2,
-                            SidecarConfig {
-                                zidx_dir: zidx_dir.as_deref(),
-                                registry: Some(&registry2),
-                                dzx: dzx_dir
-                                    .as_deref()
-                                    .map(|d| (d, dzx_min_entry_bytes, dzx_max_concurrent_builds)),
-                            },
-                            None,
-                        );
-                    });
-                }
-            }
-            metrics.events_processed.fetch_add(1, Ordering::Relaxed);
-        }
-
         IndexEvent::ArchiveModified(path) => {
-            let arc_cfg = cfg.archive_index.clone();
-            let cnt_cfg = cfg.content.clone();
-            let sqlite2 = Arc::clone(&sqlite);
-            let tantivy2 = Arc::clone(&tantivy);
-            let metrics2 = Arc::clone(&metrics);
-            let registry2 = Arc::clone(&registry);
-            let zidx_dir = if cfg.archive_service.enabled {
-                Some(
-                    cfg.archive_service
-                        .zidx_dir
-                        .clone()
-                        .unwrap_or_else(|| cfg.data_dir.join("zidx")),
-                )
-            } else {
-                None
+            let stores = Stores {
+                sqlite: Arc::clone(&sqlite),
+                tantivy: Arc::clone(&tantivy),
+                metrics: Arc::clone(&metrics),
+                registry: Arc::clone(&registry),
             };
-            let dzx_dir = if cfg.archive_service.enabled {
-                Some(
-                    cfg.archive_service
-                        .dzx_dir
-                        .clone()
-                        .unwrap_or_else(|| cfg.data_dir.join("dzx")),
-                )
-            } else {
-                None
-            };
-            let dzx_min_entry_bytes = cfg.archive_service.dzx_min_entry_bytes;
-            let dzx_max_concurrent_builds = cfg.archive_service.dzx_max_concurrent_builds;
+            let side_work = SideWork::new(&cfg, &path, &stores, None);
+            // Not awaited: a large archive takes a while, and the next event
+            // need not wait for it.
             tokio::task::spawn_blocking(move || {
-                let crawler = ArchiveCrawler::new(&arc_cfg, &cnt_cfg);
-                if let Err(e) = crawl_archive_sync(
-                    &path,
-                    &crawler,
-                    sqlite2.as_ref(),
-                    &tantivy2,
-                    &metrics2,
-                    SidecarConfig {
-                        zidx_dir: zidx_dir.as_deref(),
-                        registry: Some(&registry2),
-                        dzx: dzx_dir
-                            .as_deref()
-                            .map(|d| (d, dzx_min_entry_bytes, dzx_max_concurrent_builds)),
-                    },
-                    None,
-                ) {
-                    tracing::warn!("ArchiveModified crawl error: {e}");
+                let Ok(meta) = std::fs::metadata(&path) else {
+                    // FSEvents can report a deletion as a modification.
+                    let path_str = path.to_string_lossy();
+                    remove_archive(&side_work.sqlite, &side_work.tantivy, &path_str);
+                    side_work.registry.unregister(&path);
+                    return;
+                };
+                let record = build_file_record(&path, &meta, is_hidden_name(&path), unix_now());
+                if let Err(e) = side_work.sqlite.upsert_file(&record) {
+                    tracing::warn!("ArchiveModified upsert: {e}");
+                    return;
+                }
+                side_work.run(&record);
+                // Deleted while this ran: the delete's cleanup may have come
+                // before these rows, so they go now.
+                if !path.exists() {
+                    remove_archive(&side_work.sqlite, &side_work.tantivy, &record.path);
                 }
             });
             metrics.events_processed.fetch_add(1, Ordering::Relaxed);
@@ -687,15 +784,9 @@ pub async fn process_event(
         IndexEvent::ArchiveDeleted(path) => {
             registry.unregister(&path);
             let path_str = path.to_string_lossy().into_owned();
-            if let Err(e) = sqlite.remove_archive_entries(&path_str) {
-                tracing::warn!("ArchiveDeleted remove_archive_entries: {e}");
-            }
-            if let Err(e) = sqlite.remove_file(&path_str) {
-                tracing::warn!("ArchiveDeleted remove_file: {e}");
-            }
-            if let Err(e) = tantivy.remove(&path_str) {
-                tracing::warn!("ArchiveDeleted tantivy remove: {e}");
-            }
+            tokio::task::spawn_blocking(move || remove_archive(&sqlite, &tantivy, &path_str))
+                .await
+                .ok();
             metrics.events_processed.fetch_add(1, Ordering::Relaxed);
         }
     }

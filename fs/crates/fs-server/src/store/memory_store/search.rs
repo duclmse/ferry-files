@@ -206,6 +206,15 @@ impl MemoryStore {
             .collect())
     }
 
+    pub fn paths_in_archive(&self, archive_path: &str) -> Vec<String> {
+        let state = self.read_state();
+        state
+            .iter()
+            .filter(|e| e.is_archive() && e.with_archive_path(|a| a == Some(archive_path)))
+            .map(|e| e.path_string())
+            .collect()
+    }
+
     pub fn search_conditions(
         &self,
         conds: &[SqlCondition],

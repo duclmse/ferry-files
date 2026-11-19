@@ -141,6 +141,22 @@ pub struct ContentConfig {
     pub extension_limits: HashMap<String, u64>,
 }
 
+impl ContentConfig {
+    /// Every limit lowered to at most `cap` bytes; `0` leaves them as set.
+    pub fn capped(&self, cap: u64) -> ContentConfig {
+        if cap == 0 {
+            return self.clone();
+        }
+        ContentConfig {
+            extension_limits: self
+                .extension_limits
+                .iter()
+                .map(|(ext, &limit)| (ext.clone(), limit.min(cap)))
+                .collect(),
+        }
+    }
+}
+
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum AuthMode {

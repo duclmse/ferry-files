@@ -40,22 +40,33 @@ impl ExclusionEngine {
 
 #[cfg(target_os = "linux")]
 pub fn is_network_mount(path: &Path) -> bool {
-    use std::io::{BufRead, BufReader};
-    let Ok(file) = std::fs::File::open("/proc/mounts") else {
+    let Ok(mounts) = std::fs::read_to_string("/proc/mounts") else {
         return false;
     };
-    let path_str = path.to_string_lossy();
-    BufReader::new(file)
+    network_by_mount_table(&mounts, path)
+}
+
+/// The deepest mount point holding `path` decides, so a local disk mounted
+/// inside a network share is local.
+#[cfg_attr(not(target_os = "linux"), allow(dead_code))]
+fn network_by_mount_table(mounts: &str, path: &Path) -> bool {
+    mounts
         .lines()
-        .map_while(std::io::Result::ok)
-        .any(|line| {
-            let parts: Vec<&str> = line.split_whitespace().collect();
-            if parts.len() >= 3 {
-                path_str.starts_with(parts[1])
-                    && matches!(parts[2], "nfs" | "nfs4" | "cifs" | "smbfs")
-            } else {
-                false
-            }
+        .filter_map(|line| {
+            let mut parts = line.split_whitespace();
+            let _device = parts.next()?;
+            // /proc/mounts escapes the space in a mount point as \040.
+            let point = parts.next()?.replace("\\040", " ");
+            let fstype = parts.next()?;
+            path.starts_with(&point)
+                .then(|| (point.len(), fstype.to_owned()))
+        })
+        .max_by_key(|(len, _)| *len)
+        .is_some_and(|(_, fstype)| {
+            matches!(
+                fstype.as_str(),
+                "nfs" | "nfs4" | "cifs" | "smbfs" | "smb3" | "fuse.sshfs"
+            )
         })
 }
 
@@ -113,6 +124,22 @@ mod tests {
             skip_network_content: false,
         })
         .unwrap()
+    }
+
+    #[test]
+    fn mount_table_uses_the_deepest_mount_point() {
+        let table = "/dev/sda1 / ext4 rw 0 0\n\
+                     server:/share /mnt/nfs nfs4 rw 0 0\n\
+                     /dev/sdb1 /mnt/nfs/local ext4 rw 0 0\n\
+                     //host/my\\040share /mnt/my\\040share cifs rw 0 0\n";
+        assert!(network_by_mount_table(table, Path::new("/mnt/nfs/a")));
+        assert!(!network_by_mount_table(table, Path::new("/mnt/nfsdata/a")));
+        assert!(!network_by_mount_table(
+            table,
+            Path::new("/mnt/nfs/local/a")
+        ));
+        assert!(network_by_mount_table(table, Path::new("/mnt/my share/a")));
+        assert!(!network_by_mount_table(table, Path::new("/home/a")));
     }
 
     #[test]

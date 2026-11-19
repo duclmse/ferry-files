@@ -57,6 +57,8 @@ fn batch_to_events(
     }
 
     let mut out = Vec::with_capacity(best.len());
+    // A paired rename is the best event for both of its paths.
+    let mut renames = std::collections::HashSet::new();
     for (path, (_, ev)) in best {
         match &ev.kind {
             EventKind::Create(_) => {
@@ -67,7 +69,7 @@ fn batch_to_events(
                 }
             }
             EventKind::Modify(notify::event::ModifyKind::Name(notify::event::RenameMode::Both)) => {
-                if ev.paths.len() >= 2 {
+                if ev.paths.len() >= 2 && renames.insert(ev.paths[..2].to_vec()) {
                     out.push(IndexEvent::Renamed {
                         from: ev.paths[0].clone(),
                         to: ev.paths[1].clone(),
@@ -174,4 +176,27 @@ pub async fn run_watcher(
     }
 
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use notify::event::{ModifyKind, RenameMode};
+    use notify_debouncer_full::DebouncedEvent;
+
+    #[test]
+    fn a_paired_rename_becomes_one_event() {
+        let event = notify::Event::new(EventKind::Modify(ModifyKind::Name(RenameMode::Both)))
+            .add_path(PathBuf::from("/w/old"))
+            .add_path(PathBuf::from("/w/new"));
+        let out = batch_to_events(
+            vec![DebouncedEvent::new(event, std::time::Instant::now())],
+            &[],
+        );
+        assert_eq!(out.len(), 1, "{out:?}");
+        assert!(matches!(
+            &out[0],
+            IndexEvent::Renamed { from, to } if from.ends_with("old") && to.ends_with("new")
+        ));
+    }
 }

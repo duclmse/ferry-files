@@ -243,8 +243,11 @@ pub async fn run_with_shutdown(
                         // indexed and then fsyncs; on a runtime worker that
                         // stalled every request (seconds on a 2-core host
                         // after a crawl queued thousands of documents).
+                        // The reader reloads only on request, so searches
+                        // see the commit only after the reload.
                         let t = Arc::clone(&tantivy_c);
-                        match tokio::task::spawn_blocking(move || t.commit()).await {
+                        let committed = move || t.commit().and_then(|()| t.reload_reader());
+                        match tokio::task::spawn_blocking(committed).await {
                             Ok(Ok(())) => {}
                             Ok(Err(e)) => tracing::warn!("tantivy commit error: {e}"),
                             Err(e) => tracing::warn!("tantivy commit panicked: {e}"),

@@ -1,7 +1,24 @@
 use std::path::Path;
 
-use crate::config::ContentConfig;
+use crate::config::{ContentConfig, ExclusionConfig};
 use crate::error::{AppError, Result};
+
+use super::exclusions::is_network_mount;
+
+/// The content limits that apply under `root`: none on a network mount when
+/// `skip_network_content` is set, and none above `max_content_size_bytes`.
+/// Applying both here keeps the crawl, the watcher and archive indexing in
+/// agreement, since all three read limits only through `content_limit`.
+pub fn effective_config(
+    content: &ContentConfig,
+    excl: &ExclusionConfig,
+    root: &Path,
+) -> ContentConfig {
+    if excl.skip_network_content && is_network_mount(root) {
+        return ContentConfig::default();
+    }
+    content.capped(excl.max_content_size_bytes)
+}
 
 /// Returns the maximum bytes to index for this file's extension.
 /// `None` means skip content indexing entirely.
@@ -44,6 +61,17 @@ pub fn extract_content_from_bytes(buf: &[u8]) -> Option<String> {
     }
     let (cow, _, _) = encoding_rs::UTF_8.decode(buf);
     Some(cow.into_owned())
+}
+
+/// The first `max_bytes` of a file as text, reading no more than that.
+/// `None` for a binary or unreadable file. Blocking: for crawl threads.
+pub fn read_content(path: &Path, max_bytes: u64) -> Option<String> {
+    use std::io::Read;
+    let file = std::fs::File::open(path).ok()?;
+    let len = file.metadata().ok()?.len().min(max_bytes);
+    let mut buf = Vec::with_capacity(len as usize);
+    file.take(max_bytes).read_to_end(&mut buf).ok()?;
+    extract_content_from_bytes(&buf)
 }
 
 /// Extract text content from a file on disk.
@@ -114,6 +142,37 @@ mod tests {
         ContentConfig {
             extension_limits: map.iter().map(|(k, v)| (k.to_string(), *v)).collect(),
         }
+    }
+
+    #[test]
+    fn read_content_stops_at_the_limit() {
+        let mut f = NamedTempFile::new().unwrap();
+        f.write_all(&b"x".repeat(3 * 1024 * 1024)).unwrap();
+        let text = read_content(f.path(), 10).unwrap();
+        assert_eq!(text, "x".repeat(10));
+        assert!(read_content(Path::new("/no/such/file"), 10).is_none());
+    }
+
+    #[test]
+    fn cap_lowers_limits_but_keeps_zero_as_skip() {
+        let capped = cfg(&[("rs", 524_288), ("md", 1000), ("bin", 0)]).capped(4096);
+        assert_eq!(content_limit(Path::new("a.rs"), &capped), Some(4096));
+        assert_eq!(content_limit(Path::new("a.md"), &capped), Some(1000));
+        assert_eq!(content_limit(Path::new("a.bin"), &capped), None);
+        let uncapped = cfg(&[("rs", 524_288)]).capped(0);
+        assert_eq!(content_limit(Path::new("a.rs"), &uncapped), Some(524_288));
+    }
+
+    #[test]
+    fn effective_config_applies_the_global_cap() {
+        let excl = ExclusionConfig {
+            max_content_size_bytes: 100,
+            skip_network_content: true,
+            ..Default::default()
+        };
+        let dir = tempfile::tempdir().unwrap();
+        let eff = effective_config(&cfg(&[("rs", 524_288)]), &excl, dir.path());
+        assert_eq!(content_limit(Path::new("a.rs"), &eff), Some(100));
     }
 
     #[test]

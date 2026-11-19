@@ -530,6 +530,11 @@ impl FileStore {
         }
     }
 
+    /// Upserts plain file rows in one transaction.
+    pub fn upsert_files(&self, records: &[FileRecord]) -> Result<()> {
+        self.upsert_archive_batch(records, None)
+    }
+
     pub fn upsert_archive_batch(
         &self,
         records: &[FileRecord],
@@ -541,6 +546,13 @@ impl FileStore {
                 m.upsert_archive_batch(records, tag);
                 Ok(())
             }
+        }
+    }
+
+    pub fn paths_in_archive(&self, archive_path: &str) -> Result<Vec<String>> {
+        match self {
+            FileStore::Sqlite(s) => s.paths_in_archive(archive_path),
+            FileStore::Memory(m) => Ok(m.paths_in_archive(archive_path)),
         }
     }
 
