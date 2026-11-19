@@ -68,6 +68,7 @@ impl Ctx {
                     p.found.set(None);
                     if moved {
                         self.note_recent(src, &path);
+                        self.pane_moved(p);
                     }
                     p.cwd.set(path);
                     p.all.set(entries);
@@ -362,7 +363,7 @@ impl Ctx {
     }
 
     /// Brings the shown tab's entry up to date with where the pane is.
-    fn save_tab(self, p: Pane) {
+    pub(super) fn save_tab(self, p: Pane) {
         // While a listing is on its way, the tab is where it's going, not the folder still shown.
         let (src, cwd, selected) = match p.going_to.get_value() {
             Some((src, path)) => (src, path, None),

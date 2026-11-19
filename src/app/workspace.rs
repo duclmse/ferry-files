@@ -35,20 +35,55 @@ pub(super) struct Workspace {
     pane_w: f64,
 }
 
+/// A tab on a phone that isn't connected: its pane, where it was among the pane's saved tabs,
+/// and whether it was the one shown.
+struct Waiting {
+    pane: usize,
+    at: usize,
+    shown: bool,
+    tab: SavedTab,
+}
+
+/// How `apply` left a pane, kept until the pane is used: where each tab was among the saved ones
+/// (`None`: a stand-in on the computer while all of them wait for their phones), the tab shown,
+/// and whether the pane has landed on its first folder since.
+#[derive(Clone)]
+struct Applied {
+    order: Vec<Option<usize>>,
+    tab: usize,
+    landed: bool,
+}
+
 thread_local! {
     /// Whether the session may be saved: not before it's been brought back at launch.
     static READY: Cell<bool> = const { Cell::new(false) };
-    /// Tabs on phones that aren't connected, by pane.
-    static WAITING: RefCell<Vec<(usize, SavedTab)>> = const { RefCell::new(vec![]) };
+    /// Tabs on phones that aren't connected.
+    static WAITING: RefCell<Vec<Waiting>> = const { RefCell::new(vec![]) };
+    /// Per pane, how `apply` left it, until it's used.
+    static APPLIED: RefCell<[Option<Applied>; 2]> = const { RefCell::new([None, None]) };
+}
+
+fn tab_of(src: Src, t: &SavedTab) -> Tab {
+    Tab { src, cwd: t.cwd.clone(), selected: None, view: view_of(&t.view), root: t.cwd.clone() }
+}
+
+/// A hidden pane given other tabs: it lists its shown tab when it's shown (`set_split`), and
+/// until then is where that tab says.
+fn forget(p: Pane) {
+    p.load_seq.update_value(|n| *n += 1);
+    p.going_to.set_value(None);
+    p.loading.set(false);
+    p.cwd.set(String::new());
 }
 
 fn view_of(key: &str) -> ViewMode {
     ViewMode::ALL.into_iter().find(|v| v.key() == key).unwrap_or(ViewMode::List)
 }
 
-/// Whether a saved tab is on the phone `info`: by serial, else by name.
-fn is_on(t: &SavedTab, info: &Info) -> bool {
-    match &t.side {
+/// Whether a saved tab's side is the phone `info`: by serial, else by name (ids are handed out
+/// afresh each launch).
+fn is_on(side: &Side, info: &Info) -> bool {
+    match side {
         Side::Phone { serial: Some(s), .. } => info.serial.as_deref() == Some(s.as_str()),
         Side::Phone { serial: None, label, .. } => *label == info.label,
         Side::Mac => false,
@@ -60,33 +95,74 @@ pub(super) fn saved_workspaces() -> Vec<Workspace> {
 }
 
 impl Ctx {
-    /// The workspace as it is now, named `name`; tabs waiting for their phone are kept.
+    /// The pane's tabs as `apply` left them, while it hasn't been used since.
+    fn as_applied(self, i: usize) -> Option<Applied> {
+        let p = self.panes[i];
+        APPLIED
+            .with_borrow(|a| a[i].clone())
+            .filter(|a| a.tab == p.tab.get_untracked() && a.order.len() == p.tabs.with_untracked(Vec::len))
+    }
+
+    /// Pane `p` went to another folder: the first time after `apply`, that's it landing on the
+    /// shown tab's folder; after that it's in use, and tabs coming back no longer move it.
+    pub(super) fn pane_moved(self, p: Pane) {
+        APPLIED.with_borrow_mut(|a| {
+            let slot = &mut a[p.id];
+            match slot {
+                Some(x) if !x.landed => x.landed = true,
+                _ => *slot = None,
+            }
+        });
+    }
+
+    /// The workspace as it is now, named `name`; tabs waiting for their phone are kept, in their
+    /// places while the pane hasn't been used since.
     fn snapshot(self, name: String) -> Workspace {
         let panes = [0, 1].map(|i| {
             let p = self.panes[i];
             let shown = p.tab.get_untracked();
-            let kept: Vec<Option<SavedTab>> = p.tabs.with_untracked(|ts| {
-                ts.iter()
-                    .enumerate()
-                    .map(|(at, t)| {
-                        // The shown tab's entry is brought up to date only when leaving it.
-                        // While a listing is on its way, the tab is where it's going.
-                        let (src, cwd, view) = if at == shown {
-                            let (src, cwd) = p.going_to.get_value().unwrap_or_else(|| (p.src.get_untracked(), p.cwd.get_untracked()));
-                            (src, cwd, p.view.get_untracked())
-                        } else {
-                            (t.src, t.cwd.clone(), t.view)
-                        };
-                        // A tab left on a phone that's gone can't be found again.
-                        (src == Src::Mac || self.src_info(src).is_some()).then(|| SavedTab { side: self.side(src), cwd, view: view.key().into() })
-                    })
-                    .collect()
+            // A pane not listed yet (hidden since its tabs were set) is where its shown tab says.
+            let live = p.going_to.with_value(Option::is_some) || p.cwd.with_untracked(|c| !c.is_empty());
+            let applied = self.as_applied(i);
+            // Each tab with where it goes and how much it wants to be the one shown: a waiting tab
+            // that was shown beats the tab shown in its place.
+            let mut all: Vec<(usize, SavedTab, u8)> = vec![];
+            p.tabs.with_untracked(|ts| {
+                for (at, t) in ts.iter().enumerate() {
+                    // The shown tab's entry is brought up to date only when leaving it.
+                    // While a listing is on its way, the tab is where it's going.
+                    let (src, cwd, view) = if at == shown && live {
+                        let (src, cwd) = p.going_to.get_value().unwrap_or_else(|| (p.src.get_untracked(), p.cwd.get_untracked()));
+                        (src, cwd, p.view.get_untracked())
+                    } else {
+                        (t.src, t.cwd.clone(), t.view)
+                    };
+                    // A tab left on a phone that's gone can't be found again.
+                    if src != Src::Mac && self.src_info(src).is_none() {
+                        continue;
+                    }
+                    let place = match &applied {
+                        Some(a) => match a.order[at] {
+                            Some(k) => k,
+                            None => continue,
+                        },
+                        None => at,
+                    };
+                    all.push((place, SavedTab { side: self.side(src), cwd, view: view.key().into() }, u8::from(at == shown)));
+                }
             });
-            // The shown tab, counted among those kept.
-            let tab = kept[..shown.min(kept.len())].iter().flatten().count();
-            let mut tabs: Vec<SavedTab> = kept.into_iter().flatten().collect();
-            WAITING.with_borrow(|w| tabs.extend(w.iter().filter(|(pane, _)| *pane == i).map(|(_, t)| t.clone())));
-            SavedPane { tabs, tab }
+            WAITING.with_borrow(|w| {
+                for x in w.iter().filter(|x| x.pane == i) {
+                    let (place, want) = match applied {
+                        Some(_) => (x.at, if x.shown { 2 } else { 0 }),
+                        None => (usize::MAX, 0),
+                    };
+                    all.push((place, x.tab.clone(), want));
+                }
+            });
+            all.sort_by_key(|x| x.0);
+            let tab = all.iter().enumerate().max_by_key(|(k, x)| (x.2, std::cmp::Reverse(*k))).map_or(0, |(k, _)| k);
+            SavedPane { tabs: all.into_iter().map(|x| x.1).collect(), tab }
         });
         Workspace {
             name,
@@ -103,6 +179,7 @@ impl Ctx {
     /// when their phones connect.
     fn apply(self, w: Workspace) {
         WAITING.with_borrow_mut(Vec::clear);
+        self.stop_compare();
         self.side_w.set(w.side_w);
         store(SIDE_W_KEY, &w.side_w.to_string());
         self.pane_w.set(w.pane_w);
@@ -112,27 +189,36 @@ impl Ctx {
         store(SPLIT_KEY, if w.split { "1" } else { "0" });
         for (i, saved) in w.panes.into_iter().enumerate() {
             let p = self.panes[i];
-            let mut tabs = vec![];
+            let (mut tabs, mut order) = (vec![], vec![]);
             let mut shown = 0;
             for (at, t) in saved.tabs.into_iter().enumerate() {
-                match self.src_of(&t.side) {
-                    Ok(src) => {
+                let src = match &t.side {
+                    Side::Mac => Some(Src::Mac),
+                    side => self.phones.with_untracked(|ps| ps.iter().find(|i| is_on(side, i)).map(|i| Src::of(&i.id))),
+                };
+                match src {
+                    Some(src) => {
                         if at == saved.tab {
                             shown = tabs.len();
                         }
-                        tabs.push(Tab { src, cwd: t.cwd.clone(), selected: None, view: view_of(&t.view), root: t.cwd });
+                        tabs.push(tab_of(src, &t));
+                        order.push(Some(at));
                     }
-                    Err(_) => WAITING.with_borrow_mut(|wt| wt.push((i, t))),
+                    None => WAITING.with_borrow_mut(|wt| wt.push(Waiting { pane: i, at, shown: at == saved.tab, tab: t })),
                 }
             }
             if tabs.is_empty() {
                 tabs.push(Tab { src: Src::Mac, cwd: String::new(), selected: None, view: p.view.get_untracked(), root: String::new() });
+                order.push(None);
             }
             p.tabs.set(tabs);
             p.tab.set(shown);
             if i == 0 || w.split {
                 self.go_to_tab(p);
+            } else {
+                forget(p);
             }
+            APPLIED.with_borrow_mut(|a| a[i] = Some(Applied { order, tab: shown, landed: false }));
         }
         self.active.set(if w.split { w.active.min(1) } else { 0 });
     }
@@ -174,17 +260,57 @@ impl Ctx {
         });
     }
 
-    /// A phone connected: its waiting tabs come back, after the pane's others.
+    /// A phone connected: its waiting tabs come back. In a pane not used since its tabs were
+    /// set, they go back in their places, a stand-in gives way, and the one that was shown is
+    /// shown; otherwise they go after the pane's others.
     pub(super) fn tabs_back(self, info: &Info) {
-        let back: Vec<(usize, SavedTab)> = WAITING.with_borrow_mut(|w| {
-            let (on, rest): (Vec<_>, Vec<_>) = w.drain(..).partition(|(_, t)| is_on(t, info));
+        let back: Vec<Waiting> = WAITING.with_borrow_mut(|w| {
+            let (on, rest): (Vec<_>, Vec<_>) = w.drain(..).partition(|x| is_on(&x.tab.side, info));
             *w = rest;
             on
         });
         let src = Src::of(&info.id);
-        for (i, t) in back {
+        for i in 0..2 {
+            let mine: Vec<&Waiting> = back.iter().filter(|x| x.pane == i).collect();
+            if mine.is_empty() {
+                continue;
+            }
             let p = self.panes[i];
-            p.tabs.update(|ts| ts.push(Tab { src, cwd: t.cwd.clone(), selected: None, view: view_of(&t.view), root: t.cwd }));
+            let Some(a) = self.as_applied(i).filter(|_| self.editor.with_untracked(Option::is_none)) else {
+                p.tabs.update(|ts| ts.extend(mine.iter().map(|x| tab_of(src, &x.tab))));
+                continue;
+            };
+            let visible = i == 0 || self.split.get_untracked();
+            let stand_in = a.order == [None];
+            if visible && !stand_in {
+                self.save_tab(p);
+            }
+            let (mut tabs, mut order) = (p.tabs.get_untracked(), a.order);
+            // The saved place of the tab shown, and whether another is to be shown.
+            let (mut shown, mut switch) = (order[a.tab], stand_in);
+            if stand_in {
+                tabs.clear();
+                order.clear();
+            }
+            for x in mine {
+                let pos = order.iter().position(|o| o.is_some_and(|k| k > x.at)).unwrap_or(order.len());
+                order.insert(pos, Some(x.at));
+                tabs.insert(pos, tab_of(src, &x.tab));
+                if x.shown {
+                    (shown, switch) = (Some(x.at), true);
+                }
+            }
+            let tab = shown.and_then(|k| order.iter().position(|o| *o == Some(k))).unwrap_or(0);
+            p.tabs.set(tabs);
+            p.tab.set(tab);
+            if switch {
+                if visible {
+                    self.go_to_tab(p);
+                } else {
+                    forget(p);
+                }
+            }
+            APPLIED.with_borrow_mut(|ap| ap[i] = Some(Applied { order, tab, landed: a.landed && !switch }));
         }
     }
 

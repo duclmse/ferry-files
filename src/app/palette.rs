@@ -50,12 +50,11 @@ struct Choice {
     cmd: Cmd,
 }
 
-/// How well `query` matches `text`: its letters in order, scoring runs of letters and word
-/// starts; `None` when they aren't all there.
-fn score(query: &str, text: &str) -> Option<i32> {
-    let t: Vec<char> = text.to_lowercase().chars().collect();
+/// How well `query` (lowercase, no spaces) matches `text` (lowercase): its letters in order,
+/// scoring runs of letters and word starts; `None` when they aren't all there.
+fn score(query: &[char], t: &[char]) -> Option<i32> {
     let (mut at, mut total, mut prev) = (0usize, 0i32, usize::MAX);
-    for c in query.to_lowercase().chars().filter(|c| !c.is_whitespace()) {
+    for &c in query {
         let i = (at..t.len()).find(|&i| t[i] == c)?;
         if prev != usize::MAX && i == prev + 1 {
             total += 4;
@@ -68,6 +67,10 @@ fn score(query: &str, text: &str) -> Option<i32> {
         at = i + 1;
     }
     Some(total)
+}
+
+fn lower(s: &str) -> Vec<char> {
+    s.to_lowercase().chars().collect()
 }
 
 /// A menu's items as choices: the enabled ones, with ✓ marks turned into words.
@@ -168,23 +171,21 @@ impl Ctx {
 pub(super) fn Palette() -> impl IntoView {
     let ctx = expect_context::<Ctx>();
     let choices = StoredValue::new(ctx.choices());
+    // What typing is matched against, per choice: the label, and the group with the label.
+    let hay = StoredValue::new(choices.with_value(|cs| cs.iter().map(|c| (lower(&c.label), lower(&format!("{} {}", c.group, c.label)))).collect::<Vec<_>>()));
     let query = RwSignal::new(String::new());
     let at = RwSignal::new(0usize);
     // Indices of the choices that match, best first; all of them, in order, before typing.
     let shown = Memo::new(move |_| {
-        let q = query.get();
-        choices.with_value(|cs| {
-            if q.trim().is_empty() {
-                return (0..cs.len()).collect::<Vec<_>>();
+        let q: Vec<char> = query.with(|q| q.to_lowercase().chars().filter(|c| !c.is_whitespace()).collect());
+        hay.with_value(|hs| {
+            if q.is_empty() {
+                return (0..hs.len()).collect::<Vec<_>>();
             }
-            let mut hits: Vec<(i32, usize)> = cs
+            let mut hits: Vec<(i32, usize)> = hs
                 .iter()
                 .enumerate()
-                .filter_map(|(i, c)| {
-                    let own = score(&q, &c.label);
-                    let with_group = score(&q, &format!("{} {}", c.group, c.label)).map(|s| s - 2);
-                    own.max(with_group).map(|s| (s, i))
-                })
+                .filter_map(|(i, (own, with_group))| score(&q, own).max(score(&q, with_group).map(|s| s - 2)).map(|s| (s, i)))
                 .collect();
             hits.sort_by_key(|&(s, i)| (std::cmp::Reverse(s), i));
             hits.into_iter().map(|(_, i)| i).collect()

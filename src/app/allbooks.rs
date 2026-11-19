@@ -16,7 +16,7 @@ fn book_key(e: &Entry, info: Option<&BookInfo>) -> String {
     let squash = |s: &str| s.to_lowercase().split(|c: char| !c.is_alphanumeric()).filter(|w| !w.is_empty()).collect::<Vec<_>>().join(" ");
     match info {
         Some(i) if i.problem.is_none() && !i.title.trim().is_empty() => format!("{}|{}", squash(&i.title), squash(i.creators.first().map_or("", |c| c.as_str()))),
-        _ => format!("file|{}", squash(e.name.trim_end_matches(".epub").trim_end_matches(".EPUB"))),
+        _ => format!("file|{}", squash(e.name.rsplit_once('.').map_or(e.name.as_str(), |(stem, _)| stem))),
     }
 }
 
@@ -80,16 +80,25 @@ pub(super) fn AllBooks() -> impl IntoView {
             let r = call::<Matches>("library", args).await.map(|m| m.entries);
             let entries = r.clone().unwrap_or_default();
             found.try_update(|f| f[at] = Some(r));
+            // Infos are handed over a few times a second, not one by one: each hand-over matches
+            // and draws all the books again.
+            let (mut got, mut handed) = (vec![], js_sys::Date::now());
+            let hand_over = |got: &mut Vec<_>| infos.try_update(|i| i.extend(got.drain(..))).is_some();
             for e in entries {
                 if alive.try_get_value().is_none() {
                     return;
                 }
                 let args = json!({ "src": pl.src.key(), "path": e.path, "size": e.size, "mtime": e.mtime });
                 let info = call::<BookInfo>("book_info", args).await.unwrap_or_else(|err| BookInfo { problem: Some(err), ..Default::default() });
-                infos.try_update(|i| {
-                    i.insert((at, e.path.clone()), info);
-                });
+                got.push(((at, e.path), info));
+                if js_sys::Date::now() - handed > 300.0 {
+                    if !hand_over(&mut got) {
+                        return;
+                    }
+                    handed = js_sys::Date::now();
+                }
             }
+            hand_over(&mut got);
         });
     }
 
