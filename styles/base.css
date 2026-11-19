@@ -55,6 +55,29 @@ body {
   height: 100%;
 }
 
+/* Thin scroll bars, even with "Show scroll bars: Always" on the Mac: a rounded thumb in the muted
+   colour, with no track. */
+::-webkit-scrollbar {
+  width: 8px;
+  height: 8px;
+}
+
+::-webkit-scrollbar-track,
+::-webkit-scrollbar-corner {
+  background: transparent;
+}
+
+::-webkit-scrollbar-thumb {
+  background: color-mix(in srgb, var(--muted) 45%, transparent);
+  background-clip: padding-box;
+  border: 2px solid transparent;
+  border-radius: 4px;
+}
+
+::-webkit-scrollbar-thumb:hover {
+  background-color: color-mix(in srgb, var(--muted) 75%, transparent);
+}
+
 body {
   background: var(--bg);
   color: var(--ink);

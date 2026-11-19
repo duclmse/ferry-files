@@ -23,14 +23,13 @@ fn focus_in(id: usize, sel: &'static str) {
 }
 
 impl Ctx {
-    /// Shows the filter pane and puts the cursor in the search box, or with `replace`, in Replace
-    /// with.
+    /// Shows the filter pane and puts the cursor in the search box (hiding Replace with), or with
+    /// `replace`, in Replace with.
     pub(super) fn open_search(self, p: Pane, replace: bool) {
         self.active.set(p.id);
         p.filters_open.set(true);
-        if replace {
-            p.replacing.set(true);
-        }
+        // ⌘F while replacing goes back to just the search.
+        p.replacing.set(replace);
         focus_in(p.id, if replace { ".replace-box input" } else { ".search-box input" });
     }
 
