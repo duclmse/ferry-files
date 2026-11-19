@@ -9,7 +9,7 @@
 #   scripts\bench-windows.ps1 [-TargetDir <path>] [-Store sqlite|memory]
 #       [-DataDir <path>] [-OutDir <path>] [-RootStyle forward|backslash]
 #       [-Clients 8] [-LoadSeconds 20] [-IdleSeconds 15] [-Iterations 5]
-#       [-CrawlTimeout 3600]
+#       [-CrawlTimeout 3600] [-UseMft]
 #
 # Catch-up has two paths on Windows, and one run exercises only one of them:
 #   - USN journal replay needs admin rights, as the service's LocalSystem
@@ -27,6 +27,13 @@
 # -DataDir keeps the index across runs. A later run warm-starts instead of
 # crawling, which keeps repeated runs over a large TargetDir (e.g. C:\) cheap.
 # Without it, a fresh temp dir is used and deleted at the end.
+#
+# -UseMft sets indexer.use_mft, so a cold crawl reads the NTFS file table
+# instead of walking directories. It needs an elevated prompt; otherwise the
+# daemon falls back to the walk. The summary says which one ran per root.
+#
+# The script exits 1 when a catch-up check fails, or with -UseMft when no root
+# was read from the file table, so CI can run it as a test.
 #
 # -RootStyle backslash writes watch_paths with '\' separators instead of '/',
 # to check that replayed paths match crawled ones either way.
@@ -48,7 +55,8 @@ param(
     [int]$LoadSeconds = 20,
     [int]$IdleSeconds = 15,
     [int]$Iterations = 5,
-    [int]$CrawlTimeout = 3600
+    [int]$CrawlTimeout = 3600,
+    [switch]$UseMft
 )
 
 $ErrorActionPreference = "Stop"
@@ -470,6 +478,9 @@ path_patterns = ["**/$leaf/data/**", "**/$leaf/logs/**", "**/$leaf/outside/**"]
 [archive_index]
 enabled = false
 
+[indexer]
+use_mft = $(if ($UseMft) { 'true' } else { 'false' })
+
 [api]
 rest_port    = $restPort
 grpc_port    = $($restPort + 1)
@@ -486,6 +497,7 @@ if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
 
 $running = $null
 $catchUp = $null
+$exitCode = 1
 try {
     $os = Get-CimInstance Win32_OperatingSystem
     $cpu = Get-CimInstance Win32_Processor | Select-Object -First 1
@@ -504,6 +516,7 @@ try {
     Say "RAM:          $([math]::Round($os.TotalVisibleMemorySize / 1MB, 1)) GB"
     Say "Elevated:     $isAdmin $(if ($isAdmin) {'(USN replay expected)'} else {'(timestamp scan expected)'})"
     Say "Store:        $Store"
+    Say "File table:   $(if ($UseMft) {'requested (indexer.use_mft)'} else {'off'})"
     Say "Roots:        $TargetDir, $fixture  [$RootStyle separators]"
     Say "Volumes:      $fsTypes"
     Say "Work dir:     $workDir$(if ($keepData) {' (kept)'})"
@@ -542,6 +555,12 @@ try {
             $crawlSecs, $firstDone, [int64]$stats.total_files, [int64]$stats.total_dirs, ($entries / [math]::Max($crawlSecs, 0.1)))
     } else {
         Say ("Warm start:   ready {0:N1}s after launch (index reused, no crawl)" -f $firstDone)
+    }
+    $fromTable = @(Get-LogMessages $d1 | Where-Object { $_ -match '^file table: ' })
+    $walked = @(Get-LogMessages $d1 | Where-Object { $_ -match '^file table (unavailable|unusable), walking ' })
+    if ($crawled -and $UseMft) {
+        foreach ($m in $fromTable) { Say "Enumeration:  $m" }
+        foreach ($m in $walked) { Say "Enumeration:  $m" }
     }
 
     if (-not (Wait-Expectations $d1 $baseline 60 "baseline")) {
@@ -656,6 +675,12 @@ try {
     Say ""
     Say "Result: catch-up via $path, $($afterChanges.Count - $failed)/$($afterChanges.Count) checks passed"
     Say "======================================================================"
+    $exitCode = 0
+    if ($failed -gt 0) { $exitCode = 1 }
+    if ($UseMft -and $crawled -and $fromTable.Count -eq 0) {
+        Say "FAIL: indexer.use_mft was set but no root was read from the file table"
+        $exitCode = 1
+    }
 }
 finally {
     if ($running -and -not $running.Proc.HasExited) {
@@ -679,3 +704,4 @@ finally {
     Write-Host ""
     Write-Host "Results: $OutDir"
 }
+exit $exitCode

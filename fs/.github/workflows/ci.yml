@@ -1,0 +1,123 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+env:
+  CARGO_TERM_COLOR: always
+
+jobs:
+  test:
+    name: test (${{ matrix.os }})
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, macos-latest, windows-latest]
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          components: clippy, rustfmt
+      - uses: Swatinem/rust-cache@v2
+      - name: Format
+        if: matrix.os == 'ubuntu-latest'
+        run: cargo fmt --all -- --check
+      - name: Clippy
+        run: cargo clippy --workspace --all-targets -- -D warnings
+      - name: Clippy (rar2zip integration feature)
+        run: cargo clippy -p fs-ext-rar2zip --all-targets --features integration -- -D warnings
+      - name: Test
+        run: cargo test --workspace
+      - name: Release build
+        run: cargo build --release --workspace
+
+  # Runner jobs are elevated, and C: is NTFS, so this is a real-volume run of
+  # the file table crawl next to the directory walk it replaces.
+  windows-crawl:
+    name: file table crawl and service (Windows)
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+      - name: Build fsd
+        run: cargo build --release -p fs-server
+      - name: Crawl from the file table
+        shell: pwsh
+        run: >
+          .\scripts\bench-windows.ps1 -TargetDir C:\Windows\System32 -UseMft
+          -OutDir target\bench-mft -LoadSeconds 5 -IdleSeconds 3 -Iterations 3
+      - name: Crawl by walking directories
+        if: always()
+        shell: pwsh
+        run: >
+          .\scripts\bench-windows.ps1 -TargetDir C:\Windows\System32
+          -OutDir target\bench-walk -LoadSeconds 5 -IdleSeconds 3 -Iterations 3
+      - name: Run as a Windows Service
+        if: always()
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = "Stop"
+          $dir = Join-Path $env:RUNNER_TEMP "fs-service"
+          New-Item -ItemType Directory -Force -Path "$dir\watch", "$dir\data", "$dir\logs" | Out-Null
+          Set-Content -Path "$dir\watch\hello-service.txt" -Value "x"
+          $d = $dir -replace '\\', '/'
+          @"
+          watch_paths = ["$d/watch"]
+          data_dir    = "$d/data"
+          log_dir     = "$d/logs"
+
+          [api]
+          rest_port    = 17700
+          grpc_enabled = false
+          "@ | Set-Content -Path "$dir\config.toml" -Encoding UTF8
+          $fsd = (Resolve-Path target\release\fsd.exe).Path
+          & $fsd --config "$dir\config.toml" validate-config
+          if ($LASTEXITCODE -ne 0) { exit 1 }
+          & $fsd --config "$dir\config.toml" install-service
+          if ($LASTEXITCODE -ne 0) { exit 1 }
+          try {
+            Start-Service FsDaemon
+            $deadline = (Get-Date).AddSeconds(120)
+            $hits = 0
+            while ((Get-Date) -lt $deadline) {
+              try {
+                $r = Invoke-RestMethod "http://127.0.0.1:17700/search?q=hello-service" -TimeoutSec 5
+                $hits = [int]$r.total
+                if ($hits -gt 0) { break }
+              } catch {}
+              Start-Sleep -Seconds 1
+            }
+            if ($hits -eq 0) { throw "the service did not answer a search within 120 s" }
+            Write-Host "Service is running and found $hits hit(s)"
+            Stop-Service FsDaemon
+            (Get-Service FsDaemon).WaitForStatus("Stopped", [TimeSpan]::FromSeconds(60))
+            Write-Host "Service stopped cleanly"
+          } finally {
+            Get-ChildItem "$dir\logs" | Get-Content -Tail 30
+            & $fsd uninstall-service
+          }
+      - name: Summaries
+        if: always()
+        shell: pwsh
+        run: |
+          foreach ($run in "bench-mft", "bench-walk") {
+            $f = "target\$run\summary.txt"
+            if (Test-Path $f) {
+              "### $run" | Add-Content $env:GITHUB_STEP_SUMMARY
+              '```' | Add-Content $env:GITHUB_STEP_SUMMARY
+              Get-Content $f | Add-Content $env:GITHUB_STEP_SUMMARY
+              '```' | Add-Content $env:GITHUB_STEP_SUMMARY
+            }
+          }
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: windows-crawl
+          path: |
+            target/bench-mft
+            target/bench-walk
