@@ -197,7 +197,7 @@ pub(super) fn DeviceFinder() -> impl IntoView {
         let found: Vec<UsbDevice> = d.found.iter().filter(|f| !connected.contains(&f.key())).cloned().collect();
         let waiting = d.adb_waiting.then(|| view! { <p class="hint">"A phone is waiting: allow USB debugging on it to use adb."</p> });
         if found.is_empty() {
-            if !ctx.phones.with(|p| p.is_empty()) {
+            if ctx.phones.with(|p| p.iter().any(|i| i.transport != "everything")) {
                 return view! { {waiting} {error} }.into_any();
             }
             let mut notes = vec!["No phone found. Plug one in by USB with debugging (adb) or File transfer mode (MTP).".to_string()];

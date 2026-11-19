@@ -41,6 +41,8 @@ regex = { version = "1", default-features = false, features = [
 ] }
 # Colours for code in the preview. Pure-Rust regexes (fancy-regex), so no C library to build.
 syntect = { version = "5", default-features = false, features = ["parsing", "default-syntaxes", "regex-fancy"] }
+# Searching with Everything over its HTTP server (plain http, so no TLS).
+ureq = { version = "2", default-features = false }
 
 [target.'cfg(unix)'.dependencies]
 signal-hook = "0.3"

@@ -67,6 +67,10 @@ impl Ctx {
     }
 
     pub(super) fn ask_delete(self, p: Pane) {
+        if self.read_only(p.src.get_untracked()) {
+            p.error("Files on an Everything server can only be read, not deleted.");
+            return;
+        }
         let items = p.picked();
         if !items.is_empty() {
             p.notice.set(Notice::ConfirmDelete(items));

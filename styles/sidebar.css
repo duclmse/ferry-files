@@ -471,3 +471,21 @@
   background: var(--bg);
   color: var(--ink);
 }
+
+/* Everything: notes under the box for adding a server. */
+.ev-note {
+  margin: 2px 0 4px;
+  padding: 0 4px 0 calc(4px + var(--twisty) + 4px);
+  font-size: 12px;
+  color: var(--muted);
+}
+
+.ev-note.error {
+  color: var(--danger);
+}
+
+/* An Everything server that isn't connected. */
+.device .name.off b {
+  color: var(--muted);
+  font-weight: 500;
+}

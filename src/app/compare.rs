@@ -76,7 +76,7 @@ impl Ctx {
         if items.is_empty() {
             return;
         }
-        if to_dir == "/" && self.src_info(o.src.get_untracked()).is_some_and(|i| i.transport == "mtp") {
+        if self.read_only(o.src.get_untracked()) || to_dir == "/" && self.src_info(o.src.get_untracked()).is_some_and(|i| i.transport == "mtp") {
             return;
         }
         let work = Work::Copy { from: self.side(p.src.get_untracked()), items, to: self.side(o.src.get_untracked()), to_dir, moving: false, replace: true };

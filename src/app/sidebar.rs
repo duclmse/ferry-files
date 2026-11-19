@@ -1,15 +1,34 @@
 //! The sidebar (workspaces, favourites, places, devices) and the settings window.
 
 use super::*;
+use super::everything::everything_base;
+
+/// The sidebar's sections, top to bottom: (key, title). The computer's title is its name.
+pub(super) const SECTIONS: [(&str, &str); 6] = [
+    ("workspaces", "Workspaces"),
+    ("favs", "Favourites"),
+    ("pairs", "Sync pairs"),
+    ("everything", "Everything"),
+    ("mac", ""),
+    ("devices", "Devices"),
+];
+
+/// The sections in the order chosen (`stored`, keys of `SECTIONS`), then any it doesn't name.
+pub(super) fn section_order(stored: &[String]) -> Vec<&'static str> {
+    let mut order: Vec<&'static str> = stored.iter().filter_map(|k| SECTIONS.iter().find(|s| s.0 == k).map(|s| s.0)).collect();
+    order.dedup();
+    order.extend(SECTIONS.iter().map(|s| s.0).filter(|k| !stored.iter().any(|s| s == k)));
+    order
+}
 
 /// Places on the Mac (and its disks) and on the connected devices. Clicking one opens it in the
-/// active pane.
+/// active pane. Right-click it to choose its sections.
 #[component]
 pub(super) fn Sidebar() -> impl IntoView {
     let ctx = expect_context::<Ctx>();
     // A section heading that folds its section away; remembered across launches.
-    // `refresh`: Devices has a button to look for devices again, at the right.
-    let section = move |key: &'static str, title: &'static str, refresh: bool| {
+    // `buttons` go at its right.
+    let section = move |key: &'static str, title: &'static str, buttons: Option<ViewFn>| {
         let storage_key = format!("ferry-files.fold.{key}");
         let open = RwSignal::new(!stored_flag(&storage_key, false));
         let heading = move || {
@@ -24,26 +43,41 @@ pub(super) fn Sidebar() -> impl IntoView {
                 }>
                 {chev(open)}{title}
             </button>
-            {refresh.then(|| view! {
-                <button class="refresh" class:turning=move || ctx.looking.get()
-                    title="Look for devices and disks again" aria-label="Look for devices again"
-                    on:click=move |_| ctx.refresh_devices()>
-                    <svg viewBox="0 0 16 16" aria-hidden="true"><path d="M13 8a5 5 0 1 1-1.5-3.6"/><path d="M13 2.5v3h-3"/></svg>
-                </button>
-                <button class="refresh" title="Connect a phone over Wi-Fi (adb Wireless debugging)" aria-label="Connect over Wi-Fi"
-                    on:click=move |_| ctx.wifi.set(true)>{ico(Icon::Wifi)}</button>
-            })}</h2>
+            {buttons.as_ref().map(|b| b.run())}</h2>
             }
         };
         (heading, open)
     };
-    let (fav_heading, fav_open) = section("favs", "Favourites", false);
-    let (pairs_heading, pairs_open) = section("pairs", "Sync pairs", false);
-    let (ws_heading, ws_open) = section("workspaces", "Workspaces", false);
+    let (fav_heading, fav_open) = section("favs", "Favourites", None);
+    let (pairs_heading, pairs_open) = section("pairs", "Sync pairs", None);
+    let (ws_heading, ws_open) = section("workspaces", "Workspaces", None);
     // Naming a workspace to save: None when not asked.
     let ws_name = RwSignal::new(None::<String>);
-    let (mac_heading, mac_open) = section("mac", crate::os::computer(), false);
-    let (dev_heading, dev_open) = section("devices", "Devices", true);
+    let (mac_heading, mac_open) = section("mac", crate::os::computer(), None);
+    let dev_buttons = ViewFn::from(move || view! {
+        <button class="refresh" class:turning=move || ctx.looking.get()
+            title="Look for devices and disks again" aria-label="Look for devices again"
+            on:click=move |_| ctx.refresh_devices()>
+            <svg viewBox="0 0 16 16" aria-hidden="true"><path d="M13 8a5 5 0 1 1-1.5-3.6"/><path d="M13 2.5v3h-3"/></svg>
+        </button>
+        <button class="refresh" title="Connect a phone over Wi-Fi (adb Wireless debugging)" aria-label="Connect over Wi-Fi"
+            on:click=move |_| ctx.wifi.set(true)>{ico(Icon::Wifi)}</button>
+    });
+    let (dev_heading, dev_open) = section("devices", "Devices", Some(dev_buttons));
+    // Adding an Everything server: the address typed (None when not asked), why it couldn't
+    // be added, and whether it's being tried.
+    let ev_adding = RwSignal::new(None::<String>);
+    let ev_error = RwSignal::new(None::<String>);
+    let ev_trying = RwSignal::new(false);
+    // Not ev_adding itself: the box would be made again at each key.
+    let ev_asking = Memo::new(move |_| ev_adding.with(Option::is_some));
+    let ev_buttons = ViewFn::from(move || view! {
+        <button class="refresh" title="Add an Everything server" aria-label="Add an Everything server"
+            on:click=move |_| { ev_error.set(None); ev_adding.set(Some(String::new())) }>{ico(Icon::Plus)}</button>
+    });
+    let (ev_heading, ev_open) = section("everything", "Everything", Some(ev_buttons));
+    // A section hidden with a right-click shows nothing, not even its title.
+    let shown = move |key: &str| ctx.hidden_sections.with(|h| !h.iter().any(|x| x == key));
     // Disks mounted on the Mac: USB drives, SD cards, disk images.
     let drives = Memo::new(move |_| ctx.devices.with(|d| d.as_ref().map(|d| d.drives.clone()).unwrap_or_default()));
     let device = move |i: Info| {
@@ -76,7 +110,7 @@ pub(super) fn Sidebar() -> impl IntoView {
                     on:contextmenu=move |ev| ctx.show_place_menu(&ev, src, "/".into())>
                     <b>{i.label.clone()}</b>
                 </button>
-                {
+                {(i.transport != "everything").then(|| {
                     // The badge says how it's connected; when the same phone is also found the
                     // other way, clicking it reconnects that way.
                     let wireless = i.wireless();
@@ -102,9 +136,19 @@ pub(super) fn Sidebar() -> impl IntoView {
                             {move || to().map(|_| view! { <span class="swap" aria-hidden="true">"⇄"</span> })}
                         </button>
                     }
-                }
-                <button class="eject" title=format!("Disconnect {}", i.label) aria-label="Disconnect"
-                    on:click=move |_| ctx.disconnect(src)>{ico(Icon::Eject)}</button>
+                })}
+                {match i.usb.as_deref().and_then(|u| u.strip_prefix("everything:")).map(String::from) {
+                    Some(base) => view! {
+                        <button class="eject" title=format!("Search all drives on {}", i.label) aria-label="Search all drives"
+                            on:click=move |_| ctx.search_all(src)>{ico(Icon::Search)}</button>
+                        <button class="eject" title=format!("Remove {} from the sidebar", i.label) aria-label="Remove"
+                            on:click=move |_| ctx.remove_everything(&base)>{ico(Icon::Close)}</button>
+                    }.into_any(),
+                    None => view! {
+                        <button class="eject" title=format!("Disconnect {}", i.label) aria-label="Disconnect"
+                            on:click=move |_| ctx.disconnect(src)>{ico(Icon::Eject)}</button>
+                    }.into_any(),
+                }}
             </div>
             {move || open.get().then(|| view! {
                 <div class="dev-dirs">
@@ -113,123 +157,211 @@ pub(super) fn Sidebar() -> impl IntoView {
             })}
         }
     };
-    view! {
-        <nav class="side">
-            {ws_heading()}
-            {move || ws_open.get().then(|| view! {
-                {move || ctx.workspaces.get().into_iter().map(|w| {
-                    let tip = ctx.workspace_tip(&w);
-                    let (w1, name) = (w.clone(), w.name.clone());
+    // The sections, in the order chosen in Settings > Sidebar.
+    let sec_workspaces = move || shown("workspaces").then(|| view! {
+        {ws_heading()}
+        {move || ws_open.get().then(|| view! {
+            {move || ctx.workspaces.get().into_iter().map(|w| {
+                let tip = ctx.workspace_tip(&w);
+                let (w1, name) = (w.clone(), w.name.clone());
+                view! {
+                    <div class="tree-row fav" style="--depth: 1">
+                        <span class="twisty none"></span>
+                        <button class="item" title=tip on:click=move |_| ctx.open_workspace(w1.clone())>{w.name.clone()}</button>
+                        <button class="unfav" title="Delete this workspace" aria-label="Delete this workspace"
+                            on:click=move |_| ctx.set_workspaces(ctx.workspaces.get_untracked().into_iter().filter(|x| x.name != name).collect())>{ico(Icon::Close)}</button>
+                    </div>
+                }
+            }).collect_view()}
+            {move || match ws_name.get() {
+                None => view! {
+                    <div class="tree-row" style="--depth: 1">
+                        <span class="twisty none"></span>
+                        <button class="item add" title="Keep these tabs, the split and the widths under a name"
+                            on:click=move |_| ws_name.set(Some(String::new()))>"Save these tabs…"</button>
+                    </div>
+                }.into_any(),
+                Some(_) => {
+                    let save = move || {
+                        if let Some(n) = ws_name.get_untracked() {
+                            ctx.save_workspace(&n);
+                        }
+                        ws_name.set(None);
+                    };
+                    let input = NodeRef::<html::Input>::new();
+                    input.on_load(move |el| { request_animation_frame(move || { let _ = el.focus(); }); });
                     view! {
+                        <div class="ws-save">
+                            <input node_ref=input type="text" placeholder="Name, e.g. Phone photos" aria-label="Workspace name"
+                                on:contextmenu=|e| e.stop_propagation()
+                                prop:value=move || ws_name.get().unwrap_or_default()
+                                on:input=move |e| ws_name.set(Some(event_target_value(&e)))
+                                on:keydown=move |e| match e.key().as_str() {
+                                    "Enter" => save(),
+                                    "Escape" => { e.stop_propagation(); ws_name.set(None) }
+                                    _ => {}
+                                }/>
+                            <button class="btn small" disabled=move || ws_name.with(|n| n.as_deref().is_none_or(|n| n.trim().is_empty()))
+                                on:click=move |_| save()>"Save"</button>
+                        </div>
+                    }.into_any()
+                }
+            }}
+        })}
+    });
+    let sec_favs = move || (shown("favs") && !ctx.favs.with(|f| f.is_empty())).then(|| view! {
+            {fav_heading()}
+            {move || fav_open.get().then(|| ctx.favs.get().into_iter().map(|f| {
+                let src = ctx.fav_src(&f);
+                let name = base(&f.path);
+                let on = if f.place == "mac" { crate::os::the_computer().to_string() } else { f.label.clone() };
+                let tip = match src {
+                    Some(_) => format!("{} on {on}", f.path),
+                    None => format!("{} on {on}. Connect {on} to open it.", f.path),
+                };
+                let fav_path = f.path.clone();
+                let unfav = ViewFn::from(move || {
+                    let f = f.clone();
+                    view! {
+                        <button class="unfav" title="Remove from Favourites" aria-label="Remove from Favourites"
+                            on:click=move |_| ctx.set_favs(ctx.favs.get_untracked().into_iter().filter(|x| *x != f).collect())>{ico(Icon::Close)}</button>
+                    }
+                });
+                match src {
+                    Some(src) => view! { <TreeNode src name path=fav_path depth=1 class="fav" tip extra=unfav/> }.into_any(),
+                    // Its device isn't connected: shown, but it can't be opened.
+                    None => view! {
                         <div class="tree-row fav" style="--depth: 1">
                             <span class="twisty none"></span>
-                            <button class="item" title=tip on:click=move |_| ctx.open_workspace(w1.clone())>{w.name.clone()}</button>
-                            <button class="unfav" title="Delete this workspace" aria-label="Delete this workspace"
-                                on:click=move |_| ctx.set_workspaces(ctx.workspaces.get_untracked().into_iter().filter(|x| x.name != name).collect())>{ico(Icon::Close)}</button>
-                        </div>
-                    }
-                }).collect_view()}
-                {move || match ws_name.get() {
-                    None => view! {
-                        <div class="tree-row" style="--depth: 1">
-                            <span class="twisty none"></span>
-                            <button class="item add" title="Keep these tabs, the split and the widths under a name"
-                                on:click=move |_| ws_name.set(Some(String::new()))>"Save these tabs…"</button>
+                            <button class="item off" title=tip disabled=true>{name}</button>
+                            {unfav.run()}
                         </div>
                     }.into_any(),
-                    Some(_) => {
-                        let save = move || {
-                            if let Some(n) = ws_name.get_untracked() {
-                                ctx.save_workspace(&n);
-                            }
-                            ws_name.set(None);
-                        };
-                        let input = NodeRef::<html::Input>::new();
-                        input.on_load(move |el| { request_animation_frame(move || { let _ = el.focus(); }); });
-                        view! {
-                            <div class="ws-save">
-                                <input node_ref=input type="text" placeholder="Name, e.g. Phone photos" aria-label="Workspace name"
-                                    prop:value=move || ws_name.get().unwrap_or_default()
-                                    on:input=move |e| ws_name.set(Some(event_target_value(&e)))
-                                    on:keydown=move |e| match e.key().as_str() {
-                                        "Enter" => save(),
-                                        "Escape" => { e.stop_propagation(); ws_name.set(None) }
-                                        _ => {}
-                                    }/>
-                                <button class="btn small" disabled=move || ws_name.with(|n| n.as_deref().is_none_or(|n| n.trim().is_empty()))
-                                    on:click=move |_| save()>"Save"</button>
-                            </div>
-                        }.into_any()
-                    }
-                }}
-            })}
-            {move || (!ctx.favs.with(|f| f.is_empty())).then(|| view! {
-                {fav_heading()}
-                {move || fav_open.get().then(|| ctx.favs.get().into_iter().map(|f| {
-                    let src = ctx.fav_src(&f);
-                    let name = base(&f.path);
-                    let on = if f.place == "mac" { crate::os::the_computer().to_string() } else { f.label.clone() };
-                    let tip = match src {
-                        Some(_) => format!("{} on {on}", f.path),
-                        None => format!("{} on {on}. Connect {on} to open it.", f.path),
-                    };
-                    let fav_path = f.path.clone();
-                    let unfav = ViewFn::from(move || {
-                        let f = f.clone();
-                        view! {
-                            <button class="unfav" title="Remove from Favourites" aria-label="Remove from Favourites"
-                                on:click=move |_| ctx.set_favs(ctx.favs.get_untracked().into_iter().filter(|x| *x != f).collect())>{ico(Icon::Close)}</button>
+                }
+            }).collect_view())}
+    });
+    let sec_pairs = move || (shown("pairs") && !ctx.sync_pairs.with(|x| x.is_empty())).then(|| view! {
+            {pairs_heading()}
+            {move || pairs_open.get().then(|| ctx.sync_pairs.get().into_iter().map(|pair| {
+                let how = SYNC_MODES.iter().find(|m| m.0 == pair.mode).map_or("Copy missing", |m| m.1);
+                let tip = format!("{how}: {} on {} into {} on {}. Click to see what it would do.",
+                    pair.from_dir, ctx.side_name(&pair.from), pair.to_dir, ctx.side_name(&pair.to));
+                let name = format!("{} → {}", base(&pair.from_dir), base(&pair.to_dir));
+                let (p1, p2) = (pair.clone(), pair);
+                view! {
+                    <div class="tree-row fav pair" style="--depth: 1">
+                        <span class="twisty none"></span>
+                        <button class="item" title=tip on:click=move |_| ctx.open_pair(&p1)>{name}</button>
+                        <button class="unfav" title="Remove this sync pair" aria-label="Remove this sync pair"
+                            on:click=move |_| ctx.set_pairs(ctx.sync_pairs.get_untracked().into_iter().filter(|x| *x != p2).collect())>{ico(Icon::Close)}</button>
+                    </div>
+                }
+            }).collect_view())}
+    });
+    let sec_everything = move || shown("everything").then(|| view! {
+            {ev_heading()}
+            {move || ev_open.get().then(|| view! {
+                {move || ctx.everything.get().into_iter().map(|base| {
+                    let on = ctx.phones.with(|ps| ps.iter().find(|i| i.usb.as_deref() == Some(&format!("everything:{base}"))).cloned());
+                    match on {
+                        Some(i) => device(i).into_any(),
+                        // Not connected: tried again every so often, or now with a click.
+                        None => {
+                            let name = base.trim_start_matches("http://").to_string();
+                            let (b1, b2) = (base.clone(), base.clone());
+                            let tip = move || ctx.everything_errors.with(|e| e.get(&b1).cloned())
+                                .unwrap_or_else(|| "Connecting…".into()) + " Click to try again.";
+                            view! {
+                                <div class="device">
+                                    <span class="fold none"></span>
+                                    <button class="name off" title=tip on:click=move |_| ctx.check_everything()><b>{name}</b></button>
+                                    <button class="eject" title="Remove from the sidebar" aria-label="Remove"
+                                        on:click=move |_| ctx.remove_everything(&b2)>{ico(Icon::Close)}</button>
+                                </div>
+                            }.into_any()
                         }
-                    });
-                    match src {
-                        Some(src) => view! { <TreeNode src name path=fav_path depth=1 class="fav" tip extra=unfav/> }.into_any(),
-                        // Its device isn't connected: shown, but it can't be opened.
-                        None => view! {
-                            <div class="tree-row fav" style="--depth: 1">
-                                <span class="twisty none"></span>
-                                <button class="item off" title=tip disabled=true>{name}</button>
-                                {unfav.run()}
-                            </div>
-                        }.into_any(),
                     }
-                }).collect_view())}
-            })}
-            {move || (!ctx.sync_pairs.with(|x| x.is_empty())).then(|| view! {
-                {pairs_heading()}
-                {move || pairs_open.get().then(|| ctx.sync_pairs.get().into_iter().map(|pair| {
-                    let how = SYNC_MODES.iter().find(|m| m.0 == pair.mode).map_or("Copy missing", |m| m.1);
-                    let tip = format!("{how}: {} on {} into {} on {}. Click to see what it would do.",
-                        pair.from_dir, ctx.side_name(&pair.from), pair.to_dir, ctx.side_name(&pair.to));
-                    let name = format!("{} → {}", base(&pair.from_dir), base(&pair.to_dir));
-                    let (p1, p2) = (pair.clone(), pair);
-                    view! {
-                        <div class="tree-row fav pair" style="--depth: 1">
-                            <span class="twisty none"></span>
-                            <button class="item" title=tip on:click=move |_| ctx.open_pair(&p1)>{name}</button>
-                            <button class="unfav" title="Remove this sync pair" aria-label="Remove this sync pair"
-                                on:click=move |_| ctx.set_pairs(ctx.sync_pairs.get_untracked().into_iter().filter(|x| *x != p2).collect())>{ico(Icon::Close)}</button>
-                        </div>
-                    }
-                }).collect_view())}
-            })}
-            {mac_heading()}
-            {move || mac_open.get().then(|| view! {
-                {ctx.mac.get().map(|i| i.quick_dirs).unwrap_or_default().into_iter()
-                    .map(|(name, path)| view! { <TreeNode src=Src::Mac name path depth=1/> }).collect_view()}
-                {drives.get().into_iter().map(|(name, path)| {
-                    let (tip, at) = (format!("Eject {name}"), path.clone());
-                    let eject = ViewFn::from(move || {
-                        let (tip, at) = (tip.clone(), at.clone());
-                        view! { <button class="act" title=tip aria-label="Eject" on:click=move |_| ctx.eject(at.clone())>{ico(Icon::Eject)}</button> }
-                    });
-                    view! { <TreeNode src=Src::Mac name path depth=1 class="drive" extra=eject/> }
                 }).collect_view()}
+                {move || (ctx.everything.with(Vec::is_empty) && ev_adding.with(Option::is_none)).then(|| view! {
+                    <div class="tree-row" style="--depth: 1">
+                        <span class="twisty none"></span>
+                        <button class="item add" title="Browse and search a Windows computer's disks through Everything (voidtools)"
+                            on:click=move |_| ev_adding.set(Some(String::new()))>"Add a server…"</button>
+                    </div>
+                })}
             })}
-            {dev_heading()}
-            {move || dev_open.get().then(|| view! {
-                {ctx.phones.get().into_iter().map(device).collect_view()}
-                <DeviceFinder/>
+            {move || ev_asking.get().then(|| {
+                let add = move || {
+                    let Some(server) = ev_adding.get_untracked().filter(|s| !s.trim().is_empty()) else { return };
+                    if ctx.everything.with_untracked(|s| s.contains(&everything_base(&server))) {
+                        ev_error.set(Some("That server is already in the list.".into()));
+                        return;
+                    }
+                    ev_trying.set(true);
+                    ev_error.set(None);
+                    spawn_local(async move {
+                        match ctx.add_everything(server).await {
+                            Ok(()) => ev_adding.set(None),
+                            Err(e) => ev_error.set(Some(e)),
+                        }
+                        ev_trying.set(false);
+                    });
+                };
+                let input = NodeRef::<html::Input>::new();
+                input.on_load(move |el| { request_animation_frame(move || { let _ = el.focus(); }); });
+                view! {
+                    <div class="ws-save">
+                        <input node_ref=input type="text" placeholder="localhost or pc:8080" aria-label="Everything server address"
+                            spellcheck="false"
+                            on:contextmenu=|e| e.stop_propagation()
+                            prop:value=move || ev_adding.get().unwrap_or_default()
+                            on:input=move |e| ev_adding.set(Some(event_target_value(&e)))
+                            on:keydown=move |e| match e.key().as_str() {
+                                "Enter" => add(),
+                                "Escape" => { e.stop_propagation(); ev_adding.set(None) }
+                                _ => {}
+                            }/>
+                        <button class="btn small" disabled=move || ev_trying.get() || ev_adding.with(|n| n.as_deref().is_none_or(|n| n.trim().is_empty()))
+                            on:click=move |_| add()>{move || if ev_trying.get() { "Adding…" } else { "Add" }}</button>
+                    </div>
+                    <p class="ev-note">"Turn on the HTTP server in Everything (Tools > Options > HTTP Server) and allow file downloads."</p>
+                    {move || ev_error.get().map(|e| view! { <p class="ev-note error">{e}</p> })}
+                }
             })}
+    });
+    let sec_mac = move || shown("mac").then(|| view! {
+        {mac_heading()}
+        {move || mac_open.get().then(|| view! {
+            {ctx.mac.get().map(|i| i.quick_dirs).unwrap_or_default().into_iter()
+                .map(|(name, path)| view! { <TreeNode src=Src::Mac name path depth=1/> }).collect_view()}
+            {drives.get().into_iter().map(|(name, path)| {
+                let (tip, at) = (format!("Eject {name}"), path.clone());
+                let eject = ViewFn::from(move || {
+                    let (tip, at) = (tip.clone(), at.clone());
+                    view! { <button class="act" title=tip aria-label="Eject" on:click=move |_| ctx.eject(at.clone())>{ico(Icon::Eject)}</button> }
+                });
+                view! { <TreeNode src=Src::Mac name path depth=1 class="drive" extra=eject/> }
+            }).collect_view()}
+        })}
+    });
+    let sec_devices = move || shown("devices").then(|| view! {
+        {dev_heading()}
+        {move || dev_open.get().then(|| view! {
+            {ctx.phones.get().into_iter().filter(|i| i.transport != "everything").map(device).collect_view()}
+            <DeviceFinder/>
+        })}
+    });
+    view! {
+        <nav class="side" on:contextmenu=move |ev| ctx.show_sections_menu(&ev)>
+            {move || ctx.section_order.get().into_iter().map(|k| match k {
+                "workspaces" => sec_workspaces().into_any(),
+                "favs" => sec_favs().into_any(),
+                "pairs" => sec_pairs().into_any(),
+                "everything" => sec_everything().into_any(),
+                "mac" => sec_mac().into_any(),
+                "devices" => sec_devices().into_any(),
+                _ => ().into_any(),
+            }).collect_view()}
             <span class="grow"></span>
             <div class="side-buttons">
                 <button class="btn icon-only" title="Backups: files replaced or deleted by the app, which can be put back" aria-label="Backups"
@@ -430,8 +562,10 @@ pub(super) fn Settings() -> impl IntoView {
         {move || error.get().map(|e| view! { <p class="error">{e}</p> })}
     }.into_any();
     let storage_name = format!("On {}", crate::os::this_computer());
-    let sections: [(&'static str, String); 6] = [
+    let sections: [(&'static str, String); 8] = [
         ("general", "General".into()),
+        ("sidebar", "Sidebar".into()),
+        ("connections", "Connections".into()),
         ("files", "Files".into()),
         ("phones", "Phones".into()),
         ("video", "Video".into()),
@@ -454,6 +588,8 @@ pub(super) fn Settings() -> impl IntoView {
                     <section class="settings-body" role="tabpanel"
                         aria-label=move || names.with_value(|n| n.iter().find(|s| s.0 == ctx.settings_tab.get()).map(|s| s.1.clone()))>
                         {move || match ctx.settings_tab.get() {
+                            "sidebar" => view! { <SidebarSettings/> }.into_any(),
+                            "connections" => view! { <ConnectionsSettings/> }.into_any(),
                             "files" => files(),
                             "phones" => phones(),
                             "video" => video(),

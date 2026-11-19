@@ -2,7 +2,60 @@
 
 use super::*;
 
+/// How many items a read-only server's folder (which can have hundreds of thousands) is listed
+/// at a time; more are loaded at the bottom of the list.
+pub(super) const PAGE: usize = 1000;
+
 impl Ctx {
+    /// The arguments for listing `path` on `src`: the first page only on a read-only server.
+    pub(super) fn list_args(self, src: Src, path: &str, more: serde_json::Value) -> serde_json::Value {
+        let mut args = json!({ "src": src.key(), "path": path });
+        if self.read_only(src) {
+            args["count"] = json!(PAGE);
+        }
+        if let (Some(a), serde_json::Value::Object(m)) = (args.as_object_mut(), more) {
+            a.extend(m);
+        }
+        args
+    }
+
+    /// Loads the next page of pane `p`'s folder, when it was listed a page at a time and has more.
+    pub(super) fn load_more(self, p: Pane) {
+        if !p.more.get_untracked() || p.loading_more.get_untracked() || p.loading.get_untracked() {
+            return;
+        }
+        let (src, path, seq, offset) = (p.src.get_untracked(), p.cwd.get_untracked(), p.load_seq.get_value(), p.got.get_value());
+        p.loading_more.set(true);
+        spawn_local(async move {
+            let args = json!({ "src": src.key(), "path": path, "pane": p.id, "offset": offset, "count": PAGE });
+            let listed = call::<Vec<Entry>>("list", args).await;
+            p.loading_more.set(false);
+            // Went somewhere else meanwhile.
+            if p.load_seq.get_value() != seq || p.src.get_untracked() != src || p.cwd.get_untracked() != path {
+                return;
+            }
+            match listed {
+                Ok(page) => {
+                    p.more.set(page.len() == PAGE);
+                    p.got.set_value(offset + page.len());
+                    let page = self.visible(page);
+                    let mut all = p.all.get_untracked();
+                    all.extend(page);
+                    p.sort.get_untracked().apply(&mut all);
+                    p.cols.update(|c| {
+                        c.insert(path.clone(), all.clone());
+                    });
+                    p.all.set(all);
+                    p.arrange();
+                }
+                Err(e) => {
+                    p.more.set(false);
+                    p.error(e);
+                }
+            }
+        });
+    }
+
     /// Lists `path` on `src` and makes it pane `p`'s folder, with `select` selected.
     /// Keeps the old listing (and side) if it fails.
     pub(super) fn load_select(self, p: Pane, src: Src, path: String, select: Option<String>) {
@@ -16,7 +69,7 @@ impl Ctx {
         p.load_seq.set_value(seq);
         p.going_to.set_value(Some((src, path.clone())));
         spawn_local(async move {
-            let listed = call::<Vec<Entry>>("list", json!({ "src": src.key(), "path": path, "pane": p.id })).await;
+            let listed = call::<Vec<Entry>>("list", self.list_args(src, &path, json!({ "pane": p.id }))).await;
             // A newer listing was asked for meanwhile: it decides what the pane shows (and
             // clears `loading`), so this one changes nothing.
             if p.load_seq.get_value() != seq {
@@ -25,6 +78,8 @@ impl Ctx {
             p.going_to.set_value(None);
             match listed {
                 Ok(entries) => {
+                    p.more.set(self.read_only(src) && entries.len() == PAGE);
+                    p.got.set_value(entries.len());
                     let mut entries = self.visible(entries);
                     p.sort.get_untracked().apply(&mut entries);
                     let new_src = p.src.get_untracked() != src;
@@ -176,6 +231,7 @@ impl Ctx {
                 Ok(m) if p.cwd.get_untracked() == dir && p.src.get_untracked() == src => {
                     // The search text stays, and filters the results as they're the same names.
                     p.all.set(m.entries);
+                    p.more.set(false);
                     p.found.set(Some((label, m.complete)));
                     p.select_only(None);
                     p.arrange();
@@ -452,8 +508,9 @@ impl Ctx {
         }
     }
 
-    /// New files and folders can't go in "/" over MTP: it lists the device's storages.
+    /// New files and folders can't go in "/" over MTP: it lists the device's storages. Nor
+    /// anywhere on an Everything server.
     pub(super) fn in_storage(self, p: Pane) -> bool {
-        p.cwd.get() != "/" || self.src_info(p.src.get()).is_some_and(|i| i.transport != "mtp")
+        !self.read_only(p.src.get()) && (p.cwd.get() != "/" || self.src_info(p.src.get()).is_some_and(|i| i.transport != "mtp"))
     }
 }

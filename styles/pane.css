@@ -508,3 +508,13 @@ th.num {
   -webkit-user-select: text;
   user-select: text;
 }
+
+/* The bottom of a folder listed a page at a time. */
+.more-row {
+  padding: 10px;
+  text-align: center;
+  color: var(--muted);
+}
+.thumbs + .gap + .more-row {
+  clear: both;
+}

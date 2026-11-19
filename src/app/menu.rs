@@ -23,7 +23,7 @@ impl Ctx {
             }
         }
         let (x, y) = menu_at(ev, 240.0, self.menu_items(p, entry.as_ref()).len());
-        self.menu.set(Some(Menu { x, y, pane: p.id, entry, columns: false, folders: vec![], place: None }));
+        self.menu.set(Some(Menu { x, y, pane: p.id, entry, columns: false, folders: vec![], place: None, sections: false }));
     }
 
     /// The list's columns to show or hide, from a right-click on its header.
@@ -32,7 +32,7 @@ impl Ctx {
         ev.stop_propagation();
         self.active.set(p.id);
         let (x, y) = menu_at(ev, 220.0, self.column_items(p).len());
-        self.menu.set(Some(Menu { x, y, pane: p.id, entry: None, columns: true, folders: vec![], place: None }));
+        self.menu.set(Some(Menu { x, y, pane: p.id, entry: None, columns: true, folders: vec![], place: None, sections: false }));
     }
 
     /// A folder in the sidebar: open it here or in a new tab, or (un)favourite it.
@@ -41,7 +41,7 @@ impl Ctx {
         ev.stop_propagation();
         let p = self.act();
         let (x, y) = menu_at(ev, 220.0, self.place_items(src, &path).len());
-        self.menu.set(Some(Menu { x, y, pane: p.id, entry: None, columns: false, folders: vec![], place: Some((src, path)) }));
+        self.menu.set(Some(Menu { x, y, pane: p.id, entry: None, columns: false, folders: vec![], place: Some((src, path)), sections: false }));
     }
 
     pub(super) fn place_items(self, src: Src, path: &str) -> Vec<MenuItem> {
@@ -59,6 +59,39 @@ impl Ctx {
         }
     }
 
+    /// The sidebar's sections to show or hide, from a right-click on the sidebar.
+    pub(super) fn show_sections_menu(self, ev: &web_sys::MouseEvent) {
+        ev.prevent_default();
+        ev.stop_propagation();
+        let p = self.act();
+        let (x, y) = menu_at(ev, 220.0, self.section_items().len());
+        self.menu.set(Some(Menu { x, y, pane: p.id, entry: None, columns: false, folders: vec![], place: None, sections: true }));
+    }
+
+    /// ✓ beside each of the sidebar's sections that's shown.
+    pub(super) fn section_items(self) -> Vec<MenuItem> {
+        let hidden = self.hidden_sections.get_untracked();
+        let mut v: Vec<MenuItem> = SECTIONS.iter().enumerate().map(|(i, &(key, title))| {
+            let title = if key == "mac" { crate::os::computer() } else { title };
+            item(format!("{} {title}", if hidden.iter().any(|h| h == key) { "\u{2003}" } else { "✓" }), "", Act::Section(i))
+        }).collect();
+        v.extend([MenuItem::Sep, MenuItem::Do { label: "Show all sections".into(), key: "", act: Act::AllSections, danger: false, enabled: !hidden.is_empty() }]);
+        v
+    }
+
+    /// Shows the section if it's hidden, else hides it.
+    fn toggle_section(self, i: usize) {
+        let Some(&(key, _)) = SECTIONS.get(i) else { return };
+        let mut hidden = self.hidden_sections.get_untracked();
+        match hidden.iter().position(|h| h == key) {
+            Some(at) => {
+                hidden.remove(at);
+            }
+            None => hidden.push(key.to_string()),
+        }
+        self.set_hidden_sections(hidden);
+    }
+
     /// The path's folders folded into "…", under it.
     pub(super) fn show_folders_menu(self, p: Pane, ev: &web_sys::MouseEvent, folders: Vec<String>) {
         ev.stop_propagation();
@@ -68,7 +101,7 @@ impl Ctx {
             let r = el.get_bounding_client_rect();
             (x, y) = (r.left(), r.bottom() + 2.0);
         }
-        self.menu.set(Some(Menu { x, y, pane: p.id, entry: None, columns: false, folders, place: None }));
+        self.menu.set(Some(Menu { x, y, pane: p.id, entry: None, columns: false, folders, place: None, sections: false }));
     }
 
     /// ✓ beside each of the list's columns that's shown; Name is always shown.
@@ -283,13 +316,13 @@ impl Ctx {
             if split {
                 let enabled = self.in_storage(self.other(p));
                 v.push(MenuItem::Do { label: self.to_label(p, "Copy", picked), key: "copy", act: Act::Copy, danger: false, enabled });
-                v.push(MenuItem::Do { label: self.to_label(p, "Move", picked), key: "move", act: Act::Move, danger: false, enabled });
+                v.push(MenuItem::Do { label: self.to_label(p, "Move", picked), key: "move", act: Act::Move, danger: false, enabled: enabled && !self.read_only(p.src.get_untracked()) });
                 v.push(MenuItem::Sep);
             }
             let renamable = self.renamable(p);
             v.push(MenuItem::Do { label: format!("Rename {picked} items…"), key: "rename", act: Act::Rename, danger: false, enabled: renamable });
             v.push(MenuItem::Sep);
-            v.push(MenuItem::Do { label: format!("Delete {picked} items…"), key: "delete", act: Act::Delete, danger: true, enabled: true });
+            v.push(MenuItem::Do { label: format!("Delete {picked} items…"), key: "delete", act: Act::Delete, danger: true, enabled: !self.read_only(p.src.get_untracked()) });
             return v;
         }
         let mut v = vec![];
@@ -327,7 +360,7 @@ impl Ctx {
         if split {
             let enabled = self.in_storage(self.other(p));
             v.push(MenuItem::Do { label: self.to_label(p, "Copy", 1), key: "copy", act: Act::Copy, danger: false, enabled });
-            v.push(MenuItem::Do { label: self.to_label(p, "Move", 1), key: "move", act: Act::Move, danger: false, enabled });
+            v.push(MenuItem::Do { label: self.to_label(p, "Move", 1), key: "move", act: Act::Move, danger: false, enabled: enabled && !self.read_only(p.src.get_untracked()) });
         }
         let renamable = self.renamable(p);
         v.push(MenuItem::Do { label: "Rename".into(), key: "rename", act: Act::Rename, danger: false, enabled: renamable });
@@ -343,7 +376,7 @@ impl Ctx {
         v.extend([item("Copy name", "", Act::CopyName), item("Copy path", "", Act::CopyPath)]);
         v.extend([MenuItem::Sep, item("Refresh", "", Act::Refresh), MenuItem::Sep]);
         let label = if e.dir { "Delete folder if empty…" } else { "Delete…" };
-        v.push(MenuItem::Do { label: label.into(), key: "delete", act: Act::Delete, danger: true, enabled: true });
+        v.push(MenuItem::Do { label: label.into(), key: "delete", act: Act::Delete, danger: true, enabled: !self.read_only(p.src.get_untracked()) });
         v
     }
 
@@ -408,6 +441,8 @@ impl Ctx {
                 p.set_list_cols(v);
             }
             (Act::ResetColumns, _) => p.set_list_cols(LIST_ORDER.to_vec()),
+            (Act::Section(i), _) => self.toggle_section(i),
+            (Act::AllSections, _) => self.set_hidden_sections(vec![]),
             (Act::ShowAs(how), Some(e)) => {
                 p.peek_as.set(Some((e.path, how)));
                 p.preview.set(true);
@@ -428,6 +463,8 @@ pub(super) fn ContextMenu() -> impl IntoView {
             m.folders.iter().enumerate().map(|(i, f)| item(base(f), "", Act::Go(i))).collect()
         } else if m.columns {
             ctx.column_items(p)
+        } else if m.sections {
+            ctx.section_items()
         } else {
             ctx.menu_items(p, m.entry.as_ref())
         };

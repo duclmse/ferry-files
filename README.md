@@ -95,6 +95,17 @@ files and disks too, so books can be copied between them.
 - Disks under Mac in the sidebar have ⏏ to eject them.
 - The sidebar's places, disks, device folders and favourites have ▸ to show the
   folders in them, and theirs, as a tree.
+- Right-click the sidebar to show or hide its sections; Settings > Sidebar also
+  orders them.
+- Everything (sidebar): + adds a Windows computer running Everything (voidtools)
+  with its HTTP server on (allow file downloads). It shows as a read-only drive:
+  its disks open in panes and tabs, and work with favourites, workspaces, the
+  preview and copying to this computer or a phone. Folders are listed 1000 items
+  at a time; scrolling to the bottom loads more. Search in a pane uses
+  Everything's index; the magnifier beside a server searches all its disks.
+  Servers come back at launch; every 30 seconds offline ones are tried again and
+  disks that came or went are picked up. × removes one. Settings > Connections
+  lists, adds and removes them too.
 - Backups (sidebar): every file the app replaced or deleted, with where it came
   from. Restore puts it back where it was (when that device is connected);
   Restore here puts it in the active pane's folder. A file already there is

@@ -249,9 +249,12 @@ impl Ctx {
         }
     }
 
-    /// Whether the pane's items can be renamed: not at the top of an MTP phone.
+    /// Whether the pane's items can be renamed: not at the top of an MTP phone, nor on an
+    /// Everything server.
     pub(super) fn renamable(self, p: Pane) -> bool {
-        !(p.cwd.get_untracked() == "/" && self.src_info(p.src.get_untracked()).is_some_and(|i| i.transport == "mtp"))
+        let src = p.src.get_untracked();
+        let mtp_top = p.cwd.get_untracked() == "/" && self.src_info(src).is_some_and(|i| i.transport == "mtp");
+        !self.read_only(src) && !mtp_top
     }
 
     /// F2 or Rename… on several items: the batch rename dialog.

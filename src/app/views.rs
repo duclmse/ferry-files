@@ -82,7 +82,7 @@ pub(super) fn ListView(pane: Pane) -> impl IntoView {
     view! {
         <div class="list" node_ref=scroller data-rows="" class:drop=move || ctx.drop_at.get().as_deref() == Some(here.as_str())
             on:click=move |_| p.select_only(None) on:contextmenu=move |ev| ctx.show_menu(p, &ev, None)
-            on:scroll=move |_| win.update() on:dragover=over on:drop=drop>
+            on:scroll=move |_| { win.update(); more_near_end(ctx, p, scroller) } on:dragover=over on:drop=drop>
             // At least the other columns and NAME_MIN for the name: narrower, the fixed layout would
             // give the name nothing. The list scrolls sideways instead.
             <table class:moving=move || moving.with(Option::is_some)
@@ -145,6 +145,7 @@ pub(super) fn ListView(pane: Pane) -> impl IntoView {
                     {move || gap(win.gaps().1)}
                 </tbody>
             </table>
+            {more_row(ctx, p)}
             {empty_note(p)}
         </div>
     }
@@ -287,7 +288,7 @@ pub(super) fn ThumbView(pane: Pane) -> impl IntoView {
     view! {
         <div class="list" node_ref=scroller data-rows="" class:drop=move || ctx.drop_at.get().as_deref() == Some(here.as_str())
             on:click=move |_| p.select_only(None) on:contextmenu=move |ev| ctx.show_menu(p, &ev, None)
-            on:scroll=move |_| win.update() on:dragover=over on:drop=drop>
+            on:scroll=move |_| { win.update(); more_near_end(ctx, p, scroller) } on:dragover=over on:drop=drop>
             <div class="gap" style=move || format!("height: {}px", win.gaps().0)></div>
             <div class="thumbs">
                 <For each=move || p.entries.with(|es| win.slice(es)) key=|e| (e.path.clone(), e.size, e.mtime) let(e)>
@@ -315,6 +316,7 @@ pub(super) fn ThumbView(pane: Pane) -> impl IntoView {
                 </For>
             </div>
             <div class="gap" style=move || format!("height: {}px", win.gaps().1)></div>
+            {more_row(ctx, p)}
             {empty_note(p)}
         </div>
     }
@@ -336,7 +338,7 @@ pub(super) fn ColumnView(pane: Pane) -> impl IntoView {
                 continue;
             }
             spawn_local(async move {
-                let args = json!({ "src": src.key(), "path": dir, "current": false });
+                let args = ctx.list_args(src, &dir, json!({ "current": false }));
                 if let Ok(es) = call::<Vec<Entry>>("list", args).await {
                     if p.src.get_untracked() == src {
                         let mut es = ctx.visible(es);
@@ -512,7 +514,8 @@ pub(super) fn Column(pane: Pane, dir: String, chain: Memo<Vec<String>>, width: R
     let key = format!("{}:{}", p.id, dir);
     let data_dir = dir.clone();
     view! {
-        <div class="col" node_ref=scroller data-rows=move || current.get().then_some("") on:scroll=move |_| win.update()
+        <div class="col" node_ref=scroller data-rows=move || current.get().then_some("")
+            on:scroll=move |_| { win.update(); if current.get_untracked() { more_near_end(ctx, p, scroller) } }
             class:current=current on:contextmenu=bg_menu data-dir=data_dir
             style=move || match width.get() { w if w > 0.0 => format!("flex-basis: {w}px"), _ => String::new() }
             class:drop=move || ctx.drop_at.get().as_deref() == Some(key.as_str())
@@ -563,6 +566,37 @@ pub(super) fn Column(pane: Pane, dir: String, chain: Memo<Vec<String>>, width: R
                 }
             </For>
             <div class="gap" style=move || format!("height: {}px", win.gaps().1)></div>
+            {move || current.get().then(|| more_row(ctx, p))}
         </div>
     }
+}
+
+/// How near the bottom (in pixels) scrolling loads the folder's next page.
+const MORE_NEAR: i32 = 600;
+
+/// Loads pane `p`'s next page when `scroller` is scrolled near its bottom.
+fn more_near_end(ctx: Ctx, p: Pane, scroller: NodeRef<html::Div>) {
+    if !p.more.get_untracked() {
+        return;
+    }
+    if let Some(el) = scroller.get_untracked() {
+        if el.scroll_top() + el.client_height() + MORE_NEAR >= el.scroll_height() {
+            ctx.load_more(p);
+        }
+    }
+}
+
+/// The row at the bottom of a folder listed a page at a time, while it has more: loads the next
+/// page when clicked (and when scrolled to).
+fn more_row(ctx: Ctx, p: Pane) -> impl IntoView {
+    move || p.more.get().then(|| view! {
+        <div class="more-row">
+            {move || if p.loading_more.get() {
+                view! { <span><span class="spin"></span>" Loading more…"</span> }.into_any()
+            } else {
+                view! { <button on:click=move |ev| { ev.stop_propagation(); ctx.load_more(p) }>
+                    {format!("Load {} more", super::nav::PAGE)}</button> }.into_any()
+            }}
+        </div>
+    })
 }

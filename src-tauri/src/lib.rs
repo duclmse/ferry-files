@@ -20,6 +20,7 @@ pub mod usb;
 pub mod xml;
 mod connect;
 mod dupes;
+mod everything;
 mod import;
 mod editor;
 mod files;
@@ -226,6 +227,7 @@ pub fn run() {
             settings::app_folders,
             settings::open_folder,
             settings::clear_cache,
+            everything::everything_connect,
             editor::epub_open,
             editor::epub_chapter,
             editor::epub_set_source,

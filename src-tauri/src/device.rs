@@ -62,9 +62,19 @@ pub trait Transport: Send + Sync {
         vec![]
     }
     fn refresh(&self) {}
+    /// Names under `dir` (any depth) matching `text`, up to `max`, and whether that's all of
+    /// them, from an index the transport has. None when it has none, and folders are walked.
+    fn search(&self, _dir: &str, _text: &str, _regex: bool, _max: usize) -> Option<Result<(Vec<Entry>, bool)>> {
+        None
+    }
     /// Stops the file copies under way and any started later, for letting go of the device:
     /// it's being disconnected. Called without the device's lock, which a copy holds.
     fn stop(&self) {}
+    /// Up to `count` of the folder's items from `offset`, for transports whose folders can be
+    /// too big to list at once. None when the transport lists whole folders.
+    fn listdir_page(&self, _path: &str, _offset: u64, _count: u64) -> Option<Result<Vec<Entry>>> {
+        None
+    }
 }
 
 #[derive(Clone, Debug, Serialize)]
@@ -196,6 +206,31 @@ impl Device {
         let mut entries = self.t.listdir(&path)?;
         entries.sort_by_key(|e| (!e.dir, e.name.to_lowercase()));
         Ok(entries)
+    }
+
+    /// Up to `count` of the folder's items from `offset`; the whole folder (sorted) when the
+    /// transport doesn't page, or from `offset` 0 only.
+    pub fn listdir_page(&self, path: &str, offset: u64, count: u64) -> Result<Vec<Entry>> {
+        let norm_path = norm(path)?;
+        let paged = {
+            let _g = self.lock();
+            self.t.listdir_page(&norm_path, offset, count)
+        };
+        match paged {
+            Some(r) => r,
+            None if offset == 0 => self.listdir(path),
+            None => Ok(vec![]),
+        }
+    }
+
+    /// See `Transport::search`.
+    pub fn search(&self, dir: &str, text: &str, regex: bool, max: usize) -> Option<Result<(Vec<Entry>, bool)>> {
+        let dir = match norm(dir) {
+            Ok(d) => d,
+            Err(e) => return Some(Err(e)),
+        };
+        let _g = self.lock();
+        self.t.search(&dir, text, regex, max)
     }
 
     pub fn stat(&self, path: &str) -> Result<Option<Entry>> {

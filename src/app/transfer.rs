@@ -22,6 +22,14 @@ impl Ctx {
     /// already there are skipped, never replaced. Queued behind any copy already running; the
     /// report shows in pane `p`.
     pub(super) fn transfer(self, p: Pane, from_src: Src, items: Vec<String>, to_src: Src, to_dir: String, moving: bool) {
+        if self.read_only(to_src) {
+            p.error("Files on an Everything server can only be read: copy from it, not to it.");
+            return;
+        }
+        if moving && self.read_only(from_src) {
+            p.error("Files on an Everything server can't be moved, only copied.");
+            return;
+        }
         if to_dir == "/" && self.src_info(to_src).is_some_and(|i| i.transport == "mtp") {
             p.error("Open a storage first: files can't go at the top level over MTP.");
             return;
@@ -40,6 +48,10 @@ impl Ctx {
 
     /// Compares `from` with `to` and shows in pane `p` what syncing would do, to confirm.
     pub(super) fn preview_sync(self, p: Pane, from: (Src, String), to: (Src, String), mode: String) {
+        if self.read_only(to.0) {
+            p.error("Files on an Everything server can only be read: compare the other way round.");
+            return;
+        }
         if to.1 == "/" && self.src_info(to.0).is_some_and(|i| i.transport == "mtp") {
             p.error("Open a storage in the other pane first: files can't go at the top level over MTP.");
             return;

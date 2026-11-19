@@ -15,6 +15,7 @@ mod batch;
 mod books;
 mod compare;
 mod devices;
+mod everything;
 mod dupes;
 mod editor;
 mod files;
@@ -31,6 +32,7 @@ mod preview;
 mod rows;
 mod safety;
 mod search;
+mod connections;
 mod sidebar;
 mod transfer;
 mod undo;
@@ -57,6 +59,7 @@ use pane::*;
 use preview::*;
 use safety::*;
 use search::*;
+use connections::*;
 use sidebar::*;
 use transfer::*;
 use video::*;
@@ -237,6 +240,8 @@ struct Menu {
     folders: Vec<String>,
     /// A folder in the sidebar, from a right-click on it.
     place: Option<(Src, String)>,
+    /// The sidebar's sections to show or hide, from a right-click on the sidebar.
+    sections: bool,
 }
 
 #[derive(Clone, Copy, PartialEq)]
@@ -290,6 +295,10 @@ enum Act {
     AllBooks,
     /// Find and replace in the names of what's picked, or of everything shown.
     ReplaceNames,
+    /// Shows or hides one of the sidebar's sections (an index into `SECTIONS`).
+    Section(usize),
+    /// Shows all the sidebar's sections.
+    AllSections,
 }
 
 enum MenuItem {
@@ -410,6 +419,11 @@ struct Pane {
     load_seq: StoredValue<u64>,
     /// The folder the latest listing asked for will show, until it comes back.
     going_to: StoredValue<Option<(Src, String)>>,
+    /// The folder was listed a page (`PAGE` items) at a time and has more to load; while the
+    /// next page is being loaded; and how many items the pages so far had.
+    more: RwSignal<bool>,
+    loading_more: RwSignal<bool>,
+    got: StoredValue<usize>,
     /// The pane's tabs. The shown one's entry is only brought up to date when another is shown;
     /// until then the pane's own signals are where it is.
     tabs: RwSignal<Vec<Tab>>,
@@ -476,6 +490,9 @@ impl Pane {
             editing_path: RwSignal::new(false),
             load_seq: StoredValue::new(0),
             going_to: StoredValue::new(None),
+            more: RwSignal::new(false),
+            loading_more: RwSignal::new(false),
+            got: StoredValue::new(0),
             tabs: RwSignal::new(vec![Tab { src: Src::Mac, cwd: String::new(), selected: None, view: ViewMode::stored(id), root: String::new() }]),
             tab: RwSignal::new(0),
         }
@@ -748,6 +765,14 @@ struct Ctx {
     line_numbers: RwSignal<bool>,
     /// Settings: make thumbnails of phone files (each one reads the whole file over USB).
     phone_thumbs: RwSignal<bool>,
+    /// The sidebar's sections hidden with a right-click on it, by key.
+    hidden_sections: RwSignal<Vec<String>>,
+    /// The sidebar's sections, top to bottom (keys of `SECTIONS`).
+    section_order: RwSignal<Vec<&'static str>>,
+    /// The Everything servers added in the sidebar, by address ("http://pc:8080").
+    everything: RwSignal<Vec<String>>,
+    /// Why each Everything server that isn't connected couldn't be, by address.
+    everything_errors: RwSignal<HashMap<String, String>>,
     /// The transfer queue: running, waiting, and stopped ones to retry.
     jobs: RwSignal<Vec<Job>>,
     next_job: StoredValue<u32>,
@@ -817,6 +842,12 @@ impl Ctx {
             wrap_text: RwSignal::new(stored_flag(WRAP_KEY, true)),
             line_numbers: RwSignal::new(stored_flag(LINE_NUMBERS_KEY, true)),
             phone_thumbs: RwSignal::new(stored_flag(PHONE_THUMBS_KEY, true)),
+            section_order: RwSignal::new(sidebar::section_order(
+                &stored(SECTION_ORDER_KEY).and_then(|s| serde_json::from_str::<Vec<String>>(&s).ok()).unwrap_or_default(),
+            )),
+            hidden_sections: RwSignal::new(stored(HIDDEN_SECTIONS_KEY).and_then(|s| serde_json::from_str(&s).ok()).unwrap_or_default()),
+            everything: RwSignal::new(stored(EVERYTHING_KEY).and_then(|s| serde_json::from_str(&s).ok()).unwrap_or_default()),
+            everything_errors: RwSignal::new(HashMap::new()),
             auto_connect: RwSignal::new(stored_flag(AUTO_CONNECT_KEY, true)),
             verify: RwSignal::new(stored_flag(VERIFY_KEY, false)),
             comparing: RwSignal::new(false),
@@ -882,6 +913,21 @@ impl Ctx {
     fn set_line_numbers(self, on: bool) {
         self.line_numbers.set(on);
         store(LINE_NUMBERS_KEY, if on { "1" } else { "0" });
+    }
+
+    fn set_hidden_sections(self, keys: Vec<String>) {
+        store(HIDDEN_SECTIONS_KEY, &serde_json::to_string(&keys).unwrap_or_default());
+        self.hidden_sections.set(keys);
+    }
+
+    fn set_section_order(self, order: Vec<&'static str>) {
+        store(SECTION_ORDER_KEY, &serde_json::to_string(&order).unwrap_or_default());
+        self.section_order.set(order);
+    }
+
+    fn set_everything(self, servers: Vec<String>) {
+        store(EVERYTHING_KEY, &serde_json::to_string(&servers).unwrap_or_default());
+        self.everything.set(servers);
     }
 
     fn set_phone_thumbs(self, on: bool) {
@@ -966,6 +1012,7 @@ pub fn App() -> impl IntoView {
             ctx.connected(info, false);
         }
         ctx.restore_session();
+        ctx.check_everything();
     });
     ctx.keep_session();
     // Look for devices and disks now, then when the backend says something was plugged in or taken
@@ -985,13 +1032,14 @@ pub fn App() -> impl IntoView {
     let _ = set_interval_with_handle(
         move || {
             let waiting = ctx.devices.with_untracked(|d| d.as_ref().is_some_and(|d| d.adb_waiting));
-            let unwatched = !watching.get_value() && ctx.phones.with_untracked(Vec::is_empty);
+            let unwatched = !watching.get_value() && !ctx.has_phone();
             if waiting || unwatched || ctx.scan_again.get_value() {
                 ctx.scan();
             }
         },
         std::time::Duration::from_secs(3),
     );
+    let _ = set_interval_with_handle(move || ctx.check_everything(), everything::EVERYTHING_EVERY);
 
     // Keyboard. ⌘S saves in the editors. Elsewhere the shortcuts are the user's (keymap.rs), but
     // for arrows, which move (←/→ also go up/in in the column view and move across in the

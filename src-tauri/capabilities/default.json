@@ -53,6 +53,7 @@
     "allow-app-folders",
     "allow-open-folder",
     "allow-clear-cache",
+    "allow-everything-connect",
     "allow-epub-open",
     "allow-epub-chapter",
     "allow-epub-set-source",

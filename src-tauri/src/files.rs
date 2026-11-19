@@ -4,7 +4,8 @@
 use super::*;
 
 /// Lists a folder. `current` (default true) says it's the folder `pane` (default 0) now shows;
-/// the column view passes false for the folders to its left.
+/// the column view passes false for the folders to its left. With `count`, up to that many items
+/// from `offset` (default 0), on devices whose folders can be too big to list at once.
 #[tauri::command(rename_all = "snake_case")]
 pub(super) async fn list(
     state: State<'_, AppState>,
@@ -12,6 +13,8 @@ pub(super) async fn list(
     path: String,
     current: Option<bool>,
     pane: Option<u32>,
+    offset: Option<u64>,
+    count: Option<u64>,
 ) -> Result<Vec<Entry>, String> {
     let dev = state.source(src.as_deref())?;
     if current.unwrap_or(true) {
@@ -22,7 +25,11 @@ pub(super) async fn list(
             Some(s) => viewing.insert(pane, (s.to_string(), device::norm(&path).map_err(msg)?)),
         };
     }
-    blocking(move || dev.listdir(&path).map_err(msg)).await
+    blocking(move || match count {
+        Some(count) => dev.listdir_page(&path, offset.unwrap_or(0), count).map_err(msg),
+        None => dev.listdir(&path).map_err(msg),
+    })
+    .await
 }
 
 #[tauri::command(rename_all = "snake_case")]
@@ -349,8 +356,21 @@ pub(super) fn glob(pattern: &[char], name: &[char]) -> bool {
 pub(super) async fn find(state: State<'_, AppState>, src: String, dir: String, query: String, hidden: bool, filters: Option<Filters>, regex: Option<bool>) -> Result<Matches, String> {
     let dev = state.source(Some(&src))?;
     let filters = filters.unwrap_or_default();
-    let query = if regex.unwrap_or(false) { Query::regex(&query)? } else { Query::text(&query) };
-    blocking(move || Ok(find_in(&dev, &dir, &query, hidden, &filters, 1000, std::time::Duration::from_secs(30)))).await
+    let regex = regex.unwrap_or(false);
+    let text = query.clone();
+    let query = if regex { Query::regex(&query)? } else { Query::text(&query) };
+    blocking(move || {
+        // From the device's own index when it has one (an Everything server), checked again here.
+        if let Some(found) = dev.search(&dir, &text, regex, 1000) {
+            let (entries, all) = found.map_err(msg)?;
+            let under = device::norm(&dir).map_err(msg)?;
+            let shown = |e: &Entry| hidden || !e.path[under.len()..].split('/').any(|p| p.starts_with('.'));
+            let entries: Vec<Entry> = entries.into_iter().filter(|e| shown(e) && query.fits(&e.name) && filters.accepts(e)).collect();
+            return Ok(Matches { entries, complete: all });
+        }
+        Ok(find_in(&dev, &dir, &query, hidden, &filters, 1000, std::time::Duration::from_secs(30)))
+    })
+    .await
 }
 
 /// What `find_in` looks for in names.
