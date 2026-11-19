@@ -1,6 +1,6 @@
 # Plan: Borrowing Everything's Techniques
 
-> **Status:** phases 1-5 and 7 implemented (phase 5: FSEvents replay on macOS, USN journal replay on Windows, timestamp scan on Linux and as the Windows fallback); phase 3 follow-up: parent-pointer tree; phase 6 crawl-writer fix, platform enumeration measured and not built, NTFS file table crawl built behind `indexer.use_mft` (off by default) and run on a real volume in CI, where it is slower than the walk for a root that is a small part of the volume (Nov 2026). Background:
+> **Status:** phases 1-5 and 7 implemented (phase 5: FSEvents replay on macOS, USN journal replay on Windows, timestamp scan on Linux and as the Windows fallback); phase 3 follow-up: parent-pointer tree; phase 6 crawl-writer fix, platform enumeration measured and not built, NTFS file table crawl built behind `indexer.use_mft` (off by default) and run on real volumes in CI: 20x faster than the walk over all of `C:\`, slower for a root that is a small part of a volume (Nov 2026). Background:
 > [research/everything-internals.md](../research/everything-internals.md).
 > Measurements: RSS and CPU time sampled every 250 ms plus `/usr/bin/time -l`
 > peaks, on `~/projects` (2.38M files, 191k dirs), macOS, 8 cores, with 8
@@ -398,9 +398,21 @@ with a prototype; the other two turned out to have little to gain:
   | file table  |          23,603 |                  9.3 s  |
 
   The file table read covers the whole volume however small the root is,
-  so it only pays for a root that is most of a volume (for example `C:\`);
-  keep `use_mft` off otherwise. It found 16 more entries than the walk,
-  ones the walk could not list. Timing a whole-volume root stays open.
+  so it only pays for a root that is most of a volume. It found 16 more
+  entries than the walk, ones the walk could not list.
+
+  Over the whole of `C:\` on the same runner, content indexing off
+  (`bench-windows.ps1 -NoContent`), both crawls finished with 9/9 catch-up
+  checks passing:
+
+  | Enumeration | Entries indexed | Crawl (after `/health`) |    Rate |
+  | ----------- | --------------: | ----------------------: | ------: |
+  | walk        |       1,430,354 |                  650 s  | 2,200/s |
+  | file table  |       1,430,461 |                   33 s  | 43,000/s |
+
+  The file table run came second, after the walk had read every directory,
+  so some of its 20x may be a warm cache; the raw `$MFT` read itself is
+  sequential. Use `use_mft = true` for whole-volume roots on Windows.
 
 ## Phase 7 - Optional extras (Everything §2.4) - done
 

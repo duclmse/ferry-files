@@ -586,6 +586,11 @@ try {
     Write-Host "==> Query load: $Clients clients for $LoadSeconds s"
     $load = Measure-Load $d1
     Wait-Idle $d1 "after-load" 5
+    # Watcher events handled since the crawl; a burst here means the daemon
+    # was busy with changes while the queries above were timed.
+    $eventsAfter = [int64](Invoke-RestMethod -Uri "$base/stats" -TimeoutSec 10).events_processed
+    Say ("Events:       {0:N0} after the crawl, {1:N0} by the end of the query load" -f `
+        [int64]$stats.events_processed, $eventsAfter)
 
     # The stored change-log position is written once a crawl is over, or 60s
     # after a start without one. Stopping before that turns the restart into

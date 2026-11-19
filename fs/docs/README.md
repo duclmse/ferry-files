@@ -20,22 +20,21 @@ and installs, starts, searches through and stops the Windows Service.
 
 | Area | State |
 | ---- | ----- |
-| `fsd` daemon, `fs` client, query engine | Done; Everything-compatible syntax incl. `dupe:<property>` |
+| `fsd` daemon, `fs` client, query engine | Done; Everything-compatible syntax incl. `dupe:<property>`; `*.ext` answered from the extension index, sorted or not |
 | Archive service (`.zidx`, `.dzx`, scheduler, SIMD inflate) | Done |
 | Restart catch-up | FSEvents (macOS), USN journal (Windows), timestamp scan (Linux, Windows fallback); 9/9 change checks on Windows |
-| NTFS file table crawl (`indexer.use_mft`) | Works on real volumes; off by default, slower than the walk unless the root is most of a volume |
+| NTFS file table crawl (`indexer.use_mft`) | Works on real volumes; 33 s against 650 s for the walk over all of `C:\` (1.43M entries); slower for a small root; off by default |
 | Windows Service | Installs, starts, stops; runs the extensions |
 | `rar2zip` extension | Done; host keys checked (`strict` by default); moved-in and pre-existing archives picked up |
 | `sftpd` extension | Done; public-key SFTP server confined to one folder |
 
 Open, none blocking:
 
-- Timing the file table crawl on a whole-volume root (e.g. `C:\`), where it
-  should beat the walk.
-- One cold `parent:C:\Windows\System32` query took 9.5 s in CI (later ones
-  4–17 ms); not investigated.
-- `*.ext` globs use the extension index in SQLite only; sorted queries still
-  read every match.
+- On the 2-core Windows runner, queries right after a walk crawl took
+  seconds while the daemon stayed busy for minutes; after a file table crawl
+  they took milliseconds. Tantivy commits and content upserts no longer hold
+  runtime workers, and the sibling sweep is rate-limited off macOS; the
+  benchmark now reports watcher events to confirm the cause.
 
 ### Testing on Windows
 
