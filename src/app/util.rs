@@ -219,6 +219,7 @@ pub(super) fn apply_theme(theme: &str) {
     }
 }
 pub(super) const HIDDEN_KEY: &str = "ferry-files.hidden";
+pub(super) const COLOUR_KEY: &str = "ferry-files.colour-code";
 pub(super) const PHONE_THUMBS_KEY: &str = "ferry-files.phone-thumbs";
 pub(super) const AUTO_CONNECT_KEY: &str = "ferry-files.auto-connect";
 pub(super) const VERIFY_KEY: &str = "ferry-files.verify";

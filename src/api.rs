@@ -253,6 +253,12 @@ pub struct Peek {
     pub text: String,
     /// Where the next piece starts, when the file goes on.
     pub next: Option<u64>,
+    /// Colours for code: (kind, bytes) runs over `text`; None when it's plain.
+    #[serde(default)]
+    pub runs: Option<Vec<(u8, u32)>>,
+    /// Colours stopped in this piece: the rest of the file is plain.
+    #[serde(default)]
+    pub colours_stopped: bool,
 }
 
 #[derive(Clone, Debug, Deserialize)]

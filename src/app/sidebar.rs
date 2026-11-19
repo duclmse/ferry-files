@@ -397,6 +397,8 @@ pub(super) fn Settings() -> impl IntoView {
     }.into_any();
     let files = move || view! {
         {check(ctx.show_hidden.into(), Ctx::set_show_hidden, "Show hidden files (names starting with a dot)")}
+        {check(ctx.colour_code.into(), Ctx::set_colour_code, "Colour code in the preview")}
+        <p class="hint">"Colours keywords, strings and comments in code files, by the file's extension or its first line (#!)."</p>
         {check(ctx.verify.into(), Ctx::set_verify, "Check copies")}
         <p class="hint">"Reads each copied file back and compares it with the original; a copy that doesn't match is removed and reported, and a move keeps its original. Copies to a phone over MTP take about twice as long. (adb copies are always checked.)"</p>
     }.into_any();

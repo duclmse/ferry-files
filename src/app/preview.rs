@@ -481,17 +481,49 @@ fn ZipList(src: Src, entry: Entry) -> impl IntoView {
 
 /// How much of a file the text or hex view loads, at most, as it's scrolled.
 const TEXT_CAP: u64 = 8 * 1024 * 1024;
+/// Code is coloured this far into a file, at most (as the backend's `highlight::COLOUR_MAX`).
+const COLOUR_MAX: u64 = 2 * 1024 * 1024;
 const HEX_CAP: u64 = 4 * 1024 * 1024;
 
+/// A piece of a file as shown: its text, and colours for code as (kind, bytes) runs over it.
+#[derive(Clone, Default)]
+struct Piece {
+    text: String,
+    runs: Option<Vec<(u8, u32)>>,
+    /// Colours stopped in this piece: the rest is plain.
+    stopped: bool,
+}
+
+/// The class of each kind of run (`highlight::Kind` in the backend); plain text has none.
+const TOKEN_CLASSES: [&str; 10] = ["", "tok-comment", "tok-string", "tok-number", "tok-keyword", "tok-type", "tok-function", "tok-tag", "tok-attr", "tok-heading"];
+
+/// A piece's text, with a `<span>` per coloured run. The text is only ever text, never HTML.
+fn piece_text(p: &Piece) -> AnyView {
+    let Some(runs) = &p.runs else { return p.text.clone().into_any() };
+    let mut at = 0;
+    let mut out = Vec::with_capacity(runs.len());
+    for &(kind, len) in runs {
+        let end = (at + len as usize).min(p.text.len());
+        let Some(s) = p.text.get(at..end) else { return p.text.clone().into_any() };
+        let class = TOKEN_CLASSES.get(kind as usize).copied().unwrap_or("");
+        out.push(if class.is_empty() { s.to_string().into_any() } else { view! { <span class=class>{s.to_string()}</span> }.into_any() });
+        at = end;
+    }
+    if let Some(rest) = p.text.get(at..).filter(|r| !r.is_empty()) {
+        out.push(rest.to_string().into_any());
+    }
+    out.collect_view().into_any()
+}
+
 /// Pieces of a file loaded one after another as the end is scrolled near, up to `cap` bytes, and
-/// shown (`piece_view`). `get(start)` fetches the piece at `start`: its text and where the next
-/// one starts.
+/// shown (`piece_view`). `get(start)` fetches the piece at `start` and says where the next one
+/// starts.
 fn pieces<F, Fut>(get: F, cap: u64, hex: bool) -> impl IntoView
 where
     F: Fn(u64) -> Fut + Copy + Send + Sync + 'static,
-    Fut: std::future::Future<Output = Result<(String, Option<u64>), String>> + 'static,
+    Fut: std::future::Future<Output = Result<(Piece, Option<u64>), String>> + 'static,
 {
-    let pieces = RwSignal::new(Vec::<String>::new());
+    let pieces = RwSignal::new(Vec::<Piece>::new());
     // Where the next piece starts; None once the whole file is in.
     let next = RwSignal::new(None::<u64>);
     let error = RwSignal::new(None::<String>);
@@ -530,7 +562,7 @@ where
 
 /// The pieces in a `<pre>`, with a line under it saying what's going on.
 fn piece_view(
-    pieces: RwSignal<Vec<String>>,
+    pieces: RwSignal<Vec<Piece>>,
     next: RwSignal<Option<u64>>,
     error: RwSignal<Option<String>>,
     loading: RwSignal<bool>,
@@ -538,7 +570,8 @@ fn piece_view(
     cap: u64,
     hex: bool,
 ) -> impl IntoView {
-    let empty = move || pieces.with(|v| v.len() == 1 && v[0].trim().is_empty()) && next.get().is_none();
+    let empty = move || pieces.with(|v| v.len() == 1 && v[0].text.trim().is_empty()) && next.get().is_none();
+    let stopped = move || pieces.with(|v| v.iter().any(|p| p.stopped));
     view! {
         <div class="peek" class:hex=hex>
             {move || if pieces.with(Vec::is_empty) {
@@ -552,8 +585,9 @@ fn piece_view(
                 view! {
                     <pre on:scroll=scrolled>
                         <For each=move || 0..pieces.with(Vec::len) key=|i| *i
-                            children=move |i| pieces.with_untracked(|v| v[i].clone())/>
+                            children=move |i| pieces.with_untracked(|v| piece_text(&v[i]))/>
                     </pre>
+                    {move || stopped().then(|| view! { <span class="more">{format!("Colours stop partway (after {}, or where colouring got slow); the rest is plain.", human_size(COLOUR_MAX))}</span> })}
                     {move || if let Some(e) = error.get() {
                         view! { <span class="more">{e}</span> }.into_any()
                     } else if next.get().is_some_and(|n| n >= cap) {
@@ -638,17 +672,22 @@ fn Zipped(pane: Pane, src: Src, zip: Entry, name: String, size: u64) -> impl Int
     }
 }
 
-/// A text file, a piece at a time: the next piece loads when the end is scrolled near.
+/// A text file, a piece at a time: the next piece loads when the end is scrolled near. Code is
+/// coloured unless that's turned off in Settings.
 #[component]
 fn TextPeek(src: Src, entry: Entry, #[prop(optional)] inner: Option<Inner>) -> impl IntoView {
+    let ctx = expect_context::<Ctx>();
     let path = StoredValue::new(entry.path);
     let inner = StoredValue::new(inner);
-    let get = move |start: u64| async move {
-        let path = path.try_get_value().unwrap_or_default();
-        let p = call::<Peek>("peek_text", json!({ "src": src.key(), "path": path, "start": start, "inner": inner.try_get_value().flatten().map(|i| i.name), "zipSize": inner.try_get_value().flatten().map(|i| i.zip_size) })).await?;
-        Ok((p.text, p.next))
-    };
-    pieces(get, TEXT_CAP, false)
+    move || {
+        let colour = ctx.colour_code.get();
+        let get = move |start: u64| async move {
+            let path = path.try_get_value().unwrap_or_default();
+            let p = call::<Peek>("peek_text", json!({ "src": src.key(), "path": path, "start": start, "inner": inner.try_get_value().flatten().map(|i| i.name), "zipSize": inner.try_get_value().flatten().map(|i| i.zip_size), "colour": colour })).await?;
+            Ok((Piece { text: p.text, runs: p.runs, stopped: p.colours_stopped }, p.next))
+        };
+        pieces(get, TEXT_CAP, false)
+    }
 }
 
 /// Any file's bytes, 16 to a line: where, in hex, and as text.
@@ -659,7 +698,7 @@ fn HexPeek(src: Src, entry: Entry, #[prop(optional)] inner: Option<Inner>) -> im
     let get = move |start: u64| async move {
         let path = path.try_get_value().unwrap_or_default();
         let b = call::<Bytes>("peek_bytes", json!({ "src": src.key(), "path": path, "start": start, "inner": inner.try_get_value().flatten().map(|i| i.name), "zipSize": inner.try_get_value().flatten().map(|i| i.zip_size) })).await?;
-        Ok((hex_lines(start, &b.bytes), b.next))
+        Ok((Piece { text: hex_lines(start, &b.bytes), ..Piece::default() }, b.next))
     };
     pieces(get, HEX_CAP, true)
 }

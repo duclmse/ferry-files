@@ -65,28 +65,39 @@ pub(super) struct Peek {
     text: String,
     /// Where the next piece starts, when the file goes on.
     next: Option<u64>,
+    /// Colours for code, as (kind, bytes) runs over `text` (see `highlight`); None when plain.
+    runs: Option<Vec<(u8, u32)>>,
+    /// Colours stopped in this piece: the rest of the file is plain.
+    colours_stopped: bool,
 }
 
 /// Bytes the preview reads at a time: enough to fill it, quick even over MTP.
 const PEEK_MAX: u64 = 64 * 1024;
 
-/// The text in `data`, read from `start`. When the file goes on (`more`), a character cut in two
-/// at the end is left for the next piece; bytes that aren't UTF-8 elsewhere show as �.
+/// The text in `data`, read from `start`. When the file goes on (`more`), the piece ends after its
+/// last full line, so the next one starts on a fresh line (and colours carry over cleanly); a piece
+/// that's all one line ends before a character cut in two. Bytes that aren't UTF-8 show as �.
 fn peek_of(mut data: Vec<u8>, start: u64, more: bool) -> Peek {
     if more {
-        if let Err(e) = std::str::from_utf8(&data) {
-            if e.error_len().is_none() {
-                data.truncate(e.valid_up_to());
+        match data.iter().rposition(|&b| b == b'\n') {
+            Some(i) => data.truncate(i + 1),
+            None => {
+                if let Err(e) = std::str::from_utf8(&data) {
+                    if e.error_len().is_none() {
+                        data.truncate(e.valid_up_to());
+                    }
+                }
             }
         }
     }
     let next = more.then(|| start + data.len() as u64);
-    Peek { text: String::from_utf8_lossy(&data).into_owned(), next }
+    Peek { text: String::from_utf8_lossy(&data).into_owned(), next, runs: None, colours_stopped: false }
 }
 
 /// Reads `PEEK_MAX` bytes of the file from `start` (0 when left out), never the whole of a big one.
-#[tauri::command(rename_all = "snake_case")]
 /// With `inner` (and the ZIP's `zip_size`), the file of that name packed in the ZIP at `path`.
+/// With `colour`, code is coloured (`highlight`).
+#[tauri::command(rename_all = "snake_case")]
 pub(super) async fn peek_text(
     state: State<'_, AppState>,
     src: Option<String>,
@@ -94,6 +105,7 @@ pub(super) async fn peek_text(
     start: Option<u64>,
     inner: Option<String>,
     zip_size: Option<u64>,
+    colour: Option<bool>,
 ) -> Result<Peek, String> {
     let dev = state.source(src.as_deref())?;
     let start = start.unwrap_or(0);
@@ -101,7 +113,13 @@ pub(super) async fn peek_text(
         let mut data = read_part(&dev, &path, inner.as_deref(), zip_size, start, PEEK_MAX + 1)?;
         let more = data.len() as u64 > PEEK_MAX;
         data.truncate(PEEK_MAX as usize);
-        Ok(peek_of(data, start, more))
+        let mut p = peek_of(data, start, more);
+        if colour.unwrap_or(false) {
+            let key = format!("{}:{}\n{path}\n{}", dev.kind(), dev.label(), inner.as_deref().unwrap_or(""));
+            let c = crate::highlight::colour(&key, inner.as_deref().unwrap_or(&path), start, &p.text, p.next);
+            (p.runs, p.colours_stopped) = (c.runs, c.stopped);
+        }
+        Ok(p)
     })
     .await
 }
@@ -525,6 +543,11 @@ mod tests {
         assert_eq!((p.text.as_str(), p.next), ("aé", None));
         let p = super::peek_of(vec![b'a', 0xFF, b'b'], 0, true);
         assert_eq!((p.text.as_str(), p.next), ("a\u{FFFD}b", Some(3)));
+        // With lines, it ends after the last full one.
+        let p = super::peek_of(b"one\ntwo\nthr".to_vec(), 5, true);
+        assert_eq!((p.text.as_str(), p.next), ("one\ntwo\n", Some(13)));
+        let p = super::peek_of(b"one\ntwo\nthr".to_vec(), 5, false);
+        assert_eq!((p.text.as_str(), p.next), ("one\ntwo\nthr", None));
     }
 
     #[test]

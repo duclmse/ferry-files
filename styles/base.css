@@ -10,6 +10,14 @@
   --sel: #e2eafc;
   --danger: #c4372b;
   --ok: #1f8a4c;
+  --tok-comment: #6e7781;
+  --tok-string: #0a3069;
+  --tok-number: #0550ae;
+  --tok-keyword: #cf222e;
+  --tok-type: #953800;
+  --tok-function: #8250df;
+  --tok-tag: #116329;
+  --tok-attr: #0550ae;
   color-scheme: light;
 }
 
@@ -26,6 +34,14 @@
     --sel: #263352;
     --danger: #ff6b5e;
     --ok: #4cc38a;
+    --tok-comment: #8b949e;
+    --tok-string: #a5d6ff;
+    --tok-number: #79c0ff;
+    --tok-keyword: #ff7b72;
+    --tok-type: #ffa657;
+    --tok-function: #d2a8ff;
+    --tok-tag: #7ee787;
+    --tok-attr: #79c0ff;
     color-scheme: dark;
   }
 }
@@ -42,6 +58,14 @@
   --sel: #263352;
   --danger: #ff6b5e;
   --ok: #4cc38a;
+  --tok-comment: #8b949e;
+  --tok-string: #a5d6ff;
+  --tok-number: #79c0ff;
+  --tok-keyword: #ff7b72;
+  --tok-type: #ffa657;
+  --tok-function: #d2a8ff;
+  --tok-tag: #7ee787;
+  --tok-attr: #79c0ff;
   color-scheme: dark;
 }
 

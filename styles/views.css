@@ -370,6 +370,44 @@
   border-radius: 6px;
 }
 
+/* Code colours in the text preview (kinds from the backend's highlight.rs). */
+.peek .tok-comment {
+  color: var(--tok-comment);
+  font-style: italic;
+}
+
+.peek .tok-string {
+  color: var(--tok-string);
+}
+
+.peek .tok-number {
+  color: var(--tok-number);
+}
+
+.peek .tok-keyword {
+  color: var(--tok-keyword);
+}
+
+.peek .tok-type {
+  color: var(--tok-type);
+}
+
+.peek .tok-function {
+  color: var(--tok-function);
+}
+
+.peek .tok-tag {
+  color: var(--tok-tag);
+}
+
+.peek .tok-attr {
+  color: var(--tok-attr);
+}
+
+.peek .tok-heading {
+  font-weight: 600;
+}
+
 .preview .peek .more {
   color: var(--muted);
   font-size: 11px;

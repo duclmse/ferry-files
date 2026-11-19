@@ -23,6 +23,7 @@ mod dupes;
 mod import;
 mod editor;
 mod files;
+mod highlight;
 mod library;
 mod player;
 mod safety;

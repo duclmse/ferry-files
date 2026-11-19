@@ -16,7 +16,9 @@ files and disks too, so books can be copied between them.
   images and videos, read from the file's header, and the length of videos and
   audio), videos and audio that play straight from the device without copying
   them first (GIF, HEIC, AVIF and SVG images too), and the text of text files,
-  read a piece at a time as you scroll (up to 8 MB). Pictures zoom (− and +,
+  read a piece at a time as you scroll (up to 8 MB), with code in colour
+  (keywords, strings, comments; by extension or a `#!` first line, the first
+  2 MB; Settings → Files turns it off). Pictures zoom (− and +,
   pinch, or double-click; the % is of the picture's own pixels, and clicking it
   or double-clicking switches between fitted and 100%), drag around when zoomed,
   and turn (⟲ ⟳). Videos have their own controls: click to play or pause, hold
@@ -306,6 +308,8 @@ cargo run --example epub_smoke    [-- adb|mtp]   # edits a copy of an .epub foun
   - `protocol.rs`: the `ferry://` scheme that serves book images, styles and
     fonts, thumbnails, and files in parts for the preview's media.
   - `thumbs.rs`: thumbnails and their cache.
+  - `highlight.rs`: colours for code in the text preview (syntect), carried
+    from one piece of the file to the next.
   - `lib.rs`: the app's state and the command list. The commands are grouped in
     `connect.rs`, `files.rs`, `transfer.rs`, `safety.rs` (space, backups,
     eject), `settings.rs`, `library.rs` (books, many at a time) and `editor.rs`
