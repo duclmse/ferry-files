@@ -709,8 +709,14 @@ mod functions_end_to_end {
             "childfilecount:1",
             "empty:",
             "dadupe:",
+            "dupe:size",
+            "sizedupe:5",
+            "dmdupe:today",
         ] {
             assert!(parse(q, &macros).is_err(), "{q}");
+        }
+        for q in ["dupe:", "sizedupe: *.mp4", "dmdupe: ext:rs"] {
+            assert!(parse(q, &macros).is_ok(), "{q}");
         }
     }
 }

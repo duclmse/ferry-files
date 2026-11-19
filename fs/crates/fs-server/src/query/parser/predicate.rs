@@ -65,6 +65,17 @@ pub(super) fn build_predicate(kw: &str, val: &str, mods: Modifiers) -> Result<Ex
                 modifiers: mods,
             }));
         }
+        "dupe" | "namedup" | "namedupe" | "sizedupe" | "sizedup" | "dmdupe" | "dmdup"
+        | "dcdupe" | "dcdup"
+            if !val.is_empty() =>
+        {
+            // `dupe:size` read as a name-dupe search would quietly answer a
+            // different question.
+            return Err(AppError::Query(format!(
+                "`{kw}:` takes no value; for other properties use sizedupe:, dmdupe: \
+                 or dcdupe:, and narrow with separate terms (`sizedupe: *.mp4`)"
+            )));
+        }
         "dupe" | "namedup" | "namedupe" => Function::Dupe(DupeKind::Name),
         "sizedupe" | "sizedup" => Function::Dupe(DupeKind::Size),
         "dmdupe" | "dmdup" => Function::Dupe(DupeKind::DateModified),

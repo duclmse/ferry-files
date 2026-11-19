@@ -145,6 +145,9 @@ drive.
 | `dadupe:` | Not supported (query error) |
 | `attribdupe:` | Not supported (query error) |
 
+The dupe functions take no value (`dupe:size` is an error); narrow them with
+other terms, as in `sizedupe: *.mp4`.
+
 #### Result Control
 
 | Function | Description |
