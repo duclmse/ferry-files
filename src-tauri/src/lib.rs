@@ -33,7 +33,7 @@ mod wifi;
 use device::{DevError, Device, Entry, WriteResult};
 use serde::Serialize;
 use epub::Book;
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::sync::atomic::{AtomicU32, Ordering};
 use std::sync::{Arc, Mutex};
 use tauri::{AppHandle, Manager, State};
@@ -68,6 +68,8 @@ pub struct AppState {
     pub thumb_lock: Mutex<()>,
     /// Cancel flags of running transfers, by job number (chosen by the frontend).
     jobs: Mutex<HashMap<u32, Arc<std::sync::atomic::AtomicBool>>>,
+    /// Connected devices not on USB at the last look, by id: gone at the second (see `devices`).
+    missing: Mutex<HashSet<String>>,
 }
 
 impl Default for AppState {
@@ -82,6 +84,7 @@ impl Default for AppState {
             viewing: Mutex::default(),
             thumb_lock: Mutex::default(),
             jobs: Mutex::default(),
+            missing: Mutex::default(),
         }
     }
 }
@@ -106,25 +109,47 @@ impl AppState {
 
     /// Lets go of every connected device, for quitting: an MTP phone's session is closed only
     /// when its device is dropped, and quitting doesn't drop the app's state. Transfers are
-    /// cancelled and file copies on MTP stopped, so what still uses a device lets go of it soon;
-    /// that gets up to 10 seconds (a phone that stopped answering may never let go).
+    /// cancelled too, and what still uses a device gets up to 10 seconds to let go of it (a phone
+    /// that stopped answering may never let go).
     fn close_all(&self) {
         mtp::stop_copies();
         for cancel in self.jobs.lock().unwrap_or_else(|e| e.into_inner()).values() {
             cancel.store(true, std::sync::atomic::Ordering::Relaxed);
         }
-        let mut devs: Vec<Arc<Device>> = self.devs().drain().map(|(_, c)| c.dev).collect();
-        let until = std::time::Instant::now() + std::time::Duration::from_secs(10);
-        while devs.iter().any(|d| Arc::strong_count(d) > 1) && std::time::Instant::now() < until {
-            std::thread::sleep(std::time::Duration::from_millis(50));
-        }
-        // The last holder releases the ones still in use, if it gets there before the app ends.
-        devs.clear();
+        let devs: Vec<Arc<Device>> = self.devs().drain().map(|(_, c)| c.dev).collect();
+        let_go(devs, std::time::Duration::from_secs(10));
+    }
+
+    /// Disconnects the devices `ids`, and returns once they're let go of (an MTP phone's session
+    /// closed, so it can be opened again at once), or after 5 seconds of something still using
+    /// one. Their file copies stop; a transfer using one fails at its next file.
+    fn close(&self, ids: &[String]) {
+        let devs: Vec<Arc<Device>> = {
+            let mut all = self.devs();
+            ids.iter().filter_map(|id| all.remove(id)).map(|c| c.dev).collect()
+        };
+        self.viewing.lock().unwrap_or_else(|e| e.into_inner()).retain(|_, (s, _)| !ids.contains(s));
+        self.missing.lock().unwrap_or_else(|e| e.into_inner()).retain(|id| !ids.contains(id));
+        let_go(devs, std::time::Duration::from_secs(5));
     }
 
     pub fn is_viewing(&self, src: &str, dir: &str) -> bool {
         self.viewing.lock().unwrap_or_else(|e| e.into_inner()).values().any(|(s, d)| s == src && d == dir)
     }
+}
+
+/// Stops `devs`' copies and waits up to `within` for whatever else uses them to finish, so
+/// they're dropped (and MTP sessions closed) here. One still in use after that is dropped by its
+/// last user.
+fn let_go(mut devs: Vec<Arc<Device>>, within: std::time::Duration) {
+    for d in &devs {
+        d.stop();
+    }
+    let until = std::time::Instant::now() + within;
+    while devs.iter().any(|d| Arc::strong_count(d) > 1) && std::time::Instant::now() < until {
+        std::thread::sleep(std::time::Duration::from_millis(50));
+    }
+    devs.clear();
 }
 
 fn msg(e: DevError) -> String {
@@ -140,7 +165,7 @@ async fn blocking<T: Send + 'static>(f: impl FnOnce() -> Result<T, String> + Sen
 pub fn run() {
     migrate::run();
     std::thread::spawn(thumbs::trim_caches);
-    tauri::Builder::default()
+    let app = tauri::Builder::default()
         .plugin(tauri_plugin_dialog::init())
         .plugin(tauri_plugin_clipboard_manager::init())
         .manage(AppState::default())
@@ -209,12 +234,39 @@ pub fn run() {
             editor::epub_close,
         ])
         .build(tauri::generate_context!())
-        .expect("error while running Ferry Files")
-        .run(|app, event| {
-            if let tauri::RunEvent::Exit = event {
-                state(app).close_all();
-            }
-        });
+        .expect("error while running Ferry Files");
+    #[cfg(unix)]
+    quit_on_signals(app.handle().clone());
+    app.run(|app, event| {
+        if let tauri::RunEvent::Exit = event {
+            state(app).close_all();
+        }
+    });
+}
+
+/// Ctrl+C in the terminal (as with `cargo tauri dev`), `kill`, or the terminal closing quits the
+/// way the app's own Quit does, so connected phones are let go of: a process just ended by the
+/// signal leaves the phone's MTP session open, and the next connect fails until it's replugged.
+/// A second signal ends the app at once, for a phone that won't let go.
+#[cfg(unix)]
+fn quit_on_signals(app: AppHandle) {
+    use signal_hook::consts::{SIGHUP, SIGINT, SIGTERM};
+    let mut signals = match signal_hook::iterator::Signals::new([SIGINT, SIGTERM, SIGHUP]) {
+        Ok(s) => s,
+        Err(e) => {
+            eprintln!("Ferry Files: can't catch Ctrl+C ({e}); it will quit without letting go of phones.");
+            return;
+        }
+    };
+    std::thread::spawn(move || {
+        let mut seen = signals.forever();
+        if seen.next().is_some() {
+            app.exit(0);
+        }
+        if let Some(sig) = seen.next() {
+            std::process::exit(128 + sig);
+        }
+    });
 }
 
 pub fn state(app: &AppHandle) -> tauri::State<'_, AppState> {

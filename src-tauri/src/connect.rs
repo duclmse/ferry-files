@@ -25,6 +25,9 @@ pub(super) struct Devices {
     adb_waiting: bool,
     /// Disks mounted on the computer (USB drives, SD cards, disk images), as (name, path).
     drives: Vec<(String, String)>,
+    /// Connected devices that went from USB (unplugged, or the Mac slept), now disconnected, as
+    /// (id, name).
+    gone: Vec<(String, String)>,
 }
 
 #[derive(Serialize)]
@@ -58,13 +61,61 @@ pub(super) fn drives() -> Vec<(String, String)> {
     crate::platform::drives()
 }
 
-/// Devices on USB that aren't connected yet, and the computer's mounted disks.
+/// Whether a connected device is still there: an adb one while adb lists it (in any state, and
+/// over Wi-Fi too), an MTP one while its serial number is on USB. `None` when that can't be told
+/// (adb didn't answer, the USB devices couldn't be listed, or the device has no serial number).
+fn still_there(c: &Conn, adb: &Option<Vec<String>>, usb: &Option<Vec<crate::usb::UsbDev>>) -> Option<bool> {
+    let place = c.usb.as_deref()?;
+    if let Some(serial) = place.strip_prefix("adb:") {
+        return adb.as_ref().map(|l| l.iter().any(|s| s == serial));
+    }
+    // Windows' MTP devices aren't in `usb::try_list`, which then gives nothing.
+    if place.starts_with("mtp:") && !cfg!(windows) {
+        let serial = c.serial.as_deref()?;
+        return usb.as_ref().map(|l| l.iter().any(|d| d.serial == serial));
+    }
+    None
+}
+
+/// Disconnects the connected devices that have gone from USB: missing at two looks in a row,
+/// since adb loses a phone for a moment now and then. Returns them as (id, name).
+fn drop_gone(app: &AppHandle) -> Vec<(String, String)> {
+    let st = state(app);
+    let (adb, usb) = (adb::listed(), crate::usb::try_list());
+    // Named after the locks are let go of: a name may take asking the device.
+    let looked: Vec<(String, Option<bool>, Arc<Device>)> =
+        st.devs().iter().map(|(id, c)| (id.clone(), still_there(c, &adb, &usb), c.dev.clone())).collect();
+    let gone: Vec<(String, Arc<Device>)> = {
+        let mut missing = st.missing.lock().unwrap_or_else(|e| e.into_inner());
+        let was = std::mem::take(&mut *missing);
+        looked
+            .into_iter()
+            .filter(|(id, there, _)| {
+                let lost = *there == Some(false);
+                if lost && !was.contains(id) {
+                    missing.insert(id.clone());
+                }
+                lost && was.contains(id)
+            })
+            .map(|(id, _, d)| (id, d))
+            .collect()
+    };
+    let gone: Vec<(String, String)> = gone.into_iter().map(|(id, d)| (id, d.label())).collect();
+    if !gone.is_empty() {
+        st.close(&gone.iter().map(|(id, _)| id.clone()).collect::<Vec<_>>());
+    }
+    gone
+}
+
+/// Devices on USB that aren't connected yet, and the computer's mounted disks. Connected devices
+/// no longer on USB are disconnected (`gone`).
 #[tauri::command(rename_all = "snake_case")]
-pub(super) async fn devices(state: State<'_, AppState>) -> Result<Devices, String> {
+pub(super) async fn devices(app: AppHandle, state: State<'_, AppState>) -> Result<Devices, String> {
     // A connected phone can still show here the other way (same serial), so the app can offer to
     // switch; `connect` refuses to connect it twice.
     let taken: Vec<Option<String>> = state.devs().values().map(|c| c.usb.clone()).collect();
     blocking(move || {
+        let gone = drop_gone(&app);
         let mut found: Vec<Found> = adb::ready_devices()
             .into_iter()
             .map(|(serial, name)| Found {
@@ -90,7 +141,7 @@ pub(super) async fn devices(state: State<'_, AppState>) -> Result<Devices, Strin
         };
         found.retain(|f| !taken.contains(&Some(f.usb.clone())));
         let adb_waiting = !adb::unauthorized().is_empty();
-        Ok(Devices { found, adb_found: adb::adb_path().is_some(), mtp_error, adb_waiting, drives: drives() })
+        Ok(Devices { found, adb_found: adb::adb_path().is_some(), mtp_error, adb_waiting, drives: drives(), gone })
     })
     .await
 }
@@ -118,10 +169,15 @@ pub(super) async fn connect(
     Ok(info)
 }
 
+/// Returns once the device is let go of, so connecting it again (the other way too) right after
+/// finds it free.
 #[tauri::command(rename_all = "snake_case")]
-pub(super) fn disconnect(state: State<'_, AppState>, src: String) {
-    state.devs().remove(&src);
-    state.viewing.lock().unwrap_or_else(|e| e.into_inner()).retain(|_, (s, _)| *s != src);
+pub(super) async fn disconnect(app: AppHandle, src: String) -> Result<(), String> {
+    blocking(move || {
+        state(&app).close(&[src]);
+        Ok(())
+    })
+    .await
 }
 
 /// The connected devices, oldest first (a reloaded window picks them up from here).
@@ -152,6 +208,35 @@ pub(super) fn info(state: State<'_, AppState>, src: Option<String>) -> Option<In
 
 #[cfg(test)]
 mod tests {
+    use super::*;
+
+    #[test]
+    fn tells_when_a_connected_device_is_gone() {
+        use crate::usb::UsbDev;
+        let conn = |usb: &str, serial: Option<&str>| Conn {
+            dev: Arc::new(Device::new(Box::new(crate::local::Local))),
+            usb: Some(usb.into()),
+            serial: serial.map(String::from),
+        };
+        let on_usb = |serial: &str| UsbDev { bus: 0, address: 1, vendor: 0x04e8, product: 0x6860, serial: serial.into() };
+        let adb = Some(vec!["R3CR406TEMA".to_string(), "192.168.1.5:5555".to_string()]);
+        let usb = Some(vec![on_usb("R3CR406TEMA")]);
+        let there = |c: &Conn| still_there(c, &adb, &usb);
+        assert_eq!(there(&conn("adb:R3CR406TEMA", Some("R3CR406TEMA"))), Some(true));
+        assert_eq!(there(&conn("adb:192.168.1.5:5555", None)), Some(true));
+        assert_eq!(there(&conn("adb:OTHER", Some("OTHER"))), Some(false));
+        if !cfg!(windows) {
+            assert_eq!(there(&conn("mtp:0-1", Some("R3CR406TEMA"))), Some(true));
+            // Plugged in again elsewhere is still there: the serial is what counts.
+            assert_eq!(there(&conn("mtp:0-9", Some("R3CR406TEMA"))), Some(true));
+            assert_eq!(there(&conn("mtp:0-2", Some("OTHER"))), Some(false));
+        }
+        // Can't tell: no serial, or adb or the USB list not answering.
+        assert_eq!(there(&conn("mtp:0-2", None)), None);
+        assert_eq!(still_there(&conn("adb:R3CR406TEMA", None), &None, &usb), None);
+        assert_eq!(still_there(&conn("mtp:0-1", Some("R3CR406TEMA")), &adb, &None), None);
+    }
+
     #[test]
     fn drives_skip_the_startup_disk() {
         let root = std::fs::canonicalize("/").unwrap();

@@ -62,6 +62,17 @@ pub fn unauthorized() -> Vec<String> {
         .collect()
 }
 
+/// Every device adb lists, in whatever state (offline and unauthorized ones too); `None` when
+/// adb isn't there or didn't answer, so a phone isn't taken to be gone because of that.
+pub fn listed() -> Option<Vec<String>> {
+    let adb = adb_path()?;
+    let out = crate::platform::command(adb).arg("devices").stdin(Stdio::null()).output().ok()?;
+    if !out.status.success() {
+        return None;
+    }
+    Some(String::from_utf8_lossy(&out.stdout).lines().skip(1).filter_map(|l| l.split_whitespace().next().map(String::from)).collect())
+}
+
 pub fn ready_serials() -> Vec<String> {
     let Some(adb) = adb_path() else { return vec![] };
     let Ok(out) = crate::platform::command(adb).arg("devices").stdin(Stdio::null()).output() else { return vec![] };

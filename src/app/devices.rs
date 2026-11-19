@@ -28,6 +28,10 @@ impl Ctx {
         self.scanning.set_value(true);
         spawn_local(async move {
             if let Ok(d) = call::<Devices>("devices", json!({})).await {
+                for (id, name) in &d.gone {
+                    self.forget(Src::of(id));
+                    self.conn_error.set(Some(format!("{name} is no longer on USB, so it was disconnected.")));
+                }
                 let pick = self.auto_pick(&d);
                 if self.devices.get_untracked().as_ref() != Some(&d) {
                     self.devices.set(Some(d));
@@ -123,33 +127,40 @@ impl Ctx {
             return;
         }
         spawn_local(async move {
+            // Done once the device is let go of, so connecting it again (`then`) can claim it.
             let _ = call::<()>("disconnect", json!({ "src": src.key() })).await;
-            let id = src.key();
-            self.phones.update(|ps| ps.retain(|i| i.id != id));
-            if self.editor.with_untracked(|e| e.as_ref().is_some_and(|e| e.src == src)) {
-                self.leave_editor();
-            }
-            for p in self.panes {
-                p.last.update_value(|l| {
-                    l.remove(&src);
-                });
-                if p.src.get_untracked() == src {
-                    p.entries.set(vec![]);
-                    p.cols.set(HashMap::new());
-                    p.cwd.set(String::new());
-                    p.selected.set(None);
-                    p.notice.set(Notice::None);
-                    p.src.set(Src::Mac);
-                    if self.split.get_untracked() || p.id == 0 {
-                        self.start(p);
-                    }
-                }
-            }
+            self.forget(src);
             match then {
                 Some(f) => self.connect(f, true),
                 None => self.scan(),
             }
         });
+    }
+
+    /// Takes a device that's been disconnected out of the window: panes showing it go back to the
+    /// Mac. An editor on it with unsaved changes stays open, so they can still be copied out.
+    fn forget(self, src: Src) {
+        let id = src.key();
+        self.phones.update(|ps| ps.retain(|i| i.id != id));
+        if self.editor.with_untracked(|e| e.as_ref().is_some_and(|e| e.src == src)) && !self.dirty() {
+            self.leave_editor();
+        }
+        for p in self.panes {
+            p.last.update_value(|l| {
+                l.remove(&src);
+            });
+            if p.src.get_untracked() == src {
+                p.entries.set(vec![]);
+                p.cols.set(HashMap::new());
+                p.cwd.set(String::new());
+                p.selected.set(None);
+                p.notice.set(Notice::None);
+                p.src.set(Src::Mac);
+                if self.split.get_untracked() || p.id == 0 {
+                    self.start(p);
+                }
+            }
+        }
     }
 }
 

@@ -62,6 +62,9 @@ pub trait Transport: Send + Sync {
         vec![]
     }
     fn refresh(&self) {}
+    /// Stops the file copies under way and any started later, for letting go of the device:
+    /// it's being disconnected. Called without the device's lock, which a copy holds.
+    fn stop(&self) {}
 }
 
 #[derive(Clone, Debug, Serialize)]
@@ -180,6 +183,11 @@ impl Device {
     pub fn refresh(&self) {
         let _g = self.lock();
         self.t.refresh();
+    }
+
+    /// See `Transport::stop`.
+    pub fn stop(&self) {
+        self.t.stop();
     }
 
     pub fn listdir(&self, path: &str) -> Result<Vec<Entry>> {

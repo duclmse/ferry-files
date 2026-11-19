@@ -4,7 +4,8 @@
 use crate::device::{basename, dirname, err, join, DevError, Entry, Result, Transport};
 use std::collections::HashMap;
 use std::ffi::{c_char, c_int, c_void, CStr, CString};
-use std::sync::{Mutex, OnceLock};
+use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::{Arc, Mutex, OnceLock};
 use std::time::{Duration, Instant};
 
 const ROOT_ID: u32 = 0xFFFF_FFFF; // LIBMTP_FILES_AND_FOLDERS_ROOT
@@ -129,15 +130,17 @@ type Progress = extern "C" fn(sent: u64, total: u64, data: *const c_void) -> c_i
 
 /// Set when the app quits: file copies to and from the phone stop at their next piece, so the
 /// phone can be let go of without waiting for them.
-static QUITTING: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
+static QUITTING: AtomicBool = AtomicBool::new(false);
 
 /// Stops the file copies under way, for quitting.
 pub fn stop_copies() {
-    QUITTING.store(true, std::sync::atomic::Ordering::Relaxed);
+    QUITTING.store(true, Ordering::Relaxed);
 }
 
-extern "C" fn progress(_sent: u64, _total: u64, _data: *const c_void) -> c_int {
-    QUITTING.load(std::sync::atomic::Ordering::Relaxed) as c_int
+/// `data` is the device's stop flag (`Link::stop`).
+extern "C" fn progress(_sent: u64, _total: u64, data: *const c_void) -> c_int {
+    let stopped = !data.is_null() && unsafe { (*data.cast::<AtomicBool>()).load(Ordering::Relaxed) };
+    (stopped || QUITTING.load(Ordering::Relaxed)) as c_int
 }
 
 extern "C" {
@@ -282,12 +285,19 @@ struct Link {
     dev: Dev,
     /// False once the device has refused a partial read; ranges then come from a whole copy.
     partial: bool,
+    /// Set when the device is being let go of: its copies stop (see `progress`).
+    stop: Arc<AtomicBool>,
 }
 
 // The raw device pointer is only touched while holding the mutex in `Mtp`.
 unsafe impl Send for Link {}
 
 impl Link {
+    /// What `progress` gets as its data: lives as long as the link.
+    fn stop_flag(&self) -> *const c_void {
+        Arc::as_ptr(&self.stop).cast()
+    }
+
     fn error(&self, what: &str) -> DevError {
         let mut last = None;
         let mut e = unsafe { (self.lib.errorstack)(self.dev) };
@@ -340,7 +350,7 @@ impl Link {
 
     fn download_to(&self, id: u32, to: &std::path::Path) -> Result<()> {
         let c = CString::new(to.to_string_lossy().as_bytes()).unwrap();
-        let rc = unsafe { (self.lib.get_file_to_file)(self.dev, id, c.as_ptr(), Some(progress), std::ptr::null()) };
+        let rc = unsafe { (self.lib.get_file_to_file)(self.dev, id, c.as_ptr(), Some(progress), self.stop_flag()) };
         if rc == 0 { Ok(()) } else { Err(self.error("Reading the file")) }
     }
 
@@ -378,7 +388,7 @@ impl Link {
             next: std::ptr::null_mut(),
         };
         let rc = unsafe {
-            (self.lib.send_file_from_file)(self.dev, path.as_ptr(), &mut meta, Some(progress), std::ptr::null())
+            (self.lib.send_file_from_file)(self.dev, path.as_ptr(), &mut meta, Some(progress), self.stop_flag())
         };
         let _ = std::fs::remove_file(&tmp);
         if rc != 0 {
@@ -429,8 +439,57 @@ impl Drop for Link {
     }
 }
 
+/// Image Capture's helpers, which take a phone's MTP interface (to import photos) as soon as
+/// something asks for it, and start again by themselves when stopped.
+#[cfg(target_os = "macos")]
+const CAMERA_HELPERS: [&str; 3] = ["ptpcamerad", "icdd", "mscamerad-xpc"];
+
+/// Gets the USB device at (bus, address) free of other programs before libmtp claims it: Image
+/// Capture's helpers are stopped (for up to 3 s, as they come back); anything else is an error
+/// naming it. When ioreg can't tell, it's tried anyway.
+#[cfg(target_os = "macos")]
+fn make_way(bus: u32, address: u32) -> Result<()> {
+    let me = std::process::id();
+    for _ in 0..15 {
+        let Some(held) = crate::usb::holders(bus, address) else { return Ok(()) };
+        let others: Vec<_> = held.into_iter().filter(|h| h.pid != me).collect();
+        if others.is_empty() {
+            return Ok(());
+        }
+        if let Some(h) = others.iter().find(|h| !CAMERA_HELPERS.contains(&h.name.as_str())) {
+            return err(if h.name == "ferry-files" {
+                format!("Another Ferry Files (pid {}) has the phone: disconnect it there, or quit it.", h.pid)
+            } else {
+                format!("{} (pid {}) is using the phone: quit it, then connect again.", h.name, h.pid)
+            });
+        }
+        // They ignore SIGTERM.
+        for h in &others {
+            let _ = crate::platform::command("kill").args(["-9", &h.pid.to_string()]).stdin(std::process::Stdio::null()).status();
+        }
+        std::thread::sleep(std::time::Duration::from_millis(200));
+    }
+    err("Image Capture keeps taking the phone (ptpcamerad): quit Image Capture and Photos, then connect again.".to_string())
+}
+
+#[cfg(not(target_os = "macos"))]
+fn make_way(_bus: u32, _address: u32) -> Result<()> {
+    Ok(())
+}
+
+/// This process holds the USB device at (bus, address), as after libmtp failed to open it.
+#[cfg(target_os = "macos")]
+fn held_by_us(bus: u32, address: u32) -> bool {
+    crate::usb::holders(bus, address).is_some_and(|h| h.iter().any(|h| h.pid == std::process::id()))
+}
+
+#[cfg(not(target_os = "macos"))]
+fn held_by_us(_bus: u32, _address: u32) -> bool {
+    false
+}
+
 fn temp_path(tag: &str) -> std::path::PathBuf {
-    use std::sync::atomic::{AtomicU64, Ordering};
+    use std::sync::atomic::AtomicU64;
     static N: AtomicU64 = AtomicU64::new(0);
     std::env::temp_dir().join(format!("ferry-files-mtp-{}-{tag}-{}", std::process::id(), N.fetch_add(1, Ordering::Relaxed)))
 }
@@ -491,6 +550,8 @@ pub struct Mtp {
     inner: Mutex<Inner>,
     storages: Vec<(String, u32)>,
     model: String,
+    /// The link's stop flag, reachable while a copy holds `inner`.
+    stop: Arc<AtomicBool>,
 }
 
 impl Mtp {
@@ -510,6 +571,10 @@ impl Mtp {
             let Some(raw) = found else {
                 return err("No MTP device found".to_string());
             };
+            let (bus, address) = unsafe { ((*raw).bus_location, (*raw).devnum as u32) };
+            // libmtp doesn't let go of the USB device when claiming it fails (as it does while
+            // another program has it), so this process would hold the phone without using it.
+            make_way(bus, address)?;
             // Uncached: don't enumerate the whole phone on connect (slow on Android).
             let dev = unsafe { (lib.open_uncached)(raw) };
             if !dev.is_null() {
@@ -517,12 +582,16 @@ impl Mtp {
             }
             tries += 1;
             if tries == 4 {
+                if held_by_us(bus, address) {
+                    return err("Couldn't open the MTP device, and the failed tries still hold it. Unplug the phone, plug it in again, unlock it and choose File transfer.".to_string());
+                }
                 return err("Couldn't open the MTP device".to_string());
             }
             drop(lock);
             std::thread::sleep(std::time::Duration::from_millis(1500));
         };
-        let link = Link { lib, dev, partial: true };
+        let stop = Arc::new(AtomicBool::new(false));
+        let link = Link { lib, dev, partial: true, stop: stop.clone() };
         if unsafe { (lib.get_storage)(dev, 0) } != 0 {
             return Err(link.error("Reading the device's storage"));
         }
@@ -549,7 +618,7 @@ impl Mtp {
             .map(|f| cstr(unsafe { f(dev) }))
             .find(|s| !s.is_empty())
             .unwrap_or_else(|| "MTP device".into());
-        Ok(Mtp { inner: Mutex::new(Inner { link, cache: HashMap::new() }), storages, model })
+        Ok(Mtp { inner: Mutex::new(Inner { link, cache: HashMap::new() }), storages, model, stop })
     }
 
     /// The device, locked; also holds the libmtp lock while in use.
@@ -637,6 +706,10 @@ impl Transport for Mtp {
 
     fn refresh(&self) {
         self.inner().cache.clear();
+    }
+
+    fn stop(&self) {
+        self.stop.store(true, Ordering::Relaxed);
     }
 
     fn listdir(&self, path: &str) -> Result<Vec<Entry>> {

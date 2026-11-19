@@ -15,22 +15,25 @@ pub struct UsbDev {
     pub serial: String,
 }
 
-#[cfg(target_os = "macos")]
 pub fn list() -> Vec<UsbDev> {
-    let Ok(out) = crate::platform::command("ioreg").args(["-p", "IOUSB", "-l", "-w0"]).stdin(std::process::Stdio::null()).output() else {
-        return vec![];
-    };
-    parse(&String::from_utf8_lossy(&out.stdout))
+    try_list().unwrap_or_default()
+}
+
+/// The devices on USB that have a serial number, or `None` when they couldn't be looked at (so
+/// a phone isn't taken to be gone when it's only that ioreg didn't run).
+#[cfg(target_os = "macos")]
+pub fn try_list() -> Option<Vec<UsbDev>> {
+    let out = crate::platform::command("ioreg").args(["-p", "IOUSB", "-l", "-w0"]).stdin(std::process::Stdio::null()).output().ok()?;
+    out.status.success().then(|| parse(&String::from_utf8_lossy(&out.stdout)))
 }
 
 /// Each device in /sys/bus/usb/devices that has a serial: its bus and address are the ones
 /// libusb (and so libmtp) reports on Linux.
 #[cfg(not(target_os = "macos"))]
-pub fn list() -> Vec<UsbDev> {
+pub fn try_list() -> Option<Vec<UsbDev>> {
     let read = |d: &std::path::Path, name: &str| std::fs::read_to_string(d.join(name)).ok().map(|s| s.trim().to_string());
-    std::fs::read_dir("/sys/bus/usb/devices")
-        .into_iter()
-        .flatten()
+    let dir = std::fs::read_dir("/sys/bus/usb/devices").ok()?;
+    let devs = dir
         .flatten()
         .filter_map(|e| {
             let d = e.path();
@@ -43,7 +46,8 @@ pub fn list() -> Vec<UsbDev> {
                 serial,
             })
         })
-        .collect()
+        .collect();
+    Some(devs)
 }
 
 /// Names of what's on USB now, to notice something plugged in or taken out.
@@ -107,6 +111,68 @@ pub(crate) fn parse(text: &str) -> Vec<UsbDev> {
     out
 }
 
+/// A program that has a USB device, or one of its interfaces, to itself.
+#[derive(Debug, Clone, PartialEq)]
+pub struct Holder {
+    pub pid: u32,
+    pub name: String,
+}
+
+/// The programs holding the USB device at libusb's (bus, address) or one of its interfaces (an
+/// interface is what an MTP session claims), from ioreg; `None` if ioreg couldn't be read. macOS's
+/// own drivers, which have no pid, aren't counted.
+#[cfg(target_os = "macos")]
+pub fn holders(bus: u32, address: u32) -> Option<Vec<Holder>> {
+    let out = crate::platform::command("ioreg")
+        .args(["-r", "-c", "IOUSBHostDevice", "-l", "-w0"])
+        .stdin(std::process::Stdio::null())
+        .output()
+        .ok()?;
+    out.status.success().then(|| parse_holders(&String::from_utf8_lossy(&out.stdout), bus, address))
+}
+
+/// `holders` from ioreg's text: each device entry, its properties, then the entries under it
+/// (interfaces) with theirs.
+pub(crate) fn parse_holders(text: &str, bus: u32, address: u32) -> Vec<Holder> {
+    let (mut location, mut addr, mut found) = (None::<u32>, None::<u32>, vec![]);
+    let mut out: Vec<Holder> = vec![];
+    let mut take = |location: Option<u32>, addr: Option<u32>, found: &mut Vec<Holder>| {
+        let here = location.is_some_and(|l| l >> 24 == bus) && addr == Some(address);
+        for h in found.drain(..) {
+            if here && !out.contains(&h) {
+                out.push(h);
+            }
+        }
+    };
+    for line in text.lines() {
+        if let Some(rest) = line.split_once("+-o ").map(|(_, r)| r) {
+            if rest.contains("<class IOUSBHostDevice") || rest.contains("<class IOUSBDevice") {
+                take(location.take(), addr.take(), &mut found);
+            }
+            continue;
+        }
+        let Some((key, value)) = line.split_once(" = ") else { continue };
+        let key = key.trim_start_matches([' ', '|']).trim_matches('"');
+        match key {
+            // An interface's locationID is its device's.
+            "locationID" if location.is_none() => location = value.trim().parse().ok(),
+            "USB Address" if addr.is_none() => addr = value.trim().parse().ok(),
+            "UsbExclusiveOwner" => {
+                // "pid 13235, ptpcamerad"
+                let v = value.trim().trim_matches('"');
+                if let Some((pid, name)) = v.strip_prefix("pid ").and_then(|r| r.split_once(", ")) {
+                    if let Ok(pid) = pid.parse() {
+                        found.push(Holder { pid, name: name.to_string() });
+                    }
+                }
+            }
+            _ => {}
+        }
+    }
+    take(location, addr, &mut found);
+    out
+}
+
 /// The serial of the USB device at libusb's (bus, address), or failing that, of the only device
 /// with this vendor and product id.
 pub fn serial_of(devs: &[UsbDev], bus: u32, address: u32, vendor: u16, product: u16) -> Option<String> {
@@ -153,6 +219,32 @@ mod tests {
   |       "locationID" = 34603008
   |     }
 "#;
+
+    #[test]
+    fn reads_who_holds_a_device() {
+        let text = r#"+-o SAMSUNG_Android@01100000  <class IOUSBHostDevice, id 0x1000222f4, registered>
+  |   "USB Serial Number" = "R3CR406TEMA"
+  |   "USB Address" = 1
+  |   "UsbExclusiveOwner" = "pid 91884, ferry-files"
+  |   "locationID" = 17825792
+  +-o AppleUSBCDCCompositeDevice  <class AppleUSBCDCCompositeDevice, id 0x1000222f7>
+  +-o MTP@0  <class IOUSBHostInterface, id 0x1000222fc, registered>
+  | |   "locationID" = 17825792
+  | |   "UsbExclusiveOwner" = "pid 13235, ptpcamerad"
+  | +-o ptpcamerad  <class AppleUSBHostInterfaceUserClient, id 0x100022309>
+  +-o CDC Abstract Control Model (ACM)@1  <class IOUSBHostInterface, id 0x1000222fe>
+  | |   "locationID" = 17825792
+  | |   "UsbExclusiveOwner" = "AppleUSBACMControl"
++-o Keyboard@02100000  <class IOUSBHostDevice, id 0x100014e34>
+  |   "USB Address" = 1
+  |   "UsbExclusiveOwner" = "pid 500, other"
+  |   "locationID" = 34603008
+"#;
+        let h = |pid, name: &str| Holder { pid, name: name.into() };
+        assert_eq!(parse_holders(text, 1, 1), [h(91884, "ferry-files"), h(13235, "ptpcamerad")]);
+        assert_eq!(parse_holders(text, 2, 1), [h(500, "other")]);
+        assert_eq!(parse_holders(text, 1, 2), []);
+    }
 
     #[test]
     fn reads_usb_serials() {

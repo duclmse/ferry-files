@@ -204,6 +204,9 @@ pub struct Devices {
     pub adb_waiting: bool,
     /// Disks mounted on the Mac, as (name, path).
     pub drives: Vec<(String, String)>,
+    /// Connected devices no longer on USB, which were disconnected, as (id, name).
+    #[serde(default)]
+    pub gone: Vec<(String, String)>,
 }
 
 #[derive(Clone, Debug, PartialEq, Deserialize)]
