@@ -72,10 +72,17 @@ pub(super) fn ListView(pane: Pane) -> impl IntoView {
             _ => "",
         })
     };
+    // Only the rows in view (and a little either side) are rendered.
+    let scroller = NodeRef::<html::Div>::new();
+    let len = Signal::derive(move || p.entries.with(Vec::len));
+    let win = rows::Window::new(scroller, len, rows::Rows { h: 29.0, per: 1, top: 30.0 }, rows::list_rows, Signal::derive(move || Some(p.id)));
+    let gap = move |h: f64| (h > 0.0).then(|| view! {
+        <tr class="gap" aria-hidden="true"><td colspan=move || (1 + p.list_cols.with(Vec::len)).to_string() style=format!("height: {h}px")></td></tr>
+    });
     view! {
-        <div class="list" class:drop=move || ctx.drop_at.get().as_deref() == Some(here.as_str())
+        <div class="list" node_ref=scroller data-rows="" class:drop=move || ctx.drop_at.get().as_deref() == Some(here.as_str())
             on:click=move |_| p.select_only(None) on:contextmenu=move |ev| ctx.show_menu(p, &ev, None)
-            on:dragover=over on:drop=drop>
+            on:scroll=move |_| win.update() on:dragover=over on:drop=drop>
             // At least the other columns and NAME_MIN for the name: narrower, the fixed layout would
             // give the name nothing. The list scrolls sideways instead.
             <table class:moving=move || moving.with(Option::is_some)
@@ -109,7 +116,8 @@ pub(super) fn ListView(pane: Pane) -> impl IntoView {
                     }}
                 </tr></thead>
                 <tbody>
-                    <For each=move || p.entries.get() key=|e| (e.path.clone(), e.size, e.mtime) let(e)>
+                    {move || gap(win.gaps().0)}
+                    <For each=move || p.entries.with(|es| win.slice(es)) key=|e| (e.path.clone(), e.size, e.mtime) let(e)>
                         {
                             let k = kind(&e);
                             let path = e.path.clone();
@@ -134,6 +142,7 @@ pub(super) fn ListView(pane: Pane) -> impl IntoView {
                             }
                         }
                     </For>
+                    {move || gap(win.gaps().1)}
                 </tbody>
             </table>
             {empty_note(p)}
@@ -252,12 +261,17 @@ pub(super) fn ThumbView(pane: Pane) -> impl IntoView {
     let p = pane;
     let (over, drop) = drop_events(ctx, p, None);
     let here = format!("{}:", p.id);
+    // Only the rows of tiles in view (and a little either side) are rendered.
+    let scroller = NodeRef::<html::Div>::new();
+    let len = Signal::derive(move || p.entries.with(Vec::len));
+    let win = rows::Window::new(scroller, len, rows::Rows { h: 160.0, per: 4, top: 12.0 }, rows::tile_rows, Signal::derive(move || Some(p.id)));
     view! {
-        <div class="list" class:drop=move || ctx.drop_at.get().as_deref() == Some(here.as_str())
+        <div class="list" node_ref=scroller data-rows="" class:drop=move || ctx.drop_at.get().as_deref() == Some(here.as_str())
             on:click=move |_| p.select_only(None) on:contextmenu=move |ev| ctx.show_menu(p, &ev, None)
-            on:dragover=over on:drop=drop>
+            on:scroll=move |_| win.update() on:dragover=over on:drop=drop>
+            <div class="gap" style=move || format!("height: {}px", win.gaps().0)></div>
             <div class="thumbs">
-                <For each=move || p.entries.get() key=|e| (e.path.clone(), e.size, e.mtime) let(e)>
+                <For each=move || p.entries.with(|es| win.slice(es)) key=|e| (e.path.clone(), e.size, e.mtime) let(e)>
                     {
                         let path = e.path.clone();
                         let editing = renaming(p, &e);
@@ -281,6 +295,7 @@ pub(super) fn ThumbView(pane: Pane) -> impl IntoView {
                     }
                 </For>
             </div>
+            <div class="gap" style=move || format!("height: {}px", win.gaps().1)></div>
             {empty_note(p)}
         </div>
     }
@@ -459,7 +474,14 @@ pub(super) fn Column(pane: Pane, dir: String, chain: Memo<Vec<String>>, width: R
     // The folder open to the right of this column, if any.
     let open_child = Memo::new(move |_| chain.with(|c| c.iter().position(|x| *x == d).and_then(|i| c.get(i + 1).cloned())));
     let d = dir.clone();
-    let entries = move || if current.get() { Some(p.entries.get()) } else { p.cols.with(|c| c.get(&d).cloned()) };
+    let all = Memo::new(move |_| if current.get() { Some(p.entries.get()) } else { p.cols.with(|c| c.get(&d).cloned()) });
+    // Only the rows in view (and a little either side) are rendered. Keys and arrows move in the
+    // current column, so that's the one `rows::reveal` scrolls.
+    let scroller = NodeRef::<html::Div>::new();
+    let len = Signal::derive(move || all.with(|a| a.as_ref().map_or(0, Vec::len)));
+    let pane = Signal::derive(move || current.get().then_some(p.id));
+    let win = rows::Window::new(scroller, len, rows::Rows { h: 26.0, per: 1, top: 4.0 }, rows::column_rows, pane);
+    let dir_v = StoredValue::new(dir.clone());
     let d = dir.clone();
     let bg_menu = move |ev: web_sys::MouseEvent| {
         if !current.get_untracked() {
@@ -471,17 +493,22 @@ pub(super) fn Column(pane: Pane, dir: String, chain: Memo<Vec<String>>, width: R
     let key = format!("{}:{}", p.id, dir);
     let data_dir = dir.clone();
     view! {
-        <div class="col" class:current=current on:contextmenu=bg_menu data-dir=data_dir
+        <div class="col" node_ref=scroller data-rows=move || current.get().then_some("") on:scroll=move |_| win.update()
+            class:current=current on:contextmenu=bg_menu data-dir=data_dir
             style=move || match width.get() { w if w > 0.0 => format!("flex-basis: {w}px"), _ => String::new() }
             class:drop=move || ctx.drop_at.get().as_deref() == Some(key.as_str())
             on:dragover=over on:drop=drop>
-            {move || match entries() {
-                None => view! { <div class="empty"><span class="spin"></span></div> }.into_any(),
-                Some(es) if es.is_empty() => view! { <div class="empty">"Empty"</div> }.into_any(),
-                Some(es) => es.into_iter().map(|e| {
+            {move || match all.with(|a| a.as_ref().map(Vec::is_empty)) {
+                None => Some(view! { <div class="empty"><span class="spin"></span></div> }.into_any()),
+                Some(true) => Some(view! { <div class="empty">"Empty"</div> }.into_any()),
+                Some(false) => None,
+            }}
+            <div class="gap" style=move || format!("height: {}px", win.gaps().0)></div>
+            <For each=move || all.with(|a| a.as_deref().map(|es| win.slice(es)).unwrap_or_default()) key=|e| (e.path.clone(), e.size, e.mtime) let(e)>
+                {
                     let (p1, p2) = (e.path.clone(), e.path.clone());
                     let (e1, e2) = (e.clone(), e.clone());
-                    let dir = dir.clone();
+                    let dir = dir_v.get_value();
                     let click = move |ev: web_sys::MouseEvent| {
                         if current.get_untracked() && (crate::os::cmd(ev.meta_key(), ev.ctrl_key()) || ev.shift_key()) {
                             p.click(&ev, &e1.path);
@@ -514,8 +541,9 @@ pub(super) fn Column(pane: Pane, dir: String, chain: Memo<Vec<String>>, width: R
                             {e.dir.then(|| view! { <span class="chev">"›"</span> })}
                         </div>
                     }
-                }).collect_view().into_any(),
-            }}
+                }
+            </For>
+            <div class="gap" style=move || format!("height: {}px", win.gaps().1)></div>
         </div>
     }
 }

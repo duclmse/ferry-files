@@ -160,7 +160,9 @@
   line-height: 1;
 }
 
+/* Two lines even for a short name: every tile the same height (rows.rs counts on it). */
 .tile .label {
+  min-height: 2.6em;
   font-size: 12px;
   line-height: 1.3;
   word-break: break-word;
@@ -188,6 +190,7 @@
 .col {
   flex: 0 0 230px;
   overflow-y: auto;
+  overflow-anchor: none;
   border-right: 1px solid var(--line);
   padding: 4px 0;
 }

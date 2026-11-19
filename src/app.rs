@@ -28,6 +28,7 @@ mod near;
 mod palette;
 mod pane;
 mod preview;
+mod rows;
 mod safety;
 mod search;
 mod sidebar;
@@ -1219,6 +1220,11 @@ pub fn App() -> impl IntoView {
                     opts.set_block(web_sys::ScrollLogicalPosition::Nearest);
                     opts.set_inline(web_sys::ScrollLogicalPosition::Nearest);
                     el.scroll_into_view_with_scroll_into_view_options(&opts);
+                } else if let Some(sc) = document().query_selector(&format!(".pane[data-pane=\"{i}\"] [data-rows]")).ok().flatten() {
+                    // Not rendered, being out of view in a long list: scroll to where it would be.
+                    if let Some(idx) = ctx.panes[i].entries.with_untracked(|es| es.iter().position(|e| e.path == path)) {
+                        rows::reveal(i, &sc, idx);
+                    }
                 }
             });
         }
