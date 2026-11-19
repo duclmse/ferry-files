@@ -17,6 +17,10 @@ pub const COMPUTER: &str = if cfg!(target_os = "macos") {
     "computer"
 };
 
+/// Where the web view reaches the app's `ferry` scheme: Windows' web view (WebView2) only loads
+/// it over http, at `http://ferry.localhost/`. The page's `os::served` does the same.
+pub const SCHEME_ORIGIN: &str = if cfg!(windows) { "http://ferry.localhost" } else { "ferry://localhost" };
+
 /// A command that runs without flashing a console window on Windows.
 pub fn command(program: impl AsRef<OsStr>) -> Command {
     #[allow(unused_mut)]

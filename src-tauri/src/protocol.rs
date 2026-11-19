@@ -19,15 +19,17 @@ fn encode_path(p: &str) -> String {
     p.split('/').map(|s| utf8_percent_encode(s, SEGMENT).to_string()).collect::<Vec<_>>().join("/")
 }
 
+use crate::platform::SCHEME_ORIGIN as ORIGIN;
+
 /// URL of a file in an open book. `rev` changes whenever the book does, so edits show up.
 pub fn book_url(id: u32, path: &str, rev: u32) -> String {
-    format!("ferry://localhost/book/{id}/{}?v={rev}", encode_path(path))
+    format!("{ORIGIN}/book/{id}/{}?v={rev}", encode_path(path))
 }
 
 /// Base URL for relative links in a chapter: the chapter's folder, with a trailing slash.
 pub fn book_base(id: u32, chapter: &str) -> String {
     let dir = chapter.rfind('/').map_or("", |k| &chapter[..=k]);
-    format!("ferry://localhost/book/{id}/{}", encode_path(dir))
+    format!("{ORIGIN}/book/{id}/{}", encode_path(dir))
 }
 
 fn respond(status: StatusCode, ctype: &str, body: Vec<u8>) -> Response<Vec<u8>> {
@@ -288,6 +290,13 @@ fn file(app: &AppHandle, q: &str, range: Option<&str>) -> Response<Vec<u8>> {
 #[cfg(test)]
 mod tests {
     use super::{parse_range, CHUNK};
+
+    #[test]
+    fn book_urls_use_the_web_views_address() {
+        let at = if cfg!(windows) { "http://ferry.localhost" } else { "ferry://localhost" };
+        assert_eq!(super::book_url(3, "OEBPS/a b.png", 7), format!("{at}/book/3/OEBPS/a%20b.png?v=7"));
+        assert_eq!(super::book_base(3, "OEBPS/text/ch1.xhtml"), format!("{at}/book/3/OEBPS/text/"));
+    }
 
     #[test]
     fn ranges_are_read_and_cut_to_a_chunk() {
