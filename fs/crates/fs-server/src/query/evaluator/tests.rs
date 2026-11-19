@@ -709,15 +709,35 @@ mod functions_end_to_end {
             "childfilecount:1",
             "empty:",
             "dadupe:",
-            "dupe:size",
+            "dupe:copy",
             "sizedupe:5",
             "dmdupe:today",
         ] {
             assert!(parse(q, &macros).is_err(), "{q}");
         }
-        for q in ["dupe:", "sizedupe: *.mp4", "dmdupe: ext:rs"] {
+        for q in [
+            "dupe:",
+            "sizedupe: *.mp4",
+            "dmdupe: ext:rs",
+            "dupe:size",
+            "dupe:date",
+        ] {
             assert!(parse(q, &macros).is_ok(), "{q}");
         }
+        use crate::query::ast::{Expr, Function, PredicateKind};
+        use crate::store::DupeKind;
+        let kind = |q: &str| match parse(q, &macros).unwrap() {
+            Expr::Predicate(p) => match p.kind {
+                PredicateKind::Function(Function::Dupe(k)) => k,
+                other => panic!("{q}: {other:?}"),
+            },
+            other => panic!("{q}: {other:?}"),
+        };
+        assert_eq!(kind("dupe:"), DupeKind::Name);
+        assert_eq!(kind("dupe:name"), DupeKind::Name);
+        assert_eq!(kind("dupe:SIZE"), DupeKind::Size);
+        assert_eq!(kind("dupe:date"), DupeKind::DateModified);
+        assert_eq!(kind("dupe:dc"), DupeKind::DateCreated);
     }
 }
 

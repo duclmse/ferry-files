@@ -65,18 +65,29 @@ pub(super) fn build_predicate(kw: &str, val: &str, mods: Modifiers) -> Result<Ex
                 modifiers: mods,
             }));
         }
-        "dupe" | "namedup" | "namedupe" | "sizedupe" | "sizedup" | "dmdupe" | "dmdup"
-        | "dcdupe" | "dcdup"
+        "dupe" => Function::Dupe(match val.to_ascii_lowercase().as_str() {
+            "" | "name" => DupeKind::Name,
+            "size" => DupeKind::Size,
+            "dm" | "date" | "datemodified" => DupeKind::DateModified,
+            "dc" | "datecreated" => DupeKind::DateCreated,
+            // Read as a name-dupe search, anything else would quietly answer
+            // a different question.
+            _ => {
+                return Err(AppError::Query(format!(
+                    "`dupe:{val}`: the property must be name, size, dm or dc; \
+                     narrow with separate terms (`dupe:size *.mp4`)"
+                )))
+            }
+        }),
+        "namedup" | "namedupe" | "sizedupe" | "sizedup" | "dmdupe" | "dmdup" | "dcdupe"
+        | "dcdup"
             if !val.is_empty() =>
         {
-            // `dupe:size` read as a name-dupe search would quietly answer a
-            // different question.
             return Err(AppError::Query(format!(
-                "`{kw}:` takes no value; for other properties use sizedupe:, dmdupe: \
-                 or dcdupe:, and narrow with separate terms (`sizedupe: *.mp4`)"
+                "`{kw}:` takes no value; narrow with separate terms (`{kw}: *.mp4`)"
             )));
         }
-        "dupe" | "namedup" | "namedupe" => Function::Dupe(DupeKind::Name),
+        "namedup" | "namedupe" => Function::Dupe(DupeKind::Name),
         "sizedupe" | "sizedup" => Function::Dupe(DupeKind::Size),
         "dmdupe" | "dmdup" => Function::Dupe(DupeKind::DateModified),
         "dcdupe" | "dcdup" => Function::Dupe(DupeKind::DateCreated),

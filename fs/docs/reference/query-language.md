@@ -137,7 +137,7 @@ drive.
 
 | Function | Description |
 |----------|-------------|
-| `dupe:` | Same filename as another file (`namedupe:`) |
+| `dupe:` | Same filename as another file (`namedupe:`); `dupe:size`, `dupe:dm` (or `dupe:date`) and `dupe:dc` pick another property |
 | `namepartdupe:` | Not supported (query error) |
 | `sizedupe:` | Same size |
 | `dmdupe:` | Same date modified |
@@ -145,8 +145,9 @@ drive.
 | `dadupe:` | Not supported (query error) |
 | `attribdupe:` | Not supported (query error) |
 
-The dupe functions take no value (`dupe:size` is an error); narrow them with
-other terms, as in `sizedupe: *.mp4`.
+Only `dupe:` takes a value, the property to compare; any other value is an
+error. The other dupe functions take none. Narrow them with separate terms, as
+in `sizedupe: *.mp4`.
 
 #### Result Control
 
