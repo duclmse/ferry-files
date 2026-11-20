@@ -89,9 +89,14 @@ files and disks too, so books can be copied between them.
 - Favourites (sidebar): any folder on the Mac or a device, added from the
   right-click menu. Each pane remembers its last folder for each device and the
   Mac.
-- Sync to the other pane: compares the two folders (files by size) and copies
-  what's missing from the other pane, at any depth. Files that differ, and files
-  only in the other pane, are listed but left alone.
+- Sync to the other pane: compares the two folders (files by size, at any
+  depth) and lists what it would do before doing it. Copy missing copies only
+  what the other pane lacks; Update also replaces files that differ (keeping a
+  backup); Mirror also removes what's only in the other pane (removing more than
+  10 items asks you to type "remove"). Save keeps the two folders and the mode
+  as a sync pair.
+- Sync pairs (sidebar): click one to preview its sync in the active pane; ×
+  forgets it. They're in the ⌘K palette too.
 - Disks under Mac in the sidebar have ⏏ to eject them.
 - The sidebar's places, disks, device folders and favourites have ▸ to show the
   folders in them, and theirs, as a tree.
