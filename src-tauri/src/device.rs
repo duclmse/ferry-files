@@ -75,8 +75,9 @@ pub trait Transport: Send + Sync {
     fn listdir_page(&self, _path: &str, _offset: u64, _count: u64) -> Option<Result<Vec<Entry>>> {
         None
     }
-    /// Runs a shell command in `dir`, for the terminal. None when the device has no command line.
-    fn run(&self, _dir: &str, _command: &str) -> Option<Result<crate::terminal::Ran>> {
+    /// The command that starts an interactive shell in `dir`, for the terminal (which runs it in
+    /// a pseudo-terminal). None when the device has no command line.
+    fn shell(&self, _dir: &str) -> Option<std::process::Command> {
         None
     }
 }
@@ -227,11 +228,10 @@ impl Device {
         }
     }
 
-    /// See `Transport::run`. Without the device's lock: a command can take a while, and doesn't
-    /// go through the app's file operations.
-    pub fn run(&self, dir: &str, command: &str) -> Option<Result<crate::terminal::Ran>> {
+    /// See `Transport::shell`.
+    pub fn shell(&self, dir: &str) -> Option<Result<std::process::Command>> {
         match norm(dir) {
-            Ok(dir) => self.t.run(&dir, command),
+            Ok(dir) => self.t.shell(&dir).map(Ok),
             Err(e) => Some(Err(e)),
         }
     }

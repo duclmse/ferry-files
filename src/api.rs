@@ -203,14 +203,6 @@ pub struct SmbMount {
     pub path: String,
 }
 
-/// What a command run in the terminal printed, and its exit code.
-#[derive(Clone, Debug, PartialEq, Deserialize)]
-pub struct Ran {
-    pub out: String,
-    pub code: i32,
-    pub timed_out: bool,
-}
-
 #[derive(Clone, Debug, PartialEq, Deserialize)]
 pub struct Devices {
     /// Devices on USB that aren't connected yet.

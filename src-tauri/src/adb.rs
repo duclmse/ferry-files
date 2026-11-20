@@ -155,13 +155,13 @@ impl Adb {
 }
 
 impl Transport for Adb {
-    fn run(&self, dir: &str, command: &str) -> Option<Result<crate::terminal::Ran>> {
-        let mut c = crate::platform::command(&self.adb);
+    fn shell(&self, dir: &str) -> Option<std::process::Command> {
+        let mut c = std::process::Command::new(&self.adb);
         if let Some(s) = &self.serial {
             c.args(["-s", s]);
         }
-        c.args(["shell", &format!("cd {} && {command}", crate::sftp::sh_quote(dir))]);
-        Some(crate::terminal::run(c))
+        c.args(["shell", "-t", &format!("cd {}; exec sh", crate::sftp::sh_quote(dir))]);
+        Some(c)
     }
 
     fn kind(&self) -> &'static str { "adb" }

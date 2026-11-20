@@ -743,10 +743,11 @@ impl Transport for Sftp {
         }
     }
 
-    fn run(&self, dir: &str, command: &str) -> Option<Result<crate::terminal::Ran>> {
-        let mut c = self.addr.ssh();
-        c.arg(format!("cd {} && {command}", sh_quote(dir)));
-        Some(crate::terminal::run(c))
+    /// A login shell on the server, in `dir`.
+    fn shell(&self, dir: &str) -> Option<std::process::Command> {
+        let mut c = self.addr.ssh_with(std::process::Command::new("ssh"), &["-t"]);
+        c.arg(format!("cd {}; exec \"${{SHELL:-sh}}\" -l", sh_quote(dir)));
+        Some(c)
     }
 }
 

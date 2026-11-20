@@ -521,9 +521,10 @@ th.num {
 
 /* The terminal under a pane. */
 .term {
+  position: relative;
   display: flex;
   flex-direction: column;
-  height: 220px;
+  height: 260px;
   flex: none;
   border-top: 1px solid var(--line);
   background: var(--panel);
@@ -547,70 +548,48 @@ th.num {
   white-space: nowrap;
 }
 
-.term-log {
+.term-screen {
   flex: 1;
-  overflow: auto;
-  padding: 6px 10px;
-  font: 12px/1.45 ui-monospace, SFMono-Regular, Menlo, monospace;
+  min-height: 0;
+  overflow: hidden;
+  padding: 4px 8px;
+  font: 12px/1.35 ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  white-space: pre;
+  color: var(--ink);
+  cursor: text;
   -webkit-user-select: text;
   user-select: text;
 }
 
-.term-log .hint {
-  font-family: inherit;
-  margin: 0;
+.term-screen:focus {
+  outline: none;
 }
 
-.term-log .cmd {
-  margin-top: 6px;
-  font-weight: 600;
+.term-screen > div {
+  height: 1.35em;
 }
 
-.term-log .cmd:first-child {
-  margin-top: 0;
+.term-screen .b { font-weight: 700; }
+.term-screen .d { opacity: 0.6; }
+.term-screen .i { font-style: italic; }
+.term-screen .u { text-decoration: underline; }
+
+.term-screen .cur {
+  background: var(--ink);
+  color: var(--panel);
 }
 
-.term-log .dir,
-.term-log .running {
-  color: var(--muted);
-}
-
-.term-log .running {
-  display: flex;
-  align-items: center;
-  gap: 6px;
-}
-
-.term-log .out {
-  margin: 2px 0 0;
-  font: inherit;
-  white-space: pre-wrap;
-  word-break: break-word;
-}
-
-.term-log .error {
-  color: var(--danger);
-}
-
-.term-input {
-  display: flex;
-  align-items: center;
-  gap: 6px;
-  padding: 4px 10px;
-  border-top: 1px solid var(--line);
-  font: 12px ui-monospace, SFMono-Regular, Menlo, monospace;
-}
-
-.term-input .prompt {
-  color: var(--muted);
-}
-
-.term-input input {
-  flex: 1;
-  min-width: 0;
-  border: 0;
-  outline: 0;
+.term-screen .cur.off {
   background: transparent;
-  color: var(--ink);
-  font: inherit;
+  color: inherit;
+  outline: 1px solid var(--muted);
+  outline-offset: -1px;
+}
+
+/* One line of ten characters, to know how big a character is. */
+.term-measure {
+  position: absolute;
+  visibility: hidden;
+  white-space: pre;
+  font: 12px/1.35 ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
 }

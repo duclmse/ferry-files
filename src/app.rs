@@ -427,11 +427,13 @@ struct Pane {
     more: RwSignal<bool>,
     loading_more: RwSignal<bool>,
     got: StoredValue<usize>,
-    /// The terminal under the pane: whether it's shown, what was run in it, and the commands
-    /// typed (for ↑/↓).
+    /// The terminal under the pane: whether it's shown, its shell's id while one runs (the
+    /// screen itself is in terminal.rs), a count bumped to draw it again, and whether a shell
+    /// is being started.
     term: RwSignal<bool>,
-    term_log: RwSignal<Vec<TermLine>>,
-    term_hist: StoredValue<Vec<String>>,
+    term_id: RwSignal<Option<u32>>,
+    term_tick: RwSignal<u64>,
+    term_starting: StoredValue<bool>,
     /// The pane's tabs. The shown one's entry is only brought up to date when another is shown;
     /// until then the pane's own signals are where it is.
     tabs: RwSignal<Vec<Tab>>,
@@ -502,8 +504,9 @@ impl Pane {
             loading_more: RwSignal::new(false),
             got: StoredValue::new(0),
             term: RwSignal::new(false),
-            term_log: RwSignal::new(vec![]),
-            term_hist: StoredValue::new(vec![]),
+            term_id: RwSignal::new(None),
+            term_tick: RwSignal::new(0),
+            term_starting: StoredValue::new(false),
             tabs: RwSignal::new(vec![Tab { src: Src::Mac, cwd: String::new(), selected: None, view: ViewMode::stored(id), root: String::new() }]),
             tab: RwSignal::new(0),
         }
@@ -1032,6 +1035,7 @@ pub fn App() -> impl IntoView {
         ctx.check_conns();
     });
     ctx.keep_session();
+    ctx.watch_terminals();
     // Look for devices and disks now, then when the backend says something was plugged in or taken
     // out. Every few seconds as well while a phone waits for USB debugging to be allowed (that's
     // not a USB change), after a look that couldn't start, and, when USB can't be watched, while
