@@ -39,4 +39,5 @@ Phone tests (`cargo run --example smoke` and `--example epub_smoke`) need a conn
 - **The EPUB editor is Rust only.** Don't bring back a JavaScript editor.
 - **Frontend state** lives in `Copy` structs of signals (`Ctx` in `app.rs`, methods spread over `app/`, `Ep` in `epub.rs`). Get contexts while a component is being created, not inside event handlers. Book actions go through `Ep::act`, which commits the open chapter first.
 - **UI text** is plain, short and specific: say what happened and what to do next. Styles use the CSS tokens in `styles/base.css` and support both light and dark mode.
+- **Buttons show icons**, from `src/app/icons.rs` with `ico(Icon::…)`, and say what they do in both `title` and `aria-label`. Add a 16×16 line drawing there when none fits. Use words only when no picture is clear (Save as…, a dialog's Cancel and OK) or the label is a value (a zoom percentage).
 - `target/`, `dist/`, `src-tauri/gen/` and `src-tauri/libs/` are build outputs and aren't committed.
