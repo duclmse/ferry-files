@@ -55,7 +55,10 @@ use import::*;
 use devices::*;
 use editor::*;
 use code::*;
-use icons::{ico, Icon};
+pub(crate) use icons::{ico, Icon};
+/// For the EPUB editor's Source view.
+pub(crate) use editor::{code_html, shift_runs, LAYER_MAX};
+pub(crate) use util::{store, stored_flag};
 use keymap::*;
 use layout::*;
 use menu::*;

@@ -42,7 +42,11 @@ pub struct Ep {
     query: RwSignal<Query>,
     found: RwSignal<Option<Found>>,
     frame: NodeRef<html::Iframe>,
+    /// Source shown in colour.
+    colours: RwSignal<bool>,
 }
+
+const COLOURS_KEY: &str = "ferry-files.epub-colours";
 
 fn plural(n: usize, one: &str, many: &str) -> String {
     format!("{n} {}", if n == 1 { one } else { many })
@@ -74,6 +78,7 @@ impl Ep {
             doc: RwSignal::new(None),
             source: RwSignal::new(String::new()),
             chapter_dirty: RwSignal::new(false),
+            colours: RwSignal::new(crate::app::stored_flag(COLOURS_KEY, true)),
             status: RwSignal::new((String::new(), "")),
             busy: RwSignal::new(false),
             confirm_close: RwSignal::new(false),
@@ -617,6 +622,14 @@ fn ChapterView(path: String) -> impl IntoView {
                 <button class:active=move || ep.mode.get() == Mode::Source on:click=move |_| ep.set_mode(Mode::Source)>"Source"</button>
             </div>
             <span class="spacer"></span>
+            {move || (ep.mode.get() == Mode::Source).then(|| view! {
+                <button class="btn" class:active=move || ep.colours.get() title="Colours" aria-label="Colours"
+                    on:click=move |_| {
+                        let on = !ep.colours.get_untracked();
+                        ep.colours.set(on);
+                        crate::app::store(COLOURS_KEY, if on { "1" } else { "0" });
+                    }>{crate::app::ico(crate::app::Icon::Highlight)}</button>
+            })}
             {move || (ep.mode.get() == Mode::Visual && visual_ok()).then(|| view! {
                 <div class="fmt">
                     {FORMAT.iter().map(|&(cmd, arg, text, title)| view! {
@@ -639,12 +652,81 @@ fn ChapterView(path: String) -> impl IntoView {
                     <button class="btn" on:click=move |_| ep.set_mode(Mode::Source)>"Fix it in Source"</button>
                 </div>
             }.into_any(),
-            (Mode::Source, Some(_)) => view! {
-                <div class="editor">
-                    <textarea spellcheck="false" prop:value=move || ep.source.get()
-                        on:input=move |ev| { ep.source.set(event_target_value(&ev)); ep.chapter_dirty.set(true); }></textarea>
-                </div>
-            }.into_any(),
+            (Mode::Source, Some(_)) => view! { <SourceEdit path=path.clone()/> }.into_any(),
         }}
+    }
+}
+
+/// The chapter's XHTML: a clear-lettered box over a layer that draws it in colour (as the text
+/// editor does), or the plain box when colours are off or the chapter is big.
+#[component]
+fn SourceEdit(path: String) -> impl IntoView {
+    let ep = expect_context::<Ep>();
+    let layer = NodeRef::<html::Pre>::new();
+    let ta = NodeRef::<html::Textarea>::new();
+    // The runs and the text they were for, and which colouring is the latest.
+    let runs = StoredValue::new(None::<Vec<(u8, u32)>>);
+    let ran_on = StoredValue::new(String::new());
+    let asked = StoredValue::new(0u32);
+    let timer = StoredValue::new(None::<leptos::leptos_dom::helpers::TimeoutHandle>);
+    // The text as the box holds it, with line breaks as LF.
+    let text = move || ep.source.with_untracked(|s| s.replace("\r\n", "\n"));
+    let layered = move || ep.colours.get() && ep.source.with(|s| s.len() <= crate::app::LAYER_MAX);
+    let draw = move || {
+        let Some(l) = layer.get_untracked() else { return };
+        let t = text();
+        let r = ran_on.with_value(|old| runs.with_value(|r| r.as_ref().map(|r| if *old == t { r.clone() } else { crate::app::shift_runs(r, old, &t) })));
+        l.set_inner_html(&crate::app::code_html(&t, r.as_deref(), &[], None, 1..usize::MAX));
+        if let Some(b) = ta.get_untracked() {
+            l.set_scroll_top(b.scroll_top());
+            l.set_scroll_left(b.scroll_left());
+        }
+    };
+    let colour = move || {
+        let t = text();
+        let n = asked.get_value() + 1;
+        asked.set_value(n);
+        let name = path.clone();
+        spawn_local(async move {
+            let Ok(c) = call::<TextColours>("colour_text", json!({ "name": name, "text": t })).await else { return };
+            if asked.try_get_value() != Some(n) {
+                return;
+            }
+            runs.set_value(c.runs);
+            ran_on.set_value(t);
+            draw();
+        });
+    };
+    Effect::new(move |_| {
+        ep.source.track();
+        if !layered() {
+            return;
+        }
+        draw();
+        if let Some(h) = timer.try_update_value(Option::take).flatten() {
+            h.clear();
+        }
+        let colour = colour.clone();
+        timer.set_value(set_timeout_with_handle(move || colour(), std::time::Duration::from_millis(250)).ok());
+    });
+    on_cleanup(move || {
+        if let Some(h) = timer.try_update_value(Option::take).flatten() {
+            h.clear();
+        }
+    });
+    let scrolled = move |_| {
+        if let (Some(b), Some(l)) = (ta.get_untracked(), layer.get_untracked()) {
+            l.set_scroll_top(b.scroll_top());
+            l.set_scroll_left(b.scroll_left());
+        }
+    };
+    view! {
+        <div class="code-edit source" class:layered=layered>
+            <pre class="code-layer" node_ref=layer aria-hidden="true"></pre>
+            <textarea class="code-input" node_ref=ta spellcheck="false" autocomplete="off" autocapitalize="off"
+                aria-label="Chapter source" prop:value=move || ep.source.get()
+                on:input=move |ev| { ep.source.set(event_target_value(&ev)); ep.chapter_dirty.set(true); }
+                on:scroll=scrolled></textarea>
+        </div>
     }
 }

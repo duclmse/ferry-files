@@ -306,7 +306,7 @@ fn reveal(p: Pane, path: &str) {
 
 /// Text up to this size is drawn over the editing box, with colours, line numbers and find marks;
 /// bigger text is edited plain.
-const LAYER_MAX: usize = 512 * 1024;
+pub(crate) const LAYER_MAX: usize = 512 * 1024;
 /// Colours are asked for this long after typing stops.
 const COLOUR_DELAY: std::time::Duration = std::time::Duration::from_millis(250);
 /// Matches marked, at most.
@@ -342,7 +342,7 @@ fn slice_runs(runs: &[(u8, u32)], from: usize, to: usize) -> Vec<(u8, u32)> {
 
 /// `runs` for `old` moved onto `new`: kept where the start and the end are unchanged; what's
 /// between is plain until it's coloured again.
-fn shift_runs(runs: &[(u8, u32)], old: &str, new: &str) -> Vec<(u8, u32)> {
+pub(crate) fn shift_runs(runs: &[(u8, u32)], old: &str, new: &str) -> Vec<(u8, u32)> {
     let mut pre = old.bytes().zip(new.bytes()).take_while(|(a, b)| a == b).count();
     while !new.is_char_boundary(pre) || !old.is_char_boundary(pre) {
         pre -= 1;
@@ -389,7 +389,7 @@ fn escape_into(out: &mut String, s: &str) {
 /// `<mark>` per match. The lines before and after are each one plain `<span class="far">`: they're
 /// out of view, and a long file is then a few hundred nodes, not a few per line. Every line ends
 /// with a line break, so an empty last line has its height. The text is escaped.
-fn code_html(t: &str, runs: Option<&[(u8, u32)]>, hits: &[(usize, usize)], shown: Option<usize>, rich: Range<usize>) -> String {
+pub(crate) fn code_html(t: &str, runs: Option<&[(u8, u32)]>, hits: &[(usize, usize)], shown: Option<usize>, rich: Range<usize>) -> String {
     let runs = runs.filter(|r| runs_fit(r, t));
     // (end, class) per run.
     let mut ends = vec![];

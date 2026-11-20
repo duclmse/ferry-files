@@ -826,3 +826,8 @@ th.num {
   border-top: 0;
   line-height: 1;
 }
+
+/* Without colours (the EPUB editor's Source view, turned off), the box shows its own letters. */
+.code-edit:not(.layered) .code-layer {
+  display: none;
+}

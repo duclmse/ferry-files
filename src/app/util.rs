@@ -315,7 +315,7 @@ pub(super) fn rename_stored_keys() {
     }
 }
 
-pub(super) fn store(key: &str, value: &str) {
+pub(crate) fn store(key: &str, value: &str) {
     if let Some(s) = storage() {
         let _ = s.set_item(key, value);
     }
@@ -436,7 +436,7 @@ pub(super) fn glob_source(pattern: &str) -> String {
 }
 
 /// A setting kept in localStorage as "1" or "0".
-pub(super) fn stored_flag(key: &str, default: bool) -> bool {
+pub(crate) fn stored_flag(key: &str, default: bool) -> bool {
     stored(key).map_or(default, |v| v == "1")
 }
 
