@@ -45,6 +45,10 @@ pub(super) enum Icon {
     /// A line running on and turning back.
     Wrap,
     LineNumbers,
+    /// A list with indented lines: a book's or a PDF's contents.
+    Contents,
+    /// A box and an arrow out of it: open in another app.
+    OpenOut,
     /// A prompt: › and a line.
     Terminal,
     /// A box, and an arrow from it into another.
@@ -97,6 +101,8 @@ impl Icon {
             Icon::Terminal => r#"<rect x="1.5" y="2.5" width="13" height="11" rx="1.5"/><path d="M4.5 6l2 2-2 2M8 10.5h3.5"/>"#,
             Icon::Search => r#"<circle cx="7" cy="7" r="4.5"/><path d="M10.5 10.5 14 14"/>"#,
             Icon::Wrap => r#"<path d="M2 4h12M2 8h9.5a2.25 2.25 0 0 1 0 4.5H8"/><path d="M9.5 11 8 12.5 9.5 14M2 12.5h3"/>"#,
+            Icon::Contents => r#"<path d="M2.5 3.5h11M5.5 6.5h8M5.5 9.5h8M2.5 12.5h11"/>"#,
+            Icon::OpenOut => r#"<path d="M9 2.5h4.5V7M13.5 2.5l-6 6"/><path d="M11.5 9.5v3a1 1 0 0 1-1 1h-7a1 1 0 0 1-1-1v-7a1 1 0 0 1 1-1h3"/>"#,
             Icon::LineNumbers => r#"<path d="M2.5 3.5l1-.75V6.5M2 9.5h2l-2 3h2M7 4h7M7 8h7M7 12h7"/>"#,
         }
     }

@@ -958,11 +958,27 @@ td.name input.rename {
   font-variant-numeric: tabular-nums;
 }
 
-.preview iframe.pdf {
+/* The viewer, zoomed by widening it and turned in CSS; the stage scrolls when it's bigger. */
+.preview .pdf-stage {
   min-width: 0;
   flex: 1 1 0;
+  overflow: auto;
   border: 1px solid var(--line);
   border-radius: 6px;
+}
+
+.preview .pdf-box {
+  position: relative;
+  margin: 0 auto;
+  overflow: hidden;
+}
+
+.preview iframe.pdf {
+  position: absolute;
+  top: 0;
+  left: 0;
+  border: none;
+  transform-origin: 0 0;
   background: #fff;
 }
 

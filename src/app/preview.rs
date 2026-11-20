@@ -184,6 +184,53 @@ fn PdfView(pane: Pane, src: Src, entry: Entry, url: String, #[prop(optional)] in
             }
         });
     };
+    // Zoom widens the viewer, so it draws the pages bigger; a turn turns the whole viewer. Both
+    // need the stage's size, as the viewer can't be reached inside.
+    let zoom = RwSignal::new(1.0f64);
+    let turns = RwSignal::new(0u8);
+    let stage = NodeRef::<html::Div>::new();
+    let room = RwSignal::new(None::<(f64, f64)>);
+    let measure = move || {
+        if let Some(s) = stage.get_untracked() {
+            let _ = room.try_set(Some((s.client_width() as f64, s.client_height() as f64)));
+        }
+    };
+    let watcher = StoredValue::new_local(None::<(web_sys::ResizeObserver, Closure<dyn Fn()>)>);
+    Effect::new(move |_| {
+        let Some(s) = stage.get() else { return };
+        let cb = Closure::<dyn Fn()>::new(measure);
+        if let Ok(ro) = web_sys::ResizeObserver::new(cb.as_ref().unchecked_ref()) {
+            ro.observe(&s);
+            if let Some((old, _)) = watcher.try_update_value(|w| w.replace((ro, cb))).flatten() {
+                old.disconnect();
+            }
+        }
+    });
+    on_cleanup(move || {
+        if let Some((ro, _)) = watcher.try_update_value(Option::take).flatten() {
+            ro.disconnect();
+        }
+    });
+    let set_zoom = move |z: f64| zoom.set(z.clamp(0.5, 4.0));
+    // (The box it takes up, the viewer's own size and how it's moved and turned into that box.)
+    let placed = move || {
+        let Some((w, h)) = room.get() else { return (String::new(), "width: 100%; height: 100%".to_string()) };
+        let z = zoom.get();
+        let t = turns.get();
+        // The viewer's own width is the side it fits the pages to.
+        let (own_w, own_h) = if t % 2 == 1 { (h * z, w) } else { (w * z, h) };
+        let (box_w, box_h) = if t % 2 == 1 { (own_h, own_w) } else { (own_w, own_h) };
+        let turn = match t {
+            1 => format!("translateX({own_h}px) rotate(90deg)"),
+            2 => format!("translate({own_w}px, {own_h}px) rotate(180deg)"),
+            3 => format!("translateY({own_w}px) rotate(-90deg)"),
+            _ => "none".to_string(),
+        };
+        (
+            format!("width: {box_w}px; height: {box_h}px"),
+            format!("width: {own_w}px; height: {own_h}px; transform: {turn}"),
+        )
+    };
     let heading_list = move || match outline.get() {
         None => view! { <span class="hint">"Loading…"</span> }.into_any(),
         Some(Err(e)) => view! { <span class="hint">{e}</span> }.into_any(),
@@ -206,20 +253,31 @@ fn PdfView(pane: Pane, src: Src, entry: Entry, url: String, #[prop(optional)] in
     };
     view! {
         <div class="viewer-bar pdf-bar">
-            <button class="btn" class:active=move || show.get() title="Show the PDF's outline" on:click=toggle>"Outline"</button>
+            <button class="btn" class:active=move || show.get() title="Outline" aria-label="Outline" on:click=toggle>{ico(Icon::Contents)}</button>
             <span class="gap"></span>
             <input class="pdf-page" type="text" inputmode="numeric" placeholder="Page" aria-label="Go to page"
                 prop:value=move || typed.get() on:input=move |ev| typed.set(event_target_value(&ev)) on:keydown=on_key/>
             {move || pages().map(|n| view! { <span class="pdf-pages">{format!("of {n}")}</span> })}
+            <span class="gap"></span>
+            <button class="btn" title="Zoom out" aria-label="Zoom out" on:click=move |_| set_zoom(zoom.get_untracked() / 1.25)>{ico(Icon::ZoomOut)}</button>
+            <button class="btn zoom" title="Back to 100%" on:click=move |_| zoom.set(1.0)>{move || format!("{:.0}%", zoom.get() * 100.0)}</button>
+            <button class="btn" title="Zoom in" aria-label="Zoom in" on:click=move |_| set_zoom(zoom.get_untracked() * 1.25)>{ico(Icon::ZoomIn)}</button>
+            <button class="btn" title="Turn left" aria-label="Turn left" on:click=move |_| turns.update(|t| *t = (*t + 3) % 4)>{ico(Icon::TurnLeft)}</button>
+            <button class="btn" title="Turn right" aria-label="Turn right" on:click=move |_| turns.update(|t| *t = (*t + 1) % 4)>{ico(Icon::TurnRight)}</button>
             <span class="pdf-fill"></span>
-            {(!in_zip).then(|| view! { <button class="btn" title="Open in its default app" on:click=open>"Open"</button> })}
-            {(!in_zip && src == Src::Mac).then(|| view! {
-                <button class="btn" on:click=reveal>{format!("Show in {}", crate::os::file_manager())}</button>
+            {(!in_zip).then(|| view! { <button class="btn" title="Open in its default app" aria-label="Open in its default app" on:click=open>{ico(Icon::OpenOut)}</button> })}
+            {(!in_zip && src == Src::Mac).then(|| {
+                let tip = format!("Show in {}", crate::os::file_manager());
+                view! { <button class="btn" title=tip.clone() aria-label=tip on:click=reveal>{ico(Icon::Folder)}</button> }
             })}
         </div>
         <div class="pdf-body">
             {move || show.get().then(|| view! { <nav class="pdf-outline">{heading_list}</nav> })}
-            <iframe class="pdf" node_ref=frame src=url title="PDF"></iframe>
+            <div class="pdf-stage" node_ref=stage>
+                <div class="pdf-box" style=move || placed().0>
+                    <iframe class="pdf" node_ref=frame src=url title="PDF" style=move || placed().1></iframe>
+                </div>
+            </div>
         </div>
     }
 }
