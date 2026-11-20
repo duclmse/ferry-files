@@ -22,7 +22,6 @@ dirs = "6"
 chrono = { version = "0.4", default-features = false, features = ["clock"] }
 percent-encoding = "2"
 zip = { version = "2", default-features = false, features = ["deflate"] }
-flate2 = "1"
 image = { version = "0.25", default-features = false, features = [
     "jpeg",
     "png",
@@ -47,9 +46,6 @@ ureq = { version = "2", default-features = false }
 # Terminals: a real pseudo-terminal (ConPTY on Windows), so programs can ask for input.
 portable-pty = "0.9"
 base64 = "0.22"
-bzip2 = "0.6"
-ruzstd = "0.8"
-lzma-rust2 = { version = "0.25", default-features = false, features = ["std", "xz"] }
 
 [target.'cfg(unix)'.dependencies]
 signal-hook = "0.3"
@@ -77,7 +73,3 @@ windows = { version = "0.62", features = [
     "Win32_System_Variant",
     "Win32_UI_Shell_PropertiesSystem",
 ] }
-
-[dev-dependencies]
-# Packing .tar.xz files in the tests.
-lzma-rust2 = { version = "0.25", default-features = false, features = ["std", "xz", "encoder"] }

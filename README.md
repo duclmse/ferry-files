@@ -35,13 +35,9 @@ files and disks too, so books can be copied between them.
   the folder. PDFs (up to 64
   MB) show in the preview, fonts (TTF, OTF, WOFF, WOFF2) as samples, EPUBs as
   their cover (the cover itself once the preview is bigger than its thumbnail),
-  and ZIP, APK and JAR (and TAR: .tar, .tar.gz, .tar.bz2, .tar.xz, .tar.zst)
-  files as a tree of what's in them, folders opening and closing, each with the
-  size of all in it (a ZIP read from the end of the file, without unpacking; the
-  first 5000 items; a TAR from its headers; a packed TAR has no index, so it's
-  unpacked from the start, up to its first 256 MB). A gzipped file (.gz) shows the
-  file in it, its name and size read from the start and end of the file (the size
-  is wrong past 4 GB); in the column view, a ZIP
+  and ZIP, APK and JAR files as a tree of what's in them, folders opening and
+  closing, each with the size of all in it (read from the end of the file,
+  without unpacking; the first 5000 items); in the column view, a ZIP
   picked in the last column also opens as more columns, one per folder in it; a
   file picked there shows in the preview (unpacked in memory, up to 64 MB).
   Right-click a file for "Show as text" or "Show as hex" (bytes, 16 to a line,

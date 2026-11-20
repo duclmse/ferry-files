@@ -417,12 +417,9 @@ pub struct Packed {
     pub dir: bool,
 }
 
-/// What's in a ZIP or TAR file: the first items, and how many there are in all (for a TAR not
-/// read to its end, `partial`, how many were found).
+/// What's in a ZIP file: the first items, and how many there are in all.
 #[derive(Clone, Debug, Deserialize)]
 pub struct Listing {
     pub items: Vec<Packed>,
     pub total: u64,
-    #[serde(default)]
-    pub partial: bool,
 }

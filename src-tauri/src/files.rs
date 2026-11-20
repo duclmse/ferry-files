@@ -581,23 +581,11 @@ fn read_part(dev: &Device, path: &str, inner: Option<&str>, zip_size: Option<u64
     }
 }
 
-/// What's in a ZIP file of `size` bytes, read from its end; or in a TAR, packed or not; or in a
-/// gzipped file.
+/// What's in a ZIP file of `size` bytes, read from its end.
 #[tauri::command(rename_all = "snake_case")]
 pub(super) async fn zip_list(state: State<'_, AppState>, src: Option<String>, path: String, size: u64) -> Result<crate::archive::Listing, String> {
     let dev = state.source(src.as_deref())?;
-    // By its name: a TAR (packed or not), a gzipped file, else a ZIP.
-    blocking(move || {
-        let mut read = |at, len| dev.read_range(&path, at, len).map_err(msg);
-        match crate::archive::kind_of(&path) {
-            Some(crate::archive::Kind::Tar(pack)) => crate::archive::list_tar(size, &mut read, pack),
-            Some(crate::archive::Kind::Gz) => {
-                let name = path.rsplit(['/', '\\']).next().unwrap_or(&path);
-                crate::archive::list_gz(size, &mut read, name.strip_suffix(".gz").or_else(|| name.strip_suffix(".GZ")).unwrap_or(name))
-            }
-            None => crate::archive::list(size, &mut read),
-        }
-    })
+    blocking(move || crate::archive::list(size, &mut |at, len| dev.read_range(&path, at, len).map_err(msg)))
     .await
 }
 

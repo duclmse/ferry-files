@@ -111,12 +111,6 @@ pub(super) const ZIP_EXTS: &[&str] = &[
     "zip", "apk", "jar", "cbz", "xapk", "ipa", "aar", "war", "whl", "vsix", "nupkg",
 ];
 
-/// A TAR file, packed or not, or a gzipped file (listed like a ZIP, in the preview only; as the
-/// backend's `archive::kind_of`).
-fn is_tar(e: &Entry) -> bool {
-    let n = e.name.to_lowercase();
-    !e.dir && [".tar", ".tgz", ".tbz2", ".tbz", ".txz", ".tzst", ".tar.bz2", ".tar.xz", ".tar.zst", ".gz"].iter().any(|x| n.ends_with(x))
-}
 /// The backend serves a whole file (a PDF, a font) up to this size.
 const WHOLE_MAX: u64 = 64 * 1024 * 1024;
 
@@ -210,7 +204,7 @@ pub(super) fn Preview(
                         }.into_any(),
                         _ if has_ext(&e, FONT_EXTS) && e.size <= WHOLE_MAX => view! { <FontSample src entry=e.clone()/> }.into_any(),
                         _ if has_ext(&e, &["epub"]) => view! { <BigCover src entry=e.clone()/> }.into_any(),
-                        _ if has_ext(&e, ZIP_EXTS) || is_tar(&e) => view! { <ZipList src entry=e.clone()/> }.into_any(),
+                        _ if has_ext(&e, ZIP_EXTS) => view! { <ZipList src entry=e.clone()/> }.into_any(),
                         _ if is_text(&e) => view! { <TextPeek src entry=e.clone()/> }.into_any(),
                         _ if e.dir => thumb(&e).into_any(),
                         // A type the preview doesn't know: offer to look inside anyway.
@@ -672,9 +666,8 @@ fn zip_parents(path: &str) -> impl Iterator<Item = &str> {
     path.match_indices('/').map(move |(at, _)| &path[..=at])
 }
 
-/// What's in a ZIP (or APK, JAR, CBZ) or TAR, as a tree whose folders open and close: a ZIP's read
-/// from the end of the file, a TAR's from the headers before its files (a packed one, such as a
-/// .tar.gz, unpacked from the start). A gzipped file's one file, from its header and last bytes.
+/// What's in a ZIP (or APK, JAR, CBZ), as a tree whose folders open and close, read from the end
+/// of the file.
 #[component]
 fn ZipList(src: Src, entry: Entry) -> impl IntoView {
     let got = RwSignal::new(None::<Result<Listing, String>>);
@@ -703,7 +696,7 @@ fn ZipList(src: Src, entry: Entry) -> impl IntoView {
                         }
                     }
                     view! {
-                        <span class="sub">{format!("{}{} {} · {} packed, {} unpacked", l.total, if l.partial { "+" } else { "" }, if l.total == 1 && !l.partial { "item" } else { "items" }, human_size(packed), human_size(unpacked))}</span>
+                        <span class="sub">{format!("{} {} · {} packed, {} unpacked", l.total, if l.total == 1 { "item" } else { "items" }, human_size(packed), human_size(unpacked))}</span>
                         <div class="zip-list">
                             <table>
                                 <tbody>
@@ -729,12 +722,8 @@ fn ZipList(src: Src, entry: Entry) -> impl IntoView {
                                 </tbody>
                             </table>
                         </div>
-                        {match (l.partial, shown < l.total) {
-                            (true, _) => Some(view! { <span class="more">{format!("Only the first {shown} are listed: the rest of the file isn't read.")}</span> }.into_any()),
-                            (false, true) => Some(view! { <span class="more">{format!("Only the first {shown} are listed.")}</span> }.into_any()),
-                            _ => None,
-                        }}
-                        {(l.total == 0 && !l.partial).then(|| view! { <span class="hint">"Empty"</span> })}
+                        {(shown < l.total).then(|| view! { <span class="more">{format!("Only the first {shown} are listed.")}</span> })}
+                        {(l.total == 0).then(|| view! { <span class="hint">"Empty"</span> })}
                     }.into_any()
                 }
             }}
