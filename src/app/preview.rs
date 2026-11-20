@@ -35,11 +35,9 @@ fn peek_as_buttons(
     zip: bool,
     set: impl Fn(Option<PeekAs>) + Clone + Send + Sync + 'static,
 ) -> impl IntoView {
-    let set2 = set.clone();
     view! {
         <div class="peek-as">
-            <button class="btn small" on:click=move |_| set(None)>"Show normally"</button>
-            <OpenAs now=now zip small=true pick=move |h| set2(Some(h))/>
+            <OpenAs now=now zip small=true pick=move |h| set(Some(h))/>
         </div>
     }
 }
@@ -259,11 +257,15 @@ fn PdfView(pane: Pane, src: Src, entry: Entry, url: String, #[prop(optional)] in
                 prop:value=move || typed.get() on:input=move |ev| typed.set(event_target_value(&ev)) on:keydown=on_key/>
             {move || pages().map(|n| view! { <span class="pdf-pages">{format!("of {n}")}</span> })}
             <span class="gap"></span>
-            <button class="btn" title="Zoom out" aria-label="Zoom out" on:click=move |_| set_zoom(zoom.get_untracked() / 1.25)>{ico(Icon::ZoomOut)}</button>
-            <button class="btn zoom" title="Back to 100%" on:click=move |_| zoom.set(1.0)>{move || format!("{:.0}%", zoom.get() * 100.0)}</button>
-            <button class="btn" title="Zoom in" aria-label="Zoom in" on:click=move |_| set_zoom(zoom.get_untracked() * 1.25)>{ico(Icon::ZoomIn)}</button>
-            <button class="btn" title="Turn left" aria-label="Turn left" on:click=move |_| turns.update(|t| *t = (*t + 3) % 4)>{ico(Icon::TurnLeft)}</button>
-            <button class="btn" title="Turn right" aria-label="Turn right" on:click=move |_| turns.update(|t| *t = (*t + 1) % 4)>{ico(Icon::TurnRight)}</button>
+            <span class="btn-group" role="group">
+                <button class="btn" title="Zoom out" aria-label="Zoom out" on:click=move |_| set_zoom(zoom.get_untracked() / 1.25)>{ico(Icon::ZoomOut)}</button>
+                <button class="btn zoom" title="Back to 100%" on:click=move |_| zoom.set(1.0)>{move || format!("{:.0}%", zoom.get() * 100.0)}</button>
+                <button class="btn" title="Zoom in" aria-label="Zoom in" on:click=move |_| set_zoom(zoom.get_untracked() * 1.25)>{ico(Icon::ZoomIn)}</button>
+            </span>
+            <span class="btn-group" role="group">
+                <button class="btn" title="Turn left" aria-label="Turn left" on:click=move |_| turns.update(|t| *t = (*t + 3) % 4)>{ico(Icon::TurnLeft)}</button>
+                <button class="btn" title="Turn right" aria-label="Turn right" on:click=move |_| turns.update(|t| *t = (*t + 1) % 4)>{ico(Icon::TurnRight)}</button>
+            </span>
             <span class="pdf-fill"></span>
             {(!in_zip).then(|| view! { <button class="btn" title="Open in its default app" aria-label="Open in its default app" on:click=open>{ico(Icon::OpenOut)}</button> })}
             {(!in_zip && src == Src::Mac).then(|| {
@@ -358,11 +360,13 @@ fn EpubView(src: Src, entry: Entry) -> impl IntoView {
             <button class="btn" class:active=move || reading.get() title="Read the book here" aria-label="Read the book here" on:click=toggle>{ico(Icon::Book)}</button>
             {move || reading.get().then(|| view! {
                 <span class="gap"></span>
-                <button class="btn" title="Previous chapter" aria-label="Previous chapter" disabled=move || at.get() == 0 on:click=move |_| go(-1)>{ico(Icon::Prev)}</button>
+                <span class="btn-group" role="group">
+                    <button class="btn" title="Previous chapter" aria-label="Previous chapter" disabled=move || at.get() == 0 on:click=move |_| go(-1)>{ico(Icon::Prev)}</button>
+                    <button class="btn" title="Next chapter" aria-label="Next chapter" disabled=move || at.get() + 1 >= count() on:click=move |_| go(1)>{ico(Icon::Next)}</button>
+                </span>
                 <select class="epub-chapters" aria-label="Chapter" prop:value=move || at.get().to_string()
                     on:keydown=|ev| ev.stop_propagation()
                     on:change=move |ev| at.set(event_target_value(&ev).parse().unwrap_or(0))>{chapter_list}</select>
-                <button class="btn" title="Next chapter" aria-label="Next chapter" disabled=move || at.get() + 1 >= count() on:click=move |_| go(1)>{ico(Icon::Next)}</button>
                 <span class="epub-of">{move || match count() { 0 => String::new(), n => format!("{} of {n}", at.get() + 1) }}</span>
             })}
         </div>
@@ -557,8 +561,10 @@ pub(super) fn step_media(p: Pane, e: &Entry, delta: isize) {
 fn neighbours(p: Pane, e: &Entry) -> impl IntoView {
     let a = StoredValue::new(e.clone());
     view! {
-        <button class="btn" title="Previous (←)" aria-label="Previous" on:click=move |_| step_media(p, &a.get_value(), -1)>{ico(Icon::Prev)}</button>
-        <button class="btn" title="Next (→)" aria-label="Next" on:click=move |_| step_media(p, &a.get_value(), 1)>{ico(Icon::Next)}</button>
+        <span class="btn-group" role="group">
+            <button class="btn" title="Previous (←)" aria-label="Previous" on:click=move |_| step_media(p, &a.get_value(), -1)>{ico(Icon::Prev)}</button>
+            <button class="btn" title="Next (→)" aria-label="Next" on:click=move |_| step_media(p, &a.get_value(), 1)>{ico(Icon::Next)}</button>
+        </span>
     }
 }
 
@@ -794,15 +800,19 @@ fn FullImage(
         </div>
         <div class="viewer-bar">
             {(!alone).then(|| view! { {neighbours(pane, &entry)} <span class="gap"></span> })}
-            <button class="btn" title="Zoom out" aria-label="Zoom out" on:click=move |_| set_zoom(zoom.get_untracked() / 1.25)>{ico(Icon::ZoomOut)}</button>
-            <button class="btn zoom" title="Of the picture's own size. Click (or double-click the picture) for 100% or to fit."
-                on:click=move |_| fit_or_actual()>
-                {move || format!("{:.0}%", zoom.get() * base() * 100.0)}
-            </button>
-            <button class="btn" title="Zoom in (or pinch)" aria-label="Zoom in" on:click=move |_| set_zoom(zoom.get_untracked() * 1.25)>{ico(Icon::ZoomIn)}</button>
+            <span class="btn-group" role="group">
+                <button class="btn" title="Zoom out" aria-label="Zoom out" on:click=move |_| set_zoom(zoom.get_untracked() / 1.25)>{ico(Icon::ZoomOut)}</button>
+                <button class="btn zoom" title="Of the picture's own size. Click (or double-click the picture) for 100% or to fit."
+                    on:click=move |_| fit_or_actual()>
+                    {move || format!("{:.0}%", zoom.get() * base() * 100.0)}
+                </button>
+                <button class="btn" title="Zoom in (or pinch)" aria-label="Zoom in" on:click=move |_| set_zoom(zoom.get_untracked() * 1.25)>{ico(Icon::ZoomIn)}</button>
+            </span>
             <span class="gap"></span>
-            <button class="btn" title="Turn left" aria-label="Turn left" on:click=move |_| turn.by(-1)>{ico(Icon::TurnLeft)}</button>
-            <button class="btn" title="Turn right" aria-label="Turn right" on:click=move |_| turn.by(1)>{ico(Icon::TurnRight)}</button>
+            <span class="btn-group" role="group">
+                <button class="btn" title="Turn left" aria-label="Turn left" on:click=move |_| turn.by(-1)>{ico(Icon::TurnLeft)}</button>
+                <button class="btn" title="Turn right" aria-label="Turn right" on:click=move |_| turn.by(1)>{ico(Icon::TurnRight)}</button>
+            </span>
         </div>
     }
 }

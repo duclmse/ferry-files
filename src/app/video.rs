@@ -789,8 +789,10 @@ pub(super) fn VideoPlayer(
                         aria-label=move || if muted.get() { "Sound on" } else { "Sound off" }>
                         {move || if muted.get() { ico(Icon::SoundOff).into_any() } else { ico(Icon::SoundOn).into_any() }}
                     </button>
-                    <button class="btn icon-only" title="Turn left" aria-label="Turn left" on:mousedown=quiet on:click=move |_| turn.by(-1)>{ico(Icon::TurnLeft)}</button>
-                    <button class="btn icon-only" title="Turn right" aria-label="Turn right" on:mousedown=quiet on:click=move |_| turn.by(1)>{ico(Icon::TurnRight)}</button>
+                    <span class="btn-group" role="group">
+                        <button class="btn icon-only" title="Turn left" aria-label="Turn left" on:mousedown=quiet on:click=move |_| turn.by(-1)>{ico(Icon::TurnLeft)}</button>
+                        <button class="btn icon-only" title="Turn right" aria-label="Turn right" on:mousedown=quiet on:click=move |_| turn.by(1)>{ico(Icon::TurnRight)}</button>
+                    </span>
                     {has_pop.then(|| view! {
                         <button class="btn icon-only" title="Pop out: play it in a small window that stays on top" aria-label="Pop out"
                             on:mousedown=quiet on:click=move |_| pop_out()>{ico(Icon::PopOut)}</button>

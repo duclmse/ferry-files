@@ -831,3 +831,30 @@ th.num {
 .code-edit:not(.layered) .code-layer {
   display: none;
 }
+
+/* Buttons that go together (previous and next, zoom, turn) joined into one. */
+.btn-group {
+  display: inline-flex;
+  flex: none;
+}
+
+.btn-group > .btn {
+  border-radius: 0;
+}
+
+.btn-group > .btn + .btn {
+  margin-left: -1px;
+}
+
+.btn-group > .btn:first-child {
+  border-radius: 7px 0 0 7px;
+}
+
+.btn-group > .btn:last-child {
+  border-radius: 0 7px 7px 0;
+}
+
+.btn-group > .btn:hover,
+.btn-group > .btn:focus-visible {
+  position: relative;
+}
