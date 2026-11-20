@@ -110,6 +110,10 @@ pub(super) const ZIP_EXTS: &[&str] = &[
 ];
 
 
+/// Asks the built-in viewer for the pages only: no toolbar or side panes. Edge on Windows does as
+/// asked; WebKit (macOS, Linux) ignores it and keeps its own controls.
+const PDF_PLAIN: &str = "toolbar=0&navpanes=0";
+
 /// A PDF in the web view's own viewer, with a bar above it: the outline, go to a page, open it in
 /// its app, show it in its folder. The viewer is out of the app's reach: a page is gone to through
 /// the address (#page=), and the page it's on can't be read back. The outline (and page count)
@@ -154,7 +158,7 @@ fn PdfView(pane: Pane, src: Src, entry: Entry, url: String, #[prop(optional)] in
         let n = pages().map_or(n, |last| n.min(last)).max(1);
         if let Some(f) = frame.get_untracked() {
             // Set again even when it's the same, so a second click goes back to the page.
-            let _ = f.set_attribute("src", &format!("{}#page={n}", page_url.get_value()));
+            let _ = f.set_attribute("src", &format!("{}#page={n}&{PDF_PLAIN}", page_url.get_value()));
         }
     };
     let on_key = move |ev: ev::KeyboardEvent| {
@@ -206,6 +210,16 @@ fn PdfView(pane: Pane, src: Src, entry: Entry, url: String, #[prop(optional)] in
         }
     });
     let set_zoom = move |z: f64| zoom.set(z.clamp(0.5, 4.0));
+    // Zoomed or turned past the sides, the middle shows, not the left edge.
+    Effect::new(move |_| {
+        zoom.track();
+        turns.track();
+        request_animation_frame(move || {
+            if let Some(s) = stage.get_untracked() {
+                s.set_scroll_left((s.scroll_width() - s.client_width()).max(0) / 2);
+            }
+        });
+    });
     // (The box it takes up, the viewer's own size and how it's moved and turned into that box.)
     let placed = move || {
         let Some((w, h)) = room.get() else { return (String::new(), "width: 100%; height: 100%".to_string()) };
@@ -273,7 +287,7 @@ fn PdfView(pane: Pane, src: Src, entry: Entry, url: String, #[prop(optional)] in
             {move || show.get().then(|| view! { <nav class="pdf-outline">{heading_list}</nav> })}
             <div class="pdf-stage" node_ref=stage>
                 <div class="pdf-box" style=move || placed().0>
-                    <iframe class="pdf" node_ref=frame src=url title="PDF" style=move || placed().1></iframe>
+                    <iframe class="pdf" node_ref=frame src=format!("{url}#{PDF_PLAIN}") title="PDF" style=move || placed().1></iframe>
                 </div>
             </div>
         </div>
