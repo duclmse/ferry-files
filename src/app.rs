@@ -427,6 +427,8 @@ struct Pane {
     more: RwSignal<bool>,
     loading_more: RwSignal<bool>,
     got: StoredValue<usize>,
+    /// How many items the folder has in all (its listing's length when it was listed at once).
+    total: RwSignal<u64>,
     /// The terminal under the pane: whether it's shown, its shell's id while one runs (the
     /// screen itself is in terminal.rs), a count bumped to draw it again, and whether a shell
     /// is being started.
@@ -503,6 +505,7 @@ impl Pane {
             more: RwSignal::new(false),
             loading_more: RwSignal::new(false),
             got: StoredValue::new(0),
+            total: RwSignal::new(0),
             term: RwSignal::new(false),
             term_id: RwSignal::new(None),
             term_tick: RwSignal::new(0),

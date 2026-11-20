@@ -119,8 +119,9 @@ files and disks too, so books can be copied between them.
     (allow file downloads), with no login or a user name and password. It shows
     as a read-only drive: its disks open in panes and tabs, and work with
     favourites, workspaces, the preview and copying to this computer or a phone.
-    Folders are listed 1000 items at a time; scrolling to the
-    bottom loads more. Search in a pane uses Everything's index; the magnifier beside a
+    Folders load 1,000 items at a time, sorted by the server, with the total
+    shown ("1,000 of 5,000"); Load more or scrolling to the bottom fetches the
+    next 1,000. Search in a pane uses Everything's index; the magnifier beside a
     server searches all its disks.
   All of them show under Servers in the sidebar: SFTP, then SMB, then
   Everything, then shares mounted outside the app.

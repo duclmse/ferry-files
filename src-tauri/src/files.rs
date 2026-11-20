@@ -4,8 +4,7 @@
 use super::*;
 
 /// Lists a folder. `current` (default true) says it's the folder `pane` (default 0) now shows;
-/// the column view passes false for the folders to its left. With `count`, up to that many items
-/// from `offset` (default 0), on devices whose folders can be too big to list at once.
+/// the column view passes false for the folders to its left.
 #[tauri::command(rename_all = "snake_case")]
 pub(super) async fn list(
     state: State<'_, AppState>,
@@ -13,23 +12,55 @@ pub(super) async fn list(
     path: String,
     current: Option<bool>,
     pane: Option<u32>,
-    offset: Option<u64>,
-    count: Option<u64>,
 ) -> Result<Vec<Entry>, String> {
     let dev = state.source(src.as_deref())?;
+    note_viewing(&state, src.as_deref(), &path, current, pane)?;
+    blocking(move || dev.listdir(&path).map_err(msg)).await
+}
+
+/// Part of a folder listing, on devices whose folders can be too big to list at once.
+#[derive(Serialize)]
+pub struct Page {
+    pub entries: Vec<Entry>,
+    /// How many items the folder has in all.
+    pub total: u64,
+}
+
+/// Like `list`, but up to `count` items from `offset`, sorted by `sort` ("name", "size", "date"
+/// or "kind"; ascending unless `asc` is false) where the device can sort.
+#[tauri::command(rename_all = "snake_case")]
+#[allow(clippy::too_many_arguments)]
+pub(super) async fn list_page(
+    state: State<'_, AppState>,
+    src: Option<String>,
+    path: String,
+    current: Option<bool>,
+    pane: Option<u32>,
+    offset: u64,
+    count: u64,
+    sort: Option<String>,
+    asc: Option<bool>,
+) -> Result<Page, String> {
+    let dev = state.source(src.as_deref())?;
+    note_viewing(&state, src.as_deref(), &path, current, pane)?;
+    blocking(move || {
+        let (entries, total) = dev.listdir_page(&path, offset, count, (sort.as_deref().unwrap_or("name"), asc.unwrap_or(true))).map_err(msg)?;
+        Ok(Page { entries, total })
+    })
+    .await
+}
+
+/// Keeps which folder `pane` shows, when it's the `current` one (the default).
+fn note_viewing(state: &AppState, src: Option<&str>, path: &str, current: Option<bool>, pane: Option<u32>) -> Result<(), String> {
     if current.unwrap_or(true) {
         let mut viewing = state.viewing.lock().unwrap_or_else(|e| e.into_inner());
         let pane = pane.unwrap_or(0);
-        match src.as_deref() {
+        match src {
             Some("mac") | None => viewing.remove(&pane),
-            Some(s) => viewing.insert(pane, (s.to_string(), device::norm(&path).map_err(msg)?)),
+            Some(s) => viewing.insert(pane, (s.to_string(), device::norm(path).map_err(msg)?)),
         };
     }
-    blocking(move || match count {
-        Some(count) => dev.listdir_page(&path, offset.unwrap_or(0), count).map_err(msg),
-        None => dev.listdir(&path).map_err(msg),
-    })
-    .await
+    Ok(())
 }
 
 #[tauri::command(rename_all = "snake_case")]

@@ -154,9 +154,16 @@ pub(super) fn ListView(pane: Pane) -> impl IntoView {
 /// A column header's button: sorts by it, or turns the order around when it's already sorted by
 /// it. Not when it was just dragged.
 fn sort_button(p: Pane, k: SortKey, dragged: StoredValue<bool>) -> impl IntoView {
+    let ctx = expect_context::<Ctx>();
     view! {
         <button class="sort" title=format!("Sort by {}", k.label().to_lowercase())
-            on:click=move |_| if !dragged.get_value() { p.set_sort(k) }>
+            on:click=move |_| if !dragged.get_value() {
+                p.set_sort(k);
+                // Only part of the folder is here: the server sorts it all and sends the first page again.
+                if p.more.get_untracked() {
+                    ctx.reload(p);
+                }
+            }>
             {k.label()}
             <span class="arrow">{move || match p.sort.get() {
                 Sort(s, asc) if s == k => if asc { "▲" } else { "▼" },
@@ -338,8 +345,7 @@ pub(super) fn ColumnView(pane: Pane) -> impl IntoView {
                 continue;
             }
             spawn_local(async move {
-                let args = ctx.list_args(src, &dir, json!({ "current": false }));
-                if let Ok(es) = call::<Vec<Entry>>("list", args).await {
+                if let Ok((es, _)) = ctx.list_first(src, &dir, p.sort.get_untracked(), json!({ "current": false })).await {
                     if p.src.get_untracked() == src {
                         let mut es = ctx.visible(es);
                         p.sort.get_untracked().apply(&mut es);
@@ -594,8 +600,11 @@ fn more_row(ctx: Ctx, p: Pane) -> impl IntoView {
             {move || if p.loading_more.get() {
                 view! { <span><span class="spin"></span>" Loading more…"</span> }.into_any()
             } else {
-                view! { <button on:click=move |ev| { ev.stop_propagation(); ctx.load_more(p) }>
-                    {format!("Load {} more", super::nav::PAGE)}</button> }.into_any()
+                view! {
+                    <span class="count">{move || format!("{} of {}", count(p.got.get_value() as u64), count(p.total.get()))}</span>
+                    <button on:click=move |ev| { ev.stop_propagation(); ctx.load_more(p) }>
+                        {format!("Load {} more", count(super::nav::PAGE as u64))}</button>
+                }.into_any()
             }}
         </div>
     })

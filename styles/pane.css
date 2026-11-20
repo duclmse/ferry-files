@@ -593,3 +593,7 @@ th.num {
   white-space: pre;
   font: 12px/1.35 ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
 }
+
+.more-row .count {
+  margin-right: 10px;
+}

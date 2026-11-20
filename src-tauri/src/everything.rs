@@ -119,6 +119,22 @@ struct Server {
     auth: Option<String>,
 }
 
+/// How a page of a folder is sorted: Everything's sort name and whether ascending.
+pub struct Order<'a>(pub &'a str, pub bool);
+
+impl Order<'_> {
+    const NAME: Order<'static> = Order("name", true);
+
+    /// Everything's name for the app's sort ("name", "size", "date"; others by name).
+    fn param(&self) -> &'static str {
+        match self.0 {
+            "size" => "size",
+            "date" => "date_modified",
+            _ => "name",
+        }
+    }
+}
+
 fn agent() -> ureq::Agent {
     ureq::AgentBuilder::new().timeout_connect(Duration::from_secs(3)).timeout(Duration::from_secs(60)).build()
 }
@@ -140,8 +156,8 @@ fn failed(e: ureq::Error, srv: &Server) -> String {
     }
 }
 
-/// Asks the Everything at `srv` for `query`, `count` results from `offset`.
-fn ask(srv: &Server, query: &str, offset: u64, count: u64) -> std::result::Result<Found, String> {
+/// Asks the Everything at `srv` for `query`, `count` results from `offset`, in `order`.
+fn ask(srv: &Server, query: &str, offset: u64, count: u64, order: &Order) -> std::result::Result<Found, String> {
     let mut req = agent().get(&format!("{}/", srv.base));
     if let Some(a) = &srv.auth {
         req = req.set("Authorization", a);
@@ -152,8 +168,8 @@ fn ask(srv: &Server, query: &str, offset: u64, count: u64) -> std::result::Resul
         .query("path_column", "1")
         .query("size_column", "1")
         .query("date_modified_column", "1")
-        .query("sort", "name")
-        .query("ascending", "1")
+        .query("sort", order.param())
+        .query("ascending", if order.1 { "1" } else { "0" })
         .query("offset", &offset.to_string())
         .query("count", &count.to_string())
         .call()
@@ -204,7 +220,7 @@ impl Everything {
 
     fn find_drives(srv: &Server) -> std::result::Result<Vec<(String, String)>, String> {
         let mut drives: Vec<(String, String)> =
-            ask(srv, "root:", 0, 1000)?.hits.into_iter().filter(|h| h.dir).map(|h| (h.name, h.path)).collect();
+            ask(srv, "root:", 0, 1000, &Order::NAME)?.hits.into_iter().filter(|h| h.dir).map(|h| (h.name, h.path)).collect();
         drives.sort();
         Ok(drives)
     }
@@ -214,21 +230,24 @@ impl Everything {
     }
 
     fn list(&self, path: &str) -> Result<Vec<Entry>> {
-        self.list_range(path, 0, LIST_MAX)
+        Ok(self.list_range(path, 0, LIST_MAX, &Order::NAME)?.0)
     }
 
-    /// `count` of the folder's items from `offset`, folders first, by name.
-    fn list_range(&self, path: &str, offset: u64, count: u64) -> Result<Vec<Entry>> {
+    /// `count` of the folder's items from `offset`, in `order`, and how many it has in all.
+    fn list_range(&self, path: &str, offset: u64, count: u64, order: &Order) -> Result<(Vec<Entry>, u64)> {
         if path == "/" {
-            let drives = self.drives().into_iter().skip(offset as usize).take(count as usize);
-            return Ok(drives.map(|(name, path)| Entry { name, path, dir: true, size: 0, mtime: 0 }).collect());
+            let all = self.drives();
+            let total = all.len() as u64;
+            let drives = all.into_iter().skip(offset as usize).take(count as usize);
+            return Ok((drives.map(|(name, path)| Entry { name, path, dir: true, size: 0, mtime: 0 }).collect(), total));
         }
         let win = windows_path(path);
-        let mut found = ask(&self.srv, &format!("parent:\"{win}\""), offset, count).map_err(DevError::Msg)?;
+        let mut found = ask(&self.srv, &format!("parent:\"{win}\""), offset, count, order).map_err(DevError::Msg)?;
         // A drive's own path may be kept as "C:" rather than "C:\".
         if found.hits.is_empty() && offset == 0 && win.ends_with(":\\") {
-            found = ask(&self.srv, &format!("parent:\"{}\"", win.trim_end_matches('\\')), offset, count).map_err(DevError::Msg)?;
+            found = ask(&self.srv, &format!("parent:\"{}\"", win.trim_end_matches('\\')), offset, count, order).map_err(DevError::Msg)?;
         }
+        let total = found.total;
         let entries: Vec<Entry> = found.hits.into_iter().map(Entry::from).collect();
         let mut last = self.last.lock().unwrap_or_else(|e| e.into_inner());
         match last.as_mut() {
@@ -239,7 +258,7 @@ impl Everything {
             }
             _ => *last = Some((path.to_string(), entries.clone(), Instant::now())),
         }
-        Ok(entries)
+        Ok((entries, total))
     }
 
     fn get(&self, url: &str, range: Option<(u64, u64)>) -> Result<ureq::Response> {
@@ -265,7 +284,7 @@ impl Everything {
         let text = text.trim().replace('"', "");
         let term = if regex { format!("regex:\"{text}\"") } else { format!("\"{text}\"") };
         let query = if dir == "/" { term } else { format!("\"{}\\\" {term}", windows_path(dir).trim_end_matches('\\')) };
-        let found = ask(&self.srv, &query, 0, max as u64).map_err(DevError::Msg)?;
+        let found = ask(&self.srv, &query, 0, max as u64, &Order::NAME).map_err(DevError::Msg)?;
         let all = found.total <= found.hits.len() as u64;
         let under = format!("{}/", dir.trim_end_matches('/'));
         Ok((found.hits.into_iter().filter(|h| h.path.starts_with(&under)).map(Entry::from).collect(), all))
@@ -293,8 +312,8 @@ impl Transport for Everything {
         self.list(path)
     }
 
-    fn listdir_page(&self, path: &str, offset: u64, count: u64) -> Option<Result<Vec<Entry>>> {
-        Some(self.list_range(path, offset, count))
+    fn listdir_page(&self, path: &str, offset: u64, count: u64, sort: (&str, bool)) -> Option<Result<(Vec<Entry>, u64)>> {
+        Some(self.list_range(path, offset, count, &Order(sort.0, sort.1)))
     }
 
     fn stat(&self, path: &str) -> Result<Option<Entry>> {
@@ -456,12 +475,13 @@ mod tests {
             ("200 OK", r#"{"results":[{"type":"file","name":"b.md","path":"C:\\Big","size":"2"}]}"#),
         ]);
         let ev = Everything::open(&at, Some(("me", "pw"))).unwrap();
-        let page = ev.listdir_page("/C:/Big", 1000, 1000).unwrap().unwrap();
+        let (page, total) = ev.listdir_page("/C:/Big", 1000, 1000, ("date", false)).unwrap().unwrap();
         assert_eq!(page.iter().map(|e| e.path.as_str()).collect::<Vec<_>>(), ["/C:/Big/b.md"]);
-        assert_eq!(ev.listdir_page("/", 0, 1).unwrap().unwrap().len(), 1);
+        assert_eq!(total, 1);
+        assert_eq!(ev.listdir_page("/", 0, 1, ("name", true)).unwrap().unwrap().0.len(), 1);
         let lines = asked.join().unwrap();
         let first = lines[1].lines().next().unwrap_or_default().to_string();
-        assert!(first.contains("sort=name&ascending=1&offset=1000&count=1000"), "{first}");
+        assert!(first.contains("sort=date_modified&ascending=0&offset=1000&count=1000"), "{first}");
         // "me:pw" in base64.
         assert!(lines[1].contains("Authorization: Basic bWU6cHc="), "{}", lines[1]);
     }

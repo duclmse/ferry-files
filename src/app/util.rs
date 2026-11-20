@@ -535,3 +535,28 @@ impl AutoDismiss {
         }
     }
 }
+
+/// `n` with its thousands grouped: "48,213".
+pub(super) fn count(n: u64) -> String {
+    let digits = n.to_string();
+    let mut out = String::new();
+    for (i, d) in digits.chars().enumerate() {
+        if i > 0 && (digits.len() - i).is_multiple_of(3) {
+            out.push(',');
+        }
+        out.push(d);
+    }
+    out
+}
+
+#[cfg(test)]
+mod count_tests {
+    #[test]
+    fn groups_thousands() {
+        assert_eq!(super::count(0), "0");
+        assert_eq!(super::count(999), "999");
+        assert_eq!(super::count(1000), "1,000");
+        assert_eq!(super::count(48213), "48,213");
+        assert_eq!(super::count(1234567), "1,234,567");
+    }
+}

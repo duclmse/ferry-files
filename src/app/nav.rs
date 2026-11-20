@@ -6,17 +6,30 @@ use super::*;
 /// at a time; more are loaded at the bottom of the list.
 pub(super) const PAGE: usize = 1000;
 
+/// Part of a folder, and how many items it has in all.
+#[derive(serde::Deserialize)]
+struct Page {
+    entries: Vec<Entry>,
+    total: u64,
+}
+
 impl Ctx {
-    /// The arguments for listing `path` on `src`: the first page only on a read-only server.
-    pub(super) fn list_args(self, src: Src, path: &str, more: serde_json::Value) -> serde_json::Value {
+    /// Lists `path` on `src` (`more` are added to the arguments): all of it, or on a read-only
+    /// server the first page in `sort` order, sorted by the server. With the folder's total
+    /// when it's listed a page at a time.
+    pub(super) async fn list_first(self, src: Src, path: &str, sort: Sort, more: serde_json::Value) -> Result<(Vec<Entry>, Option<u64>), String> {
         let mut args = json!({ "src": src.key(), "path": path });
-        if self.read_only(src) {
-            args["count"] = json!(PAGE);
-        }
         if let (Some(a), serde_json::Value::Object(m)) = (args.as_object_mut(), more) {
             a.extend(m);
         }
-        args
+        if !self.read_only(src) {
+            return call::<Vec<Entry>>("list", args).await.map(|es| (es, None));
+        }
+        args["offset"] = json!(0);
+        args["count"] = json!(PAGE);
+        args["sort"] = json!(sort.0.key());
+        args["asc"] = json!(sort.1);
+        call::<Page>("list_page", args).await.map(|pg| (pg.entries, Some(pg.total)))
     }
 
     /// Loads the next page of pane `p`'s folder, when it was listed a page at a time and has more.
@@ -25,19 +38,22 @@ impl Ctx {
             return;
         }
         let (src, path, seq, offset) = (p.src.get_untracked(), p.cwd.get_untracked(), p.load_seq.get_value(), p.got.get_value());
+        let Sort(key, asc) = p.sort.get_untracked();
         p.loading_more.set(true);
         spawn_local(async move {
-            let args = json!({ "src": src.key(), "path": path, "pane": p.id, "offset": offset, "count": PAGE });
-            let listed = call::<Vec<Entry>>("list", args).await;
+            let args = json!({ "src": src.key(), "path": path, "pane": p.id, "offset": offset, "count": PAGE, "sort": key.key(), "asc": asc });
+            let listed = call::<Page>("list_page", args).await;
             p.loading_more.set(false);
             // Went somewhere else meanwhile.
             if p.load_seq.get_value() != seq || p.src.get_untracked() != src || p.cwd.get_untracked() != path {
                 return;
             }
             match listed {
-                Ok(page) => {
-                    p.more.set(page.len() == PAGE);
-                    p.got.set_value(offset + page.len());
+                Ok(Page { entries: page, total }) => {
+                    let got = offset + page.len();
+                    p.more.set(!page.is_empty() && (got as u64) < total);
+                    p.got.set_value(got);
+                    p.total.set(total);
                     let page = self.visible(page);
                     let mut all = p.all.get_untracked();
                     all.extend(page);
@@ -69,7 +85,7 @@ impl Ctx {
         p.load_seq.set_value(seq);
         p.going_to.set_value(Some((src, path.clone())));
         spawn_local(async move {
-            let listed = call::<Vec<Entry>>("list", self.list_args(src, &path, json!({ "pane": p.id }))).await;
+            let listed = self.list_first(src, &path, p.sort.get_untracked(), json!({ "pane": p.id })).await;
             // A newer listing was asked for meanwhile: it decides what the pane shows (and
             // clears `loading`), so this one changes nothing.
             if p.load_seq.get_value() != seq {
@@ -77,9 +93,10 @@ impl Ctx {
             }
             p.going_to.set_value(None);
             match listed {
-                Ok(entries) => {
-                    p.more.set(self.read_only(src) && entries.len() == PAGE);
+                Ok((entries, total)) => {
+                    p.more.set(total.is_some_and(|t| (entries.len() as u64) < t));
                     p.got.set_value(entries.len());
+                    p.total.set(total.unwrap_or(entries.len() as u64));
                     let mut entries = self.visible(entries);
                     p.sort.get_untracked().apply(&mut entries);
                     let new_src = p.src.get_untracked() != src;

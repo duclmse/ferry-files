@@ -193,6 +193,7 @@ pub fn run() {
             wifi::adb_connect,
             wifi::adb_discover,
             files::list,
+            files::list_page,
             files::refresh,
             files::read_text,
             files::peek_text,

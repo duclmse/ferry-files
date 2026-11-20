@@ -72,7 +72,9 @@ pub trait Transport: Send + Sync {
     fn stop(&self) {}
     /// Up to `count` of the folder's items from `offset`, for transports whose folders can be
     /// too big to list at once. None when the transport lists whole folders.
-    fn listdir_page(&self, _path: &str, _offset: u64, _count: u64) -> Option<Result<Vec<Entry>>> {
+    /// `sort` is ("name", "size", "date" or "kind", ascending), and the second item of the
+    /// answer how many items the folder has in all.
+    fn listdir_page(&self, _path: &str, _offset: u64, _count: u64, _sort: (&str, bool)) -> Option<Result<(Vec<Entry>, u64)>> {
         None
     }
     /// The command that starts an interactive shell in `dir`, for the terminal (which runs it in
@@ -213,18 +215,22 @@ impl Device {
         Ok(entries)
     }
 
-    /// Up to `count` of the folder's items from `offset`; the whole folder (sorted) when the
-    /// transport doesn't page, or from `offset` 0 only.
-    pub fn listdir_page(&self, path: &str, offset: u64, count: u64) -> Result<Vec<Entry>> {
+    /// Up to `count` of the folder's items from `offset` in the order `sort` (see
+    /// `Transport::listdir_page`), and how many it has in all. The whole folder when the
+    /// transport doesn't page, from `offset` 0 only.
+    pub fn listdir_page(&self, path: &str, offset: u64, count: u64, sort: (&str, bool)) -> Result<(Vec<Entry>, u64)> {
         let norm_path = norm(path)?;
         let paged = {
             let _g = self.lock();
-            self.t.listdir_page(&norm_path, offset, count)
+            self.t.listdir_page(&norm_path, offset, count, sort)
         };
         match paged {
             Some(r) => r,
-            None if offset == 0 => self.listdir(path),
-            None => Ok(vec![]),
+            None if offset == 0 => self.listdir(path).map(|es| {
+                let n = es.len() as u64;
+                (es, n)
+            }),
+            None => Ok((vec![], 0)),
         }
     }
 

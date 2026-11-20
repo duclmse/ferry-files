@@ -16,6 +16,7 @@
     "allow-info",
     "allow-watch-devices",
     "allow-list",
+    "allow-list-page",
     "allow-refresh",
     "allow-read-text",
     "allow-peek-text",
