@@ -4,11 +4,59 @@
   --twisty: 18px;
   background: var(--panel);
   border-right: 1px solid var(--line);
-  padding: 8px 8px 12px;
   display: flex;
   flex-direction: column;
   gap: 0;
+  min-height: 0;
+  overflow: hidden;
+}
+
+/* The sections scroll; the buttons under them stay at the bottom. */
+.side-scroll {
+  flex: 1;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+  padding: 8px 8px 12px;
   overflow: auto;
+}
+
+.side > .side-buttons {
+  flex: none;
+  margin: 0;
+  padding: 8px;
+  border-top: 1px solid var(--line);
+}
+
+/* Section headings are dragged to move their sections (Reorder in sidebar.rs). */
+.side h2 {
+  touch-action: none;
+}
+
+.side h2 .head-buttons {
+  display: contents;
+}
+
+.sec.dragging,
+.order-row.dragging {
+  opacity: 0.45;
+}
+
+.sec.drop-before,
+.order-row.drop-before {
+  box-shadow: 0 -2px 0 var(--accent);
+}
+
+.sec.drop-after,
+.order-row.drop-after {
+  box-shadow: 0 2px 0 var(--accent);
+}
+
+.side.reordering,
+.side.reordering *,
+.order.reordering,
+.order.reordering * {
+  cursor: grabbing !important;
 }
 
 /* Every row lines up on one grid: a column for ▸, then the name, indented one step per level.
@@ -35,7 +83,7 @@
   color: var(--muted);
 }
 
-.side h2:first-child {
+.side-scroll > .sec:first-child h2 {
   margin-top: 0;
 }
 
@@ -380,7 +428,7 @@
   flex: 1;
 }
 
-.side > .btn {
+.side-scroll > .btn {
   margin-top: 4px;
 }
 
@@ -488,4 +536,9 @@
 .device .name.off b {
   color: var(--muted);
   font-weight: 500;
+}
+
+/* A section being moved: its title in the accent colour, with no background. */
+.sec.dragging h2 .fold {
+  color: var(--accent);
 }

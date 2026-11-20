@@ -97,8 +97,10 @@ files and disks too, so books can be copied between them.
   folders in them, and theirs, as a tree.
 - The sidebar's sections, top to bottom by default: Workspaces, Favourites, the
   Mac (or this computer), Sync pairs, Devices, Servers. Right-click the sidebar
-  to show or hide them. Settings > Sidebar also orders
-  them.
+  to show or hide them. Drag a section by its title to move it; Settings >
+  Sidebar lists them all, with ⠿ to drag, ↑/↓ and a way back to the usual
+  order. Backups, History and Settings stay at the bottom
+  of the sidebar while it scrolls.
 - Connections (Settings > Connections, or + in the sidebar's Servers section):
   one list of every connection, each with a type and the sign-in that type
   takes. The search box on top filters by server, user name or

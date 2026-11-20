@@ -20,6 +20,112 @@ pub(super) fn section_order(stored: &[String]) -> Vec<&'static str> {
     order
 }
 
+/// `order` with section `from` moved before (or `after`) section `to`.
+pub(super) fn moved_section(order: &[&'static str], from: &str, to: &str, after: bool) -> Vec<&'static str> {
+    let mut v: Vec<&'static str> = order.to_vec();
+    if from == to {
+        return v;
+    }
+    let Some(at) = v.iter().position(|k| *k == from) else { return v };
+    let key = v.remove(at);
+    let Some(t) = v.iter().position(|k| *k == to) else { return order.to_vec() };
+    v.insert(t + usize::from(after), key);
+    v
+}
+
+/// Dragging sections to put them in another order, in the sidebar and in Settings > Sidebar.
+/// Uses the pointer rather than HTML drag and drop, which Windows doesn't give the page while
+/// the app takes files dropped from the file manager. Elements with `data-section` are the
+/// places to drop; a press on a `[data-grip]` element starts a drag once it moves a few pixels.
+#[derive(Clone, Copy)]
+pub(super) struct Reorder {
+    /// The section pressed on, and where (x, y).
+    pressed: StoredValue<Option<(&'static str, f64, f64)>>,
+    /// The section being dragged, once the pointer has moved.
+    pub(super) dragging: RwSignal<Option<&'static str>>,
+    /// Where it would drop: the section, and whether after it.
+    pub(super) over: RwSignal<Option<(&'static str, bool)>>,
+    /// A drag just ended, so the click that follows the release is ignored.
+    just_moved: StoredValue<bool>,
+}
+
+impl Reorder {
+    pub(super) fn new() -> Reorder {
+        Reorder { pressed: StoredValue::new(None), dragging: RwSignal::new(None), over: RwSignal::new(None), just_moved: StoredValue::new(false) }
+    }
+
+    /// For a grip's pointerdown.
+    pub(super) fn press(self, key: &'static str) -> impl Fn(web_sys::PointerEvent) + 'static {
+        move |ev: web_sys::PointerEvent| {
+            if ev.button() != 0 {
+                return;
+            }
+            // Not from the buttons and boxes in a heading or row.
+            let skip = ev.target().and_then(|t| t.dyn_into::<web_sys::Element>().ok())
+                .is_some_and(|e| e.closest("[data-no-grip], input").ok().flatten().is_some());
+            if !skip {
+                self.pressed.set_value(Some((key, ev.client_x() as f64, ev.client_y() as f64)));
+            }
+        }
+    }
+
+    /// For the list's pointermove.
+    pub(super) fn track(self, ev: web_sys::PointerEvent) {
+        let Some((key, x, y)) = self.pressed.get_value() else { return };
+        let (cx, cy) = (ev.client_x() as f64, ev.client_y() as f64);
+        if self.dragging.get_untracked().is_none() {
+            if (cx - x).abs() + (cy - y).abs() < 5.0 {
+                return;
+            }
+            self.dragging.set(Some(key));
+            if let Some(el) = ev.current_target().and_then(|t| t.dyn_into::<web_sys::Element>().ok()) {
+                let _ = el.set_pointer_capture(ev.pointer_id());
+            }
+        }
+        ev.prevent_default();
+        let target = document().element_from_point(cx as f32, cy as f32).and_then(|e| e.closest("[data-section]").ok().flatten());
+        let over = target.and_then(|t| {
+            let k = t.get_attribute("data-section")?;
+            let key = SECTIONS.iter().find(|s| s.0 == k)?.0;
+            let r = t.get_bounding_client_rect();
+            Some((key, cy > r.top() + r.height() / 2.0))
+        });
+        if self.over.get_untracked() != over {
+            self.over.set(over);
+        }
+    }
+
+    /// For the list's pointerup and pointercancel: moves the section when it was dropped on one.
+    pub(super) fn release(self, ctx: Ctx, drop: bool) {
+        self.pressed.set_value(None);
+        let Some(from) = self.dragging.get_untracked() else { return };
+        if let (true, Some((to, after))) = (drop, self.over.get_untracked()) {
+            ctx.set_section_order(moved_section(&ctx.section_order.get_untracked(), from, to, after));
+        }
+        self.dragging.set(None);
+        self.over.set(None);
+        self.just_moved.set_value(true);
+        let _ = set_timeout_with_handle(move || { let _ = self.just_moved.try_set_value(false); }, std::time::Duration::from_millis(50));
+    }
+
+    /// True right after a drag, for click handlers to ignore the release.
+    pub(super) fn just_moved(self) -> bool {
+        self.just_moved.get_value()
+    }
+
+    /// The class for section `key`'s element while dragging.
+    pub(super) fn class(self, key: &'static str) -> &'static str {
+        if self.dragging.get() == Some(key) {
+            return "dragging";
+        }
+        match self.over.get() {
+            Some((k, false)) if k == key && self.dragging.get().is_some() => "drop-before",
+            Some((k, true)) if k == key && self.dragging.get().is_some() => "drop-after",
+            _ => "",
+        }
+    }
+}
+
 /// Places on the Mac (and its disks) and on the connected devices. Clicking one opens it in the
 /// active pane. Right-click it to choose its sections.
 #[component]
@@ -27,22 +133,26 @@ pub(super) fn Sidebar() -> impl IntoView {
     let ctx = expect_context::<Ctx>();
     // A section heading that folds its section away; remembered across launches.
     // `buttons` go at its right.
+    let reorder = Reorder::new();
     let section = move |key: &'static str, title: &'static str, buttons: Option<ViewFn>| {
         let storage_key = format!("ferry-files.fold.{key}");
         let open = RwSignal::new(!stored_flag(&storage_key, false));
         let heading = move || {
             let storage_key = storage_key.clone();
             view! {
-            <h2>
+            <h2 data-grip on:pointerdown=reorder.press(key)>
             <button class="fold" aria-expanded=move || open.get().to_string()
                 on:click=move |_| {
+                    if reorder.just_moved() {
+                        return;
+                    }
                     let now = !open.get_untracked();
                     open.set(now);
                     store(&storage_key, if now { "0" } else { "1" });
                 }>
                 {chev(open)}{title}
             </button>
-            {buttons.as_ref().map(|b| b.run())}</h2>
+            <span class="head-buttons" data-no-grip>{buttons.as_ref().map(|b| b.run())}</span></h2>
             }
         };
         (heading, open)
@@ -336,17 +446,24 @@ pub(super) fn Sidebar() -> impl IntoView {
         })}
     });
     view! {
-        <nav class="side" on:contextmenu=move |ev| ctx.show_sections_menu(&ev)>
-            {move || ctx.section_order.get().into_iter().map(|k| match k {
-                "workspaces" => sec_workspaces().into_any(),
-                "favs" => sec_favs().into_any(),
-                "pairs" => sec_pairs().into_any(),
-                "servers" => sec_servers().into_any(),
-                "mac" => sec_mac().into_any(),
-                "devices" => sec_devices().into_any(),
-                _ => ().into_any(),
-            }).collect_view()}
-            <span class="grow"></span>
+        <nav class="side" class:reordering=move || reorder.dragging.get().is_some() on:contextmenu=move |ev| ctx.show_sections_menu(&ev)>
+            <div class="side-scroll"
+                on:pointermove=move |ev| reorder.track(ev)
+                on:pointerup=move |_| reorder.release(ctx, true)
+                on:pointercancel=move |_| reorder.release(ctx, false)>
+                {move || ctx.section_order.get().into_iter().map(|k| {
+                    let body = match k {
+                        "workspaces" => sec_workspaces().into_any(),
+                        "favs" => sec_favs().into_any(),
+                        "pairs" => sec_pairs().into_any(),
+                        "servers" => sec_servers().into_any(),
+                        "mac" => sec_mac().into_any(),
+                        "devices" => sec_devices().into_any(),
+                        _ => ().into_any(),
+                    };
+                    view! { <div class=move || format!("sec {}", reorder.class(k)) data-section=k>{body}</div> }
+                }).collect_view()}
+            </div>
             <div class="side-buttons">
                 <button class="btn icon-only" title="Backups: files replaced or deleted by the app, which can be put back" aria-label="Backups"
                     on:click=move |_| ctx.panel.set(Some(Panel::Backups))>{ico(Icon::Backups)}</button>
@@ -589,5 +706,21 @@ pub(super) fn Settings() -> impl IntoView {
                 </div>
             </div>
         </div>
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn moves_sections() {
+        let o = ["a", "b", "c", "d"];
+        assert_eq!(moved_section(&o, "a", "c", false), ["b", "a", "c", "d"]);
+        assert_eq!(moved_section(&o, "a", "c", true), ["b", "c", "a", "d"]);
+        assert_eq!(moved_section(&o, "d", "a", false), ["d", "a", "b", "c"]);
+        assert_eq!(moved_section(&o, "c", "d", true), ["a", "b", "d", "c"]);
+        assert_eq!(moved_section(&o, "b", "b", true), o);
+        assert_eq!(moved_section(&o, "x", "a", false), o);
     }
 }

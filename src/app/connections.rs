@@ -241,6 +241,7 @@ fn section_title(key: &str) -> &'static str {
 #[component]
 pub(super) fn SidebarSettings() -> impl IntoView {
     let ctx = expect_context::<Ctx>();
+    let reorder = super::sidebar::Reorder::new();
     let swap = move |at: usize, to: usize| {
         let mut order = ctx.section_order.get_untracked();
         if at < order.len() && to < order.len() {
@@ -257,15 +258,19 @@ pub(super) fn SidebarSettings() -> impl IntoView {
         ctx.set_hidden_sections(hidden);
     };
     view! {
-        <p class="hint flush">"The sidebar's sections, top to bottom. Favourites and Sync pairs show only when there are some."</p>
-        <div class="order">
+        <p class="hint flush">"The sidebar's sections, top to bottom. Drag them by ⠿ (or their titles in the sidebar) to move them. Favourites and Sync pairs show only when there are some."</p>
+        <div class="order" class:reordering=move || reorder.dragging.get().is_some()
+            on:pointermove=move |ev| reorder.track(ev)
+            on:pointerup=move |_| reorder.release(ctx, true)
+            on:pointercancel=move |_| reorder.release(ctx, false)>
             {move || {
                 let order = ctx.section_order.get();
                 let n = order.len();
                 order.into_iter().enumerate().map(|(i, key)| {
                     let title = section_title(key);
                     view! {
-                        <div class="order-row">
+                        <div class=move || format!("order-row {}", reorder.class(key)) data-section=key>
+                            <span class="grip" data-grip title=format!("Drag to move {title}") on:pointerdown=reorder.press(key)>"⠿"</span>
                             <label class="check">
                                 <input type="checkbox" prop:checked=move || ctx.hidden_sections.with(|h| !h.iter().any(|x| x == key))
                                     on:change=move |e| toggle(key, event_target_checked(&e))/>

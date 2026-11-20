@@ -525,3 +525,19 @@
 .order-row label.check {
   flex: 1;
 }
+.order-row {
+  border-radius: 6px;
+}
+.order-row .grip {
+  flex: none;
+  width: 16px;
+  text-align: center;
+  color: var(--muted);
+  cursor: grab;
+  touch-action: none;
+}
+/* The handle highlights by its colour only. */
+.order-row .grip:hover,
+.order-row.dragging .grip {
+  color: var(--accent);
+}
