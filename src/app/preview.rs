@@ -774,10 +774,11 @@ fn piece_view(
     }
 }
 
-/// A file packed in a ZIP: its name in it, and the ZIP's size.
+/// A file packed in a ZIP: its name in it, and the ZIP's path and size.
 #[derive(Clone)]
 struct Inner {
     name: String,
+    zip_path: String,
     zip_size: u64,
 }
 
@@ -799,7 +800,7 @@ fn Zipped(pane: Pane, src: Src, zip: Entry, name: String, size: u64) -> impl Int
         zip.mtime,
         String::from(js_sys::encode_uri_component(&name)),
     ));
-    let inner = Inner { name: name.clone(), zip_size: zip.size };
+    let inner = Inner { name: name.clone(), zip_path: zip.path.clone(), zip_size: zip.size };
     let (pic_turn, video_turn) = (Turn::new(), Turn::new());
     let info = RwSignal::new(MediaInfo::default());
     let forced = RwSignal::new(None::<PeekAs>);
@@ -848,7 +849,8 @@ fn Zipped(pane: Pane, src: Src, zip: Entry, name: String, size: u64) -> impl Int
 #[component]
 fn TextPeek(src: Src, entry: Entry, #[prop(optional)] inner: Option<Inner>) -> impl IntoView {
     let ctx = expect_context::<Ctx>();
-    let path = StoredValue::new(entry.path);
+    // A file packed in a ZIP is read from the ZIP.
+    let path = StoredValue::new(inner.as_ref().map_or(entry.path, |i| i.zip_path.clone()));
     let inner = StoredValue::new(inner);
     move || {
         let colour = ctx.colour_code.get();
@@ -864,7 +866,8 @@ fn TextPeek(src: Src, entry: Entry, #[prop(optional)] inner: Option<Inner>) -> i
 /// Any file's bytes, 16 to a line: where, in hex, and as text.
 #[component]
 fn HexPeek(src: Src, entry: Entry, #[prop(optional)] inner: Option<Inner>) -> impl IntoView {
-    let path = StoredValue::new(entry.path);
+    // A file packed in a ZIP is read from the ZIP.
+    let path = StoredValue::new(inner.as_ref().map_or(entry.path, |i| i.zip_path.clone()));
     let inner = StoredValue::new(inner);
     let get = move |start: u64| async move {
         let path = path.try_get_value().unwrap_or_default();
