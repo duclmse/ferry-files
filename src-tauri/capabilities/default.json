@@ -23,6 +23,7 @@
     "allow-media-info",
     "allow-peek-bytes",
     "allow-zip-list",
+    "allow-pdf-outline",
     "allow-copy-text",
     "allow-write-text",
     "allow-colour-text",
