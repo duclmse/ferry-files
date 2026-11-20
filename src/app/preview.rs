@@ -516,6 +516,7 @@ fn zip_parents(path: &str) -> impl Iterator<Item = &str> {
 #[component]
 fn ZipList(src: Src, entry: Entry) -> impl IntoView {
     let got = RwSignal::new(None::<Result<Listing, String>>);
+    let packed = entry.size;
     let args = json!({ "src": src.key(), "path": entry.path, "size": entry.size });
     spawn_local(async move {
         let r = call::<Listing>("zip_list", args).await;
@@ -540,7 +541,7 @@ fn ZipList(src: Src, entry: Entry) -> impl IntoView {
                         }
                     }
                     view! {
-                        <span class="sub">{format!("{} items · {} unpacked", l.total, human_size(unpacked))}</span>
+                        <span class="sub">{format!("{} items · {} packed, {} unpacked", l.total, human_size(packed), human_size(unpacked))}</span>
                         <div class="zip-list">
                             <table>
                                 <tbody>
