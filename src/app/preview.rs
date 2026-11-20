@@ -42,9 +42,10 @@ pub(super) fn has_ext(e: &Entry, exts: &[&str]) -> bool {
 /// What's selected, to the right of the files: the picture, video, sound, text or contents, and
 /// details. Shown in every view; the button at the end of the status bar hides it.
 /// `entry`: this file instead of the pane's selected item (the Editor view's preview tab), with
-/// no ‹ › (the files around it aren't the pane's).
+/// no ‹ › (the files around it aren't the pane's); `src`, where it is, if not the pane's place.
 #[component]
-pub(super) fn Preview(pane: Pane, #[prop(optional)] entry: Option<Entry>) -> impl IntoView {
+pub(super) fn Preview(pane: Pane, #[prop(optional)] entry: Option<Entry>, #[prop(optional)] src: Option<Src>) -> impl IntoView {
+    let src_of = src;
     let p = pane;
     let alone = entry.is_some();
     // Kept as the preview moves from one picture to the next, and from one video to the next.
@@ -79,7 +80,7 @@ pub(super) fn Preview(pane: Pane, #[prop(optional)] entry: Option<Entry>) -> imp
                     let what = match kind(&e) {
                         Kind::Folder => "Folder", Kind::Epub => "EPUB book", Kind::Text => "Text file", Kind::Other => "File",
                     };
-                    let src = p.src.get_untracked();
+                    let src = src_of.unwrap_or_else(|| p.src.get_untracked());
                     // Width, height and length, from the file's header; the picture or player
                     // fills in what the header didn't give (an SVG's size, an MP3's length).
                     let info = RwSignal::new(MediaInfo::default());
@@ -853,7 +854,7 @@ fn TextPeek(src: Src, entry: Entry, #[prop(optional)] inner: Option<Inner>) -> i
         let colour = ctx.colour_code.get();
         let get = move |start: u64| async move {
             let path = path.try_get_value().unwrap_or_default();
-            let p = call::<Peek>("peek_text", json!({ "src": src.key(), "path": path, "start": start, "inner": inner.try_get_value().flatten().map(|i| i.name), "zipSize": inner.try_get_value().flatten().map(|i| i.zip_size), "colour": colour })).await?;
+            let p = call::<Peek>("peek_text", json!({ "src": src.key(), "path": path, "start": start, "inner": inner.try_get_value().flatten().map(|i| i.name), "zip_size": inner.try_get_value().flatten().map(|i| i.zip_size), "colour": colour })).await?;
             Ok((Piece { text: p.text, runs: p.runs, stopped: p.colours_stopped, ..Piece::default() }, p.next))
         };
         pieces(get, TEXT_CAP, false)
@@ -867,7 +868,7 @@ fn HexPeek(src: Src, entry: Entry, #[prop(optional)] inner: Option<Inner>) -> im
     let inner = StoredValue::new(inner);
     let get = move |start: u64| async move {
         let path = path.try_get_value().unwrap_or_default();
-        let b = call::<Bytes>("peek_bytes", json!({ "src": src.key(), "path": path, "start": start, "inner": inner.try_get_value().flatten().map(|i| i.name), "zipSize": inner.try_get_value().flatten().map(|i| i.zip_size) })).await?;
+        let b = call::<Bytes>("peek_bytes", json!({ "src": src.key(), "path": path, "start": start, "inner": inner.try_get_value().flatten().map(|i| i.name), "zip_size": inner.try_get_value().flatten().map(|i| i.zip_size) })).await?;
         Ok((Piece { text: hex_lines(start, &b.bytes), ..Piece::default() }, b.next))
     };
     pieces(get, HEX_CAP, true)

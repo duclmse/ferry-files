@@ -27,7 +27,16 @@ pub(super) fn CodeView(pane: Pane) -> impl IntoView {
     };
     // Dropping on the tree's empty space puts items in its folder.
     let (over, drop) = drop_events(ctx, p, None);
-    let peek = move || p.peek_on.get().then(|| p.doc_peek.get()).flatten();
+    // A file shown as the preview shows it: the preview tab's, or a kept one's.
+    let peek = Memo::new(move |_| {
+        if p.peek_on.get() {
+            return p.doc_peek.get().map(|e| (p.src.get(), e));
+        }
+        p.docs.with(|ds| match ds.get(p.doc_at.get()) {
+            Some(Doc::File { src, entry }) if p.doc.with(Option::is_none) => Some((*src, entry.clone())),
+            _ => None,
+        })
+    });
     view! {
         <div class="code-view">
             <div class="code-row">
@@ -43,9 +52,9 @@ pub(super) fn CodeView(pane: Pane) -> impl IntoView {
             <Grip size=p.tree_w key=format!("ferry-files.tree-w.{}", p.id) min=TREE_MIN target=Target::Prev room=300.0/>
             <div class="code-main">
                 <DocTabs pane=p/>
-                {move || match (peek(), shown.get()) {
-                    (Some(e), _) => view! {
-                        <div class="code-peek"><Preview pane=p entry=e/></div>
+                {move || match (peek.get(), shown.get()) {
+                    (Some((src, e)), _) => view! {
+                        <div class="code-peek"><Preview pane=p entry=e src/></div>
                         <div class="statusbar">
                             <span class="spacer"></span>
                             <ViewSeg pane=p/>
@@ -143,6 +152,9 @@ fn CodeNode(pane: Pane, entry: Entry, depth: usize) -> impl IntoView {
             if p.peek_on.get() {
                 return p.doc_peek.with(|e| e.as_ref().is_some_and(|e| path.with_value(|x| *x == e.path)));
             }
+            if p.doc.with(Option::is_none) {
+                return p.docs.with(|ds| ds.get(p.doc_at.get()).is_some_and(|d| matches!(d, Doc::File { .. }) && d.src() == src && path.with_value(|x| x == d.path())));
+            }
             p.doc.with(|d| d.as_ref().is_some_and(|d| d.src == src && path.with_value(|x| *x == d.path)))
         });
         let row = NodeRef::<html::Button>::new();
@@ -191,15 +203,15 @@ fn DocTabs(pane: Pane) -> impl IntoView {
         <div class="doc-tabs" role="tablist" hidden=move || n() == 0 && p.doc_peek.with(Option::is_none)>
             {move || (0..n()).map(|i| {
                 let shown = move || p.doc_at.get() == i && !p.peek_on.get();
-                let path = move || p.docs.with(|ds| ds.get(i).map(|d| d.ed.path.clone()).unwrap_or_default());
+                let path = move || p.docs.with(|ds| ds.get(i).map(|d| d.path().to_string()).unwrap_or_default());
                 // The shown tab's text is in the editor; the others' in their entries.
-                let dirty = move || if shown() { p.slot().dirty() } else { p.docs.with(|ds| ds.get(i).is_some_and(Doc::dirty)) };
+                let dirty = move || if shown() && p.doc.with(Option::is_some) { p.slot().dirty() } else { p.docs.with(|ds| ds.get(i).is_some_and(Doc::dirty)) };
                 let label = move || format!("Close {}", base(&path()));
                 // Its folder's name, when another tab's file has the same name.
                 let where_ = move || {
                     let path = path();
                     let name = base(&path);
-                    let clash = p.docs.with(|ds| ds.iter().filter(|d| base(&d.ed.path) == name).count() > 1);
+                    let clash = p.docs.with(|ds| ds.iter().filter(|d| base(d.path()) == name).count() > 1);
                     clash.then(|| base(&parent(&path)))
                 };
                 view! {
@@ -217,10 +229,12 @@ fn DocTabs(pane: Pane) -> impl IntoView {
                 }
             }).collect_view()}
             // The preview tab, for a file that isn't text: its name in italics.
+            // Double-clicked, it's kept open in a tab of its own.
             {move || p.doc_peek.get().map(|e| view! {
                 <div class="doc-tab peek" class:shown=move || p.peek_on.get() role="tab" aria-selected=move || p.peek_on.get().to_string()
-                    title=e.path.clone()
+                    title=format!("{}\nDouble-click to keep it open", e.path)
                     on:click=move |_| p.peek_on.set(true)
+                    on:dblclick=move |_| ctx.keep_peek(p)
                     on:mousedown=middle_down on:mouseup=move |ev| if ev.button() == 1 { ev.prevent_default(); ctx.close_peek(p) }>
                     <span class="name">{e.name.clone()}</span>
                     <button class="close" title="Close" aria-label=format!("Close {}", e.name)

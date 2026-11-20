@@ -528,22 +528,35 @@ struct Pane {
 
 /// A file open in a tab of the Editor view.
 #[derive(Clone)]
-struct Doc {
-    ed: Editor,
-    /// Its text when it differs from the saved text; None while it's the shown tab (whose text is
-    /// in the editor) or unchanged, so an unchanged file in another tab is held once, not twice.
-    text: Option<String>,
+enum Doc {
+    Text {
+        ed: Editor,
+        /// Its text when it differs from the saved text; None while it's the shown tab (whose
+        /// text is in the editor) or unchanged, so an unchanged file in another tab is held once.
+        text: Option<String>,
+    },
+    /// A file that isn't text, kept open from the preview tab: shown as the preview shows it.
+    File { src: Src, entry: Entry },
 }
 
 impl Doc {
-    /// For a tab not shown: whether it has unsaved changes.
-    fn dirty(&self) -> bool {
-        self.text.as_deref().is_some_and(|t| t != &*self.ed.saved_text)
+    fn src(&self) -> Src {
+        match self {
+            Doc::Text { ed, .. } => ed.src,
+            Doc::File { src, .. } => *src,
+        }
     }
 
-    /// Its text, for the editor, leaving None.
-    fn take_text(&mut self) -> String {
-        self.text.take().unwrap_or_else(|| self.ed.saved_text.to_string())
+    fn path(&self) -> &str {
+        match self {
+            Doc::Text { ed, .. } => &ed.path,
+            Doc::File { entry, .. } => &entry.path,
+        }
+    }
+
+    /// For a tab not shown: whether it has unsaved changes.
+    fn dirty(&self) -> bool {
+        matches!(self, Doc::Text { ed, text: Some(t) } if *t != *ed.saved_text)
     }
 }
 
@@ -1305,7 +1318,7 @@ pub fn App() -> impl IntoView {
                     if p.peek_on.get_untracked() {
                         p.doc_peek.with_untracked(|e| e.as_ref().map(|e| e.path.clone()))
                     } else {
-                        p.doc.with_untracked(|d| d.as_ref().map(|d| d.path.clone()))
+                        p.docs.with_untracked(|ds| ds.get(p.doc_at.get_untracked()).map(|d| d.path().to_string()))
                     }
                 };
                 if !in_field {
@@ -1315,7 +1328,10 @@ pub fn App() -> impl IntoView {
                     }
                 }
                 return;
-            } else if id == Some("close_tab") && p.doc.with_untracked(Option::is_some) {
+            } else if id == Some("close_tab") && p.peek_on.get_untracked() {
+                e.prevent_default();
+                ctx.close_peek(p);
+            } else if id == Some("close_tab") && p.docs.with_untracked(|ds| !ds.is_empty()) {
                 e.prevent_default();
                 ctx.close_doc(p, p.doc_at.get_untracked(), false);
             } else if bound.is_some_and(|b| b.anywhere && b.id != "replace") && chord.as_deref().is_some_and(held) {

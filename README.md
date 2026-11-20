@@ -161,7 +161,8 @@ files and disks too, so books can be copied between them.
 - Edit text files.
 - Editor view: the pane's folder as a tree beside text files in tabs. Clicking
   a file that isn't text shows it in a preview tab (its name in italics), as the
-  preview shows it; the next one replaces it. Drag files and folders in the tree
+  preview shows it; the next one replaces it. Double-click the preview tab to
+  keep the file open in a tab of its own. Drag files and folders in the tree
   onto a folder (or the tree's empty space) to move them, or copy with ⌥, as in
   the panes; open files that move or are renamed follow. Right-click a file or
   folder to rename it in place (or press F2) or refresh. The terminal shows above the status

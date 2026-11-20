@@ -53,8 +53,12 @@ impl Ctx {
                     } else if let Some(p) = slot.pane {
                         // Another tab was shown meanwhile: the saved file is in the stash.
                         p.docs.update(|ds| {
-                            if let Some(d) = ds.iter_mut().find(|d| same(&d.ed)) {
-                                d.ed = saved;
+                            for d in ds {
+                                if let Doc::Text { ed, .. } = d {
+                                    if same(ed) {
+                                        *ed = saved.clone();
+                                    }
+                                }
                             }
                         });
                     }
@@ -70,7 +74,7 @@ impl Ctx {
     pub(super) fn open_doc(self, p: Pane, path: String) {
         let src = p.src.get_untracked();
         reveal(p, &path);
-        if let Some(i) = p.docs.with_untracked(|ds| ds.iter().position(|d| d.ed.src == src && d.ed.path == path)) {
+        if let Some(i) = p.docs.with_untracked(|ds| ds.iter().position(|d| d.src() == src && d.path() == path)) {
             self.show_doc(p, i);
             return;
         }
@@ -81,9 +85,10 @@ impl Ctx {
                     let (text, crlf, mixed) = to_lf(f.text);
                     let ed = Editor { src, pane: p.id, path, version: f.version, saved_text: text.as_str().into(), crlf, mixed };
                     // Its text is in the editor while it's shown.
-                    let doc = Doc { ed: ed.clone(), text: None };
+                    let doc = Doc::Text { ed: ed.clone(), text: None };
                     let at = p.doc_at.get_untracked();
-                    let keep = p.slot().dirty();
+                    // A shown file with changes, or one that isn't text (kept open), stays.
+                    let keep = p.slot().dirty() || p.docs.with_untracked(|ds| matches!(ds.get(at), Some(Doc::File { .. })));
                     stash(p);
                     p.docs.update(|ds| {
                         if ds.is_empty() {
@@ -105,11 +110,31 @@ impl Ctx {
         });
     }
 
-    /// Shows a file that isn't text in the Editor view's preview tab, in place of the one there.
+    /// Shows a file that isn't text in the Editor view's preview tab, in place of the one there;
+    /// or in its own tab, when it's kept open.
     pub(super) fn peek_doc(self, p: Pane, e: Entry) {
+        let src = p.src.get_untracked();
+        if let Some(i) = p.docs.with_untracked(|ds| ds.iter().position(|d| matches!(d, Doc::File { .. }) && d.src() == src && d.path() == e.path)) {
+            self.show_doc(p, i);
+            return;
+        }
         reveal(p, &e.path);
         p.doc_peek.set(Some(e));
         p.peek_on.set(true);
+    }
+
+    /// Keeps the preview tab's file open in a tab of its own, after the shown one.
+    pub(super) fn keep_peek(self, p: Pane) {
+        let Some(entry) = p.doc_peek.get_untracked() else { return };
+        let src = p.src.get_untracked();
+        let n = p.docs.with_untracked(Vec::len);
+        let at = if n == 0 { 0 } else { (p.doc_at.get_untracked() + 1).min(n) };
+        p.docs.update(|ds| ds.insert(at, Doc::File { src, entry }));
+        if p.doc_at.get_untracked() >= at && n > 0 {
+            p.doc_at.update(|a| *a += 1);
+        }
+        p.doc_peek.set(None);
+        self.show_doc(p, at);
     }
 
     /// Closes the Editor view's preview tab.
@@ -127,7 +152,17 @@ impl Ctx {
             }
         };
         for p in self.panes {
-            p.docs.update(|ds| ds.iter_mut().filter(|d| d.ed.src == src).for_each(|d| moved(&mut d.ed.path)));
+            p.docs.update(|ds| {
+                for d in ds.iter_mut().filter(|d| d.src() == src) {
+                    match d {
+                        Doc::Text { ed, .. } => moved(&mut ed.path),
+                        Doc::File { entry, .. } => {
+                            moved(&mut entry.path);
+                            entry.name = base(&entry.path);
+                        }
+                    }
+                }
+            });
             p.doc.update(|d| {
                 if let Some(ed) = d.as_mut().filter(|ed| ed.src == src) {
                     moved(&mut ed.path);
@@ -147,16 +182,13 @@ impl Ctx {
     /// Shows the Editor view's tab `i`.
     pub(super) fn show_doc(self, p: Pane, i: usize) {
         p.peek_on.set(false);
-        if (i == p.doc_at.get_untracked() && p.doc.with_untracked(Option::is_some)) || i >= p.docs.with_untracked(Vec::len) {
+        let n = p.docs.with_untracked(Vec::len);
+        let here = i == p.doc_at.get_untracked() && (p.doc.with_untracked(Option::is_some) || p.docs.with_untracked(|ds| matches!(ds.get(i), Some(Doc::File { .. }))));
+        if here || i >= n {
             return;
         }
         stash(p);
-        // Its text goes to the editor, not copied.
-        let taken = p.docs.try_update(|ds| ds.get_mut(i).map(|d| (d.ed.clone(), d.take_text()))).flatten();
-        if let Some((ed, text)) = taken {
-            reveal(p, &ed.path);
-            show(p, i, ed, text);
-        }
+        put(p, i);
     }
 
     /// Closes the Editor view's tab `i`; with unsaved changes, unless `force`, it's shown and asks.
@@ -177,9 +209,9 @@ impl Ctx {
         let n = p.docs.with_untracked(Vec::len);
         if i == at {
             let next = i.min(n.saturating_sub(1));
-            match p.docs.try_update(|ds| ds.get_mut(next).map(|d| (d.ed.clone(), d.take_text()))).flatten() {
-                Some((ed, text)) => show(p, next, ed, text),
-                None => {
+            match n {
+                1.. => put(p, next),
+                0 => {
                     p.doc.set(None);
                     p.doc_text.set(String::new());
                     p.doc_at.set(0);
@@ -221,9 +253,32 @@ fn stash(p: Pane) {
     let text = (text != *ed.saved_text).then_some(text);
     p.docs.update(|ds| {
         if let Some(d) = ds.get_mut(at) {
-            *d = Doc { ed, text };
+            *d = Doc::Text { ed, text };
         }
     });
+}
+
+/// Shows tab `at`: a text file in the editor (its text moved there, not copied), or a kept file
+/// as the preview shows it.
+fn put(p: Pane, at: usize) {
+    let taken = p.docs.try_update(|ds| {
+        ds.get_mut(at).map(|d| match d {
+            Doc::Text { ed, text } => (ed.path.clone(), Some((ed.clone(), text.take().unwrap_or_else(|| ed.saved_text.to_string())))),
+            Doc::File { entry, .. } => (entry.path.clone(), None),
+        })
+    });
+    let Some(Some((path, text))) = taken else { return };
+    reveal(p, &path);
+    match text {
+        Some((ed, text)) => show(p, at, ed, text),
+        None => {
+            p.doc.set(None);
+            p.doc_text.set(String::new());
+            p.doc_at.set(at);
+            p.doc_ask.set(false);
+            p.doc_status.set((String::new(), ""));
+        }
+    }
 }
 
 /// Puts tab `at`'s file in the editor. Its text goes first: the editor reads it when it's made.
