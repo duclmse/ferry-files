@@ -322,7 +322,7 @@ fn BigCover(src: Src, entry: Entry) -> impl IntoView {
             want.set(true);
         }
     });
-    let p = String::from(js_sys::encode_uri_component(&entry.path));
+    let p = uri_part(&entry.path);
     let url = crate::os::served(&format!(
         "cover?src={}&p={p}&s={}&m={}",
         src.key(),
@@ -1014,10 +1014,10 @@ fn Zipped(pane: Pane, src: Src, zip: Entry, name: String, size: u64) -> impl Int
     let url = crate::os::served(&format!(
         "zipped?src={}&p={}&s={}&m={}&e={}",
         src.key(),
-        String::from(js_sys::encode_uri_component(&zip.path)),
+        uri_part(&zip.path),
         zip.size,
         zip.mtime,
-        String::from(js_sys::encode_uri_component(&name)),
+        uri_part(&name),
     ));
     let inner = Inner {
         name: name.clone(),

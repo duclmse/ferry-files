@@ -1,6 +1,7 @@
 //! Finding in the editor's text, and what Replace puts in place of a match: plain text or a
 //! regular expression (the `regex` crate's), any case or not, whole words or not.
 
+use super::util::regex_problem;
 use regex::{Regex, RegexBuilder};
 use std::cell::{OnceCell, RefCell};
 
@@ -32,11 +33,7 @@ fn compiled(q: &str, o: FindOpts) -> Result<Regex, String> {
     }
     let src = if o.regex { q.to_string() } else { regex::escape(q) };
     // ^ and $ are at each line's start and end, as in other editors.
-    let re = RegexBuilder::new(&src).case_insensitive(!o.case).multi_line(true).build().map_err(|e| {
-        // The message is the line that says what's wrong, without the pattern drawn above it.
-        let m = e.to_string();
-        m.lines().find_map(|l| l.strip_prefix("error: ")).map_or(m.clone(), str::to_string)
-    })?;
+    let re = RegexBuilder::new(&src).case_insensitive(!o.case).multi_line(true).build().map_err(|e| regex_problem(&e))?;
     LAST.set(Some((q.to_string(), o, re.clone())));
     Ok(re)
 }

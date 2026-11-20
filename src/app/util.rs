@@ -144,6 +144,20 @@ pub(super) fn human_size(n: u64) -> String {
     format!("{v:.1} TB")
 }
 
+/// `s` made safe for a part of a URL, as JavaScript's encodeURIComponent does: everything but
+/// letters, digits and -_.!~*'() as %XX bytes of its UTF-8.
+pub(super) fn uri_part(s: &str) -> String {
+    let mut out = String::with_capacity(s.len());
+    for b in s.bytes() {
+        if b.is_ascii_alphanumeric() || b"-_.!~*'()".contains(&b) {
+            out.push(b as char);
+        } else {
+            out.push_str(&format!("%{b:02X}"));
+        }
+    }
+    out
+}
+
 pub(super) fn when(mtime: i64) -> String {
     if mtime <= 0 {
         return String::new();
@@ -223,7 +237,7 @@ pub(super) fn media(e: &Entry) -> Option<Media> {
 
 /// URL of the file itself, read in parts as the player asks for them, without copying it first.
 pub(super) fn stream_url(src: Src, e: &Entry) -> String {
-    let p = String::from(js_sys::encode_uri_component(&e.path));
+    let p = uri_part(&e.path);
     crate::os::served(&format!("file?src={}&p={p}&s={}&m={}", src.key(), e.size, e.mtime))
 }
 
@@ -234,7 +248,7 @@ const FIT_FROM: u64 = 2 * 1024 * 1024;
 /// pixels would take far more memory than it needs. `None` for other files.
 pub(super) fn fit_url(src: Src, e: &Entry) -> Option<String> {
     (e.size >= FIT_FROM && e.size <= THUMB_MAX && ["jpg", "jpeg", "png", "webp"].contains(&ext(&e.name).as_str())).then(|| {
-        let p = String::from(js_sys::encode_uri_component(&e.path));
+        let p = uri_part(&e.path);
         crate::os::served(&format!("fit?src={}&p={p}&s={}&m={}", src.key(), e.size, e.mtime))
     })
 }
@@ -242,7 +256,7 @@ pub(super) fn fit_url(src: Src, e: &Entry) -> Option<String> {
 /// Thumbnail URL for images and EPUBs (their cover), served by the backend's `ferry://` scheme.
 pub(super) fn thumb_url(src: Src, e: &Entry) -> Option<String> {
     (!e.dir && e.size <= THUMB_MAX && THUMB_EXTS.contains(&ext(&e.name).as_str())).then(|| {
-        let p = String::from(js_sys::encode_uri_component(&e.path));
+        let p = uri_part(&e.path);
         crate::os::served(&format!("thumb?src={}&p={p}&s={}&m={}", src.key(), e.size, e.mtime))
     })
 }
@@ -386,15 +400,15 @@ pub(super) const RIGHT_PANE_MIN: f64 = 360.0;
 /// The narrowest the preview may be dragged.
 pub(super) const PREVIEW_MIN: f64 = 200.0;
 
-/// A JavaScript regular expression, or why `source` isn't one.
-pub(super) fn js_regex(source: &str, flags: &str) -> Result<js_sys::RegExp, String> {
-    // Through Reflect, so a bad pattern is an error rather than a crash.
-    let ctor = js_sys::RegExp::new("", "").constructor();
-    let args = js_sys::Array::of2(&source.into(), &flags.into());
-    match js_sys::Reflect::construct(&ctor, &args) {
-        Ok(v) => Ok(v.unchecked_into()),
-        Err(e) => Err(format!("That pattern doesn't work: {}", e.dyn_ref::<js_sys::Error>().map(|e| String::from(e.message())).unwrap_or_default())),
-    }
+/// A regular expression, or why `source` isn't one.
+pub(super) fn regex(source: &str, any_case: bool) -> Result<regex::Regex, String> {
+    regex::RegexBuilder::new(source).case_insensitive(any_case).build().map_err(|e| format!("That pattern doesn't work: {}", regex_problem(&e)))
+}
+
+/// The line of a regex error that says what's wrong, without the pattern drawn above it.
+pub(super) fn regex_problem(e: &regex::Error) -> String {
+    let m = e.to_string();
+    m.lines().find_map(|l| l.strip_prefix("error: ")).map_or(m.clone(), str::to_string)
 }
 
 /// Whether `name` contains `lower` (already lowercase) in any case. Most names are ASCII, and
@@ -414,11 +428,7 @@ pub(super) fn glob_source(pattern: &str) -> String {
         match c {
             '*' => out.push_str(".*"),
             '?' => out.push('.'),
-            c if r"\^$.|+()[]{}/".contains(c) => {
-                out.push('\\');
-                out.push(c);
-            }
-            c => out.push(c),
+            c => out.push_str(&regex::escape(c.encode_utf8(&mut [0; 4]))),
         }
     }
     out.push('$');
@@ -559,6 +569,12 @@ pub(super) fn count(n: u64) -> String {
 
 #[cfg(test)]
 mod count_tests {
+    #[test]
+    fn uri_parts() {
+        assert_eq!(super::uri_part("/sdcard/My Photos/é#1?.jpg"), "%2Fsdcard%2FMy%20Photos%2F%C3%A9%231%3F.jpg");
+        assert_eq!(super::uri_part("a-b_c.d!~*'()"), "a-b_c.d!~*'()");
+    }
+
     #[test]
     fn groups_thousands() {
         assert_eq!(super::count(0), "0");

@@ -11,7 +11,7 @@ const CASES: [&str; 4] = ["Keep as is", "lower case", "UPPER CASE", "Title Case"
 struct Rule {
     find: String,
     replace: String,
-    /// `find` is a regular expression (JavaScript's), and `replace` may use $1, $2…
+    /// `find` is a regular expression (the `regex` crate's), and `replace` may use $1, $2…
     pattern: bool,
     match_case: bool,
     /// The new name before its extension; {name}, {n}, {n:3} and {date} are filled in.
@@ -28,25 +28,52 @@ struct Row {
     problem: Option<String>,
 }
 
-/// Find, as a JavaScript regular expression, or why it isn't one.
-fn regex(r: &Rule) -> Result<Option<js_sys::RegExp>, String> {
+/// Find, as a regular expression, or why it isn't one.
+fn find_regex(r: &Rule) -> Result<Option<regex::Regex>, String> {
     if r.find.is_empty() {
         return Ok(None);
     }
-    let source = if r.pattern { r.find.clone() } else { escape(&r.find) };
-    js_regex(&source, if r.match_case { "g" } else { "gi" }).map(Some)
+    let source = if r.pattern { r.find.clone() } else { regex::escape(&r.find) };
+    regex(&source, !r.match_case).map(Some)
 }
 
-/// `s` with regular expression characters escaped.
-fn escape(s: &str) -> String {
-    let mut out = String::new();
-    for c in s.chars() {
-        if r"\^$.|?*+()[]{}/-".contains(c) {
-            out.push('\\');
-        }
-        out.push(c);
+/// `name` with every match of `re` replaced. As a pattern, `with` may use $1 or $<name> for what
+/// a group matched, $& for the whole match, $` and $' for what's before and after it, and $$ for $.
+fn replace(re: &regex::Regex, name: &str, with: &str, pattern: bool) -> String {
+    if !pattern {
+        return re.replace_all(name, regex::NoExpand(with)).into_owned();
     }
-    out
+    re.replace_all(name, |caps: &regex::Captures| {
+        let whole = caps.get(0).expect("a match");
+        let mut out = String::new();
+        let mut rest = with;
+        while let Some(i) = rest.find('$') {
+            out.push_str(&rest[..i]);
+            rest = &rest[i + 1..];
+            let b = rest.as_bytes();
+            let digit = |k: usize| b.get(k).filter(|c| c.is_ascii_digit()).map(|c| (c - b'0') as usize);
+            let group = |n: usize| (n > 0 && n < caps.len()).then_some(n);
+            // $12 is group 12 when there is one, else group 1 and then "2".
+            let num = digit(0).zip(digit(1)).and_then(|(x, y)| group(x * 10 + y)).map(|n| (n, 2)).or_else(|| digit(0).and_then(group).map(|n| (n, 1)));
+            let (put, used) = match b.first() {
+                Some(b'$') => ("$", 1),
+                Some(b'&') => (whole.as_str(), 1),
+                Some(b'`') => (&name[..whole.start()], 1),
+                Some(b'\'') => (&name[whole.end()..], 1),
+                _ if num.is_some() => num.map_or(("", 0), |(n, used)| (caps.get(n).map_or("", |m| m.as_str()), used)),
+                Some(b'<') => match rest.find('>').and_then(|j| re.capture_names().flatten().any(|n| n == &rest[1..j]).then_some(j)) {
+                    Some(j) => (caps.name(&rest[1..j]).map_or("", |m| m.as_str()), j + 1),
+                    None => ("$", 0),
+                },
+                _ => ("$", 0),
+            };
+            out.push_str(put);
+            rest = &rest[used..];
+        }
+        out.push_str(rest);
+        out
+    })
+    .into_owned()
 }
 
 /// "photo.jpg" as ("photo", ".jpg"); folders and names starting with a dot keep it all.
@@ -130,15 +157,14 @@ fn bad_name(name: &str) -> Option<String> {
 /// The new names for `items` (in order), with problems marked. `taken` holds, by folder, the
 /// lower-cased names of what else is there.
 fn plan(items: &[Entry], r: &Rule, taken: &HashMap<String, HashSet<String>>) -> Result<Vec<Row>, String> {
-    let re = regex(r)?;
-    let replacement = if r.pattern { r.replace.clone() } else { r.replace.replace('$', "$$") };
+    let re = find_regex(r)?;
     let template = if r.template.trim().is_empty() { "{name}" } else { r.template.as_str() };
     let mut rows: Vec<Row> = items
         .iter()
         .enumerate()
         .map(|(i, e)| {
             let name = match &re {
-                Some(re) => String::from(js_sys::JsString::from(e.name.as_str()).replace_by_pattern(re, &replacement)),
+                Some(re) => replace(re, &e.name, &r.replace, r.pattern),
                 None => e.name.clone(),
             };
             let (stem, ext) = split_ext(&name, e.dir);
@@ -406,5 +432,32 @@ pub(super) fn BatchRename(pane: usize, items: Vec<Entry>) -> impl IntoView {
                 </div>
             </div>
         </div>
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    fn rep(find: &str, with: &str, name: &str) -> String {
+        super::replace(&regex::Regex::new(find).unwrap(), name, with, true)
+    }
+
+    #[test]
+    fn replaces_as_javascript_did() {
+        assert_eq!(rep(r"(\w+)-(\w+)", "$2-$1", "ab-cd.txt"), "cd-ab.txt");
+        assert_eq!(rep(r"(\d)", "$1a", "x1"), "x1a");
+        assert_eq!(rep(r"(\d)", "$10", "x1"), "x10");
+        assert_eq!(rep(r"\d+", "[$&]", "a12b3"), "a[12]b[3]");
+        assert_eq!(rep(r"b", "$`|$'", "abc"), "aa|cc");
+        assert_eq!(rep(r"(?<y>\d{4})", "<$<y>>", "IMG_2024"), "IMG_<2024>");
+        assert_eq!(rep(r"a", "$$ $5 $<no> $", "a"), "$ $5 $<no> $");
+        let re = regex::Regex::new(&regex::escape("a.b")).unwrap();
+        assert_eq!(super::replace(&re, "a.b axb", "$1$", false), "$1$ axb");
+    }
+
+    #[test]
+    fn globs() {
+        let re = super::regex(&super::glob_source("IMG_*.j?g"), true).unwrap();
+        assert!(re.is_match("img_1.jpg") && !re.is_match("IMG_.jpeg") && re.is_match("IMG_(1)/x.jpg"));
+        assert!(super::regex("(", true).is_err());
     }
 }

@@ -668,13 +668,13 @@ impl Pane {
         if !f.is_empty() {
             if self.regex.get_untracked() {
                 // A pattern that doesn't work filters nothing out, and says why.
-                match js_regex(&f, "i") {
+                match regex(&f, true) {
                     Ok(r) => re = Some(r),
                     Err(e) => bad = Some(e),
                 }
             } else if f.contains('*') || f.contains('?') {
                 // A pattern, as the search takes it: * any run of characters, ? one.
-                re = js_regex(&glob_source(&f), "i").ok();
+                re = regex(&glob_source(&f), true).ok();
             } else {
                 text = Some(f.to_lowercase());
             }
@@ -688,7 +688,7 @@ impl Pane {
             let cmp = cmp.as_ref().filter(|_| diff_only);
             self.all.with_untracked(|all| {
                 all.iter()
-                    .filter(|e| re.as_ref().is_none_or(|re| re.test(&e.name)))
+                    .filter(|e| re.as_ref().is_none_or(|re| re.is_match(&e.name)))
                     .filter(|e| text.as_deref().is_none_or(|t| contains_any_case(&e.name, t)))
                     .filter(|e| cmp.is_none_or(|m| m.get(&e.name).is_some_and(|x| x != "same")))
                     .cloned()
