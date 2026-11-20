@@ -58,8 +58,8 @@ pub enum StoreMode {
     /// SQLite WAL database (default). Best for concurrent API access.
     #[default]
     Sqlite,
-    /// In-memory `Vec<FileRecord>` with binary mmap file on shutdown.
-    /// Near-zero startup latency; single-writer only.
+    /// Packed entries with parent pointers and a shared name buffer, saved
+    /// to `index.bin` on shutdown and periodically; single-writer only.
     Memory,
 }
 

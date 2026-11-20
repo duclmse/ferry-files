@@ -48,11 +48,27 @@ impl SqliteStore {
                 .map_err(|e| AppError::Index(e.to_string()))?
         };
 
+        let t0 = std::time::Instant::now();
         let conn = writer.get().map_err(|e| AppError::Index(e.to_string()))?;
+        let t_conn = t0.elapsed();
         conn.execute_batch(SCHEMA)?;
+        let t_schema = t0.elapsed();
         apply_migrations(&conn)?;
+        let t_migrate = t0.elapsed();
         super::schema::repair_backslash_parents(&conn)?;
+        let t_repair = t0.elapsed();
         sync_optional_indexes(&conn, indexes)?;
+        let t_indexes = t0.elapsed();
+        tracing::info!(
+            "sqlite store opened in {:.1}s (connect {:.1}s, schema {:.1}s, migrations {:.1}s, \
+             parent repair {:.1}s, optional indexes {:.1}s)",
+            t_indexes.as_secs_f64(),
+            t_conn.as_secs_f64(),
+            (t_schema - t_conn).as_secs_f64(),
+            (t_migrate - t_schema).as_secs_f64(),
+            (t_repair - t_migrate).as_secs_f64(),
+            (t_indexes - t_repair).as_secs_f64(),
+        );
 
         drop(conn);
         Ok(Self {

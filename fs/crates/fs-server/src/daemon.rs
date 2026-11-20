@@ -151,7 +151,12 @@ pub async fn run_with_shutdown(
     // ── 4-5. Stores ────────────────────────────────────────────────────────
     tracing::info!("store mode: {:?}", cfg.store.mode);
     let sqlite = Arc::new(FileStore::from_config(&cfg)?);
+    let t_tantivy = std::time::Instant::now();
     let tantivy = Arc::new(TantivyStore::new(&cfg.data_dir.join("tantivy"))?);
+    tracing::info!(
+        "full-text index opened in {:.1}s",
+        t_tantivy.elapsed().as_secs_f64()
+    );
     let metrics = IndexMetrics::new();
 
     // ── 5b. Archive registry ───────────────────────────────────────────────

@@ -694,3 +694,45 @@ fn recrawl_rewrites_changed_rows_and_keeps_unchanged_ones() {
     assert_eq!(store.get_by_path("/r/b.txt").unwrap().unwrap().mtime, 99);
     assert!(store.get_by_path("/r/c.txt").unwrap().is_none());
 }
+
+fn schema_version(db: &Path) -> i64 {
+    rusqlite::Connection::open(db)
+        .unwrap()
+        .query_row("PRAGMA schema_version", [], |r| r.get(0))
+        .unwrap()
+}
+
+#[test]
+fn reopening_a_store_leaves_its_schema_alone() {
+    let dir = tempfile::tempdir().unwrap();
+    let db = dir.path().join("index.db");
+    drop(SqliteStore::new(&db).unwrap());
+    let before = schema_version(&db);
+    drop(SqliteStore::new(&db).unwrap());
+    // Any index dropped and rebuilt on open would bump it.
+    assert_eq!(schema_version(&db), before);
+}
+
+#[test]
+fn an_old_parent_index_is_repointed_at_the_parent_column() {
+    let dir = tempfile::tempdir().unwrap();
+    let db = dir.path().join("index.db");
+    drop(SqliteStore::new(&db).unwrap());
+    rusqlite::Connection::open(&db)
+        .unwrap()
+        .execute_batch(
+            "DROP INDEX idx_files_parent;
+             CREATE INDEX idx_files_parent ON files(path);",
+        )
+        .unwrap();
+    drop(SqliteStore::new(&db).unwrap());
+    let cols: Vec<String> = rusqlite::Connection::open(&db)
+        .unwrap()
+        .prepare("SELECT name FROM pragma_index_info('idx_files_parent')")
+        .unwrap()
+        .query_map([], |r| r.get(0))
+        .unwrap()
+        .collect::<rusqlite::Result<_>>()
+        .unwrap();
+    assert_eq!(cols, ["parent"]);
+}

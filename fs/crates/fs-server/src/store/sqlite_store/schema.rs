@@ -60,9 +60,6 @@ pub(super) const MIGRATIONS: &[&str] = &[
     "ALTER TABLE files ADD COLUMN parent           TEXT DEFAULT NULL",
     "ALTER TABLE files ADD COLUMN watch_root       TEXT DEFAULT NULL",
     "ALTER TABLE files ADD COLUMN crawl_generation INTEGER DEFAULT NULL",
-    // Re-point the parent index to the actual parent column.
-    "DROP INDEX IF EXISTS idx_files_parent",
-    "CREATE INDEX IF NOT EXISTS idx_files_parent ON files(parent)",
 ];
 
 pub(super) fn apply_migrations(conn: &rusqlite::Connection) -> rusqlite::Result<()> {
@@ -72,6 +69,19 @@ pub(super) fn apply_migrations(conn: &rusqlite::Connection) -> rusqlite::Result<
             Err(e) if e.to_string().contains("duplicate column name") => {}
             Err(e) => return Err(e),
         }
+    }
+    // Old databases had `idx_files_parent` on another column. Re-pointing it
+    // unconditionally rebuilt the index over every row on every start: a
+    // large share of the 40-100 s restart at 1.4M rows.
+    let columns: Vec<String> = conn
+        .prepare("SELECT name FROM pragma_index_info('idx_files_parent')")?
+        .query_map([], |r| r.get(0))?
+        .collect::<rusqlite::Result<_>>()?;
+    if columns != ["parent"] {
+        conn.execute_batch(
+            "DROP INDEX IF EXISTS idx_files_parent;
+             CREATE INDEX idx_files_parent ON files(parent);",
+        )?;
     }
     Ok(())
 }
