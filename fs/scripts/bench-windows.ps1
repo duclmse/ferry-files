@@ -183,6 +183,24 @@ function Get-LogMessages($d) {
     @($re.Matches($text) | ForEach-Object { $_.Groups[1].Value })
 }
 
+# Seconds from launch to the first log line matching $pattern, by the
+# daemon's own clock. /health also counts this script's polling and HTTP
+# client: on a runner it came about half a second after the daemon logged
+# that REST was listening.
+function Find-LogTime($d, [string]$pattern) {
+    $esc = [char]27
+    $text = (Read-Shared $d.Err) -replace "$esc\[[0-9;]*m", ''
+    $re = [regex]'(?m)^(\S+)\s+(?:TRACE|DEBUG|INFO|WARN|ERROR)\s+\S+:\s(.*?)\r?$'
+    foreach ($m in $re.Matches($text)) {
+        if ($m.Groups[2].Value -match $pattern) {
+            $at = [DateTime]::Parse($m.Groups[1].Value, [Globalization.CultureInfo]::InvariantCulture,
+                [Globalization.DateTimeStyles]::AdjustToUniversal)
+            return ($at - $d.Launched).TotalSeconds
+        }
+    }
+    return $null
+}
+
 function Find-Log($d, [string]$pattern) {
     Get-LogMessages $d | Where-Object { $_ -match $pattern } | Select-Object -First 1
 }
@@ -193,6 +211,7 @@ function Start-Daemon([string]$label) {
         Out   = Join-Path $workDir "logs\daemon.$label.out.log"
         Err   = Join-Path $workDir "logs\daemon.$label.err.log"
         Clock = [Diagnostics.Stopwatch]::StartNew()
+        Launched = [DateTime]::UtcNow
         Proc  = $null
         Ready = 0.0
     }
@@ -534,6 +553,9 @@ try {
 
     # ---- first start: cold crawl, or warm start on a kept index -----------
     New-Fixture
+    # The first HTTP request in a PowerShell session sets up its HTTP stack,
+    # which would otherwise land in the first /health time.
+    try { Invoke-RestMethod -Uri "http://127.0.0.1:9/" -TimeoutSec 1 | Out-Null } catch {}
     Write-Host "==> Starting daemon (first run)"
     $running = Start-Daemon "first"
     $d1 = $running
@@ -653,6 +675,12 @@ try {
     if ($heap2) { Say "Store heap:   $($heap2 -replace '^memory store: ', '') after loading index.bin" }
     Say ("Timing:       /health {0:N2}s, decision logged {1:N2}s, all changes visible {2}" -f `
         $d2.Ready, $decisionAt, $(if ($allOk) { "{0:N2}s" -f $verifiedAt } else { "NEVER (timed out)" }))
+    $loadedAt = Find-LogTime $d2 '^memory store: loaded|^sqlite store opened'
+    $servingAt = Find-LogTime $d2 '^REST listening'
+    if ($null -ne $servingAt) {
+        Say ("Daemon log:   first line {0:N2}s, store loaded {1}, REST listening {2:N2}s after launch" -f `
+            (Find-LogTime $d2 '.'), $(if ($null -ne $loadedAt) { "{0:N2}s" -f $loadedAt } else { "-" }), $servingAt)
+    }
     Say "Checks:"
     foreach ($e in $afterChanges) {
         $mark = if ($e.Ok) { "ok  " } else { "FAIL" }

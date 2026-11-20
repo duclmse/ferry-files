@@ -280,3 +280,20 @@ before an entry's last separator, ignoring ASCII case in both stores:
   the end, without building a path. 2M entries: `parent:/bench` 14.8 to
   3.8 ms, one folder 6.8 to 3.7 ms; what is left is the scan itself. Not yet
   measured on a runner against Everything's ~45 ms for `parent:C:\`.
+
+**Restart, 1.1 s against 0.6 s.** Most of the gap was the measurement. On
+that run the daemon logged its first line, finished loading `index.bin`
+0.58 s later and was listening 0.03 s after that, but the script's first
+`/health` answer came 1.14 s after launch: the rest is PowerShell's polling
+and first HTTP request. On a first start with nothing to load, `/health`
+came at 1.1 s too, 0.25 s after the daemon's first line. Everything's 0.58 s
+was polled with es.exe every 250 ms. So the load itself was about on par.
+
+The load is three steps of similar size, one after another (2M entries,
+local): decompress 85 ms, decode 85 ms, rebuild the path index 100-125 ms.
+Decompression now runs on a second thread while the main one decodes, and
+the index rebuild hashes paths in parallel and inserts them in order. 2M
+entries: 270 ms to 171 ms, or 205-215 ms with two rayon threads, as on a
+runner. bench-windows.ps1 now also reports the times from the daemon's
+log, makes one HTTP request before the first start, and bench-everything.ps1
+polls every 50 ms, so the next run compares like with like.

@@ -132,8 +132,7 @@ impl MemoryStore {
         let corrupt = |e: String| AppError::Index(format!("corrupt index.bin: {e}"));
         if version == 5 {
             let raw_len = le_u64(&header[HEADER_V5 - 16..HEADER_V5 - 8]);
-            let body = zstd::Decoder::new(file.take(data_len)).map_err(decode)?;
-            let snap = snapshot::read(body, raw_len).map_err(decode)?;
+            let snap = read_compressed(file.take(data_len), raw_len).map_err(decode)?;
             return IndexState::from_snapshot(snap, usn_checkpoint).map_err(corrupt);
         }
         if version == 4 {
@@ -327,4 +326,66 @@ impl MemoryStore {
 /// keeps ordering without widening every entry to 8 bytes.
 fn generation_u32(generation: i64) -> u32 {
     generation.clamp(0, i64::from(u32::MAX)) as u32
+}
+
+/// Decompresses on a second thread while this one decodes: each took about
+/// 85 ms of a 270 ms load at 2M entries, one after the other.
+fn read_compressed(
+    compressed: impl Read + Send,
+    raw_len: u64,
+) -> std::io::Result<snapshot::Snapshot<super::state::Entry>> {
+    use std::sync::mpsc;
+    const CHUNK: u64 = 1 << 20;
+    let mut decoder = zstd::Decoder::new(compressed)?;
+    // A few chunks ahead is enough to keep both threads busy.
+    let (tx, rx) = mpsc::sync_channel::<std::io::Result<Vec<u8>>>(4);
+    std::thread::scope(|scope| {
+        scope.spawn(move || loop {
+            let mut chunk = Vec::with_capacity(CHUNK as usize);
+            match (&mut decoder).take(CHUNK).read_to_end(&mut chunk) {
+                Ok(0) => return,
+                Ok(_) => {
+                    if tx.send(Ok(chunk)).is_err() {
+                        return;
+                    }
+                }
+                Err(e) => {
+                    let _ = tx.send(Err(e));
+                    return;
+                }
+            }
+        });
+        let body = ChunkReader {
+            rx,
+            chunk: Vec::new(),
+            pos: 0,
+        };
+        // `read` consumes `body`, receiver included, so a decode error also
+        // ends the decompressing thread's next send before the scope joins.
+        snapshot::read(body, raw_len)
+    })
+}
+
+/// Reads the chunks `read_compressed` sends, in order; the sender hanging up
+/// is the end of the data.
+struct ChunkReader {
+    rx: std::sync::mpsc::Receiver<std::io::Result<Vec<u8>>>,
+    chunk: Vec<u8>,
+    pos: usize,
+}
+
+impl Read for ChunkReader {
+    fn read(&mut self, out: &mut [u8]) -> std::io::Result<usize> {
+        while self.pos == self.chunk.len() {
+            match self.rx.recv() {
+                Ok(Ok(chunk)) => (self.chunk, self.pos) = (chunk, 0),
+                Ok(Err(e)) => return Err(e),
+                Err(_) => return Ok(0),
+            }
+        }
+        let n = out.len().min(self.chunk.len() - self.pos);
+        out[..n].copy_from_slice(&self.chunk[self.pos..self.pos + n]);
+        self.pos += n;
+        Ok(n)
+    }
 }

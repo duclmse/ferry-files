@@ -1004,6 +1004,25 @@ fn a_v4_snapshot_from_before_compression_still_loads() {
 }
 
 #[test]
+fn a_snapshot_of_many_decompressed_chunks_loads_whole() {
+    let dir = TempDir::new().unwrap();
+    let store = MemoryStore::new(dir.path()).unwrap();
+    // Several MB once decompressed, so the body crosses chunk boundaries.
+    let paths: Vec<String> = (0..60_000)
+        .map(|i| format!("/r/dir_{}/a_fairly_long_file_name_{i}.txt", i / 100))
+        .collect();
+    for p in &paths {
+        store.upsert_file(&sample(p));
+    }
+    store.flush_to_disk(dir.path()).unwrap();
+    let loaded = MemoryStore::new(dir.path()).unwrap();
+    for p in &paths {
+        assert!(loaded.get_by_path(p).unwrap().is_some(), "{p}");
+    }
+    assert_eq!(loaded.read_state().len(), store.read_state().len());
+}
+
+#[test]
 fn a_truncated_compressed_snapshot_is_refused() {
     let dir = TempDir::new().unwrap();
     let store = MemoryStore::new(dir.path()).unwrap();

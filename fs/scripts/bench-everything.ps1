@@ -146,7 +146,8 @@ function Start-Everything([string]$label) {
         if ($ev.IpcAt -and (Get-Count "C:\") -gt 0) { $ev.LoadAt = $ev.Clock.Elapsed.TotalSeconds; break }
         if ((Get-Date) -gt $deadline) { throw "Everything ($label) did not load its database within $IndexTimeout s" }
         Add-Sample $ev "index"
-        Start-Sleep -Milliseconds 250
+        # Short, so a restart's load time is not rounded up to a long step.
+        Start-Sleep -Milliseconds 50
     }
     Add-Sample $ev "index"
     return $ev

@@ -767,25 +767,40 @@ impl IndexState {
         st.meta = s.meta.into_iter().collect();
         st.crawl_gen = s.crawl_gen;
         st.usn_checkpoint = usn_checkpoint;
-        st.index = HashTable::with_capacity(st.entries.len());
-        for i in 0..st.entries.len() as u32 {
-            let (entries, tails, hasher) = (&st.entries, &st.tails, &st.hasher);
-            let duplicate = with_path_buf(|buf| {
-                write_path(entries, tails, i, buf);
-                let h = hasher.hash_one(buf.as_str());
-                let dup = st
-                    .index
-                    .find(h, |&j| path_eq(entries, tails, j, buf))
-                    .is_some();
-                (dup, h)
-            });
-            if duplicate.0 {
+        st.index = Self::build_index(&st.entries, &st.tails, &st.hasher)?;
+        Ok(st)
+    }
+
+    /// The path index over loaded entries. Building and hashing every path
+    /// is a third of a load (~100 ms of 270 at 2M entries), and independent
+    /// per entry, so the hashes are computed in parallel and only the
+    /// inserts, which share the table, run in order.
+    fn build_index(
+        entries: &[Entry],
+        tails: &str,
+        hasher: &DefaultHashBuilder,
+    ) -> Result<HashTable<u32>, String> {
+        use rayon::prelude::*;
+        let hashes: Vec<u64> = (0..entries.len() as u32)
+            .into_par_iter()
+            .map(|i| hash_entry(entries, tails, hasher, i))
+            .collect();
+        let mut index = HashTable::with_capacity(entries.len());
+        for (i, &h) in hashes.iter().enumerate() {
+            let i = i as u32;
+            let same = |&j: &u32| {
+                hashes[j as usize] == h
+                    && with_path_buf(|buf| {
+                        write_path(entries, tails, i, buf);
+                        path_eq(entries, tails, j, buf)
+                    })
+            };
+            if index.find(h, same).is_some() {
                 return Err("duplicate path".into());
             }
-            st.index
-                .insert_unique(duplicate.1, i, |&j| hash_entry(entries, tails, hasher, j));
+            index.insert_unique(h, i, |&j| hashes[j as usize]);
         }
-        Ok(st)
+        Ok(index)
     }
 
     /// Upgrades a v3 snapshot (one whole path per entry). Shorter paths go
