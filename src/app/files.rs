@@ -7,11 +7,14 @@ impl Ctx {
         let src = p.src.get_untracked();
         match kind(&e) {
             Kind::Folder => self.navigate(p, e.path),
+            // A book opens for editing in the preview.
             Kind::Epub => {
                 p.loading.set(true);
+                p.selected.set(Some(e.path.clone()));
+                p.preview.set(true);
                 let ep = self.ep;
                 spawn_local(async move {
-                    if let Err(err) = ep.open(&src.key(), self.place(src), e.path).await {
+                    if let Err(err) = ep.open(&src.key(), self.place(src), e.path, p.id).await {
                         p.error(err);
                     }
                     p.loading.set(false);
@@ -21,6 +24,25 @@ impl Ctx {
             Kind::Text => self.open_text(p, e.path),
             Kind::Other => self.open_in_app(p, e.path),
         }
+    }
+
+    /// Shows the book at `path` on `src` in the active pane, picked, and opens it for editing in
+    /// the preview.
+    pub(super) fn edit_book(self, src: Src, path: String) {
+        let p = self.act();
+        let dir = parent(&path);
+        if p.src.get_untracked() != src || p.cwd.get_untracked() != dir {
+            self.navigate_select(p, src, dir, Some(path.clone()));
+        } else {
+            p.selected.set(Some(path.clone()));
+        }
+        p.preview.set(true);
+        let ep = self.ep;
+        spawn_local(async move {
+            if let Err(err) = ep.open(&src.key(), self.place(src), path, p.id).await {
+                p.error(err);
+            }
+        });
     }
 
     /// Opens a file in its default Mac app. A phone file is copied to the Mac first; that copy is

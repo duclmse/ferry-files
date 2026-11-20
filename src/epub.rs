@@ -1,6 +1,6 @@
-//! The EPUB editor: book info and cover, find & replace, and each chapter in a visual or source view.
-//! The book itself lives in the backend (src-tauri/src/epub.rs) until it's saved; this module only
-//! holds what's on screen. Chapter edits are sent to the backend before any other action, so the
+//! The EPUB editor, shown in a pane's preview: book info and cover, find & replace, and each
+//! chapter in a visual or source view. The book itself lives in the backend (src-tauri/src/epub.rs)
+//! until it's saved; this module only holds what's on screen. Chapter edits are sent to the backend before any other action, so the
 //! backend copy is always complete when the book is saved.
 
 use crate::api::*;
@@ -44,6 +44,10 @@ pub struct Ep {
     frame: NodeRef<html::Iframe>,
     /// Source shown in colour.
     colours: RwSignal<bool>,
+    /// The pane whose preview shows the editor, so only one place draws it.
+    pub host: RwSignal<Option<usize>>,
+    /// The visual view's edits, taken as its frame went away (the preview moved to another file).
+    kept: StoredValue<Option<String>>,
 }
 
 const COLOURS_KEY: &str = "ferry-files.epub-colours";
@@ -85,6 +89,8 @@ impl Ep {
             query: RwSignal::new(Query::default()),
             found: RwSignal::new(None),
             frame: NodeRef::new(),
+            host: RwSignal::new(None),
+            kept: StoredValue::new(None),
         }
     }
 
@@ -97,7 +103,7 @@ impl Ep {
         self.place.get_untracked()
     }
 
-    fn dirty(self) -> bool {
+    pub fn dirty(self) -> bool {
         self.chapter_dirty.get() || self.book.with(|b| b.as_ref().is_some_and(|b| b.dirty))
     }
 
@@ -105,8 +111,23 @@ impl Ep {
         self.status.set((msg.into(), kind));
     }
 
-    /// Opens the book at `path` on `src` ("mac" or a device id); `place` names it for sentences.
-    pub async fn open(self, src: &str, place: String, path: String) -> Result<(), String> {
+    /// Whether the open book is the one at `path` on `src`.
+    pub fn holds(self, src: &str, path: &str) -> bool {
+        self.book.with(|b| b.as_ref().is_some_and(|b| b.src == src && b.path == path))
+    }
+
+    /// Opens the book at `path` on `src` ("mac" or a device id) in pane `host`'s preview; `place`
+    /// names it for sentences. Editing reads the whole book. A book already open with unsaved
+    /// changes isn't replaced.
+    pub async fn open(self, src: &str, place: String, path: String, host: usize) -> Result<(), String> {
+        if self.book.with_untracked(|b| b.as_ref().is_some_and(|b| b.src == src && b.path == path)) {
+            self.host.set(Some(host));
+            return Ok(());
+        }
+        if self.dirty() {
+            let name = self.book.with_untracked(|b| b.as_ref().map(|b| b.name.clone()).unwrap_or_default());
+            return Err(format!("{name} has changes that aren't saved. Save or discard them first."));
+        }
         let book = call::<Book>("epub_open", json!({ "src": src, "path": path })).await?;
         // A book still open here is replaced: the backend lets go of it.
         let old = self.id();
@@ -123,7 +144,9 @@ impl Ep {
         self.found.set(None);
         self.confirm_close.set(false);
         self.say("", "");
+        self.kept.set_value(None);
         self.book.set(Some(book));
+        self.host.set(Some(host));
         Ok(())
     }
 
@@ -140,7 +163,11 @@ impl Ep {
                 call::<Book>("epub_set_source", json!({ "id": id, "path": path, "source": source })).await
             }
             Mode::Visual => {
-                let body = self.visual_body()?;
+                let body = match self.kept.try_update_value(Option::take).flatten() {
+                    Some(b) => b,
+                    None => self.visual_body().inspect_err(|_| self.chapter_dirty.set(false))
+                        .map_err(|e| format!("The last edits to this chapter were lost. {e}"))?,
+                };
                 call::<Book>("epub_set_body", json!({ "id": id, "path": path, "body": body })).await
             }
         }
@@ -174,6 +201,7 @@ impl Ep {
 
     async fn load_chapter(self, path: &str) -> Result<(), String> {
         let doc = call::<ChapterDoc>("epub_chapter", json!({ "id": self.id(), "path": path })).await?;
+        self.kept.set_value(None);
         self.source.set(doc.source.clone());
         self.doc.set(Some(doc));
         self.chapter_dirty.set(false);
@@ -190,6 +218,22 @@ impl Ep {
             }
             self.view.set(v);
             Ok(())
+        });
+    }
+
+    /// Shows the open chapter again when the editor is drawn anew, as it is when the preview comes
+    /// back to the book: its edits are sent first, then it's read back with them.
+    fn reshow(self) {
+        let View::Chapter(p) = self.view.get_untracked() else { return };
+        self.doc.set(None);
+        spawn_local(async move {
+            let r = match self.commit().await {
+                Ok(()) => self.load_chapter(&p).await,
+                Err(e) => Err(e),
+            };
+            if let Err(e) = r {
+                self.say(e, "error");
+            }
         });
     }
 
@@ -227,7 +271,7 @@ impl Ep {
         });
     }
 
-    fn close(self, force: bool) {
+    pub fn close(self, force: bool) {
         if !force && self.dirty() {
             self.confirm_close.set(true);
             return;
@@ -238,7 +282,9 @@ impl Ep {
         });
         self.chapter_dirty.set(false);
         self.confirm_close.set(false);
+        self.kept.set_value(None);
         self.doc.set(None);
+        self.host.set(None);
         self.book.set(None);
     }
 
@@ -338,85 +384,81 @@ impl Ep {
     }
 }
 
+/// The editor's controls, in the preview's bar: which part of the book is shown, Save copy and Save.
 #[component]
-pub fn EpubEditor() -> impl IntoView {
+pub fn EditBar() -> impl IntoView {
     let ep = expect_context::<Ep>();
-    let name = move || ep.book.with(|b| b.as_ref().map(|b| b.name.clone()).unwrap_or_default());
     let dirty = Memo::new(move |_| ep.dirty());
     let chapters = move || ep.book.with(|b| b.as_ref().map(|b| b.chapters.clone()).unwrap_or_default());
-    let on = move |v: View| move || ep.view.with(|x| *x == v);
+    let shown = move || match ep.view.get() {
+        View::Info => "info".to_string(),
+        View::Find => "find".to_string(),
+        View::Chapter(p) => format!("ch:{p}"),
+    };
+    let pick = move |ev| {
+        let v = event_target_value(&ev);
+        ep.go(match v.as_str() {
+            "info" => View::Info,
+            "find" => View::Find,
+            _ => View::Chapter(v.strip_prefix("ch:").unwrap_or(&v).to_string()),
+        });
+    };
+    let save_title = move || {
+        ep.book.track();
+        let to = if b_mac(ep) { String::new() } else { format!(" to {}", ep.place()) };
+        let state = if dirty.get() { "" } else { " (nothing new)" };
+        format!("Save{to}{state} ({})", crate::os::keys("⌘S"))
+    };
+    let copy_title = format!("Save a copy on {}…", crate::os::the_computer());
     view! {
-        <div class="app">
-            <nav class="side">
-                <div class="device">
-                    <b title=move || ep.book.with(|b| b.as_ref().map(|b| b.path.clone()).unwrap_or_default())>{name}</b>
-                    <span class="kind">"EPUB"</span>
+        <select class="epub-chapters" aria-label="Part of the book" prop:value=shown
+            on:keydown=|ev| ev.stop_propagation() on:change=pick>
+            <option value="info">"Book info"</option>
+            <option value="find">"Find & replace"</option>
+            <optgroup label="Chapters">
+                {move || chapters().into_iter().map(|c| view! {
+                    <option value=format!("ch:{}", c.path) title=c.path.clone()>{c.label}</option>
+                }).collect_view()}
+            </optgroup>
+        </select>
+        {move || ep.busy.get().then(|| view! { <span class="spin"></span> })}
+        <span class="spacer"></span>
+        <button class="btn" title=copy_title.clone() aria-label=copy_title disabled=move || ep.busy.get()
+            on:click=move |_| ep.export()>{crate::app::ico(crate::app::Icon::Copy)}</button>
+        <button class="btn primary" class:unsaved=move || dirty.get() title=save_title aria-label=save_title
+            disabled=move || !dirty.get() || ep.busy.get() on:click=move |_| ep.save()>{crate::app::ico(crate::app::Icon::Save)}</button>
+    }
+}
+
+/// The editor's notices and the part of the book shown, under the preview's bar.
+#[component]
+pub fn EditBody() -> impl IntoView {
+    let ep = expect_context::<Ep>();
+    ep.reshow();
+    view! {
+        <div class="epub-edit">
+            {move || ep.confirm_close.get().then(|| view! {
+                <div class="notice">
+                    <span class="text">{format!("This book has changes that aren't saved to {}.", ep.place())}</span>
+                    <button class="btn primary" on:click=move |_| ep.save()>"Save"</button>
+                    <button class="btn danger" on:click=move |_| ep.close(true)>"Discard"</button>
+                    <button class="btn" on:click=move |_| ep.confirm_close.set(false)>"Keep editing"</button>
                 </div>
-                <button class="item" class:active=on(View::Info) on:click=move |_| ep.go(View::Info)>"Book info"</button>
-                <button class="item" class:active=on(View::Find) on:click=move |_| ep.go(View::Find)>"Find & replace"</button>
-                <h2>"Chapters"</h2>
-                <For each=chapters key=|c| c.path.clone() let(c)>
-                    {
-                        let (p1, p2) = (c.path.clone(), c.path.clone());
-                        view! {
-                            <button class="item" title=c.path.clone()
-                                class:active=move || ep.view.with(|v| matches!(v, View::Chapter(x) if *x == p1))
-                                on:click=move |_| ep.go(View::Chapter(p2.clone()))>{c.label.clone()}</button>
-                        }
-                    }
-                </For>
-            </nav>
-            <div class="main">
-                <div class="bar">
-                    <button class="btn back" title="Back to files" aria-label="Back to files" on:click=move |_| ep.close(false)><svg class="back-icon" viewBox="0 0 16 16" aria-hidden="true"><path d="M13 8H3M7.5 3.5 3 8l4.5 4.5"/></svg></button>
-                    <span class="title">{name}{move || dirty.get().then_some(" •")}</span>
-                    <span class="spacer"></span>
-                    {move || ep.busy.get().then(|| view! { <span class="spin"></span> })}
-                    <button class="btn" disabled=move || ep.busy.get() on:click=move |_| ep.export()
-                        title=format!("Save the book, with your edits, to a file on {}", crate::os::the_computer())>{format!("Save copy on {}…", crate::os::computer())}</button>
-                    <button class="btn primary" title=crate::os::keys("⌘S") disabled=move || !dirty.get() || ep.busy.get()
-                        on:click=move |_| ep.save()>{move || { ep.book.track(); if b_mac(ep) { "Save".to_string() } else { format!("Save to {}", ep.place()) } }}</button>
-                </div>
-                {move || ep.confirm_close.get().then(|| view! {
-                    <div class="notice">
-                        <span class="text">{format!("This book has changes that aren't saved to {}.", ep.place())}</span>
-                        <button class="btn primary" on:click=move |_| ep.save()>"Save"</button>
-                        <button class="btn danger" on:click=move |_| ep.close(true)>"Discard changes"</button>
-                        <button class="btn" on:click=move |_| ep.confirm_close.set(false)>"Keep editing"</button>
+            })}
+            {move || {
+                let (msg, kind) = ep.status.get();
+                (!msg.is_empty()).then(|| view! {
+                    <div class=format!("notice {kind}")>
+                        <span class="text">{msg}</span>
+                        <button class="btn" title="Dismiss" aria-label="Dismiss" on:click=move |_| ep.say("", "")>{crate::app::ico(crate::app::Icon::Close)}</button>
                     </div>
-                })}
-                {move || {
-                    let (msg, kind) = ep.status.get();
-                    (!msg.is_empty()).then(|| view! {
-                        <div class=format!("notice {kind}")>
-                            <span class="text">{msg}</span>
-                            <button class="btn" on:click=move |_| ep.say("", "")>"Dismiss"</button>
-                        </div>
-                    })
-                }}
-                {move || match ep.view.get() {
-                    View::Info => view! { <InfoView/> }.into_any(),
-                    View::Find => view! { <FindView/> }.into_any(),
-                    View::Chapter(path) => view! { <ChapterView path/> }.into_any(),
-                }}
-                <div class="statusbar">
-                    <span>{move || ep.book.with(|b| b.as_ref().map(|b| format!(
-                        "EPUB {} · {}", b.stats.version, plural(b.chapters.len(), "chapter", "chapters"))).unwrap_or_default())}</span>
-                    <span class="sel">{move || match ep.view.get() {
-                        View::Info => "Book info".to_string(),
-                        View::Find => "Find & replace".to_string(),
-                        View::Chapter(p) => {
-                            let label = ep.book.with(|b| b.as_ref()
-                                .and_then(|b| b.chapters.iter().find(|c| c.path == p).map(|c| c.label.clone()))
-                                .unwrap_or(p));
-                            let mode = match ep.mode.get() { Mode::Visual => "visual", Mode::Source => "source" };
-                            format!("{label} · {mode}")
-                        }
-                    }}</span>
-                    <span class="spacer"></span>
-                    <span class:unsaved=move || dirty.get()>{move || if dirty.get() { format!("Not saved to {}", ep.place()) } else { "Saved".to_string() }}</span>
-                </div>
-            </div>
+                })
+            }}
+            {move || match ep.view.get() {
+                View::Info => view! { <InfoView/> }.into_any(),
+                View::Find => view! { <FindView/> }.into_any(),
+                View::Chapter(path) => view! { <ChapterView path/> }.into_any(),
+            }}
         </div>
     }
 }
@@ -610,18 +652,21 @@ const FORMAT: &[(&str, &str, &str, &str)] = &[
 #[component]
 fn ChapterView(path: String) -> impl IntoView {
     let ep = expect_context::<Ep>();
-    let label = ep.book.with_untracked(|b| {
-        b.as_ref().and_then(|b| b.chapters.iter().find(|c| c.path == path).map(|c| c.label.clone())).unwrap_or_default()
-    });
     let visual_ok = move || ep.doc.with(|d| d.as_ref().is_some_and(|d| d.html.is_some()));
+    // When the preview moves to another file, the frame goes with it: its edits are kept to send later.
+    on_cleanup(move || {
+        if ep.mode.get_untracked() == Mode::Visual && ep.chapter_dirty.get_untracked() {
+            if let Ok(b) = ep.visual_body() {
+                ep.kept.set_value(Some(b));
+            }
+        }
+    });
     view! {
-        <div class="bar tools">
-            <span class="title" title=path.clone()>{label}</span>
+        <div class="viewer-bar tools">
             <div class="seg">
                 <button class:active=move || ep.mode.get() == Mode::Visual on:click=move |_| ep.set_mode(Mode::Visual)>"Visual"</button>
                 <button class:active=move || ep.mode.get() == Mode::Source on:click=move |_| ep.set_mode(Mode::Source)>"Source"</button>
             </div>
-            <span class="spacer"></span>
             {move || (ep.mode.get() == Mode::Source).then(|| view! {
                 <button class="btn" class:active=move || ep.colours.get() title="Colours" aria-label="Colours"
                     on:click=move |_| {
@@ -633,7 +678,7 @@ fn ChapterView(path: String) -> impl IntoView {
             {move || (ep.mode.get() == Mode::Visual && visual_ok()).then(|| view! {
                 <div class="fmt">
                     {FORMAT.iter().map(|&(cmd, arg, text, title)| view! {
-                        <button title=title on:mousedown=|e| e.prevent_default() on:click=move |_| ep.exec(cmd, arg)>{text}</button>
+                        <button title=title aria-label=title on:mousedown=|e| e.prevent_default() on:click=move |_| ep.exec(cmd, arg)>{text}</button>
                     }).collect_view()}
                 </div>
             })}

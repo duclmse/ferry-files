@@ -373,14 +373,9 @@ pub(super) fn Library(src: Src, dir: String) -> impl IntoView {
                                             <button class="btn" title="Read the book" on:click=move |_| {
                                                 ctx.panel.set(Some(Panel::Reader(src, e.get_value().path, Some(dir.get_value()))));
                                             }>{ico(Icon::Book)}"Read"</button>
-                                            <button class="btn" title="Open in the EPUB editor" on:click=move |_| {
-                                                let path = e.get_value().path;
+                                            <button class="btn" title="Edit in the preview" on:click=move |_| {
                                                 ctx.panel.set(None);
-                                                spawn_local(async move {
-                                                    if let Err(err) = ctx.ep.open(&src.key(), ctx.place(src), path).await {
-                                                        ctx.act().error(err);
-                                                    }
-                                                });
+                                                ctx.edit_book(src, e.get_value().path);
                                             }>{ico(Icon::Edit)}"Edit"</button>
                                         </div>
                                     }
@@ -505,13 +500,9 @@ pub(super) fn Reader(src: Src, path: String, back: Option<String>) -> impl IntoV
                     <button class="btn" title="Bigger text" on:click=move |_| size.update(|s| *s = (*s + 1).min(32))>"A+"</button>
                     <span class="grow"></span>
                     <span class="about">{move || match count() { 0 => String::new(), n => format!("{} of {n}", at.get() + 1) }}</span>
-                    <button class="btn" title="Open in the EPUB editor" on:click=move |_| {
+                    <button class="btn" title="Edit in the preview" on:click=move |_| {
                         ctx.panel.set(None);
-                        spawn_local(async move {
-                            if let Err(err) = ctx.ep.open(&src.key(), ctx.place(src), path.get_value()).await {
-                                ctx.act().error(err);
-                            }
-                        });
+                        ctx.edit_book(src, path.get_value());
                     }>{ico(Icon::Edit)}"Edit"</button>
                     {if back.get_value().is_some() {
                         view! { <button class="btn back" title="Back" aria-label="Back" on:click=move |_| close()><svg class="back-icon" viewBox="0 0 16 16" aria-hidden="true"><path d="M13 8H3M7.5 3.5 3 8l4.5 4.5"/></svg></button> }.into_any()

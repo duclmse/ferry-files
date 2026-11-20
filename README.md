@@ -18,7 +18,8 @@ own files and disks, with tools for EPUB books in particular.
   - PDFs, with an outline, go to page, zoom, turn, Open and Show in Finder;
   - fonts as samples;
   - EPUBs as their cover, or read a chapter at a time. Only the chapter shown
-    (and its pictures) is read from the book;
+    (and its pictures) is read from the book. Edit opens the whole book in the
+    EPUB editor, there in the preview;
   - ZIP, APK and JAR contents as a tree, read from the file's end without
     unpacking. A file picked in it shows in the preview.
 - **Files**: copy, move, rename, delete, new file or folder, upload and
@@ -35,9 +36,9 @@ own files and disks, with tools for EPUB books in particular.
 - **Terminal** in a pane, on this computer, an adb phone or an SFTP server.
 - **Editor view**: a folder tree beside text files in tabs.
 - **Books**: list every EPUB under a folder. Check them, change their info, or
-  make smaller copies. Read them a chapter at a time, or edit them in the EPUB
-  editor: info, cover, find and replace, a visual or XHTML view (in colour),
-  and saving back to the phone. Unedited parts of an EPUB keep their exact bytes.
+  make smaller copies. Read them a chapter at a time, or edit them in the
+  preview's EPUB editor: info, cover, find and replace, a visual or XHTML view
+  (in colour), and saving back to the phone. Unedited parts of an EPUB keep their exact bytes.
 
 Press ? for the keyboard shortcuts.
 

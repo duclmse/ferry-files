@@ -1177,13 +1177,15 @@ pub fn App() -> impl IntoView {
     provide_context(VideoPrefs::load());
     let ep = ctx.ep;
     provide_context(ep);
-    // Closing a book goes back to the panes, which may have changed (a save writes the file and its backup).
-    Effect::new(move |was_open: Option<bool>| {
-        let open = ep.book.with(|b| b.is_some());
-        if was_open == Some(true) && !open {
-            ctx.reload_all();
+    // Saving a book writes the file and its backup, so the panes are listed again.
+    Effect::new(move |was: Option<Option<(u32, bool)>>| {
+        let now = ep.book.with(|b| b.as_ref().map(|b| (b.id, b.dirty)));
+        if let (Some(Some((id, true))), Some((id2, false))) = (was, now) {
+            if id == id2 {
+                ctx.reload_all();
+            }
         }
-        open
+        now
     });
 
     // Pick up existing device connections after a webview reload, then bring back the last
@@ -1277,12 +1279,16 @@ pub fn App() -> impl IntoView {
             }
             return;
         }
-        if ep.book.with_untracked(|b| b.is_some()) {
-            if meta && e.key() == "s" {
+        // ⌘S in the preview's book editor saves the book.
+        if meta && e.key() == "s" && ep.book.with_untracked(|b| b.is_some()) {
+            let in_book = document()
+                .active_element()
+                .is_some_and(|el| el.closest(".epub-edit, .epub-bar").ok().flatten().is_some());
+            if in_book {
                 e.prevent_default();
                 ep.save();
+                return;
             }
-            return;
         }
         if ctx.editor.get_untracked().is_some() {
             if meta && e.key() == "s" {
@@ -1629,10 +1635,9 @@ pub fn App() -> impl IntoView {
 #[component]
 fn Browser() -> impl IntoView {
     let ctx = expect_context::<Ctx>();
-    let ep = ctx.ep;
     // Only opening and closing the editor rebuilds the main area, not saving in it.
     let editing = Memo::new(move |_| ctx.editor.with(Option::is_some));
-    move || if ep.book.with(|b| b.is_some()) { view! { <crate::epub::EpubEditor/> }.into_any() } else { view! {
+    move || view! {
         <div class="app browse" class:no-side=move || !ctx.side.get() style=move || match ctx.side_w.get() {
             w if w > 0.0 && ctx.side.get() => format!("grid-template-columns: auto {}px auto 1fr", w.max(SIDE_MIN)),
             _ => String::new(),
@@ -1655,5 +1660,5 @@ fn Browser() -> impl IntoView {
                 <TransferBar/>
             </div>
         </div>
-    }.into_any() }
+    }
 }

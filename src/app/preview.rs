@@ -299,7 +299,33 @@ const EPUB_READ_KEY: &str = "ferry-files.epub-read";
 /// An EPUB: its cover, or its chapters one at a time. Only the book's contents list and the
 /// chapter shown are read (and its pictures, as they show), not the whole book.
 #[component]
-fn EpubView(src: Src, entry: Entry) -> impl IntoView {
+fn EpubView(pane: Pane, src: Src, entry: Entry) -> impl IntoView {
+    let ctx = expect_context::<Ctx>();
+    let ep = ctx.ep;
+    // Editing reads the whole book into the app; reading takes a chapter at a time.
+    let editing = {
+        let path = entry.path.clone();
+        Signal::derive(move || ep.host.get() == Some(pane.id) && ep.holds(&src.key(), &path))
+    };
+    let opening = RwSignal::new(false);
+    let edit_error = RwSignal::new(None::<String>);
+    let book_path = StoredValue::new(entry.path.clone());
+    let edit = move |_| {
+        edit_error.set(None);
+        if editing.get_untracked() {
+            ep.close(false);
+            return;
+        }
+        opening.set(true);
+        let path = book_path.get_value();
+        spawn_local(async move {
+            let r = ep.open(&src.key(), ctx.place(src), path, pane.id).await;
+            let _ = opening.try_set(false);
+            if let Err(e) = r {
+                let _ = edit_error.try_set(Some(e));
+            }
+        });
+    };
     let reading = RwSignal::new(stored_flag(EPUB_READ_KEY, false));
     let contents = RwSignal::new(None::<Result<EpubContents, String>>);
     let at = RwSignal::new(0usize);
@@ -340,6 +366,12 @@ fn EpubView(src: Src, entry: Entry) -> impl IntoView {
         }
     };
     let toggle = move |_| {
+        if editing.get_untracked() {
+            ep.close(false);
+            reading.set(true);
+            store(EPUB_READ_KEY, "1");
+            return;
+        }
         let on = !reading.get_untracked();
         reading.set(on);
         store(EPUB_READ_KEY, if on { "1" } else { "0" });
@@ -367,8 +399,13 @@ fn EpubView(src: Src, entry: Entry) -> impl IntoView {
     };
     view! {
         <div class="viewer-bar epub-bar">
-            <button class="btn" class:active=move || reading.get() title="Read the book here" aria-label="Read the book here" on:click=toggle>{ico(Icon::Book)}</button>
-            {move || reading.get().then(|| view! {
+            <span class="btn-group" role="group">
+                <button class="btn" class:active=move || reading.get() && !editing.get() title="Read the book here" aria-label="Read the book here" on:click=toggle>{ico(Icon::Book)}</button>
+                <button class="btn" class:active=editing title="Edit the book" aria-label="Edit the book" disabled=opening on:click=edit>{ico(Icon::Edit)}</button>
+            </span>
+            {move || opening.get().then(|| view! { <span class="spin"></span> })}
+            {move || editing.get().then(|| view! { <crate::epub::EditBar/> })}
+            {move || (reading.get() && !editing.get()).then(|| view! {
                 <span class="gap"></span>
                 <span class="btn-group" role="group">
                     <button class="btn" title="Previous chapter" aria-label="Previous chapter" disabled=move || at.get() == 0 on:click=move |_| go(-1)>{ico(Icon::Prev)}</button>
@@ -380,7 +417,15 @@ fn EpubView(src: Src, entry: Entry) -> impl IntoView {
                 <span class="epub-of">{move || match count() { 0 => String::new(), n => format!("{} of {n}", at.get() + 1) }}</span>
             })}
         </div>
-        {move || if !reading.get() {
+        {move || edit_error.get().map(|e| view! {
+            <div class="notice error">
+                <span class="text">{e}</span>
+                <button class="btn" title="Dismiss" aria-label="Dismiss" on:click=move |_| edit_error.set(None)>{ico(Icon::Close)}</button>
+            </div>
+        })}
+        {move || if editing.get() {
+            view! { <crate::epub::EditBody/> }.into_any()
+        } else if !reading.get() {
             view! { <BigCover src entry=entry.clone()/> }.into_any()
         } else {
             match (contents.get(), page.get()) {
@@ -486,7 +531,7 @@ pub(super) fn Preview(
                         }.into_any(),
                         _ if has_ext(&e, PDF_EXTS) && e.size <= WHOLE_MAX => view! { <PdfView pane=p src entry=e.clone() url=stream_url(src, &e)/> }.into_any(),
                         _ if has_ext(&e, FONT_EXTS) && e.size <= WHOLE_MAX => view! { <FontSample src entry=e.clone()/> }.into_any(),
-                        _ if has_ext(&e, &["epub"]) => view! { <EpubView src entry=e.clone()/> }.into_any(),
+                        _ if has_ext(&e, &["epub"]) => view! { <EpubView pane=p src entry=e.clone()/> }.into_any(),
                         _ if has_ext(&e, ZIP_EXTS) => view! { <ZipList src entry=e.clone()/> }.into_any(),
                         _ if is_text(&e) => view! { <TextPeek src entry=e.clone()/> }.into_any(),
                         _ if e.dir => thumb(&e).into_any(),
