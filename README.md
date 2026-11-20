@@ -35,7 +35,8 @@ files and disks too, so books can be copied between them.
   the folder. PDFs (up to 64
   MB) show in the preview, fonts (TTF, OTF, WOFF, WOFF2) as samples, EPUBs as
   their cover (the cover itself once the preview is bigger than its thumbnail),
-  and ZIP, APK and JAR files as the list of what's in them (read from the end of
+  and ZIP, APK and JAR files as a tree of what's in them, folders opening and closing, each with
+  the size of all in it (read from the end of
   the file, without unpacking; the first 5000 items); in the column view, a ZIP
   picked in the last column also opens as more columns, one per folder in it; a
   file picked there shows in the preview (unpacked in memory, up to 64 MB).
@@ -163,7 +164,7 @@ files and disks too, so books can be copied between them.
   preview shows it; the next one replaces it. Drag files and folders in the tree
   onto a folder (or the tree's empty space) to move them, or copy with ⌥, as in
   the panes; open files that move or are renamed follow. Right-click a file or
-  folder to rename it in place or refresh. The terminal shows above the status
+  folder to rename it in place (or press F2) or refresh. The terminal shows above the status
   bar.
 - Tabs (the panes' and the editor's) close with a middle click too.
 - Books in this folder (right-click empty space): every EPUB in the folder and

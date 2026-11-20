@@ -137,7 +137,7 @@
 }
 
 /* The fold arrow, pointing down when open. */
-:is(.side, .code-tree) .chev {
+:is(.side, .code-tree, .zip-list) .chev {
   flex: none;
   box-sizing: border-box;
   width: var(--twisty);
@@ -152,7 +152,7 @@
   transition: transform 0.12s;
 }
 
-:is(.side, .code-tree) .chev.open {
+:is(.side, .code-tree, .zip-list) .chev.open {
   transform: rotate(90deg);
 }
 

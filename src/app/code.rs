@@ -123,7 +123,7 @@ fn CodeNode(pane: Pane, entry: Entry, depth: usize) -> impl IntoView {
         };
         let leaf = move || kids.with(|k| k.as_ref().is_some_and(Vec::is_empty));
         view! {
-            <div class="tree-row" style=style role="treeitem" aria-expanded=move || open.get().to_string() on:contextmenu=menu
+            <div class="tree-row" style=style role="treeitem" data-path=path.get_value() aria-expanded=move || open.get().to_string() on:contextmenu=menu
                 class:drop=move || ctx.drop_at.get().as_deref() == Some(key.as_str())
                 draggable=move || (!editing.get()).to_string() on:dragstart=drag on:dragend=drag_end(ctx) on:dragover=over on:drop=drop>
                 <button class="twisty" class:none=leaf tabindex="-1" aria-hidden="true" on:click=toggle>{chev(open.into())}</button>
@@ -161,7 +161,7 @@ fn CodeNode(pane: Pane, entry: Entry, depth: usize) -> impl IntoView {
         let text = kind(&entry) == Kind::Text;
         let e = row_entry;
         view! {
-            <div class="tree-row file" style=style role="treeitem" aria-selected=move || active.get().to_string() on:contextmenu=menu
+            <div class="tree-row file" style=style role="treeitem" data-path=path.get_value() aria-selected=move || active.get().to_string() on:contextmenu=menu
                 draggable=move || (!editing.get()).to_string() on:dragstart=drag on:dragend=drag_end(ctx) on:dragover=over on:drop=drop>
                 <span class="twisty none"></span>
                 {move || if editing.get() {

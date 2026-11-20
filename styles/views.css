@@ -876,6 +876,28 @@ td.name input.rename {
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
+  padding-left: calc(4px + var(--depth, 0) * 14px);
+}
+
+/* A folder's arrow, or the room for one. */
+.preview .zip-list .twisty {
+  display: inline-flex;
+  width: 14px;
+  vertical-align: -2px;
+}
+
+.preview .zip-list .twisty .chev {
+  width: 14px;
+  height: 14px;
+  padding: 2px;
+}
+
+.preview .zip-list tr.dir {
+  cursor: default;
+}
+
+.preview .zip-list tr.dir:hover {
+  background: var(--hover);
 }
 
 .preview .zip-list td.s {

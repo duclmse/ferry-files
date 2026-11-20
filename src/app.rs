@@ -1280,6 +1280,28 @@ pub fn App() -> impl IntoView {
                     ctx.find_state.replacing.set(true);
                 }
                 p.doc_find.set(true);
+            } else if id == Some("rename") {
+                // The tree's row with the focus, or else the shown file. Not from a field: the
+                // rename box is one.
+                let focused = document().active_element();
+                let in_field = focused.as_ref().is_some_and(|el| el.tag_name() == "INPUT");
+                let row = focused
+                    .and_then(|el| el.closest(".code-tree .tree-row").ok().flatten())
+                    .and_then(|row| row.get_attribute("data-path"));
+                let shown = || {
+                    if p.peek_on.get_untracked() {
+                        p.doc_peek.with_untracked(|e| e.as_ref().map(|e| e.path.clone()))
+                    } else {
+                        p.doc.with_untracked(|d| d.as_ref().map(|d| d.path.clone()))
+                    }
+                };
+                if !in_field {
+                    if let Some(path) = row.or_else(shown) {
+                        e.prevent_default();
+                        p.renaming.set(Some(path));
+                    }
+                }
+                return;
             } else if id == Some("close_tab") && p.doc.with_untracked(Option::is_some) {
                 e.prevent_default();
                 ctx.close_doc(p, p.doc_at.get_untracked(), false);
