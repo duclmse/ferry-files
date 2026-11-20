@@ -790,11 +790,68 @@ td.name input.rename {
   transition: transform 0.12s ease-out;
 }
 
-/* Bytes: offset, hex and text, so the lines can't wrap. */
+/* Bytes: offset, hex and text. The scrolled space stands for the whole file; the rows in sight
+   stay at its top as it's scrolled, each ROW_H (16px) tall, below ROW_PAD (4px), as in preview.rs. */
+.preview .peek.hex .hex-scroll {
+  width: 100%;
+  flex: 1 1 0;
+  min-height: 0;
+  overflow: auto;
+  background: var(--bg);
+  border: 1px solid var(--line);
+  border-radius: 6px;
+  outline: none;
+}
+
+.preview .peek.hex .hex-scroll:focus-visible {
+  border-color: var(--accent);
+}
+
+.preview .peek.hex .hex-space {
+  width: max-content;
+  min-width: 100%;
+}
+
 .preview .peek.hex pre {
+  position: sticky;
+  top: 0;
+  box-sizing: border-box;
+  width: auto;
+  flex: none;
+  overflow: hidden;
+  padding: 4px 12px 0;
+  border: 0;
+  border-radius: 0;
+  background: none;
   white-space: pre;
   word-break: normal;
   font-size: 11px;
+  line-height: 16px;
+}
+
+.preview .peek.hex .peek-tools {
+  align-items: center;
+  gap: 8px;
+}
+
+.preview .peek.hex .hex-at {
+  margin-right: auto;
+  color: var(--muted);
+  font: 11px ui-monospace, SFMono-Regular, Menlo, monospace;
+}
+
+.preview .peek.hex .hex-go {
+  width: 120px;
+  padding: 2px 6px;
+  font: 11px ui-monospace, SFMono-Regular, Menlo, monospace;
+  background: var(--bg);
+  border: 1px solid var(--line);
+  border-radius: 4px;
+  outline: none;
+}
+
+.preview .peek.hex .hex-go:focus {
+  border-color: var(--accent);
 }
 
 .preview iframe.pdf {

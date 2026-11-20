@@ -1,6 +1,7 @@
 //! What's in a ZIP file (and APK, JAR…), from its central directory at the end: only the end of
 //! the file and that directory are read, never the files packed in it. And what's in a TAR file,
-//! from the header before each file (the files skipped), or in a .tar.gz, read through.
+//! from the header before each file (the files skipped), or in a packed one (.tar.gz, .tar.bz2,
+//! .tar.xz, .tar.zst), unpacked from the start. And a gzipped file's name and size.
 
 use crate::media::Read;
 use serde::Serialize;
@@ -19,7 +20,7 @@ pub struct Listing {
     pub items: Vec<Packed>,
     /// How many there are in all; for a TAR not read to its end, how many were found.
     pub total: u64,
-    /// A TAR not read to its end (too many items, or a .tar.gz too big to read through).
+    /// A TAR not read to its end (too many items, or a packed one too big to read through).
     pub partial: bool,
 }
 
@@ -90,29 +91,102 @@ pub fn list(size: u64, read: &mut Read) -> Result<Listing, String> {
     Ok(Listing { items, total, partial: false })
 }
 
-/// The most of a .tar.gz read, packed: past it, what's found is listed.
-const GZ_MAX: u64 = 256 * 1024 * 1024;
+/// The most of a packed TAR (.tar.gz…) read: past it, what's found is listed.
+const PACKED_MAX: u64 = 256 * 1024 * 1024;
 
-/// What's in a TAR file of `size` bytes, or with `gz`, a gzipped one (.tar.gz, .tgz).
-pub fn list_tar(size: u64, read: &mut Read, gz: bool) -> Result<Listing, String> {
-    let bad = || "Not a TAR file, or a damaged one.".to_string();
-    let (items, total, mut done) = if gz {
-        let r = Ranged { read, size: size.min(GZ_MAX), at: 0, block: (0, Vec::new()) };
-        let mut z = flate2::read::MultiGzDecoder::new(r);
-        tar_walk(&mut z, |r, n| std::io::copy(&mut std::io::Read::take(r, n), &mut std::io::sink()).map(drop))
+/// How a TAR is packed.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub enum Pack {
+    None,
+    Gz,
+    Bz2,
+    Xz,
+    Zst,
+}
+
+/// What's listed for a file, by its name: a TAR and how it's packed, a gzipped file (`Gz`), or
+/// None for a ZIP.
+pub enum Kind {
+    Tar(Pack),
+    Gz,
+}
+
+pub fn kind_of(path: &str) -> Option<Kind> {
+    let lower = path.to_lowercase();
+    let ends = |xs: &[&str]| xs.iter().any(|x| lower.ends_with(x));
+    Some(if ends(&[".tar"]) {
+        Kind::Tar(Pack::None)
+    } else if ends(&[".tar.gz", ".tgz"]) {
+        Kind::Tar(Pack::Gz)
+    } else if ends(&[".tar.bz2", ".tbz2", ".tbz"]) {
+        Kind::Tar(Pack::Bz2)
+    } else if ends(&[".tar.xz", ".txz"]) {
+        Kind::Tar(Pack::Xz)
+    } else if ends(&[".tar.zst", ".tzst"]) {
+        Kind::Tar(Pack::Zst)
+    } else if ends(&[".gz"]) {
+        Kind::Gz
     } else {
+        return None;
+    })
+}
+
+/// What's in a TAR file of `size` bytes, as packed. A packed one has no index: it's unpacked from
+/// the start, up to `PACKED_MAX` of it.
+pub fn list_tar(size: u64, read: &mut Read, pack: Pack) -> Result<Listing, String> {
+    let bad = || "Not a TAR file, or a damaged one.".to_string();
+    let (items, total, mut done) = if pack == Pack::None {
         let mut r = Ranged { read, size, at: 0, block: (0, Vec::new()) };
         tar_walk(&mut r, |r, n| {
             r.at += n;
             Ok(())
         })
+    } else {
+        let r = Ranged { read, size: size.min(PACKED_MAX), at: 0, block: (0, Vec::new()) };
+        let mut z: Box<dyn std::io::Read + '_> = match pack {
+            Pack::Gz => Box::new(flate2::read::MultiGzDecoder::new(r)),
+            Pack::Bz2 => Box::new(bzip2::read::MultiBzDecoder::new(r)),
+            Pack::Xz => Box::new(lzma_rust2::XzReader::new(r, true)),
+            Pack::Zst => Box::new(ruzstd::decoding::StreamingDecoder::new(r).map_err(|_| bad())?),
+            Pack::None => unreachable!(),
+        };
+        tar_walk(&mut z, |r, n| std::io::copy(&mut std::io::Read::take(r, n), &mut std::io::sink()).map(drop))
     };
     // Not all read.
-    done &= !(gz && size > GZ_MAX);
+    done &= pack == Pack::None || size <= PACKED_MAX;
     if items.is_empty() && !done {
         return Err(bad());
     }
     Ok(Listing { total, items, partial: !done })
+}
+
+/// A gzipped file (not a TAR): the one file in it, from its header (the name it had, if kept) and
+/// its last 4 bytes (its size, unpacked; past 4 GB, only the low 32 bits). Nothing is unpacked.
+/// `name` is used when the header has none.
+pub fn list_gz(size: u64, read: &mut Read, name: &str) -> Result<Listing, String> {
+    let bad = || "Not a gzip file, or a damaged one.".to_string();
+    if size < 18 {
+        return Err(bad());
+    }
+    let head = read(0, size.min(64 * 1024))?;
+    if head.len() < 10 || head[..3] != [0x1f, 0x8b, 8] {
+        return Err(bad());
+    }
+    let flags = head[3];
+    let mut at = 10;
+    // FEXTRA: a length, then that many bytes.
+    if flags & 4 != 0 {
+        at += 2 + u16_at(&head, at).ok_or_else(bad)? as usize;
+    }
+    // FNAME: in Latin-1, ending in 0.
+    let kept = (flags & 8 != 0)
+        .then(|| head.get(at..).and_then(|h| h.iter().position(|&b| b == 0).map(|n| h[..n].iter().map(|&b| b as char).collect::<String>())))
+        .flatten()
+        .filter(|n| !n.is_empty());
+    let tail = read(size - 4, 4)?;
+    let unpacked = u32_at(&tail, 0).ok_or_else(bad)?;
+    let name = kept.map_or_else(|| name.to_string(), |n| n.rsplit(['/', '\\']).next().unwrap_or(&n).to_string());
+    Ok(Listing { items: vec![Packed { name, size: unpacked, dir: false }], total: 1, partial: false })
 }
 
 /// Reads TAR headers from `r`, passing over each file's data with `skip`: the first `LIST_MAX`
@@ -410,14 +484,14 @@ mod tests {
             read_bytes += v.len();
             Ok(v)
         };
-        let l = super::list_tar(file.len() as u64, &mut read, false).unwrap();
+        let l = super::list_tar(file.len() as u64, &mut read, super::Pack::None).unwrap();
         let got: Vec<_> = l.items.iter().map(|p| (p.name.as_str(), p.size, p.dir)).collect();
         let long = format!("{}/deep.txt", "d".repeat(120));
         assert_eq!(got, [("pics/", 0, true), ("pics/a.txt", 100_000, false), (long.as_str(), 5, false), ("pax/név.txt", 2, false)]);
         assert_eq!((l.total, l.partial), (4, false));
 
         let mut read = |_: u64, _: u64| Ok(b"not a tar at all, just some text".to_vec());
-        assert!(super::list_tar(32, &mut read, false).is_err());
+        assert!(super::list_tar(32, &mut read, super::Pack::None).is_err());
     }
 
     #[test]
@@ -427,13 +501,80 @@ mod tests {
         z.write_all(&sample_tar()).unwrap();
         let file = z.finish().unwrap();
         let mut read = |at: u64, len: u64| Ok(file.iter().skip(at as usize).take(len as usize).copied().collect());
-        let l = super::list_tar(file.len() as u64, &mut read, true).unwrap();
+        let l = super::list_tar(file.len() as u64, &mut read, super::Pack::Gz).unwrap();
         assert_eq!((l.items.len(), l.total, l.partial), (4, 4, false));
         // Cut short: what's found, marked as not all.
         let cut = file.len() as u64 / 2;
         let mut read = |at: u64, len: u64| Ok(file.iter().take(cut as usize).skip(at as usize).take(len as usize).copied().collect());
-        let l = super::list_tar(cut, &mut read, true);
+        let l = super::list_tar(cut, &mut read, super::Pack::Gz);
         assert!(l.is_err() || l.unwrap().partial);
+    }
+
+    #[test]
+    fn lists_a_tar_bz2_xz_and_zst() {
+        use super::Pack;
+        let tar = sample_tar();
+        let bz2 = {
+            let mut z = bzip2::write::BzEncoder::new(Vec::new(), bzip2::Compression::default());
+            z.write_all(&tar).unwrap();
+            z.finish().unwrap()
+        };
+        let xz = {
+            let mut z = lzma_rust2::XzWriter::new(Vec::new(), lzma_rust2::XzOptions::with_preset(1)).unwrap();
+            z.write_all(&tar).unwrap();
+            z.finish().unwrap()
+        };
+        let zst = ruzstd::encoding::compress_to_vec(&tar[..], ruzstd::encoding::CompressionLevel::Fastest);
+        for (file, pack) in [(bz2, Pack::Bz2), (xz, Pack::Xz), (zst, Pack::Zst)] {
+            let mut read = |at: u64, len: u64| Ok(file.iter().skip(at as usize).take(len as usize).copied().collect());
+            let l = super::list_tar(file.len() as u64, &mut read, pack).unwrap();
+            assert_eq!((l.items.len(), l.total, l.partial), (4, 4, false), "{pack:?}");
+            // Not packed that way: an error.
+            let other = if pack == Pack::Xz { Pack::Zst } else { Pack::Xz };
+            assert!(super::list_tar(file.len() as u64, &mut read, other).is_err(), "{pack:?}");
+        }
+    }
+
+    #[test]
+    fn lists_a_gz_from_its_ends() {
+        use flate2::write::GzEncoder;
+        let body = vec![b'a'; 300_000];
+        let named = {
+            let mut z = flate2::GzBuilder::new().filename("notes.txt").write(Vec::new(), flate2::Compression::default());
+            z.write_all(&body).unwrap();
+            z.finish().unwrap()
+        };
+        let plain = {
+            let mut z = GzEncoder::new(Vec::new(), flate2::Compression::default());
+            z.write_all(&body).unwrap();
+            z.finish().unwrap()
+        };
+        for (file, want) in [(named, "notes.txt"), (plain, "log")] {
+            let mut read = |at: u64, len: u64| Ok(file.iter().skip(at as usize).take(len as usize).copied().collect());
+            let l = super::list_gz(file.len() as u64, &mut read, "log").unwrap();
+            let got: Vec<_> = l.items.iter().map(|p| (p.name.as_str(), p.size, p.dir)).collect();
+            assert_eq!(got, [(want, 300_000, false)]);
+        }
+        let file = b"not gzipped at all".to_vec();
+        let mut read = |at: u64, len: u64| Ok(file.iter().skip(at as usize).take(len as usize).copied().collect());
+        assert!(super::list_gz(file.len() as u64, &mut read, "x").is_err());
+    }
+
+    #[test]
+    fn knows_a_file_by_its_name() {
+        use super::{kind_of, Kind, Pack};
+        let tar = |p| match kind_of(p) {
+            Some(Kind::Tar(k)) => Some(k),
+            _ => None,
+        };
+        assert_eq!(tar("/a/b.TAR"), Some(Pack::None));
+        assert_eq!(tar("b.tar.gz"), Some(Pack::Gz));
+        assert_eq!(tar("b.tgz"), Some(Pack::Gz));
+        assert_eq!(tar("b.tar.bz2"), Some(Pack::Bz2));
+        assert_eq!(tar("b.tar.xz"), Some(Pack::Xz));
+        assert_eq!(tar("b.tar.zst"), Some(Pack::Zst));
+        assert!(matches!(kind_of("b.log.gz"), Some(Kind::Gz)));
+        assert!(kind_of("b.zip").is_none());
     }
 
     #[test]
