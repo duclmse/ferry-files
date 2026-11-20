@@ -605,6 +605,11 @@ try {
     $stop1 = Stop-Daemon $d1
     $running = $null
     Say "Stop:         $stop1"
+    $dataFiles = @(Get-ChildItem -Recurse -File (Join-Path $workDir "data") -ErrorAction SilentlyContinue)
+    $dataMb = Format-MB (($dataFiles | Measure-Object Length -Sum).Sum)
+    $biggest = $dataFiles | Sort-Object Length -Descending | Select-Object -First 3 |
+        ForEach-Object { "$($_.Name) $(Format-MB $_.Length)" }
+    Say "Disk:         $dataMb MB in the data dir ($($biggest -join ', '))"
 
     # ---- offline changes ---------------------------------------------------
     Write-Host "==> Making changes while stopped"

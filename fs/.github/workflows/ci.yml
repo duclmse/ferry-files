@@ -183,3 +183,58 @@ jobs:
           path: |
             target/volume-walk
             target/volume-mft
+
+  # voidtools Everything and fsd on the same runner, both indexing all of C:
+  # from the file table. fsd runs with the memory store, the closest match to
+  # Everything's in-memory database, and again with SQLite. Everything runs
+  # first, so its file table read is the one on a cold cache. A measurement,
+  # not a gate.
+  windows-everything:
+    name: Everything head-to-head (Windows)
+    runs-on: windows-latest
+    continue-on-error: true
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+      - name: Build fsd
+        run: cargo build --release -p fs-server
+      - name: Everything, all of C:\
+        timeout-minutes: 40
+        shell: pwsh
+        run: .\scripts\bench-everything.ps1 -OutDir target\h2h-everything -Iterations 3
+      - name: fsd memory store, all of C:\
+        if: always()
+        timeout-minutes: 60
+        shell: pwsh
+        run: >
+          .\scripts\bench-windows.ps1 -TargetDir C:\ -NoContent -UseMft -Store memory -CrawlTimeout 3000
+          -OutDir target\h2h-fsd-memory -LoadSeconds 5 -IdleSeconds 3 -Iterations 3
+      - name: fsd SQLite store, all of C:\
+        if: always()
+        timeout-minutes: 60
+        shell: pwsh
+        run: >
+          .\scripts\bench-windows.ps1 -TargetDir C:\ -NoContent -UseMft -Store sqlite -CrawlTimeout 3000
+          -OutDir target\h2h-fsd-sqlite -LoadSeconds 5 -IdleSeconds 3 -Iterations 3
+      - name: Summaries
+        if: always()
+        shell: pwsh
+        run: |
+          foreach ($run in "h2h-everything", "h2h-fsd-memory", "h2h-fsd-sqlite") {
+            $f = "target\$run\summary.txt"
+            if (Test-Path $f) {
+              "### $run" | Add-Content $env:GITHUB_STEP_SUMMARY
+              '```' | Add-Content $env:GITHUB_STEP_SUMMARY
+              Get-Content $f | Add-Content $env:GITHUB_STEP_SUMMARY
+              '```' | Add-Content $env:GITHUB_STEP_SUMMARY
+            }
+          }
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: windows-everything
+          path: |
+            target/h2h-everything
+            target/h2h-fsd-memory
+            target/h2h-fsd-sqlite
