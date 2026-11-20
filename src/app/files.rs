@@ -26,7 +26,11 @@ impl Ctx {
     /// Opens a file in its default Mac app. A phone file is copied to the Mac first; that copy is
     /// what the app sees, so changes to it don't go back to the phone.
     pub(super) fn open_in_app(self, p: Pane, path: String) {
-        let src = p.src.get_untracked();
+        self.open_in_app_from(p, p.src.get_untracked(), path);
+    }
+
+    /// As `open_in_app`, for a file on `src` rather than the pane's place.
+    pub(super) fn open_in_app_from(self, p: Pane, src: Src, path: String) {
         p.loading.set(true);
         spawn_local(async move {
             match call::<String>("open_file", json!({ "src": src.key(), "path": path })).await {

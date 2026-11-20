@@ -20,6 +20,7 @@ fn main() {
             "media_info",
             "peek_bytes",
             "zip_list",
+            "pdf_outline",
             "copy_text",
             "write_text",
             "colour_text",

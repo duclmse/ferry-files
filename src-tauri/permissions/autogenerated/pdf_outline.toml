@@ -1,0 +1,11 @@
+# Automatically generated - DO NOT EDIT!
+
+[[permission]]
+identifier = "allow-pdf-outline"
+description = "Enables the pdf_outline command without any pre-configured scope."
+commands.allow = ["pdf_outline"]
+
+[[permission]]
+identifier = "deny-pdf-outline"
+description = "Denies the pdf_outline command without any pre-configured scope."
+commands.deny = ["pdf_outline"]

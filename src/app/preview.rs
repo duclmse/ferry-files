@@ -4,7 +4,7 @@
 
 use super::sidebar::chev;
 use super::*;
-use crate::api::{Bytes, Listing, MediaInfo, Packed, Peek};
+use crate::api::{Bytes, Listing, MediaInfo, Packed, PdfOutline, Peek};
 use wasm_bindgen::closure::Closure;
 
 /// A file shown another way than its type says, from "Open as…" or the context menu.
@@ -111,6 +111,119 @@ pub(super) const ZIP_EXTS: &[&str] = &[
     "zip", "apk", "jar", "cbz", "xapk", "ipa", "aar", "war", "whl", "vsix", "nupkg",
 ];
 
+const PDF_OUTLINE_KEY: &str = "ferry-files.pdf-outline";
+
+/// A PDF in the web view's own viewer, with a bar above it: the outline, go to a page, open it in
+/// its app, show it in its folder. The viewer is out of the app's reach: a page is gone to through
+/// the address (#page=), and the page it's on can't be read back. The outline (and page count)
+/// are read only when the outline is shown, as that reads the whole file again.
+#[component]
+fn PdfView(pane: Pane, src: Src, entry: Entry, url: String, #[prop(optional)] inner: Option<Inner>) -> impl IntoView {
+    let ctx = expect_context::<Ctx>();
+    let p = pane;
+    let frame = NodeRef::<html::Iframe>::new();
+    let in_zip = inner.is_some();
+    let (path, size) = (entry.path.clone(), entry.size);
+    let what = StoredValue::new((path.clone(), inner));
+    let page_url = StoredValue::new(url.clone());
+    let outline = RwSignal::new(None::<Result<PdfOutline, String>>);
+    let show = RwSignal::new(stored_flag(PDF_OUTLINE_KEY, false));
+    let typed = RwSignal::new(String::new());
+    let load = move || {
+        if outline.with_untracked(|o| matches!(o, Some(Ok(_)))) {
+            return;
+        }
+        outline.set(None);
+        let (path, inner) = what.get_value();
+        let args = match &inner {
+            Some(i) => json!({ "src": src.key(), "path": i.zip_path, "size": size, "inner": i.name, "zip_size": i.zip_size }),
+            None => json!({ "src": src.key(), "path": path, "size": size }),
+        };
+        spawn_local(async move {
+            let r = call::<PdfOutline>("pdf_outline", args).await;
+            let _ = outline.try_set(Some(r));
+        });
+    };
+    if show.get_untracked() {
+        load();
+    }
+    let toggle = move |_| {
+        let on = !show.get_untracked();
+        show.set(on);
+        store(PDF_OUTLINE_KEY, if on { "1" } else { "0" });
+        if on {
+            load();
+        }
+    };
+    let pages = move || outline.with(|o| o.as_ref().and_then(|o| o.as_ref().ok()).map(|o| o.pages));
+    let go = move |n: usize| {
+        let n = pages().map_or(n, |last| n.min(last)).max(1);
+        if let Some(f) = frame.get_untracked() {
+            // Set again even when it's the same, so a second click goes back to the page.
+            let _ = f.set_attribute("src", &format!("{}#page={n}", page_url.get_value()));
+        }
+    };
+    let on_key = move |ev: ev::KeyboardEvent| {
+        // Typed digits aren't the app's shortcuts.
+        ev.stop_propagation();
+        if ev.key() == "Enter" {
+            if let Ok(n) = typed.get_untracked().trim().parse::<usize>() {
+                go(n);
+            }
+        }
+    };
+    let open = {
+        let path = path.clone();
+        move |_| ctx.open_in_app_from(p, src, path.clone())
+    };
+    let reveal = move |_| {
+        let path = path.clone();
+        spawn_local(async move {
+            if let Err(e) = call::<()>("reveal", json!({ "path": path })).await {
+                p.error(e);
+            }
+        });
+    };
+    let heading_list = move || match outline.get() {
+        None => view! { <span class="hint">"Loading…"</span> }.into_any(),
+        Some(Err(e)) => view! { <span class="hint">{e}</span> }.into_any(),
+        Some(Ok(o)) if o.headings.is_empty() => view! { <span class="hint">"This PDF has no outline."</span> }.into_any(),
+        Some(Ok(o)) => o
+            .headings
+            .into_iter()
+            .map(|h| {
+                let indent = format!("padding-left: {}px", 8 + 12 * h.level.saturating_sub(1).min(8));
+                let (page, tip) = (h.page, h.title.clone());
+                view! {
+                    <button class="pdf-head" style=indent title=tip on:click=move |_| go(page)>
+                        <span class="name">{h.title}</span>
+                        <span class="pg">{page}</span>
+                    </button>
+                }
+            })
+            .collect_view()
+            .into_any(),
+    };
+    view! {
+        <div class="viewer-bar pdf-bar">
+            <button class="btn" class:active=move || show.get() title="Show the PDF's outline" on:click=toggle>"Outline"</button>
+            <span class="gap"></span>
+            <input class="pdf-page" type="text" inputmode="numeric" placeholder="Page" aria-label="Go to page"
+                prop:value=move || typed.get() on:input=move |ev| typed.set(event_target_value(&ev)) on:keydown=on_key/>
+            {move || pages().map(|n| view! { <span class="pdf-pages">{format!("of {n}")}</span> })}
+            <span class="pdf-fill"></span>
+            {(!in_zip).then(|| view! { <button class="btn" title="Open in its default app" on:click=open>"Open"</button> })}
+            {(!in_zip && src == Src::Mac).then(|| view! {
+                <button class="btn" on:click=reveal>{format!("Show in {}", crate::os::file_manager())}</button>
+            })}
+        </div>
+        <div class="pdf-body">
+            {move || show.get().then(|| view! { <nav class="pdf-outline">{heading_list}</nav> })}
+            <iframe class="pdf" node_ref=frame src=url title="PDF"></iframe>
+        </div>
+    }
+}
+
 /// The backend serves a whole file (a PDF, a font) up to this size.
 const WHOLE_MAX: u64 = 64 * 1024 * 1024;
 
@@ -199,9 +312,7 @@ pub(super) fn Preview(
                             {thumb(&e)}
                             <Player pane=p entry=e.clone() url=stream_url(src, &e) video=false info turn=video_turn alone/>
                         }.into_any(),
-                        _ if has_ext(&e, PDF_EXTS) && e.size <= WHOLE_MAX => view! {
-                            <iframe class="pdf" src=stream_url(src, &e) title="PDF"></iframe>
-                        }.into_any(),
+                        _ if has_ext(&e, PDF_EXTS) && e.size <= WHOLE_MAX => view! { <PdfView pane=p src entry=e.clone() url=stream_url(src, &e)/> }.into_any(),
                         _ if has_ext(&e, FONT_EXTS) && e.size <= WHOLE_MAX => view! { <FontSample src entry=e.clone()/> }.into_any(),
                         _ if has_ext(&e, &["epub"]) => view! { <BigCover src entry=e.clone()/> }.into_any(),
                         _ if has_ext(&e, ZIP_EXTS) => view! { <ZipList src entry=e.clone()/> }.into_any(),
@@ -1059,7 +1170,7 @@ fn Zipped(pane: Pane, src: Src, zip: Entry, name: String, size: u64) -> impl Int
                     .into_any()
             }
             _ if has_ext(&e, PDF_EXTS) => {
-                view! { <iframe class="pdf" src=url title="PDF"></iframe> }.into_any()
+                view! { <PdfView pane=p src entry=e url inner/> }.into_any()
             }
             _ if is_text(&e) => view! { <TextPeek src entry=e inner/> }.into_any(),
             _ => view! {

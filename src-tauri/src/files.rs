@@ -589,6 +589,24 @@ pub(super) async fn zip_list(state: State<'_, AppState>, src: Option<String>, pa
     .await
 }
 
+/// A PDF's page count and outline. `inner`, `zip_size`: as for `peek_text`. The PDF is read whole,
+/// up to the size the preview shows.
+#[tauri::command(rename_all = "snake_case")]
+pub(super) async fn pdf_outline(
+    state: State<'_, AppState>,
+    src: Option<String>,
+    path: String,
+    size: u64,
+    inner: Option<String>,
+    zip_size: Option<u64>,
+) -> Result<crate::pdf::Outline, String> {
+    if size > UNPACK_MAX {
+        return Err("Too big to read the outline.".into());
+    }
+    let dev = state.source(src.as_deref())?;
+    blocking(move || crate::pdf::outline(&read_part(&dev, &path, inner.as_deref(), zip_size, 0, size)?)).await
+}
+
 /// The files on the system clipboard (copied in Finder or File Explorer), as app paths.
 #[tauri::command(rename_all = "snake_case")]
 pub(super) fn clip_files() -> Vec<String> {

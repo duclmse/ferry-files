@@ -33,7 +33,9 @@ files and disks too, so books can be copied between them.
   Space, ← → and F. Videos and sounds go on from where they were stopped. ‹ and ›
   (or ← and → in the list) go to the previous and next picture, video or sound in
   the folder. PDFs (up to 64
-  MB) show in the preview, fonts (TTF, OTF, WOFF, WOFF2) as samples, EPUBs as
+  MB) show in the preview, with a bar above: Outline lists the PDF's bookmarks
+  (click one to go to its page), a box goes to a page number, Open opens it in
+  its default app, and Show in Finder shows where it is; fonts (TTF, OTF, WOFF, WOFF2) as samples, EPUBs as
   their cover (the cover itself once the preview is bigger than its thumbnail),
   and ZIP, APK and JAR files as a tree of what's in them, folders opening and
   closing, each with the size of all in it (read from the end of the file,

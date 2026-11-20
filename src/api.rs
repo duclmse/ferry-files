@@ -417,6 +417,22 @@ pub struct Packed {
     pub dir: bool,
 }
 
+/// A PDF's page count and outline (empty when it has none).
+#[derive(Clone, Debug, Deserialize, PartialEq)]
+pub struct PdfOutline {
+    pub pages: usize,
+    pub headings: Vec<Heading>,
+}
+
+#[derive(Clone, Debug, Deserialize, PartialEq)]
+pub struct Heading {
+    pub title: String,
+    /// 1 for the top level.
+    pub level: usize,
+    /// From 1.
+    pub page: usize,
+}
+
 /// What's in a ZIP file: the first items, and how many there are in all.
 #[derive(Clone, Debug, Deserialize)]
 pub struct Listing {

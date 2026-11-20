@@ -5,6 +5,7 @@ pub mod device;
 pub mod epub;
 pub mod local;
 pub mod media;
+pub mod pdf;
 mod migrate;
 /// MTP over libmtp on macOS and Linux; on Windows over Windows' own Portable Devices API, since
 /// libmtp would need the phone's USB driver replaced there.
@@ -201,6 +202,7 @@ pub fn run() {
             files::media_info,
             files::peek_bytes,
             files::zip_list,
+            files::pdf_outline,
             files::copy_text,
             files::clip_files,
             files::clip_set,

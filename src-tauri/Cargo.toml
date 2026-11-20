@@ -46,6 +46,7 @@ ureq = { version = "2", default-features = false }
 # Terminals: a real pseudo-terminal (ConPTY on Windows), so programs can ask for input.
 portable-pty = "0.9"
 base64 = "0.22"
+lopdf = { version = "0.47.0", default-features = false }
 
 [target.'cfg(unix)'.dependencies]
 signal-hook = "0.3"
