@@ -141,7 +141,7 @@ fn DocTabs(pane: Pane) -> impl IntoView {
                 let shown = move || p.doc_at.get() == i;
                 let path = move || p.docs.with(|ds| ds.get(i).map(|d| d.ed.path.clone()).unwrap_or_default());
                 // The shown tab's text is in the editor; the others' in their entries.
-                let dirty = move || if shown() { p.slot().dirty() } else { p.docs.with(|ds| ds.get(i).is_some_and(|d| d.ed.saved_text != d.text)) };
+                let dirty = move || if shown() { p.slot().dirty() } else { p.docs.with(|ds| ds.get(i).is_some_and(|d| *d.ed.saved_text != *d.text)) };
                 let label = move || format!("Close {}", base(&path()));
                 // Its folder's name, when another tab's file has the same name.
                 let where_ = move || {

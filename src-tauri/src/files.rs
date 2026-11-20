@@ -544,20 +544,26 @@ pub(super) async fn peek_bytes(
 /// Files packed in a ZIP are unpacked whole for the preview, up to this size.
 pub(super) const UNPACK_MAX: u64 = 64 * 1024 * 1024;
 
-/// The file `name` packed in the ZIP at `path` (`size` bytes), unpacked. The last one is kept, as
-/// the preview asks for it a piece at a time.
+/// The file `name` packed in the ZIP at `path` (`size` bytes), unpacked. The last one is kept for a
+/// minute after its last use, as the preview asks for it a piece at a time.
 pub(super) fn unpacked(dev: &Device, path: &str, size: u64, name: &str) -> Result<Arc<Vec<u8>>, String> {
-    static LAST: Mutex<Option<(String, Arc<Vec<u8>>)>> = Mutex::new(None);
+    static LAST: crate::idle::Slot<(String, Arc<Vec<u8>>)> = Mutex::new(None);
     let key = format!("{}:{}\n{path}\n{size}\n{name}", dev.kind(), dev.label());
     let mut last = LAST.lock().unwrap_or_else(|e| e.into_inner());
-    if let Some((k, data)) = last.as_ref() {
+    if let Some(((k, data), used)) = last.as_mut() {
         if *k == key {
+            *used = std::time::Instant::now();
             return Ok(data.clone());
         }
     }
+    let watched = last.is_some();
     *last = None;
     let data = Arc::new(crate::archive::unpack(size, &mut |at, len| dev.read_range(path, at, len).map_err(msg), name, UNPACK_MAX)?);
-    *last = Some((key, data.clone()));
+    *last = Some(((key, data.clone()), std::time::Instant::now()));
+    // Let go of after a minute unused: it can be up to UNPACK_MAX.
+    if !watched {
+        crate::idle::drop_when_idle(&LAST, std::time::Duration::from_secs(60), || {});
+    }
     Ok(data)
 }
 

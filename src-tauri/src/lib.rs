@@ -30,6 +30,7 @@ mod import;
 mod editor;
 mod files;
 mod highlight;
+mod idle;
 mod library;
 mod player;
 mod safety;

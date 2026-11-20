@@ -357,7 +357,8 @@ struct Editor {
     path: String,
     /// Version of the file we started from; saving refuses if the file differs now.
     version: String,
-    saved_text: String,
+    /// Shared by the copies of it (the tab's entry, the shown file).
+    saved_text: std::sync::Arc<str>,
 }
 
 /// Where a text editor keeps its file: the full-window editor's (`Ctx::full_slot`) or a pane's
@@ -389,7 +390,7 @@ struct Slot {
 
 impl Slot {
     fn dirty(self) -> bool {
-        self.editor.with(|e| e.as_ref().is_some_and(|e| e.saved_text != self.text.get()))
+        self.editor.with(|e| e.as_ref().is_some_and(|e| self.text.with(|t| *e.saved_text != **t)))
     }
 }
 
@@ -518,6 +519,7 @@ struct Pane {
 #[derive(Clone)]
 struct Doc {
     ed: Editor,
+    /// Its text; empty while it's the shown tab, whose text is in the editor.
     text: String,
 }
 

@@ -1,6 +1,7 @@
 //! The text editor: opening, saving and closing a text file.
 
 use super::*;
+use std::ops::Range;
 
 impl Ctx {
     pub(super) fn open_text(self, p: Pane, path: String) {
@@ -9,8 +10,8 @@ impl Ctx {
         spawn_local(async move {
             match call::<TextFile>("read_text", json!({ "src": src.key(), "path": path })).await {
                 Ok(f) => {
-                    self.text.set(f.text.clone());
-                    self.editor.set(Some(Editor { src, pane: p.id, path, version: f.version, saved_text: f.text }));
+                    self.editor.set(Some(Editor { src, pane: p.id, path, version: f.version, saved_text: f.text.as_str().into() }));
+                    self.text.set(f.text);
                     self.status.set((String::new(), ""));
                     self.confirm_discard.set(false);
                     self.finding.set(false);
@@ -41,7 +42,7 @@ impl Ctx {
                     slot.status.set((format!("Saved to {}.{note}", self.place(ed.src)), "ok"));
                     self.log(format!("Saved {} on {}", base(&ed.path), self.place(ed.src)));
                     let same = |e: &Editor| e.src == ed.src && e.path == ed.path;
-                    let saved = Editor { version: r.version, saved_text: text, ..ed.clone() };
+                    let saved = Editor { version: r.version, saved_text: text.into(), ..ed.clone() };
                     if slot.editor.with_untracked(|e| e.as_ref().is_some_and(same)) {
                         slot.editor.set(Some(saved));
                         slot.ask.set(false);
@@ -73,8 +74,9 @@ impl Ctx {
         spawn_local(async move {
             match call::<TextFile>("read_text", json!({ "src": src.key(), "path": path })).await {
                 Ok(f) => {
-                    let ed = Editor { src, pane: p.id, path, version: f.version, saved_text: f.text.clone() };
-                    let doc = Doc { ed: ed.clone(), text: f.text.clone() };
+                    let ed = Editor { src, pane: p.id, path, version: f.version, saved_text: f.text.as_str().into() };
+                    // Its text is in the editor while it's shown.
+                    let doc = Doc { ed: ed.clone(), text: String::new() };
                     let at = p.doc_at.get_untracked();
                     let keep = p.slot().dirty();
                     stash(p);
@@ -103,7 +105,9 @@ impl Ctx {
             return;
         }
         stash(p);
-        if let Some(d) = p.docs.with_untracked(|ds| ds.get(i).cloned()) {
+        // Its text goes to the editor, not copied.
+        let taken = p.docs.try_update(|ds| ds.get_mut(i).map(|d| Doc { ed: d.ed.clone(), text: std::mem::take(&mut d.text) })).flatten();
+        if let Some(d) = taken {
             reveal(p, &d.ed.path);
             show(p, i, d);
         }
@@ -112,7 +116,7 @@ impl Ctx {
     /// Closes the Editor view's tab `i`; with unsaved changes, unless `force`, it's shown and asks.
     pub(super) fn close_doc(self, p: Pane, i: usize, force: bool) {
         let at = p.doc_at.get_untracked();
-        let dirty = if i == at { p.slot().dirty() } else { p.docs.with_untracked(|ds| ds.get(i).is_some_and(|d| d.ed.saved_text != d.text)) };
+        let dirty = if i == at { p.slot().dirty() } else { p.docs.with_untracked(|ds| ds.get(i).is_some_and(|d| *d.ed.saved_text != *d.text)) };
         if dirty && !force {
             self.show_doc(p, i);
             p.doc_ask.set(true);
@@ -126,8 +130,9 @@ impl Ctx {
         });
         let n = p.docs.with_untracked(Vec::len);
         if i == at {
-            match p.docs.with_untracked(|ds| ds.get(i.min(n.saturating_sub(1))).cloned()) {
-                Some(d) => show(p, i.min(n - 1), d),
+            let next = i.min(n.saturating_sub(1));
+            match p.docs.try_update(|ds| ds.get_mut(next).map(|d| Doc { ed: d.ed.clone(), text: std::mem::take(&mut d.text) })).flatten() {
+                Some(d) => show(p, next, d),
                 None => {
                     p.doc.set(None);
                     p.doc_text.set(String::new());
@@ -201,6 +206,8 @@ const COLOUR_DELAY: std::time::Duration = std::time::Duration::from_millis(250);
 const FIND_MAX: usize = 10_000;
 /// The editor's line height in px (`.code-edit` in pane.css): for scrolling to a line in plain mode.
 const LINE_PX: i32 = 20;
+/// Lines painted above and below those shown, at least.
+const MARGIN: usize = 60;
 
 /// The class of each kind of run (`highlight::Kind` in the backend), as the preview's.
 const TOKEN_CLASSES: [&str; 17] = [
@@ -273,7 +280,9 @@ fn escape_into(out: &mut String, s: &str) {
 /// The text as HTML for the layer under the editing box: a `<span class="ln">` per line (its
 /// number in `data-n`, shown by CSS), a `<span>` per coloured run and a `<mark>` per match. Every
 /// line ends with a line break, so an empty last line has its height. The text is escaped.
-fn code_html(t: &str, runs: Option<&[(u8, u32)]>, hits: &[(usize, usize)], shown: Option<usize>) -> String {
+/// Colours and marks are only on the lines in `rich` (by number): the others are plain text, so a
+/// long file is a few nodes a line and not one per word.
+fn code_html(t: &str, runs: Option<&[(u8, u32)]>, hits: &[(usize, usize)], shown: Option<usize>, rich: Range<usize>) -> String {
     let runs = runs.filter(|r| runs_fit(r, t));
     // (end, class) per run.
     let mut ends = vec![];
@@ -294,8 +303,13 @@ fn code_html(t: &str, runs: Option<&[(u8, u32)]>, hits: &[(usize, usize)], shown
         while hits.get(hi).is_some_and(|h| h.1 <= pos) {
             hi += 1;
         }
-        let (class, run_end) = ends.get(ri).map_or(("", t.len()), |e| (e.1, e.0));
+        let plain = !rich.contains(&line);
+        let (class, run_end) = match ends.get(ri) {
+            Some(e) if !plain => (e.1, e.0),
+            _ => ("", t.len()),
+        };
         let (hit, hit_edge) = match hits.get(hi) {
+            _ if plain => (None, t.len()),
             Some(&(s, e)) if pos >= s => (Some(hi), e),
             Some(&(s, _)) => (None, s),
             None => (None, t.len()),
@@ -332,6 +346,36 @@ fn code_html(t: &str, runs: Option<&[(u8, u32)]>, hits: &[(usize, usize)], shown
     // The last line has no line break of its own (or is the empty one after the last).
     out.push_str("\n</span>");
     out
+}
+
+/// Lines painted (by number) for the lines shown, `first..end`: as many again above and below,
+/// at least `MARGIN`.
+fn band(first: usize, end: usize) -> Range<usize> {
+    let m = (end - first).max(MARGIN);
+    first.saturating_sub(m).max(1)..end + m
+}
+
+/// The line endings `t` uses: LF, CRLF, or Mixed. LF when it has none.
+fn line_ending(t: &str) -> &'static str {
+    let (mut lf, mut crlf) = (false, false);
+    let b = t.as_bytes();
+    for i in (0..b.len()).filter(|&i| b[i] == b'\n') {
+        if i > 0 && b[i - 1] == b'\r' { crlf = true } else { lf = true }
+        if lf && crlf {
+            return "Mixed";
+        }
+    }
+    if crlf { "CRLF" } else { "LF" }
+}
+
+/// (lines, characters) in a selection; (0, 0) when it's empty. A last line break doesn't start a
+/// line of its own.
+fn selected(s: &str) -> (usize, usize) {
+    if s.is_empty() {
+        return (0, 0);
+    }
+    let breaks = s.matches('\n').count();
+    (breaks + 1 - usize::from(s.ends_with('\n')), s.chars().count())
 }
 
 /// The byte in `t` at UTF-16 offset `u` (a textarea's selection is in UTF-16).
@@ -391,8 +435,8 @@ pub(super) fn TextEditor(file: Slot) -> impl IntoView {
     let name = StoredValue::new(name);
     // Small enough to draw under the box.
     let drawn_on = slot.text.with_untracked(|t| t.len() <= LAYER_MAX);
-    // The text last drawn, and the colours for it.
-    let drawn = StoredValue::new(String::new());
+    // Lines painted with colours and marks (by number); the rest are plain.
+    let painted = StoredValue::new(0..0usize);
     let runs = StoredValue::new(None::<Vec<(u8, u32)>>);
     // Colours stopped partway (far in, or slow): the rest is plain.
     let stopped = RwSignal::new(false);
@@ -400,6 +444,8 @@ pub(super) fn TextEditor(file: Slot) -> impl IntoView {
     let edits = StoredValue::new(0u64);
     let colour_timer = StoredValue::new_local(None::<TimeoutHandle>);
     let caret = RwSignal::new((1usize, 1usize));
+    // Lines and characters selected: (0, 0) when nothing is.
+    let picked = RwSignal::new((0usize, 0usize));
     let finding = slot.find;
     let FindState { query, with, opts, keep, replacing } = ctx.find_state;
     let replace_box = NodeRef::<leptos::html::Input>::new();
@@ -409,6 +455,9 @@ pub(super) fn TextEditor(file: Slot) -> impl IntoView {
     let shown = RwSignal::new(None::<usize>);
     let (wrap, numbers) = (ctx.wrap_text, ctx.line_numbers);
     let lines = Memo::new(move |_| slot.text.with(|t| t.matches('\n').count() + 1));
+    let ending = Memo::new(move |_| slot.text.with(|t| line_ending(t)));
+    // Files are read as UTF-8 only; a byte order mark is kept as the text's first character.
+    let encoding = Memo::new(move |_| slot.text.with(|t| if t.starts_with('\u{feff}') { "UTF-8 with BOM" } else { "UTF-8" }));
 
     // The current line gets a highlight in the layer.
     let mark_line = move |line: usize| {
@@ -420,35 +469,74 @@ pub(super) fn TextEditor(file: Slot) -> impl IntoView {
             let _ = el.class_list().add_1("cur");
         }
     };
+    // The lines in view (by number, `first..end`), found by the layer's lines' places.
+    let in_view = move || -> Range<usize> {
+        let (Some(t), Some(l)) = (ta.get_untracked(), layer.get_untracked()) else { return 1..2 };
+        let (top, h) = (t.scroll_top(), t.client_height().max(LINE_PX));
+        let kids = l.children();
+        let n = kids.length() as usize;
+        if n == 0 {
+            return 1..(top + h) as usize / LINE_PX as usize + 2;
+        }
+        let at = |i: usize| kids.item(i as u32).and_then(|e| e.dyn_into::<web_sys::HtmlElement>().ok()).map_or(0, |e| e.offset_top());
+        // The first line whose top is below `y`.
+        let below = |y: i32| {
+            let (mut lo, mut hi) = (0, n);
+            while lo < hi {
+                let mid = (lo + hi) / 2;
+                if at(mid) <= y { lo = mid + 1 } else { hi = mid }
+            }
+            lo
+        };
+        below(top).max(1)..below(top + h) + 1
+    };
+    let draw_at = move |rich: Range<usize>| {
+        let Some(l) = layer.get_untracked() else { return };
+        let html = slot.text.with_untracked(|t| runs.with_value(|r| hits.with_untracked(|h| code_html(t, r.as_deref(), h, shown.get_untracked(), rich.clone()))));
+        l.set_inner_html(&html);
+        painted.set_value(rich);
+        mark_line(caret.get_untracked().0);
+    };
     let sync_scroll = move || {
         if let (Some(t), Some(l)) = (ta.get_untracked(), layer.get_untracked()) {
             l.set_scroll_top(t.scroll_top());
             l.set_scroll_left(t.scroll_left());
+        }
+        // Painted again when the lines in view get near the edge of those painted.
+        if drawn_on {
+            let v = in_view();
+            let (from, to) = (v.start.saturating_sub(MARGIN / 2).max(1), v.end + MARGIN / 2);
+            if painted.with_value(|p| from < p.start || to > p.end) {
+                draw_at(band(v.start, v.end));
+            }
         }
     };
     let draw = move || {
         if !drawn_on {
             return;
         }
-        let Some(l) = layer.get_untracked() else { return };
-        let html = slot.text.with_untracked(|t| runs.with_value(|r| hits.with_untracked(|h| code_html(t, r.as_deref(), h, shown.get_untracked()))));
-        l.set_inner_html(&html);
-        mark_line(caret.get_untracked().0);
+        let v = in_view();
+        draw_at(band(v.start, v.end));
         sync_scroll();
     };
     let update_caret = move || {
         let Some(el) = ta.get_untracked() else { return };
-        let u = el.selection_start().ok().flatten().unwrap_or(0);
-        let (line, col) = slot.text.with_untracked(|t| {
-            let b = byte_at(t, u);
-            let before = &t[..b];
+        let a = el.selection_start().ok().flatten().unwrap_or(0);
+        let b = el.selection_end().ok().flatten().unwrap_or(a);
+        // The caret is the end the selection was made towards.
+        let back = el.selection_direction().ok().flatten().is_some_and(|d| d == "backward");
+        let (line, col, sel) = slot.text.with_untracked(|t| {
+            let (a, b) = (byte_at(t, a), byte_at(t, b));
+            let at = if back { a } else { b };
+            let before = &t[..at];
             let line_start = before.rfind('\n').map_or(0, |i| i + 1);
-            (before.matches('\n').count() + 1, before[line_start..].chars().count() + 1)
+            (before.matches('\n').count() + 1, before[line_start..].chars().count() + 1, selected(&t[a..b]))
         });
         if caret.get_untracked().0 != line {
             mark_line(line);
         }
         caret.set((line, col));
+        picked.set(sel);
     };
     let colour_now = move || {
         if !drawn_on || !ctx.colour_code.get_untracked() {
@@ -500,9 +588,9 @@ pub(super) fn TextEditor(file: Slot) -> impl IntoView {
         let v = el.value();
         edits.update_value(|n| *n += 1);
         if drawn_on {
-            let shifted = drawn.with_value(|old| runs.with_value(|r| r.as_ref().map(|r| shift_runs(r, old, &v))));
+            // The text in the slot is still the one the colours are for.
+            let shifted = slot.text.with_untracked(|old| runs.with_value(|r| r.as_ref().map(|r| shift_runs(r, old, &v))));
             runs.set_value(shifted);
-            drawn.set_value(v.clone());
         }
         slot.text.set(v);
         // A message about what was done ("Saved.", "Replaced 3 matches.") is old after an edit.
@@ -719,10 +807,7 @@ pub(super) fn TextEditor(file: Slot) -> impl IntoView {
     ta.on_load(move |el| {
         // macOS would otherwise "correct" code as it's typed.
         let _ = el.set_attribute("autocorrect", "off");
-        el.set_value(&slot.text.get_untracked());
-        if drawn_on {
-            drawn.set_value(slot.text.get_untracked());
-        }
+        slot.text.with_untracked(|t| el.set_value(t));
         request_animation_frame(move || {
             draw();
             if let Some(el) = ta.get_untracked() {
@@ -906,13 +991,14 @@ pub(super) fn TextEditor(file: Slot) -> impl IntoView {
             <span class="spacer"></span>
             {move || stopped.get().then(|| view! { <span title="Colouring stopped partway, far into the file or where it got slow">"Colours stop partway"</span> })}
             {(!drawn_on).then(|| view! { <span title="Colours, line numbers and find marks are off for text over 512 KB">"Plain: big file"</span> })}
-            <span>{move || { let (l, c) = caret.get(); format!("Ln {l}, Col {c}") }}</span>
+            {move || match picked.get() {
+                (0, _) => None,
+                (l, c) => Some(view! { <span>{format!("{l} {}, {c} {} selected", if l == 1 { "line" } else { "lines" }, if c == 1 { "character" } else { "characters" })}</span> }),
+            }}
+            <span title="Line:column">{move || { let (l, c) = caret.get(); format!("{l}:{c}") }}</span>
+            <span title="Line endings">{ending}</span>
+            <span>{encoding}</span>
             <span>{language}</span>
-            <span>{move || {
-                let n = lines.get();
-                let chars = slot.text.with(|t| t.chars().count());
-                format!("{n} {} · {chars} {}", if n == 1 { "line" } else { "lines" }, if chars == 1 { "character" } else { "characters" })
-            }}</span>
             {slot.pane.map(|p| view! { <ViewSeg pane=p/> })}
         </div>
     }
@@ -921,6 +1007,8 @@ pub(super) fn TextEditor(file: Slot) -> impl IntoView {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    const ALL: Range<usize> = 0..usize::MAX;
 
     #[test]
     fn runs_follow_an_edit() {
@@ -935,20 +1023,46 @@ mod tests {
 
     #[test]
     fn html_has_a_line_per_line_and_escapes() {
-        let h = code_html("a<b\n\nc", None, &[], None);
+        let h = code_html("a<b\n\nc", None, &[], None, ALL);
         assert_eq!(h, "<span class=\"ln\" data-n=\"1\">a&lt;b\n</span><span class=\"ln\" data-n=\"2\">\n</span><span class=\"ln\" data-n=\"3\">c\n</span>");
         // A last empty line still gets a line.
-        assert!(code_html("a\n", None, &[], None).ends_with("<span class=\"ln\" data-n=\"2\">\n</span>"));
-        assert_eq!(code_html("", None, &[], None), "<span class=\"ln\" data-n=\"1\">\n</span>");
+        assert!(code_html("a\n", None, &[], None, ALL).ends_with("<span class=\"ln\" data-n=\"2\">\n</span>"));
+        assert_eq!(code_html("", None, &[], None, ALL), "<span class=\"ln\" data-n=\"1\">\n</span>");
     }
 
     #[test]
     fn html_marks_matches_and_colours() {
         let t = "let x";
         // Runs that don't fit the text are left out.
-        assert_eq!(code_html(t, Some(&[(4, 9)]), &[], None), "<span class=\"ln\" data-n=\"1\">let x\n</span>");
-        let h = code_html(t, Some(&[(4, 3), (0, 2)]), &find::find(t, "ET", find::FindOpts::default(), FIND_MAX).unwrap(), Some(0));
+        assert_eq!(code_html(t, Some(&[(4, 9)]), &[], None, ALL), "<span class=\"ln\" data-n=\"1\">let x\n</span>");
+        let h = code_html(t, Some(&[(4, 3), (0, 2)]), &find::find(t, "ET", find::FindOpts::default(), FIND_MAX).unwrap(), Some(0), ALL);
         assert_eq!(h, "<span class=\"ln\" data-n=\"1\"><span class=\"tok-keyword\">l</span><mark class=\"hit on\"><span class=\"tok-keyword\">et</span></mark> x\n</span>");
+    }
+
+    #[test]
+    fn only_the_rich_lines_get_colours_and_marks() {
+        let t = "ab\nab\nab";
+        let hits = find::find(t, "b", find::FindOpts::default(), FIND_MAX).unwrap();
+        let h = code_html(t, Some(&[(4, 8)]), &hits, None, 2..3);
+        assert_eq!(
+            h,
+            "<span class=\"ln\" data-n=\"1\">ab\n</span><span class=\"ln\" data-n=\"2\"><span class=\"tok-keyword\">a</span><mark class=\"hit\"><span class=\"tok-keyword\">b</span></mark><span class=\"tok-keyword\">\n</span></span><span class=\"ln\" data-n=\"3\">ab\n</span>"
+        );
+        assert_eq!(band(100, 110), 40..170);
+        assert_eq!(band(1, 300), 1..599);
+    }
+
+    #[test]
+    fn line_endings_and_selections() {
+        assert_eq!(line_ending("a\nb"), "LF");
+        assert_eq!(line_ending("a"), "LF");
+        assert_eq!(line_ending("a\r\nb\r\n"), "CRLF");
+        assert_eq!(line_ending("a\r\nb\n"), "Mixed");
+        assert_eq!(selected(""), (0, 0));
+        assert_eq!(selected("ab"), (1, 2));
+        assert_eq!(selected("a\nb"), (2, 3));
+        assert_eq!(selected("a\n"), (1, 2));
+        assert_eq!(selected("é😀"), (1, 2));
     }
 
     #[test]

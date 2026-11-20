@@ -9,7 +9,7 @@
 //! To stay quick: lines longer than `LONG_LINE` are left plain (minified files), colours stop after
 //! `COLOUR_MAX` bytes or when a piece takes longer than `BUDGET`.
 
-use std::sync::{Mutex, OnceLock};
+use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
 
 use syntect::parsing::{ParseState, Scope, ScopeStack, SyntaxReference, SyntaxSet};
@@ -88,9 +88,22 @@ const RULES: &[(&str, Option<Kind>)] = &[
     ("markup.heading", Some(Kind::Heading)),
 ];
 
-fn syntaxes() -> &'static SyntaxSet {
-    static SET: OnceLock<SyntaxSet> = OnceLock::new();
-    SET.get_or_init(SyntaxSet::load_defaults_newlines)
+/// The grammars are let go of after this long unused: they grow by tens of MB as languages are
+/// coloured (each grammar's regexes are compiled when first used), and load again in a few ms.
+const IDLE: Duration = Duration::from_secs(60);
+
+fn syntaxes() -> Arc<SyntaxSet> {
+    static SET: crate::idle::Slot<Arc<SyntaxSet>> = Mutex::new(None);
+    let mut s = SET.lock().unwrap_or_else(|e| e.into_inner());
+    if let Some((set, used)) = s.as_mut() {
+        *used = Instant::now();
+        return set.clone();
+    }
+    let set = Arc::new(SyntaxSet::load_defaults_newlines());
+    *s = Some((set.clone(), Instant::now()));
+    // Files' parser states go with the grammars; their next pieces start afresh.
+    crate::idle::drop_when_idle(&SET, IDLE, || kept().lock().unwrap_or_else(|e| e.into_inner()).clear());
+    set
 }
 
 /// The grammar for a file, by its name, then its extension, then its first line (`#!/bin/sh`).
@@ -168,7 +181,7 @@ pub(crate) struct Colours {
 /// starts, if there is one. `key` names the file (device, path), to find the state its last piece
 /// left.
 pub(crate) fn colour(key: &str, name: &str, start: u64, text: &str, next: Option<u64>) -> Colours {
-    let ss = syntaxes();
+    let ss = &*syntaxes();
     let carried = {
         let mut kept = kept().lock().unwrap_or_else(|e| e.into_inner());
         kept.iter().position(|c| c.key == key && c.at == start).map(|i| kept.remove(i))
@@ -285,7 +298,7 @@ mod tests {
 
     #[test]
     fn colours_by_name_extension_and_first_line() {
-        let ss = syntaxes();
+        let ss = &*syntaxes();
         assert_eq!(syntax_for(ss, "a/main.rs", "").map(|s| s.name.as_str()), Some("Rust"));
         assert_eq!(syntax_for(ss, "App.TSX", "").map(|s| s.name.as_str()), Some("JavaScript"));
         assert_eq!(syntax_for(ss, "Makefile", "").map(|s| s.name.as_str()), Some("Makefile"));
