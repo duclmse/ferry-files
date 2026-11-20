@@ -603,11 +603,6 @@ fn Tabs(pane: Pane) -> impl IntoView {
     let n = move || p.tabs.with(Vec::len);
     view! {
         <div class="tabs" role="tablist">
-            {(p.id == 0).then(|| view! {
-                <button class="btn icon-only tab-tool" class:active=move || ctx.side.get()
-                    title=move || ctx.with_key(&format!("{} the {}", if ctx.side.get() { "Hide" } else { "Show" }, crate::os::sidebar()), "sidebar")
-                    aria-label="Sidebar" on:click=move |_| ctx.set_side(!ctx.side.get_untracked())>{ico(Icon::Sidebar)}</button>
-            })}
             {move || (0..n()).map(|i| {
                 let shown = move || p.tab.get() == i;
                 // The shown tab follows the pane; the others are where they were left.

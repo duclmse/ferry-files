@@ -1427,9 +1427,10 @@ fn Browser() -> impl IntoView {
     let ep = ctx.ep;
     move || if ep.book.with(|b| b.is_some()) { view! { <crate::epub::EpubEditor/> }.into_any() } else { view! {
         <div class="app browse" class:no-side=move || !ctx.side.get() style=move || match ctx.side_w.get() {
-            w if w > 0.0 && ctx.side.get() => format!("grid-template-columns: {}px auto 1fr", w.max(SIDE_MIN)),
+            w if w > 0.0 && ctx.side.get() => format!("grid-template-columns: auto {}px auto 1fr", w.max(SIDE_MIN)),
             _ => String::new(),
         }>
+            <ActivityBar/>
             {move || ctx.side.get().then(|| view! {
                 <Sidebar/>
                 <Grip size=ctx.side_w key=SIDE_W_KEY.into() min=SIDE_MIN max=480.0 room=480.0 class="grip side-grip"/>

@@ -464,13 +464,31 @@ pub(super) fn Sidebar() -> impl IntoView {
                     view! { <div class=move || format!("sec {}", reorder.class(k)) data-section=k>{body}</div> }
                 }).collect_view()}
             </div>
-            <div class="side-buttons">
-                <button class="btn icon-only" title="Backups: files replaced or deleted by the app, which can be put back" aria-label="Backups"
-                    on:click=move |_| ctx.panel.set(Some(Panel::Backups))>{ico(Icon::Backups)}</button>
-                <button class="btn icon-only" title="History: what was done since the app started" aria-label="History"
-                    on:click=move |_| ctx.panel.set(Some(Panel::History))>{ico(Icon::History)}</button>
-                <button class="btn icon-only" title="Settings" aria-label="Settings" on:click=move |_| ctx.settings.set(true)>{ico(Icon::Settings)}</button>
-            </div>
+        </nav>
+    }
+}
+
+/// The bar down the window's left edge, as in VS Code: the sidebar, books and commands at the top;
+/// backups, history and settings at the bottom.
+#[component]
+pub(super) fn ActivityBar() -> impl IntoView {
+    let ctx = expect_context::<Ctx>();
+    let side_title = move || ctx.with_key(&format!("{} the {}", if ctx.side.get() { "Hide" } else { "Show" }, crate::os::sidebar()), "sidebar");
+    view! {
+        <nav class="activity" aria-label="Tools">
+            <button class="act" class:on=move || ctx.side.get() title=side_title aria-label="Sidebar"
+                aria-pressed=move || ctx.side.get().to_string()
+                on:click=move |_| ctx.set_side(!ctx.side.get_untracked())>{ico(Icon::Sidebar)}</button>
+            <button class="act" title="Books on all devices" aria-label="Books on all devices"
+                on:click=move |_| ctx.panel.set(Some(Panel::AllBooks))>{ico(Icon::Book)}</button>
+            <button class="act" title=move || ctx.with_key("Commands", "palette") aria-label="Commands"
+                on:click=move |_| ctx.panel.set(Some(Panel::Palette))>{ico(Icon::Search)}</button>
+            <span class="grow"></span>
+            <button class="act" title="Backups: files replaced or deleted by the app, which can be put back" aria-label="Backups"
+                on:click=move |_| ctx.panel.set(Some(Panel::Backups))>{ico(Icon::Backups)}</button>
+            <button class="act" title="History: what was done since the app started" aria-label="History"
+                on:click=move |_| ctx.panel.set(Some(Panel::History))>{ico(Icon::History)}</button>
+            <button class="act" title="Settings" aria-label="Settings" on:click=move |_| ctx.settings.set(true)>{ico(Icon::Settings)}</button>
         </nav>
     }
 }

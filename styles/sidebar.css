@@ -11,7 +11,7 @@
   overflow: hidden;
 }
 
-/* The sections scroll; the buttons under them stay at the bottom. */
+/* The sections scroll. */
 .side-scroll {
   flex: 1;
   min-height: 0;
@@ -19,13 +19,6 @@
   flex-direction: column;
   padding: 8px 8px 12px;
   overflow: auto;
-}
-
-.side > .side-buttons {
-  flex: none;
-  margin: 0;
-  padding: 8px;
-  border-top: 1px solid var(--line);
 }
 
 /* Section headings are dragged to move their sections (Reorder in sidebar.rs). */
@@ -343,10 +336,6 @@
   height: 10px;
 }
 
-.side-buttons .btn {
-  justify-content: center;
-}
-
 .device .eject:hover,
 .tree-row .act:hover,
 .tree-row .unfav:hover {
@@ -542,4 +531,66 @@
 /* A section being moved: its title in the accent colour, with no background. */
 .sec.dragging h2 .fold {
   color: var(--accent);
+}
+
+/* The activity bar (sidebar.rs): icon buttons down the window's left edge. */
+.activity {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 4px;
+  width: 44px;
+  padding: 8px 0;
+  background: var(--bg);
+  border-right: 1px solid var(--line);
+  min-height: 0;
+}
+
+.activity .grow {
+  flex: 1;
+}
+
+.activity .act {
+  position: relative;
+  display: grid;
+  place-items: center;
+  width: 34px;
+  height: 34px;
+  padding: 0;
+  border: 0;
+  border-radius: 7px;
+  background: none;
+  color: var(--muted);
+  cursor: pointer;
+}
+
+.activity .act .ico {
+  width: 18px;
+  height: 18px;
+}
+
+.activity .act:hover {
+  background: var(--hover);
+  color: var(--ink);
+}
+
+.activity .act.on {
+  color: var(--ink);
+}
+
+/* The shown sidebar's button has a bar at the window's edge. */
+.activity .act.on::before {
+  content: "";
+  position: absolute;
+  left: -5px;
+  top: 7px;
+  bottom: 7px;
+  width: 2px;
+  border-radius: 1px;
+  background: var(--accent);
+}
+
+.activity .act:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: -2px;
 }

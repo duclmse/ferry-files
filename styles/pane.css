@@ -56,10 +56,6 @@
   margin: -2px 0 2px;
 }
 
-.tabs > .tab-tool:first-child {
-  margin-right: 6px;
-}
-
 .tabs .tabs-gap {
   flex: 1 1 0;
   min-width: 8px;
