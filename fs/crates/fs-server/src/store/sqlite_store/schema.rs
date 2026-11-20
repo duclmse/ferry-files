@@ -32,7 +32,7 @@ CREATE TABLE IF NOT EXISTS files (
     crawl_generation INTEGER DEFAULT NULL
 );
 
-CREATE INDEX IF NOT EXISTS idx_files_parent    ON files(parent);
+CREATE INDEX IF NOT EXISTS idx_files_parent    ON files(parent COLLATE NOCASE);
 CREATE INDEX IF NOT EXISTS idx_files_archive   ON files(archive_path)
     WHERE archive_path IS NOT NULL;
 
@@ -70,17 +70,18 @@ pub(super) fn apply_migrations(conn: &rusqlite::Connection) -> rusqlite::Result<
             Err(e) => return Err(e),
         }
     }
-    // Old databases had `idx_files_parent` on another column. Re-pointing it
-    // unconditionally rebuilt the index over every row on every start: a
-    // large share of the 40-100 s restart at 1.4M rows.
-    let columns: Vec<String> = conn
-        .prepare("SELECT name FROM pragma_index_info('idx_files_parent')")?
-        .query_map([], |r| r.get(0))?
+    // Old databases had `idx_files_parent` on another column, or on
+    // `parent` without NOCASE, which `parent:` cannot use. Rebuilding it
+    // unconditionally cost a large share of a 40-100 s restart at 1.4M rows,
+    // so only a wrong index is rebuilt.
+    let columns: Vec<(String, String)> = conn
+        .prepare("SELECT name, coll FROM pragma_index_xinfo('idx_files_parent') WHERE key = 1")?
+        .query_map([], |r| Ok((r.get(0)?, r.get(1)?)))?
         .collect::<rusqlite::Result<_>>()?;
-    if columns != ["parent"] {
+    if columns != [("parent".to_owned(), "NOCASE".to_owned())] {
         conn.execute_batch(
             "DROP INDEX IF EXISTS idx_files_parent;
-             CREATE INDEX idx_files_parent ON files(parent);",
+             CREATE INDEX idx_files_parent ON files(parent COLLATE NOCASE);",
         )?;
     }
     Ok(())
@@ -96,10 +97,7 @@ pub(super) fn apply_migrations(conn: &rusqlite::Connection) -> rusqlite::Result<
 /// Splits on `\` as well, like the memory store: Windows paths use it, and
 /// a root written with `/` gets children joined with `\`.
 pub(super) fn parent_of(path: &str) -> String {
-    match path.rfind(['/', '\\']) {
-        None | Some(0) => String::new(),
-        Some(i) => path[..i].to_owned(),
-    }
+    crate::store::parent_text(path).to_owned()
 }
 
 /// `path` is under the directory bound to `?1`, which a Windows path joins

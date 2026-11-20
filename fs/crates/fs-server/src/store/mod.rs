@@ -112,6 +112,15 @@ impl RecordView for FileRecord {
 }
 
 /// `path` is strictly inside directory `dir`, without allocating `"{dir}/"`.
+/// The text a path's `parent` column holds: everything before the last
+/// separator, or "" for a top-level path. Archive members keep the `!`.
+pub(crate) fn parent_text(path: &str) -> &str {
+    match path.rfind(['/', '\\']) {
+        None | Some(0) => "",
+        Some(i) => &path[..i],
+    }
+}
+
 pub(crate) fn is_under(path: &str, dir: &str) -> bool {
     path.len() > dir.len() && path.starts_with(dir) && path.as_bytes()[dir.len()] == b'/'
 }
@@ -327,6 +336,10 @@ pub enum SqlCondition {
     ExtOrNone(String),
     /// `path LIKE ? ESCAPE '\'` with `<dir>/%` (all files under a directory)
     ParentPath(String),
+    /// `parent = ? COLLATE NOCASE`: the direct children of a directory, with
+    /// ASCII case ignored as SQLite's `NOCASE` does. `idx_files_parent` is
+    /// built with that collation so this is an index lookup.
+    ParentIs(String),
     /// `LENGTH(name) <op> value`, in characters
     NameLenOp(CmpOp, usize),
     /// Depth relative to a root: `(LENGTH(path) - LENGTH(REPLACE(path, '/', ''))) <op> depth`
@@ -414,6 +427,10 @@ impl SqlCondition {
                     ],
                 )
             }
+            SqlCondition::ParentIs(dir) => (
+                "parent = ? COLLATE NOCASE".into(),
+                vec![Value::Text(dir.clone())],
+            ),
             SqlCondition::NameLenOp(op, n) => (
                 format!("LENGTH(name) {} ?", op.as_sql()),
                 vec![Value::Integer(*n as i64)],

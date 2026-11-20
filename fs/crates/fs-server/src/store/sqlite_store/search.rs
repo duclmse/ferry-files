@@ -229,7 +229,8 @@ impl SqliteStore {
     pub fn has_child(&self, parent_path: &str, name_pattern: &str) -> Result<bool> {
         let conn = self.get_conn()?;
         let count: i64 = conn.query_row(
-            "SELECT COUNT(*) FROM files WHERE parent = ? AND name LIKE ? ESCAPE '\\'",
+            "SELECT COUNT(*) FROM files \
+             WHERE parent = ?1 COLLATE NOCASE AND parent = ?1 AND name LIKE ?2 ESCAPE '\\'",
             rusqlite::params![parent_path, name_pattern],
             |row| row.get(0),
         )?;
@@ -237,11 +238,15 @@ impl SqliteStore {
     }
 
     /// Direct (non-recursive) children of `parent_path` that are real files,
-    /// i.e. not archive-inner entries. Uses the indexed `parent` column.
+    /// i.e. not archive-inner entries. Uses the indexed `parent` column;
+    /// that index ignores case, so the NOCASE comparison is what reaches it
+    /// and the plain one keeps the match exact.
     pub fn children_of(&self, parent_path: &str) -> Result<Vec<String>> {
         let conn = self.get_conn()?;
-        let mut stmt =
-            conn.prepare("SELECT path FROM files WHERE parent = ? AND archive_path IS NULL")?;
+        let mut stmt = conn.prepare(
+            "SELECT path FROM files \
+             WHERE parent = ?1 COLLATE NOCASE AND parent = ?1 AND archive_path IS NULL",
+        )?;
         let rows = stmt.query_map([parent_path], |row| row.get(0))?;
         rows.map(|r| r.map_err(AppError::Database)).collect()
     }

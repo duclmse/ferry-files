@@ -899,6 +899,8 @@ fn parent_and_depth_scans_agree_with_the_per_record_check() {
         r"C:\w\gone",
         r"C:\w\gone\kept.txt",
         r"C:\w2\x.txt",
+        r"C:\w\a.zip",
+        r"C:\w\a.zip!/top.txt",
         "/u/a",
         "/u/a/b.txt",
     ] {
@@ -923,6 +925,14 @@ fn parent_and_depth_scans_agree_with_the_per_record_check() {
         vec![SqlCondition::DepthOp(CmpOp::Eq, 3)],
         vec![SqlCondition::DepthOp(CmpOp::Gte, 2)],
         vec![SqlCondition::DepthOp(CmpOp::Lt, 2)],
+        vec![SqlCondition::ParentIs(r"C:\w".into())],
+        vec![SqlCondition::ParentIs(r"c:\W\SRC".into())],
+        vec![SqlCondition::ParentIs("C:".into())],
+        vec![SqlCondition::ParentIs(r"C:\w\gone".into())],
+        vec![SqlCondition::ParentIs(r"C:\w\late".into())],
+        vec![SqlCondition::ParentIs(r"C:\w\A.ZIP!".into())],
+        vec![SqlCondition::ParentIs("/U/a".into())],
+        vec![SqlCondition::ParentIs("".into())],
     ];
     for conds in cases {
         let mut got: Vec<String> = store
@@ -938,6 +948,10 @@ fn parent_and_depth_scans_agree_with_the_per_record_check() {
                 path.len() > dir.len()
                     && path.starts_with(dir.as_str())
                     && sep(path.as_bytes()[dir.len()])
+            }
+            SqlCondition::ParentIs(dir) => {
+                let cut = path.rfind(['/', '\\']).unwrap();
+                path[..cut].eq_ignore_ascii_case(dir)
             }
             SqlCondition::DepthOp(op, d) => {
                 let n = path.bytes().filter(|&b| sep(b)).count();

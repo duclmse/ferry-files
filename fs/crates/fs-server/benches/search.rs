@@ -166,8 +166,30 @@ fn bench_regex_search(c: &mut Criterion) {
 
 // ---------------------------------------------------------------------------
 
+/// One folder's 50 direct children, which `idx_files_parent` should answer.
+fn bench_parent(c: &mut Criterion) {
+    let rt = build_runtime();
+    let watch = tempfile::TempDir::new().unwrap();
+    let tantivy_dir = tempfile::TempDir::new().unwrap();
+    let sqlite = setup_sqlite(500_000);
+    let tantivy = setup_tantivy(&tantivy_dir);
+    let config = minimal_config(watch.path());
+
+    c.bench_function("parent_500k_files", |b| {
+        b.to_async(&rt).iter(|| {
+            let sq = Arc::clone(&sqlite);
+            let tv = Arc::clone(&tantivy);
+            let cf = Arc::clone(&config);
+            async move {
+                let _ = fs_server::query::execute("parent:/BENCH/dir_42", sq, tv, cf).await;
+            }
+        });
+    });
+}
+
 criterion_group!(
     benches,
+    bench_parent,
     bench_exact_search,
     bench_extension_filter,
     bench_fuzzy_search,

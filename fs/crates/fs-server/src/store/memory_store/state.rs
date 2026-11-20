@@ -227,6 +227,28 @@ fn path_eq(entries: &[Entry], tails: &str, i: u32, path: &str) -> bool {
     }
 }
 
+/// [`path_eq`] with ASCII case ignored, as SQLite's `NOCASE` does. Bytes
+/// outside ASCII compare exactly, so a match never ends inside a character.
+fn path_eq_ignore_case(entries: &[Entry], tails: &str, i: u32, path: &str) -> bool {
+    let mut rest = path.as_bytes();
+    let mut j = i;
+    loop {
+        let e = &entries[j as usize];
+        let tail = tail_in(tails, e).as_bytes();
+        let Some(cut) = rest.len().checked_sub(tail.len()) else {
+            return false;
+        };
+        if !rest[cut..].eq_ignore_ascii_case(tail) {
+            return false;
+        }
+        rest = &rest[..cut];
+        match e.parent {
+            NO_PARENT => return rest.is_empty(),
+            p => j = p,
+        }
+    }
+}
+
 fn hash_entry(entries: &[Entry], tails: &str, hasher: &DefaultHashBuilder, i: u32) -> u64 {
     with_path_buf(|buf| {
         write_path(entries, tails, i, buf);
@@ -859,6 +881,12 @@ impl<'a> EntryRef<'a> {
 
     pub(super) fn parent_index(&self) -> u32 {
         self.e.parent
+    }
+
+    /// The entry this one extends has the path `dir`, ignoring ASCII case;
+    /// there must be one.
+    pub(super) fn parent_path_eq_ignore_case(&self, dir: &str) -> bool {
+        path_eq_ignore_case(&self.st.entries, &self.st.tails, self.e.parent, dir)
     }
 
     /// Writes the path of the entry this one extends; there must be one.

@@ -603,7 +603,7 @@ fn extension_glob_finds_folders_and_dot_names_the_column_lacks() {
 
 #[test]
 fn windows_paths_have_subtrees_in_both_stores() {
-    use crate::store::{memory_store::MemoryStore, CmpOp, SqlCondition};
+    use crate::store::{memory_store::MemoryStore, SqlCondition};
 
     let paths = [
         r"C:\w",
@@ -643,15 +643,15 @@ fn windows_paths_have_subtrees_in_both_stores() {
         "a.txt and sub"
     );
 
-    // parent:C:\w plans to these two conditions.
-    let direct = [
-        SqlCondition::ParentPath(r"C:\w".into()),
-        SqlCondition::DepthOp(CmpOp::Eq, 2),
-    ];
     let names = |rows: Vec<FileRecord>| sorted(rows.into_iter().map(|r| r.path).collect());
     let want = vec![r"C:\w\a.txt".to_owned(), r"C:\w\sub".to_owned()];
-    assert_eq!(names(sqlite.search_conditions(&direct, 100).unwrap()), want);
-    assert_eq!(names(memory.search_conditions(&direct, 100).unwrap()), want);
+    // What parent:C:\w plans to, in any case, as Windows paths compare.
+    for dir in [r"C:\w", r"c:\W"] {
+        let direct = [SqlCondition::ParentIs(dir.into())];
+        assert_eq!(names(sqlite.search_conditions(&direct, 100).unwrap()), want);
+        assert_eq!(names(memory.search_conditions(&direct, 100).unwrap()), want);
+    }
+    assert!(sqlite.children_of(r"c:\W").unwrap().is_empty(), "exact");
 
     assert_eq!(sqlite.remove_directory(r"C:\w\sub").unwrap(), 1);
     assert_eq!(memory.remove_directory(r"C:\w\sub"), 1);
@@ -714,25 +714,50 @@ fn reopening_a_store_leaves_its_schema_alone() {
 }
 
 #[test]
-fn an_old_parent_index_is_repointed_at_the_parent_column() {
+fn an_old_parent_index_is_rebuilt_on_the_parent_column_ignoring_case() {
+    for old in ["files(path)", "files(parent)"] {
+        let dir = tempfile::tempdir().unwrap();
+        let db = dir.path().join("index.db");
+        drop(SqliteStore::new(&db).unwrap());
+        rusqlite::Connection::open(&db)
+            .unwrap()
+            .execute_batch(&format!(
+                "DROP INDEX idx_files_parent; CREATE INDEX idx_files_parent ON {old};"
+            ))
+            .unwrap();
+        drop(SqliteStore::new(&db).unwrap());
+        let cols: Vec<(String, String)> = rusqlite::Connection::open(&db)
+            .unwrap()
+            .prepare("SELECT name, coll FROM pragma_index_xinfo('idx_files_parent') WHERE key = 1")
+            .unwrap()
+            .query_map([], |r| Ok((r.get(0)?, r.get(1)?)))
+            .unwrap()
+            .collect::<rusqlite::Result<_>>()
+            .unwrap();
+        assert_eq!(cols, [("parent".to_owned(), "NOCASE".to_owned())], "{old}");
+    }
+}
+
+#[test]
+fn parent_lookups_use_the_parent_index() {
     let dir = tempfile::tempdir().unwrap();
-    let db = dir.path().join("index.db");
-    drop(SqliteStore::new(&db).unwrap());
-    rusqlite::Connection::open(&db)
-        .unwrap()
-        .execute_batch(
-            "DROP INDEX idx_files_parent;
-             CREATE INDEX idx_files_parent ON files(path);",
-        )
-        .unwrap();
-    drop(SqliteStore::new(&db).unwrap());
-    let cols: Vec<String> = rusqlite::Connection::open(&db)
-        .unwrap()
-        .prepare("SELECT name FROM pragma_index_info('idx_files_parent')")
-        .unwrap()
-        .query_map([], |r| r.get(0))
-        .unwrap()
-        .collect::<rusqlite::Result<_>>()
-        .unwrap();
-    assert_eq!(cols, ["parent"]);
+    let s = SqliteStore::new(&dir.path().join("index.db")).unwrap();
+    let conn = s.get_conn().unwrap();
+    let (cond, _) = crate::store::SqlCondition::ParentIs("/a".into()).to_sql();
+    for sql in [
+        format!("SELECT id FROM files WHERE {cond}"),
+        "SELECT path FROM files WHERE parent = ?1 COLLATE NOCASE AND parent = ?1".to_owned(),
+    ] {
+        let plan: Vec<String> = conn
+            .prepare(&format!("EXPLAIN QUERY PLAN {sql}"))
+            .unwrap()
+            .query_map(["/a"], |r| r.get(3))
+            .unwrap()
+            .collect::<rusqlite::Result<_>>()
+            .unwrap();
+        assert!(
+            plan.iter().any(|p| p.contains("idx_files_parent")),
+            "{sql}: {plan:?}"
+        );
+    }
 }

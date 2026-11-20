@@ -275,14 +275,10 @@ fn emit_function(
                 .push(SqlCondition::PathLike(format!("{}%", like_escape(path))));
         }
         Function::Parent(path) => {
-            // ParentPath covers the whole subtree (and the memory store's
-            // per-directory fast path); the depth check keeps direct children.
+            // `C:\` names the directory that `C:\Windows` stores as its parent, `C:`.
             let dir = path.trim_end_matches(['/', '\\']);
-            let depth = dir.bytes().filter(|&b| b == b'/' || b == b'\\').count();
             p.sql_conditions
-                .push(SqlCondition::ParentPath(dir.to_owned()));
-            p.sql_conditions
-                .push(SqlCondition::DepthOp(CmpOp::Eq, depth + 1));
+                .push(SqlCondition::ParentIs(dir.to_owned()));
         }
         Function::Content(text) => {
             p.tantivy_query = Some(text.clone());

@@ -101,7 +101,7 @@ drive.
 | Function | Aliases | Description |
 |----------|---------|-------------|
 | `ext:<list>` | | Extension, semicolon-delimited: `ext:jpg;png;gif` |
-| `parent:<path>` | `infolder:`, `nosubfolders:`, `dir:` | Files in exactly this folder, not its subfolders |
+| `parent:<path>` | `infolder:`, `nosubfolders:`, `dir:` | Files in exactly this folder, not its subfolders. Ignores ASCII case, so `parent:c:\windows` finds `C:\Windows\notepad.exe` |
 | `child:<name>` | | Folders containing a child with this name |
 | `startwith:<text>` | `startswith:` | Filename starts with text (ignores case unless `case:`) |
 | `endwith:<text>` | `endswith:` | Filename ends with text (ignores case unless `case:`) |
@@ -592,7 +592,7 @@ pub fn plan(expr: &Expr, default_modifiers: &Modifiers) -> Result<QueryPlan, Que
 | `dm:`, `dc:`, `da:` | resolve `DateExpr` → `MtimeRange`/`CtimeRange` |
 | `size:` | `SizeRange` or `SizeOp` |
 | `ext:list` | `ExtIn(list)` |
-| `parent:path` | `ParentPath(path)` + `DepthOp(Eq, depth(path) + 1)` |
+| `parent:path` | `ParentIs(path)`, trailing separators trimmed: `parent = ? COLLATE NOCASE` on `idx_files_parent` |
 | `content:text` | `tantivy_query = Some(text)`, strategy = `TantivyThenSqlite` |
 | `fuzzy:term` | strategy = `FuzzyFilter(term)` |
 | `dupe:` | strategy = `DupeSearch(DupeKind::Name)` |

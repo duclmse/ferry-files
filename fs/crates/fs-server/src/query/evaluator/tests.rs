@@ -659,6 +659,8 @@ mod functions_end_to_end {
             ("infolder:/r/src", src_children),
             ("nosubfolders:/r/src", src_children),
             ("parent:/r/a_b", &["/r/a_b/in.txt"]),
+            ("parent:/R/Src", src_children),
+            ("parent:/", &["/r"]),
             ("parents:2", &["/r/aXb", "/r/a_b", "/r/docs", "/r/src"]),
             ("root:", &["/r"]),
             (

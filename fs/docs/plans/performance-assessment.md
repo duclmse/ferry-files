@@ -258,11 +258,25 @@ Streaming also took the SQLite store's crawl peak from 879 MB to 250 MB.
 
 - The peak counter reached 399 MB at the end of the crawl, about 100 MB above
   every sample. The likely cause is the store's last reallocations (old and
-  new buffer both live) while the file table is still held. The crawl knows
-  the table's entry count before it sends anything, so reserving the store
-  once up front would remove them.
+  new buffer both live) while the file table is still held. The crawl now
+  counts the entries and name bytes under a root from the file table and
+  reserves the store once before its first crawl (6673b25). Not yet measured
+  on a runner: the CI run for it was refused for account billing.
 - Steady memory is about 35 MB above Everything's, close to what
   `fsd` holds besides the index (runtime, full-text writer, threads).
-- `parent:` takes 61 ms against about 45 ms. Matching it needs a list of
-  children per folder, which costs memory and must handle entries added
-  before their parent.
+
+**`parent:` after the 61 ms above.** It planned to "under this folder" plus
+"at this depth", a test of every path, and the memory store compared case
+exactly, so `parent:c:\windows` found nothing there while SQLite and
+Everything ignore case. It is now one condition, `ParentIs`, on the text
+before an entry's last separator, ignoring ASCII case in both stores:
+
+- SQLite: `parent = ? COLLATE NOCASE`, with `idx_files_parent` rebuilt once
+  with `NOCASE` so that is an index lookup. The exact-case lookups the crawl
+  makes (`children_of`, `has_child`) add the NOCASE comparison to reach the
+  same index. 500k rows, one folder: 59.8 ms to 0.058 ms.
+- Memory store: an entry whose tail is `/name` is in its parent entry, so the
+  answer is the parent's, worked out once per parent by comparing tails from
+  the end, without building a path. 2M entries: `parent:/bench` 14.8 to
+  3.8 ms, one folder 6.8 to 3.7 ms; what is left is the scan itself. Not yet
+  measured on a runner against Everything's ~45 ms for `parent:C:\`.

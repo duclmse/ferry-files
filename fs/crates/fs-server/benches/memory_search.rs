@@ -127,6 +127,7 @@ fn bench_queries(c: &mut Criterion) {
         ("dupe_size", "sizedupe: count:100"),
         // Every path shares the prefix, as every path on C: shares C:\.
         ("parent_shared_prefix", "parent:/bench"),
+        ("parent_one_folder", "parent:/bench/report/report"),
         ("depth_no_match", "depth:99"),
     ] {
         group.bench_function(label, |b| {

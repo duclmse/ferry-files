@@ -2,6 +2,7 @@ use std::borrow::Cow;
 
 use super::state::{EntryRef, NO_PARENT};
 use super::{CmpOp, DupeKind, MetaFilters, RecordView, SqlCondition};
+use crate::store::parent_text;
 
 // ---------------------------------------------------------------------------
 // Helpers
@@ -303,6 +304,7 @@ pub(super) enum Compiled<'a> {
     /// The `usize` is this condition's slot in [`PathMemo::verdicts`].
     PathLike(Like<'a>, usize),
     Under(&'a str),
+    ParentIs(&'a str),
     Depth(CmpOp, usize),
     Or(Vec<Vec<Compiled<'a>>>),
     Not(Vec<Compiled<'a>>),
@@ -325,6 +327,7 @@ fn compile_with<'a>(conds: &'a [SqlCondition], slots: &mut usize) -> Vec<Compile
                 Compiled::PathLike(Like::new(p), *slots - 1)
             }
             SqlCondition::ParentPath(dir) => Compiled::Under(dir),
+            SqlCondition::ParentIs(dir) => Compiled::ParentIs(dir),
             SqlCondition::DepthOp(op, d) => Compiled::Depth(*op, *d),
             SqlCondition::Or(branches) => {
                 Compiled::Or(branches.iter().map(|b| compile_with(b, slots)).collect())
@@ -343,6 +346,7 @@ impl Compiled<'_> {
             Self::NameGlobNoCase(glob) => glob.matches(e.name_str()),
             Self::PathLike(like, slot) => memo.path_matches(e, like, *slot),
             Self::Under(dir) => memo.under(e, dir),
+            Self::ParentIs(dir) => memo.parent_is(e, dir),
             Self::Depth(op, d) => cmp_op_usize(*op, memo.depth(e), *d),
             Self::Or(branches) => branches
                 .iter()
@@ -367,6 +371,10 @@ pub(super) struct PathMemo {
     /// Separators in the parent's path.
     parent_depth: usize,
     verdicts: Vec<Option<bool>>,
+    /// `ParentIs`: the last parent entry tested, and whether its path matched.
+    /// Kept apart from `parent` because this answer needs no path built.
+    tested_parent: u32,
+    parent_matches: bool,
 }
 
 fn separators(s: &str) -> usize {
@@ -381,6 +389,8 @@ impl PathMemo {
             parent_len: 0,
             parent_depth: 0,
             verdicts: Vec::new(),
+            tested_parent: NO_PARENT,
+            parent_matches: false,
         }
     }
 
@@ -409,6 +419,23 @@ impl PathMemo {
         self.path.truncate(self.parent_len);
         self.path.push_str(e.tail());
         under_dir(&self.path, dir)
+    }
+
+    /// `ParentIs`: the entry is directly in `dir`. An entry whose tail is
+    /// `/name` extends its parent directory, so the answer is the parent's,
+    /// found once per directory by comparing tails from the end. Building
+    /// each directory's path instead cost ~60 ms over a 1.4M-entry volume.
+    fn parent_is(&mut self, e: &EntryRef<'_>, dir: &str) -> bool {
+        let parent = e.parent_index();
+        if parent == NO_PARENT || !e.tail().starts_with(['/', '\\']) {
+            // A top-level path, or an archive's member under `archive.zip!`.
+            return e.with_path(|p| parent_text(p).eq_ignore_ascii_case(dir));
+        }
+        if parent != self.tested_parent {
+            self.tested_parent = parent;
+            self.parent_matches = e.parent_path_eq_ignore_case(dir);
+        }
+        self.parent_matches
     }
 
     /// `DepthOp`: separators in the full path.
@@ -468,6 +495,9 @@ impl SqlCondition {
             SqlCondition::ExtIn(exts) => r.extension().is_some_and(|e| exts.iter().any(|x| x == e)),
             SqlCondition::ExtOrNone(ext) => r.extension().is_none_or(|e| e == ext),
             SqlCondition::ParentPath(p) => r.path_is_under(p),
+            SqlCondition::ParentIs(dir) => {
+                r.with_path(|p| parent_text(p).eq_ignore_ascii_case(dir))
+            }
             SqlCondition::NameLenOp(op, n) => cmp_op_usize(*op, r.name().chars().count(), *n),
             SqlCondition::DepthOp(op, d) => cmp_op_usize(*op, r.path_depth(), *d),
             SqlCondition::IsArchiveEntry => r.is_archive_entry(),
