@@ -359,6 +359,11 @@ struct Editor {
     version: String,
     /// Shared by the copies of it (the tab's entry, the shown file).
     saved_text: std::sync::Arc<str>,
+    /// The file's lines end in CRLF (most of them, when it has both). The text is edited with LF
+    /// (as a `<textarea>` keeps it) and saved with CRLF again.
+    crlf: bool,
+    /// The file had both LF and CRLF; it's saved with one.
+    mixed: bool,
 }
 
 /// Where a text editor keeps its file: the full-window editor's (`Ctx::full_slot`) or a pane's

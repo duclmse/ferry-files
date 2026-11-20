@@ -511,6 +511,16 @@ th.num {
   position: relative;
 }
 
+/* Lines out of view, plain. Unwrapped and numbered, they start where the numbered lines' text does,
+   so the layer is as wide. */
+.code-layer .far {
+  display: block;
+}
+
+.code-edit.numbered.nowrap .code-layer .far {
+  padding-left: calc(var(--ln-w) + 2ch);
+}
+
 .code-layer .ln.cur {
   background: var(--hover);
 }

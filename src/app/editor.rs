@@ -10,8 +10,9 @@ impl Ctx {
         spawn_local(async move {
             match call::<TextFile>("read_text", json!({ "src": src.key(), "path": path })).await {
                 Ok(f) => {
-                    self.editor.set(Some(Editor { src, pane: p.id, path, version: f.version, saved_text: f.text.as_str().into() }));
-                    self.text.set(f.text);
+                    let (text, crlf, mixed) = to_lf(f.text);
+                    self.editor.set(Some(Editor { src, pane: p.id, path, version: f.version, saved_text: text.as_str().into(), crlf, mixed }));
+                    self.text.set(text);
                     self.status.set((String::new(), ""));
                     self.confirm_discard.set(false);
                     self.finding.set(false);
@@ -35,7 +36,10 @@ impl Ctx {
         self.busy.set(true);
         slot.status.set(("Saving…".into(), ""));
         spawn_local(async move {
-            let args = json!({ "src": ed.src.key(), "path": ed.path, "text": text, "base_version": ed.version, "create": false });
+            // With the file's own line endings.
+            let crlf = ed.crlf.then(|| text.replace('\n', "\r\n"));
+            let args = json!({ "src": ed.src.key(), "path": ed.path, "text": crlf.as_ref().unwrap_or(&text), "base_version": ed.version, "create": false });
+            drop(crlf);
             match call::<WriteResult>("write_text", args).await {
                 Ok(r) => {
                     let note = if r.backup.is_some() { format!(" The old version is backed up on {}.", crate::os::the_computer()) } else { String::new() };
@@ -74,7 +78,8 @@ impl Ctx {
         spawn_local(async move {
             match call::<TextFile>("read_text", json!({ "src": src.key(), "path": path })).await {
                 Ok(f) => {
-                    let ed = Editor { src, pane: p.id, path, version: f.version, saved_text: f.text.as_str().into() };
+                    let (text, crlf, mixed) = to_lf(f.text);
+                    let ed = Editor { src, pane: p.id, path, version: f.version, saved_text: text.as_str().into(), crlf, mixed };
                     // Its text is in the editor while it's shown.
                     let doc = Doc { ed: ed.clone(), text: String::new() };
                     let at = p.doc_at.get_untracked();
@@ -91,7 +96,7 @@ impl Ctx {
                         }
                     });
                     let at = if keep { at + 1 } else { at.min(p.docs.with_untracked(Vec::len) - 1) };
-                    show(p, at, Doc { ed, text: f.text });
+                    show(p, at, Doc { ed, text });
                 }
                 Err(e) => p.error(e),
             }
@@ -277,11 +282,11 @@ fn escape_into(out: &mut String, s: &str) {
     }
 }
 
-/// The text as HTML for the layer under the editing box: a `<span class="ln">` per line (its
-/// number in `data-n`, shown by CSS), a `<span>` per coloured run and a `<mark>` per match. Every
-/// line ends with a line break, so an empty last line has its height. The text is escaped.
-/// Colours and marks are only on the lines in `rich` (by number): the others are plain text, so a
-/// long file is a few nodes a line and not one per word.
+/// The text as HTML for the layer under the editing box: a `<span class="ln">` per line in `rich`
+/// (by number; its number in `data-n`, shown by CSS), with a `<span>` per coloured run and a
+/// `<mark>` per match. The lines before and after are each one plain `<span class="far">`: they're
+/// out of view, and a long file is then a few hundred nodes, not a few per line. Every line ends
+/// with a line break, so an empty last line has its height. The text is escaped.
 fn code_html(t: &str, runs: Option<&[(u8, u32)]>, hits: &[(usize, usize)], shown: Option<usize>, rich: Range<usize>) -> String {
     let runs = runs.filter(|r| runs_fit(r, t));
     // (end, class) per run.
@@ -293,58 +298,101 @@ fn code_html(t: &str, runs: Option<&[(u8, u32)]>, hits: &[(usize, usize)], shown
             ends.push((at, TOKEN_CLASSES.get(k as usize).copied().unwrap_or("")));
         }
     }
-    let mut out = String::with_capacity(t.len() * 2 + 64);
-    let (mut ri, mut hi, mut line, mut pos) = (0, 0, 1, 0);
-    out.push_str("<span class=\"ln\" data-n=\"1\">");
-    while pos < t.len() {
-        while ends.get(ri).is_some_and(|e| e.0 <= pos) {
-            ri += 1;
-        }
-        while hits.get(hi).is_some_and(|h| h.1 <= pos) {
-            hi += 1;
-        }
-        let plain = !rich.contains(&line);
-        let (class, run_end) = match ends.get(ri) {
-            Some(e) if !plain => (e.1, e.0),
-            _ => ("", t.len()),
-        };
-        let (hit, hit_edge) = match hits.get(hi) {
-            _ if plain => (None, t.len()),
-            Some(&(s, e)) if pos >= s => (Some(hi), e),
-            Some(&(s, _)) => (None, s),
-            None => (None, t.len()),
-        };
-        let nl = t[pos..].find('\n').map_or(t.len(), |i| pos + i + 1);
-        let mut end = run_end.min(hit_edge).min(nl);
-        while !t.is_char_boundary(end) {
-            end += 1;
-        }
-        let piece = &t[pos..end];
-        if let Some(h) = hit {
-            out.push_str(if shown == Some(h) { "<mark class=\"hit on\">" } else { "<mark class=\"hit\">" });
-        }
-        if !class.is_empty() {
-            out.push_str("<span class=\"");
-            out.push_str(class);
-            out.push_str("\">");
-        }
-        escape_into(&mut out, piece);
-        if !class.is_empty() {
-            out.push_str("</span>");
-        }
-        if hit.is_some() {
-            out.push_str("</mark>");
-        }
-        pos = end;
-        if piece.ends_with('\n') {
-            line += 1;
-            out.push_str("</span><span class=\"ln\" data-n=\"");
+    // The rich lines' bytes, `a..b`; b is None when they go on to the last line.
+    let (first, a) = line_start(t, rich.start.max(1)).map_or((1, 0), |a| (rich.start.max(1), a));
+    let b = if rich.end <= first { Some(a) } else { line_start(t, rich.end) };
+    let mut out = String::with_capacity((a + 64).max(4096));
+    if a > 0 {
+        out.push_str("<span class=\"far\">");
+        escape_into(&mut out, &t[..a]);
+        out.push_str("</span>");
+    }
+    if b != Some(a) {
+        let stop = b.unwrap_or(t.len());
+        let (mut ri, mut hi, mut line, mut pos) = (0, 0, first, a);
+        let open = |out: &mut String, line: usize| {
+            out.push_str("<span class=\"ln\" data-n=\"");
             out.push_str(&line.to_string());
             out.push_str("\">");
+        };
+        open(&mut out, line);
+        while pos < stop {
+            while ends.get(ri).is_some_and(|e| e.0 <= pos) {
+                ri += 1;
+            }
+            while hits.get(hi).is_some_and(|h| h.1 <= pos) {
+                hi += 1;
+            }
+            let (class, run_end) = ends.get(ri).map_or(("", t.len()), |e| (e.1, e.0));
+            let (hit, hit_edge) = match hits.get(hi) {
+                Some(&(s, e)) if pos >= s => (Some(hi), e),
+                Some(&(s, _)) => (None, s),
+                None => (None, t.len()),
+            };
+            let nl = t[pos..].find('\n').map_or(t.len(), |i| pos + i + 1);
+            let mut end = run_end.min(hit_edge).min(nl);
+            while !t.is_char_boundary(end) {
+                end += 1;
+            }
+            let piece = &t[pos..end];
+            if let Some(h) = hit {
+                out.push_str(if shown == Some(h) { "<mark class=\"hit on\">" } else { "<mark class=\"hit\">" });
+            }
+            if !class.is_empty() {
+                out.push_str("<span class=\"");
+                out.push_str(class);
+                out.push_str("\">");
+            }
+            escape_into(&mut out, piece);
+            if !class.is_empty() {
+                out.push_str("</span>");
+            }
+            if hit.is_some() {
+                out.push_str("</mark>");
+            }
+            pos = end;
+            if piece.ends_with('\n') {
+                line += 1;
+                out.push_str("</span>");
+                // The rich lines end at a line's start; the last line is opened even when empty.
+                if pos < stop || b.is_none() {
+                    open(&mut out, line);
+                }
+            }
+        }
+        if b.is_none() {
+            // The last line has no line break of its own (or is the empty one after the last).
+            out.push_str("\n</span>");
         }
     }
-    // The last line has no line break of its own (or is the empty one after the last).
-    out.push_str("\n</span>");
+    if let Some(b) = b {
+        out.push_str("<span class=\"far\">");
+        escape_into(&mut out, &t[b..]);
+        out.push_str("\n</span>");
+    }
+    out
+}
+
+/// Where line `k` (from 1) starts in `t`, in bytes; None past the last line.
+fn line_start(t: &str, k: usize) -> Option<usize> {
+    match k {
+        0 => None,
+        1 => Some(0),
+        k => t.match_indices('\n').nth(k - 2).map(|(i, _)| i + 1),
+    }
+}
+
+/// Where each line starts in the layer's text (UTF-16, as a DOM `Range` counts). The text has LF
+/// line breaks only (`to_lf`).
+fn utf16_starts(t: &str) -> Vec<u32> {
+    let mut out = vec![0];
+    let mut at = 0u32;
+    for c in t.chars() {
+        at += c.len_utf16() as u32;
+        if c == '\n' {
+            out.push(at);
+        }
+    }
     out
 }
 
@@ -355,17 +403,15 @@ fn band(first: usize, end: usize) -> Range<usize> {
     first.saturating_sub(m).max(1)..end + m
 }
 
-/// The line endings `t` uses: LF, CRLF, or Mixed. LF when it has none.
-fn line_ending(t: &str) -> &'static str {
-    let (mut lf, mut crlf) = (false, false);
-    let b = t.as_bytes();
-    for i in (0..b.len()).filter(|&i| b[i] == b'\n') {
-        if i > 0 && b[i - 1] == b'\r' { crlf = true } else { lf = true }
-        if lf && crlf {
-            return "Mixed";
-        }
+/// `t` with LF line breaks, as the editing box keeps it (a lone CR is one too); whether most of
+/// its lines ended in CRLF, and whether it had both.
+fn to_lf(t: String) -> (String, bool, bool) {
+    if !t.contains('\r') {
+        return (t, false, false);
     }
-    if crlf { "CRLF" } else { "LF" }
+    let crlf = t.matches("\r\n").count();
+    let lf = t.matches('\n').count() - crlf;
+    (t.replace("\r\n", "\n").replace('\r', "\n"), crlf > lf, crlf > 0 && lf > 0)
 }
 
 /// (lines, characters) in a selection; (0, 0) when it's empty. A last line break doesn't start a
@@ -437,6 +483,8 @@ pub(super) fn TextEditor(file: Slot) -> impl IntoView {
     let drawn_on = slot.text.with_untracked(|t| t.len() <= LAYER_MAX);
     // Lines painted with colours and marks (by number); the rest are plain.
     let painted = StoredValue::new(0..0usize);
+    // Where each line starts in the layer's text, when it was painted.
+    let starts = StoredValue::new(Vec::<u32>::new());
     let runs = StoredValue::new(None::<Vec<(u8, u32)>>);
     // Colours stopped partway (far in, or slow): the rest is plain.
     let stopped = RwSignal::new(false);
@@ -455,7 +503,7 @@ pub(super) fn TextEditor(file: Slot) -> impl IntoView {
     let shown = RwSignal::new(None::<usize>);
     let (wrap, numbers) = (ctx.wrap_text, ctx.line_numbers);
     let lines = Memo::new(move |_| slot.text.with(|t| t.matches('\n').count() + 1));
-    let ending = Memo::new(move |_| slot.text.with(|t| line_ending(t)));
+    let (crlf, mixed) = slot.editor.with_untracked(|e| e.as_ref().map_or((false, false), |e| (e.crlf, e.mixed)));
     // Files are read as UTF-8 only; a byte order mark is kept as the text's first character.
     let encoding = Memo::new(move |_| slot.text.with(|t| if t.starts_with('\u{feff}') { "UTF-8 with BOM" } else { "UTF-8" }));
 
@@ -465,35 +513,55 @@ pub(super) fn TextEditor(file: Slot) -> impl IntoView {
         if let Ok(Some(old)) = l.query_selector(".ln.cur") {
             let _ = old.class_list().remove_1("cur");
         }
-        if let Ok(Some(el)) = l.query_selector(&format!(":scope > .ln:nth-child({line})")) {
+        if let Ok(Some(el)) = l.query_selector(&format!(":scope > .ln[data-n=\"{line}\"]")) {
             let _ = el.class_list().add_1("cur");
         }
     };
-    // The lines in view (by number, `first..end`), found by the layer's lines' places.
-    let in_view = move || -> Range<usize> {
-        let (Some(t), Some(l)) = (ta.get_untracked(), layer.get_untracked()) else { return 1..2 };
-        let (top, h) = (t.scroll_top(), t.client_height().max(LINE_PX));
-        let kids = l.children();
-        let n = kids.length() as usize;
-        if n == 0 {
-            return 1..(top + h) as usize / LINE_PX as usize + 2;
+    // The top of line `k` (from 1) in the layer, in px: its `.ln`, or in a plain part, where its
+    // first character is.
+    let line_top = move |k: usize| -> Option<f64> {
+        let l = layer.get_untracked()?;
+        let p = painted.get_value();
+        if p.contains(&k) {
+            let e = l.query_selector(&format!(":scope > .ln[data-n=\"{k}\"]")).ok().flatten()?;
+            return Some(e.dyn_into::<web_sys::HtmlElement>().ok()?.offset_top() as f64);
         }
-        let at = |i: usize| kids.item(i as u32).and_then(|e| e.dyn_into::<web_sys::HtmlElement>().ok()).map_or(0, |e| e.offset_top());
-        // The first line whose top is below `y`.
-        let below = |y: i32| {
-            let (mut lo, mut hi) = (0, n);
+        let far = if k < p.start { l.first_element_child() } else { l.last_element_child() }?;
+        if !far.class_list().contains("far") {
+            return None;
+        }
+        let node = far.first_child()?;
+        let (from, at) = starts.with_value(|s| Some((if k < p.start { 0 } else { *s.get(p.end - 1)? }, *s.get(k - 1)?)))?;
+        let r = document().create_range().ok()?;
+        r.set_start(&node, at - from).ok()?;
+        r.set_end(&node, at - from + 1).ok()?;
+        Some(r.get_bounding_client_rect().top() - l.get_bounding_client_rect().top() + l.scroll_top() as f64)
+    };
+    // The lines in view (by number, `first..end`).
+    let in_view = move || -> Range<usize> {
+        let Some(t) = ta.get_untracked() else { return 1..2 };
+        let (top, h) = (t.scroll_top(), t.client_height().max(LINE_PX));
+        let n = lines.get_untracked();
+        // How many lines start at or above `y`; a guess by the line height before it's painted.
+        let above = |y: i32| {
+            let (mut lo, mut hi) = (1, n + 1);
             while lo < hi {
                 let mid = (lo + hi) / 2;
-                if at(mid) <= y { lo = mid + 1 } else { hi = mid }
+                match line_top(mid) {
+                    Some(at) if at <= y as f64 => lo = mid + 1,
+                    Some(_) => hi = mid,
+                    None => return (y / LINE_PX) as usize + 1,
+                }
             }
-            lo
+            lo - 1
         };
-        below(top).max(1)..below(top + h) + 1
+        above(top).max(1)..above(top + h) + 1
     };
     let draw_at = move |rich: Range<usize>| {
         let Some(l) = layer.get_untracked() else { return };
         let html = slot.text.with_untracked(|t| runs.with_value(|r| hits.with_untracked(|h| code_html(t, r.as_deref(), h, shown.get_untracked(), rich.clone()))));
         l.set_inner_html(&html);
+        starts.set_value(slot.text.with_untracked(|t| utf16_starts(t)));
         painted.set_value(rich);
         mark_line(caret.get_untracked().0);
     };
@@ -610,11 +678,7 @@ pub(super) fn TextEditor(file: Slot) -> impl IntoView {
         let (ua, ub, line) = slot.text.with_untracked(|t| (utf16_at(t, a), utf16_at(t, b), t[..a].matches('\n').count()));
         let _ = el.set_selection_range(ua, ub);
         draw();
-        let top = layer
-            .get_untracked()
-            .and_then(|l| l.query_selector(&format!(":scope > .ln:nth-child({})", line + 1)).ok().flatten())
-            .and_then(|e| e.dyn_into::<web_sys::HtmlElement>().ok())
-            .map_or(line as i32 * LINE_PX, |e| e.offset_top());
+        let top = line_top(line + 1).map_or(line as i32 * LINE_PX, |t| t as i32);
         let h = el.client_height();
         if top < el.scroll_top() || top > el.scroll_top() + h - 2 * LINE_PX {
             el.set_scroll_top(top - h / 3);
@@ -996,7 +1060,7 @@ pub(super) fn TextEditor(file: Slot) -> impl IntoView {
                 (l, c) => Some(view! { <span>{format!("{l} {}, {c} {} selected", if l == 1 { "line" } else { "lines" }, if c == 1 { "character" } else { "characters" })}</span> }),
             }}
             <span title="Line:column">{move || { let (l, c) = caret.get(); format!("{l}:{c}") }}</span>
-            <span title="Line endings">{ending}</span>
+            <span title=if mixed { "Line endings. The file had both LF and CRLF: it's saved with one." } else { "Line endings" }>{if crlf { "CRLF" } else { "LF" }}</span>
             <span>{encoding}</span>
             <span>{language}</span>
             {slot.pane.map(|p| view! { <ViewSeg pane=p/> })}
@@ -1046,18 +1110,27 @@ mod tests {
         let h = code_html(t, Some(&[(4, 8)]), &hits, None, 2..3);
         assert_eq!(
             h,
-            "<span class=\"ln\" data-n=\"1\">ab\n</span><span class=\"ln\" data-n=\"2\"><span class=\"tok-keyword\">a</span><mark class=\"hit\"><span class=\"tok-keyword\">b</span></mark><span class=\"tok-keyword\">\n</span></span><span class=\"ln\" data-n=\"3\">ab\n</span>"
+            "<span class=\"far\">ab\n</span><span class=\"ln\" data-n=\"2\"><span class=\"tok-keyword\">a</span><mark class=\"hit\"><span class=\"tok-keyword\">b</span></mark><span class=\"tok-keyword\">\n</span></span><span class=\"far\">ab\n</span>"
         );
+        // To the last line, and an empty last line.
+        assert_eq!(code_html("a\nb", None, &[], None, 2..9), "<span class=\"far\">a\n</span><span class=\"ln\" data-n=\"2\">b\n</span>");
+        assert_eq!(code_html("a\n", None, &[], None, 1..2), "<span class=\"ln\" data-n=\"1\">a\n</span><span class=\"far\">\n</span>");
+        // Lines past the end: all of it, rich.
+        assert_eq!(code_html("a", None, &[], None, 5..9), "<span class=\"ln\" data-n=\"1\">a\n</span>");
+        assert_eq!(line_start("a\nb\n", 3), Some(4));
+        assert_eq!(line_start("a\nb\n", 4), None);
+        assert_eq!(utf16_starts("a\n😀\nb"), [0, 2, 5]);
         assert_eq!(band(100, 110), 40..170);
         assert_eq!(band(1, 300), 1..599);
     }
 
     #[test]
     fn line_endings_and_selections() {
-        assert_eq!(line_ending("a\nb"), "LF");
-        assert_eq!(line_ending("a"), "LF");
-        assert_eq!(line_ending("a\r\nb\r\n"), "CRLF");
-        assert_eq!(line_ending("a\r\nb\n"), "Mixed");
+        assert_eq!(to_lf("a\nb".into()), ("a\nb".into(), false, false));
+        assert_eq!(to_lf("a\r\nb\r\n".into()), ("a\nb\n".into(), true, false));
+        assert_eq!(to_lf("a\r\nb\r\nc\n".into()), ("a\nb\nc\n".into(), true, true));
+        assert_eq!(to_lf("a\r\nb\nc\n".into()), ("a\nb\nc\n".into(), false, true));
+        assert_eq!(to_lf("a\rb".into()), ("a\nb".into(), false, false));
         assert_eq!(selected(""), (0, 0));
         assert_eq!(selected("ab"), (1, 2));
         assert_eq!(selected("a\nb"), (2, 3));
