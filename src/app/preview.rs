@@ -900,7 +900,23 @@ where
             _ => {}
         }
     };
-    piece_view(pieces, next, error, loading, scrolled, cap)
+    // After a failed read, a button reads it again: the start, or the piece after the last.
+    let retry = move || {
+        error.set(None);
+        fetch(if pieces.with_untracked(Vec::is_empty) { 0 } else { next.get_untracked().unwrap_or(0) });
+    };
+    piece_view(pieces, next, error, loading, scrolled, retry, cap)
+}
+
+/// What failed to load, and a button to load it again: "Try again" when nothing is shown yet,
+/// else "Load more".
+fn retry_line(e: String, nothing_yet: bool, again: impl Fn() + 'static) -> impl IntoView {
+    view! {
+        <div class="peek-retry">
+            <span class="more">{e}</span>
+            <button class="btn small" on:click=move |_| again()>{if nothing_yet { "Try again" } else { "Load more" }}</button>
+        </div>
+    }
 }
 
 /// The pieces in a `<pre>`, with a line under it saying what's going on.
@@ -910,6 +926,7 @@ fn piece_view(
     error: RwSignal<Option<String>>,
     loading: RwSignal<bool>,
     scrolled: impl Fn(web_sys::Event) + Copy + Send + Sync + 'static,
+    retry: impl Fn() + Copy + Send + Sync + 'static,
     cap: u64,
 ) -> impl IntoView {
     let ctx = expect_context::<Ctx>();
@@ -940,7 +957,7 @@ fn piece_view(
             {tools}
             {move || if pieces.with(Vec::is_empty) {
                 match error.get() {
-                    Some(e) => view! { <span class="hint">{e}</span> }.into_any(),
+                    Some(e) => retry_line(e, true, retry).into_any(),
                     None => view! { <span class="spin"></span> }.into_any(),
                 }
             } else if empty() {
@@ -956,7 +973,7 @@ fn piece_view(
                     </pre>
                     {move || stopped().then(|| view! { <span class="more">{format!("Colours stop partway (after {}, or where colouring got slow); the rest is plain.", human_size(COLOUR_MAX))}</span> })}
                     {move || if let Some(e) = error.get() {
-                        view! { <span class="more">{e}</span> }.into_any()
+                        retry_line(e, false, retry).into_any()
                     } else if next.get().is_some_and(|n| n >= cap) {
                         view! { <span class="more">{format!("Only the first {} is shown.", human_size(cap))}</span> }.into_any()
                     } else if loading.get() {
@@ -1356,7 +1373,7 @@ fn HexPeek(src: Src, entry: Entry, #[prop(optional)] inner: Option<Inner>) -> im
                 </div>
             </div>
             {move || empty().then(|| view! { <span class="hint">"Empty"</span> })}
-            {move || error.get().map(|e| view! { <span class="more">{e}</span> })}
+            {move || error.get().map(|e| retry_line(e, chunks.with(HashMap::is_empty), move || error.set(None)))}
         </div>
     }
 }

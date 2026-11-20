@@ -512,6 +512,21 @@
   font-size: 11px;
 }
 
+/* A read that failed: why, and a button to read it again. */
+.preview .peek .peek-retry {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: center;
+  gap: 4px 8px;
+  margin: auto 0;
+}
+
+.preview .peek pre ~ .peek-retry,
+.preview .peek .hex-scroll ~ .peek-retry {
+  margin: 0;
+}
+
 .preview .pic .glyph {
   font-size: 120px;
 }
