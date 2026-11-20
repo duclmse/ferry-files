@@ -41,7 +41,8 @@ files and disks too, so books can be copied between them.
   picked in the last column also opens as more columns, one per folder in it; a
   file picked there shows in the preview (unpacked in memory, up to 64 MB).
   Right-click a file for "Show as text" or "Show as hex" (bytes, 16 to a line,
-  up to 4 MB as you scroll).
+  up to 4 MB as you scroll). A file the preview doesn't know shows "Open as…":
+  it opens as text, and its arrow lists text, binary, picture, video and ZIP.
 - Drag the edges to resize the sidebar, the two panes, the files beside the
   preview, the column view's columns and the list's columns; double-click an
   edge for its default width. The sizes are remembered.

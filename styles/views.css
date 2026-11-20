@@ -1086,3 +1086,39 @@ td.name input.rename {
 .popout .vplayer {
   border-radius: 0;
 }
+
+/* "Open as…" and its arrow, joined as one button; the arrow lists the other ways. */
+.open-as {
+  display: inline-flex;
+}
+
+.open-as .btn.main {
+  border-top-right-radius: 0;
+  border-bottom-right-radius: 0;
+}
+
+.open-as .btn.more {
+  margin-left: -1px;
+  padding: 0 4px;
+  border-top-left-radius: 0;
+  border-bottom-left-radius: 0;
+}
+
+.open-as .btn.more .ico {
+  transform: rotate(90deg);
+}
+
+.open-as-list {
+  min-width: 140px;
+}
+
+.open-as-list button.on {
+  font-weight: 600;
+}
+
+/* Under a list opened from a button: a click anywhere else closes it. */
+.menu-backdrop {
+  position: fixed;
+  inset: 0;
+  z-index: 49;
+}

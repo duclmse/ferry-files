@@ -31,7 +31,6 @@ pub(super) enum Icon {
     Eye,
     Refresh,
     Text,
-    Binary,
     Wifi,
     Search,
     Eject,
@@ -99,7 +98,6 @@ impl Icon {
             Icon::Search => r#"<circle cx="7" cy="7" r="4.5"/><path d="M10.5 10.5 14 14"/>"#,
             Icon::Wrap => r#"<path d="M2 4h12M2 8h9.5a2.25 2.25 0 0 1 0 4.5H8"/><path d="M9.5 11 8 12.5 9.5 14M2 12.5h3"/>"#,
             Icon::LineNumbers => r#"<path d="M2.5 3.5l1-.75V6.5M2 9.5h2l-2 3h2M7 4h7M7 8h7M7 12h7"/>"#,
-            Icon::Binary =>r#"<rect x="2" y="3.5" width="4" height="9" rx="2"/><path d="M10 5l2-1.5v9"/>"#,
         }
     }
 }

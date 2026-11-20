@@ -7,25 +7,75 @@ use super::sidebar::chev;
 use crate::api::{Bytes, Listing, MediaInfo, Packed, Peek};
 use wasm_bindgen::closure::Closure;
 
-/// A file shown another way than its type says, from the context menu.
+/// A file shown another way than its type says, from "Open as…" or the context menu.
 #[derive(Clone, Copy, PartialEq)]
 pub(super) enum PeekAs {
     Text,
     Hex,
+    Image,
+    Video,
+    Zip,
 }
 
-/// Under a file shown as text or binary: back to how its type shows, or the other way.
-fn peek_as_buttons(now: PeekAs, set: impl Fn(Option<PeekAs>) + Clone + Send + Sync + 'static) -> impl IntoView {
+impl PeekAs {
+    fn label(self) -> &'static str {
+        match self {
+            PeekAs::Text => "Text",
+            PeekAs::Hex => "Binary",
+            PeekAs::Image => "Picture",
+            PeekAs::Video => "Video",
+            PeekAs::Zip => "ZIP",
+        }
+    }
+}
+
+/// Under a file shown another way: back to how its type shows, or another way.
+fn peek_as_buttons(now: PeekAs, zip: bool, set: impl Fn(Option<PeekAs>) + Clone + Send + Sync + 'static) -> impl IntoView {
     let set2 = set.clone();
-    let (other, icon, label) = match now {
-        PeekAs::Text => (PeekAs::Hex, Icon::Binary, "Show as binary"),
-        PeekAs::Hex => (PeekAs::Text, Icon::Text, "Show as text"),
-    };
     view! {
         <div class="peek-as">
             <button class="btn small" on:click=move |_| set(None)>"Show normally"</button>
-            <button class="btn small" on:click=move |_| set2(Some(other))>{ico(icon)}{label}</button>
+            <OpenAs now=now zip small=true pick=move |h| set2(Some(h))/>
         </div>
+    }
+}
+
+/// "Open as…": opens as text; its arrow lists the other ways (text, binary, picture, video, and
+/// ZIP when `zip`). `now`, the way shown, is marked.
+#[component]
+fn OpenAs(#[prop(into)] pick: Callback<PeekAs>, #[prop(optional)] now: Option<PeekAs>, #[prop(optional)] zip: bool, #[prop(optional)] small: bool) -> impl IntoView {
+    // Where the list is, under the arrow; None while closed.
+    let at = RwSignal::new(None::<(f64, f64)>);
+    let ways: Vec<PeekAs> = [PeekAs::Text, PeekAs::Hex, PeekAs::Image, PeekAs::Video].into_iter().chain(zip.then_some(PeekAs::Zip)).collect();
+    let toggle = move |ev: web_sys::MouseEvent| {
+        if at.get_untracked().is_some() {
+            at.set(None);
+            return;
+        }
+        if let Some(el) = ev.current_target().and_then(|t| t.dyn_into::<web_sys::Element>().ok()) {
+            let r = el.get_bounding_client_rect();
+            at.set(Some((r.left(), r.bottom() + 4.0)));
+        }
+    };
+    view! {
+        <span class="open-as" class:small=small>
+            <button class="btn main" class:small=small title="Open as text" on:click=move |_| pick.run(PeekAs::Text)>{ico(Icon::Text)}"Open as…"</button>
+            <button class="btn more" class:small=small title="Open as…" aria-label="Other ways to open it" aria-haspopup="menu"
+                aria-expanded=move || at.get().is_some().to_string() on:click=toggle>{ico(Icon::Chevron)}</button>
+            {move || at.get().map(|(x, y)| {
+                let ways = ways.clone();
+                view! {
+                    <div class="menu-backdrop" on:click=move |_| at.set(None) on:contextmenu=move |ev| { ev.prevent_default(); at.set(None) }></div>
+                    <div class="menu open-as-list" role="menu" style=format!("left: {x}px; top: {y}px")
+                        on:keydown=move |ev| if ev.key() == "Escape" { at.set(None) }>
+                        {ways.into_iter().map(|w| view! {
+                            <button role="menuitemradio" aria-checked=(now == Some(w)).to_string() class:on=now == Some(w)
+                                on:click=move |_| { at.set(None); pick.run(w) }>{w.label()}</button>
+                        }).collect_view()}
+                    </div>
+                }
+            })}
+        </span>
     }
 }
 
@@ -100,6 +150,9 @@ pub(super) fn Preview(pane: Pane, #[prop(optional)] entry: Option<Entry>, #[prop
                     let body = match (forced, media(&e)) {
                         (Some(PeekAs::Text), _) => view! { <TextPeek src entry=e.clone()/> }.into_any(),
                         (Some(PeekAs::Hex), _) => view! { <HexPeek src entry=e.clone()/> }.into_any(),
+                        (Some(PeekAs::Image), _) => view! { <FullImage pane=p src entry=e.clone() info turn=pic_turn url=stream_url(src, &e)/> }.into_any(),
+                        (Some(PeekAs::Video), _) => view! { <Player pane=p entry=e.clone() url=stream_url(src, &e) video=true info turn=video_turn alone/> }.into_any(),
+                        (Some(PeekAs::Zip), _) => view! { <ZipList src entry=e.clone()/> }.into_any(),
                         (None, Some(Media::Image)) if alone => view! { <FullImage pane=p src entry=e.clone() info turn=pic_turn url=stream_url(src, &e)/> }.into_any(),
                         (None, Some(Media::Image)) => view! { <FullImage pane=p src entry=e.clone() info turn=pic_turn/> }.into_any(),
                         (None, Some(Media::Video)) => view! { <Player pane=p entry=e.clone() url=stream_url(src, &e) video=true info turn=video_turn alone/> }.into_any(),
@@ -117,12 +170,11 @@ pub(super) fn Preview(pane: Pane, #[prop(optional)] entry: Option<Entry>, #[prop
                         _ if e.dir => thumb(&e).into_any(),
                         // A type the preview doesn't know: offer to look inside anyway.
                         _ => {
-                            let (a, b) = (e.path.clone(), e.path.clone());
+                            let path = e.path.clone();
                             view! {
                                 {thumb(&e)}
                                 <div class="viewer-bar">
-                                    <button class="btn" on:click=move |_| p.peek_as.set(Some((a.clone(), PeekAs::Text)))>{ico(Icon::Text)}"Open as text"</button>
-                                    <button class="btn" on:click=move |_| p.peek_as.set(Some((b.clone(), PeekAs::Hex)))>{ico(Icon::Binary)}"Open as binary"</button>
+                                    <OpenAs zip=true pick=move |h| p.peek_as.set(Some((path.clone(), h)))/>
                                 </div>
                             }.into_any()
                         }
@@ -147,7 +199,7 @@ pub(super) fn Preview(pane: Pane, #[prop(optional)] entry: Option<Entry>, #[prop
                             <span class="sub path" title=e.path.clone()>{parent(&e.path)}</span>
                             {forced.map(|now| {
                                 let path = e.path.clone();
-                                peek_as_buttons(now, move |how| p.peek_as.set(how.map(|h| (path.clone(), h))))
+                                peek_as_buttons(now, true, move |how| p.peek_as.set(how.map(|h| (path.clone(), h))))
                             })}
                         </div>
                     }.into_any()
@@ -812,6 +864,10 @@ fn Zipped(pane: Pane, src: Src, zip: Entry, name: String, size: u64) -> impl Int
         match (forced.get(), media(&e)) {
             (Some(PeekAs::Text), _) => view! { <TextPeek src entry=e inner/> }.into_any(),
             (Some(PeekAs::Hex), _) => view! { <HexPeek src entry=e inner/> }.into_any(),
+            (Some(PeekAs::Image), _) => view! { <FullImage pane=p src entry=e info turn=pic_turn url/> }.into_any(),
+            (Some(PeekAs::Video), _) => view! { <Player pane=p entry=e url video=true info turn=video_turn alone=true/> }.into_any(),
+            // A ZIP in a ZIP isn't listed.
+            (Some(PeekAs::Zip), _) => view! { <span class="hint">"Not shown from inside a ZIP."</span> }.into_any(),
             (None, Some(Media::Image)) => view! { <FullImage pane=p src entry=e info turn=pic_turn url/> }.into_any(),
             (None, Some(Media::Video)) => view! { <Player pane=p entry=e url video=true info turn=video_turn alone=true/> }.into_any(),
             (None, Some(Media::Audio)) => view! { <Player pane=p entry=e url video=false info turn=video_turn alone=true/> }.into_any(),
@@ -819,8 +875,7 @@ fn Zipped(pane: Pane, src: Src, zip: Entry, name: String, size: u64) -> impl Int
             _ if is_text(&e) => view! { <TextPeek src entry=e inner/> }.into_any(),
             _ => view! {
                 <div class="viewer-bar">
-                    <button class="btn" on:click=move |_| forced.set(Some(PeekAs::Text))>{ico(Icon::Text)}"Open as text"</button>
-                    <button class="btn" on:click=move |_| forced.set(Some(PeekAs::Hex))>{ico(Icon::Binary)}"Open as binary"</button>
+                    <OpenAs pick=move |h| forced.set(Some(h))/>
                 </div>
             }.into_any(),
         }
@@ -839,7 +894,7 @@ fn Zipped(pane: Pane, src: Src, zip: Entry, name: String, size: u64) -> impl Int
             <b class="name" title=short.clone()>{short.clone()}</b>
             <span class="sub">{facts}</span>
             <span class="sub path" title=format!("{}/{name}", zip.path)>{match name.rfind('/') { Some(at) => format!("{}/{}", zip.name, &name[..at]), None => zip.name.clone() }}</span>
-            {move || forced.get().map(|now| peek_as_buttons(now, move |how| forced.set(how)))}
+            {move || forced.get().map(|now| peek_as_buttons(now, false, move |how| forced.set(how)))}
         </div>
     }
 }
