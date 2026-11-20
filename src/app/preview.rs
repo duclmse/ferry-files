@@ -329,8 +329,11 @@ pub(super) fn Preview(
                             }.into_any()
                         }
                     };
-                    // Kind, size, and the width × height and length once known, on one line.
+                    // Name, then kind, size, the width × height and length once known, date and
+                    // folder, on one line above.
                     let size = (!e.dir).then(|| human_size(e.size));
+                    let modified = (e.mtime > 0).then(|| when(e.mtime));
+                    let folder = parent(&e.path);
                     let facts = move || {
                         let mut v = vec![what.to_string()];
                         v.extend(size.clone());
@@ -338,20 +341,21 @@ pub(super) fn Preview(
                             v.extend(i.width.zip(i.height).map(|(w, h)| format!("{w} × {h}")));
                             v.extend(i.duration.map(length));
                         });
+                        v.extend(modified.clone());
+                        v.push(folder.clone());
                         v.join(" · ")
                     };
+                    let facts = Signal::derive(facts);
                     view! {
-                        <div class="view">{body}</div>
                         <div class="meta">
-                            <b class="name" title=e.name.clone()>{e.name.clone()}</b>
-                            <span class="sub">{facts}</span>
-                            {(e.mtime > 0).then(|| view! { <span class="sub">{format!("Modified {}", when(e.mtime))}</span> })}
-                            <span class="sub path" title=e.path.clone()>{parent(&e.path)}</span>
+                            <b class="name" title=e.path.clone()>{e.name.clone()}</b>
+                            <span class="sub" title=move || facts.get()>{move || facts.get()}</span>
                             {forced.map(|now| {
                                 let path = e.path.clone();
                                 peek_as_buttons(now, true, move |how| p.peek_as.set(how.map(|h| (path.clone(), h))))
                             })}
                         </div>
+                        <div class="view">{body}</div>
                     }.into_any()
                 }
             }}
@@ -1181,22 +1185,27 @@ fn Zipped(pane: Pane, src: Src, zip: Entry, name: String, size: u64) -> impl Int
             .into_any(),
         }
     };
+    let folder = match name.rfind('/') {
+        Some(at) => format!("{}/{}", zip.name, &name[..at]),
+        None => zip.name.clone(),
+    };
     let facts = move || {
         let mut v = vec!["In a ZIP".to_string(), human_size(size)];
         info.with(|i| {
             v.extend(i.width.zip(i.height).map(|(w, h)| format!("{w} × {h}")));
             v.extend(i.duration.map(length));
         });
+        v.push(folder.clone());
         v.join(" · ")
     };
+    let facts = Signal::derive(facts);
     view! {
-        <div class="view">{body}</div>
         <div class="meta">
-            <b class="name" title=short.clone()>{short.clone()}</b>
-            <span class="sub">{facts}</span>
-            <span class="sub path" title=format!("{}/{name}", zip.path)>{match name.rfind('/') { Some(at) => format!("{}/{}", zip.name, &name[..at]), None => zip.name.clone() }}</span>
+            <b class="name" title=format!("{}/{name}", zip.path)>{short.clone()}</b>
+            <span class="sub" title=move || facts.get()>{move || facts.get()}</span>
             {move || forced.get().map(|now| peek_as_buttons(now, false, move |how| forced.set(how)))}
         </div>
+        <div class="view">{body}</div>
     }
 }
 
