@@ -308,19 +308,49 @@ impl Book {
             files.push((name, buf));
         }
         let mut book = Book { files, opf: String::new(), source, version, dirty: false, rev: 0 };
-        let container = book.text("META-INF/container.xml").map_err(|_| "Not an EPUB: META-INF/container.xml is missing.".to_string())?;
-        let toks = xml::tokenize(&container).map_err(|e| format!("META-INF/container.xml: {e}"))?;
-        book.opf = toks
-            .iter()
-            .find(|t| t.is_start() && t.local() == "rootfile")
-            .and_then(|t| t.attr("full-path"))
-            .ok_or("Not an EPUB: container.xml names no package document.")?
-            .to_string();
+        book.opf = book.find_opf()?;
         if book.file(&book.opf).is_none() {
             return Err(format!("The package document {} is missing.", book.opf));
         }
         book.package()?;
         Ok(book)
+    }
+
+    fn find_opf(&self) -> Result<String> {
+        let container = self.text("META-INF/container.xml").map_err(|_| "Not an EPUB: META-INF/container.xml is missing.".to_string())?;
+        let toks = xml::tokenize(&container).map_err(|e| format!("META-INF/container.xml: {e}"))?;
+        Ok(toks
+            .iter()
+            .find(|t| t.is_start() && t.local() == "rootfile")
+            .and_then(|t| t.attr("full-path"))
+            .ok_or("Not an EPUB: container.xml names no package document.")?
+            .to_string())
+    }
+
+    /// A book of only what lists its chapters: container.xml, the package document and the
+    /// table of contents, each asked of `get`. For `chapters` and `meta`; nothing else is read.
+    pub fn contents_only(get: &mut dyn FnMut(&str) -> Result<Vec<u8>>) -> Result<Book> {
+        let container = get("META-INF/container.xml").map_err(|_| "Not an EPUB: META-INF/container.xml is missing.".to_string())?;
+        let mut book = Book { files: vec![("META-INF/container.xml".into(), container)], opf: String::new(), source: String::new(), version: String::new(), dirty: false, rev: 0 };
+        book.opf = book.find_opf()?;
+        let opf = get(&book.opf).map_err(|_| format!("The package document {} is missing.", book.opf))?;
+        book.files.push((book.opf.clone(), opf));
+        let p = book.package()?;
+        let toc = p.items.iter().filter(|i| {
+            i.props.split_whitespace().any(|x| x == "nav") || i.media == "application/x-dtbncx+xml" || p.toc_id.as_deref() == Some(i.id.as_str())
+        });
+        for path in toc.map(|i| i.path.clone()).collect::<Vec<_>>() {
+            if let Ok(data) = get(&path) {
+                book.files.push((path, data));
+            }
+        }
+        Ok(book)
+    }
+
+    /// A chapter as `visual_html` makes it, from its own bytes alone.
+    pub fn chapter_alone(path: &str, data: Vec<u8>, base: &str) -> Result<String> {
+        let book = Book { files: vec![(path.to_string(), data)], opf: String::new(), source: String::new(), version: String::new(), dirty: false, rev: 0 };
+        book.visual_html(path, base)
     }
 
     pub fn file(&self, path: &str) -> Option<&[u8]> {

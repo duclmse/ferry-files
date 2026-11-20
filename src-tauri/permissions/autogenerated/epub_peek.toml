@@ -1,0 +1,11 @@
+# Automatically generated - DO NOT EDIT!
+
+[[permission]]
+identifier = "allow-epub-peek"
+description = "Enables the epub_peek command without any pre-configured scope."
+commands.allow = ["epub_peek"]
+
+[[permission]]
+identifier = "deny-epub-peek"
+description = "Denies the epub_peek command without any pre-configured scope."
+commands.deny = ["epub_peek"]

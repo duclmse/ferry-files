@@ -34,6 +34,13 @@ pub fn book_base(id: u32, chapter: &str) -> String {
     format!("{ORIGIN}/book/{id}/{}", encode_path(dir))
 }
 
+/// Base URL for a chapter of an EPUB read in place (not opened): the chapter's folder in the
+/// book, under a path naming the book, so its relative links are files in the same book.
+pub fn inzip_base(src: &str, size: u64, zip: &str, chapter: &str) -> String {
+    let dir = chapter.rfind('/').map_or("", |k| &chapter[..=k]);
+    format!("{ORIGIN}/inzip/{}/{size}/{}/{}", utf8_percent_encode(src, SEGMENT), utf8_percent_encode(zip, SEGMENT), encode_path(dir))
+}
+
 fn respond(status: StatusCode, ctype: &str, body: Vec<u8>) -> Response<Vec<u8>> {
     respond_with(status, ctype, "no-store", body)
 }
@@ -61,6 +68,14 @@ pub fn handle(app: &AppHandle, req: Request<Vec<u8>>) -> Response<Vec<u8>> {
     if path == "/zipped" {
         let range = req.headers().get("range").and_then(|v| v.to_str().ok()).map(str::to_string);
         return zipped(app, req.uri().query().unwrap_or(""), range.as_deref());
+    }
+    if let Some(rest) = path.strip_prefix("/inzip/") {
+        let range = req.headers().get("range").and_then(|v| v.to_str().ok()).map(str::to_string);
+        let part = |s: &str| percent_decode_str(s).decode_utf8_lossy().into_owned();
+        let mut it = rest.splitn(4, '/');
+        let (Some(src), Some(size), Some(zip), Some(name)) = (it.next(), it.next(), it.next(), it.next()) else { return not_found() };
+        let Ok(size) = size.parse::<u64>() else { return not_found() };
+        return zipped_at(app, &part(zip), &part(src), size, &part(name), range.as_deref());
     }
     if path == "/fit" {
         return fit(app, req.uri().query().unwrap_or(""));
@@ -160,18 +175,23 @@ fn zipped(app: &AppHandle, q: &str, range: Option<&str>) -> Response<Vec<u8>> {
     let bad = || respond(StatusCode::BAD_REQUEST, "text/plain", b"Bad request.".to_vec());
     let (Some(path), Some(src), Some(name)) = (query_param(q, "p"), query_param(q, "src"), query_param(q, "e")) else { return bad() };
     let Some(size) = query_param(q, "s").and_then(|s| s.parse::<u64>().ok()) else { return bad() };
-    let dev = match crate::state(app).source(Some(&src)) {
+    zipped_at(app, &path, &src, size, &name, range)
+}
+
+/// The file `name` packed in the ZIP at `path` (`size` bytes) on `src`.
+fn zipped_at(app: &AppHandle, path: &str, src: &str, size: u64, name: &str, range: Option<&str>) -> Response<Vec<u8>> {
+    let dev = match crate::state(app).source(Some(src)) {
         Ok(d) => d,
         Err(e) => return respond(StatusCode::NOT_FOUND, "text/plain", e.into_bytes()),
     };
-    let data = match crate::files::unpacked(&dev, &path, size, &name) {
+    let data = match crate::files::unpacked(&dev, path, size, name) {
         Ok(d) => d,
         Err(e) => return respond(StatusCode::INTERNAL_SERVER_ERROR, "text/plain", e.into_bytes()),
     };
     let len = data.len() as u64;
     let base = || {
         Response::builder()
-            .header("Content-Type", media_type(&name))
+            .header("Content-Type", media_type(name))
             .header("Accept-Ranges", "bytes")
             .header("Cache-Control", "no-store")
             .header("Access-Control-Allow-Origin", "*")
@@ -319,6 +339,11 @@ mod tests {
         let at = if cfg!(windows) { "http://ferry.localhost" } else { "ferry://localhost" };
         assert_eq!(super::book_url(3, "OEBPS/a b.png", 7), format!("{at}/book/3/OEBPS/a%20b.png?v=7"));
         assert_eq!(super::book_base(3, "OEBPS/text/ch1.xhtml"), format!("{at}/book/3/OEBPS/text/"));
+        assert_eq!(
+            super::inzip_base("adb:R5C", 99, "/sdcard/My Books/a.epub", "OEBPS/text/ch1.xhtml"),
+            format!("{at}/inzip/adb%3AR5C/99/%2Fsdcard%2FMy%20Books%2Fa.epub/OEBPS/text/")
+        );
+        assert_eq!(super::inzip_base("mac", 1, "/b.epub", "ch1.xhtml"), format!("{at}/inzip/mac/1/%2Fb.epub/"));
     }
 
     #[test]

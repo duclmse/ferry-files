@@ -4,7 +4,7 @@
 
 use super::sidebar::chev;
 use super::*;
-use crate::api::{Bytes, Listing, MediaInfo, Packed, PdfOutline, Peek};
+use crate::api::{Bytes, EpubContents, Listing, MediaInfo, Packed, PdfOutline, Peek};
 use wasm_bindgen::closure::Closure;
 
 /// A file shown another way than its type says, from "Open as…" or the context menu.
@@ -282,6 +282,106 @@ fn PdfView(pane: Pane, src: Src, entry: Entry, url: String, #[prop(optional)] in
     }
 }
 
+const EPUB_READ_KEY: &str = "ferry-files.epub-read";
+
+/// An EPUB: its cover, or its chapters one at a time. Only the book's contents list and the
+/// chapter shown are read (and its pictures, as they show), not the whole book.
+#[component]
+fn EpubView(src: Src, entry: Entry) -> impl IntoView {
+    let reading = RwSignal::new(stored_flag(EPUB_READ_KEY, false));
+    let contents = RwSignal::new(None::<Result<EpubContents, String>>);
+    let at = RwSignal::new(0usize);
+    let page = RwSignal::new(None::<Result<String, String>>);
+    let asked = StoredValue::new(0u32);
+    let (path, size) = (StoredValue::new(entry.path.clone()), entry.size);
+    Effect::new(move |_| {
+        if !reading.get() || contents.with_untracked(Option::is_some) {
+            return;
+        }
+        let args = json!({ "src": src.key(), "path": path.get_value(), "size": size });
+        spawn_local(async move {
+            let r = call::<EpubContents>("epub_contents", args).await;
+            let _ = contents.try_set(Some(r));
+        });
+    });
+    Effect::new(move |_| {
+        if !reading.get() {
+            return;
+        }
+        let Some(ch) = contents.with(|c| c.as_ref().and_then(|c| c.as_ref().ok()).and_then(|c| c.chapters.get(at.get()).cloned())) else { return };
+        let n = asked.get_value() + 1;
+        asked.set_value(n);
+        page.set(None);
+        let args = json!({ "src": src.key(), "path": path.get_value(), "size": size, "chapter": ch.path });
+        spawn_local(async move {
+            let r = call::<String>("epub_peek", args).await;
+            if asked.try_get_value() == Some(n) {
+                let _ = page.try_set(Some(r));
+            }
+        });
+    });
+    let count = move || contents.with(|c| c.as_ref().and_then(|c| c.as_ref().ok()).map_or(0, |c| c.chapters.len()));
+    let go = move |d: i32| {
+        let to = at.get_untracked() as i32 + d;
+        if to >= 0 && (to as usize) < count() {
+            at.set(to as usize);
+        }
+    };
+    let toggle = move |_| {
+        let on = !reading.get_untracked();
+        reading.set(on);
+        store(EPUB_READ_KEY, if on { "1" } else { "0" });
+    };
+    // The page in a quiet style, after the <base> the backend adds so the book's own styles load.
+    let doc = move || {
+        let html = page.get()?.ok()?;
+        let style = "<style>html{font-size:15px;background:#fbfaf7;color:#1d1d1f}body{max-width:36em;margin:0 auto !important;padding:16px 20px 60px !important;line-height:1.55}img,svg{max-width:100%;height:auto}@media (prefers-color-scheme: dark){html{background:#1c1c1e;color:#e6e6e6}a{color:#8ab4ff}}</style>";
+        Some(match html.find("<base ").and_then(|k| html[k..].find('>').map(|j| k + j + 1)) {
+            Some(k) => format!("{}{style}{}", &html[..k], &html[k..]),
+            None => format!("{style}{html}"),
+        })
+    };
+    let chapter_list = move || {
+        contents.with(|c| match c {
+            Some(Ok(c)) => c
+                .chapters
+                .iter()
+                .enumerate()
+                .map(|(k, ch)| view! { <option value=k.to_string()>{ch.label.clone()}</option> })
+                .collect_view()
+                .into_any(),
+            _ => ().into_any(),
+        })
+    };
+    view! {
+        <div class="viewer-bar epub-bar">
+            <button class="btn" class:active=move || reading.get() title="Read the book here" aria-label="Read the book here" on:click=toggle>{ico(Icon::Book)}</button>
+            {move || reading.get().then(|| view! {
+                <span class="gap"></span>
+                <button class="btn" title="Previous chapter" aria-label="Previous chapter" disabled=move || at.get() == 0 on:click=move |_| go(-1)>{ico(Icon::Prev)}</button>
+                <select class="epub-chapters" aria-label="Chapter" prop:value=move || at.get().to_string()
+                    on:keydown=|ev| ev.stop_propagation()
+                    on:change=move |ev| at.set(event_target_value(&ev).parse().unwrap_or(0))>{chapter_list}</select>
+                <button class="btn" title="Next chapter" aria-label="Next chapter" disabled=move || at.get() + 1 >= count() on:click=move |_| go(1)>{ico(Icon::Next)}</button>
+                <span class="epub-of">{move || match count() { 0 => String::new(), n => format!("{} of {n}", at.get() + 1) }}</span>
+            })}
+        </div>
+        {move || if !reading.get() {
+            view! { <BigCover src entry=entry.clone()/> }.into_any()
+        } else {
+            match (contents.get(), page.get()) {
+                (Some(Err(e)), _) | (_, Some(Err(e))) => view! { <p class="hint">{e}</p> }.into_any(),
+                (Some(Ok(c)), _) if c.chapters.is_empty() => view! { <p class="hint">"This book lists no chapters."</p> }.into_any(),
+                (Some(Ok(_)), Some(Ok(_))) => view! {
+                    // No allow-scripts: a book's scripts must never run next to the app's commands.
+                    <iframe class="epub-page" sandbox="allow-same-origin" srcdoc=doc title="Chapter"></iframe>
+                }.into_any(),
+                _ => view! { <p class="hint">"Opening…"</p> }.into_any(),
+            }
+        }}
+    }
+}
+
 /// The backend serves a whole file (a PDF, a font) up to this size.
 const WHOLE_MAX: u64 = 64 * 1024 * 1024;
 
@@ -372,7 +472,7 @@ pub(super) fn Preview(
                         }.into_any(),
                         _ if has_ext(&e, PDF_EXTS) && e.size <= WHOLE_MAX => view! { <PdfView pane=p src entry=e.clone() url=stream_url(src, &e)/> }.into_any(),
                         _ if has_ext(&e, FONT_EXTS) && e.size <= WHOLE_MAX => view! { <FontSample src entry=e.clone()/> }.into_any(),
-                        _ if has_ext(&e, &["epub"]) => view! { <BigCover src entry=e.clone()/> }.into_any(),
+                        _ if has_ext(&e, &["epub"]) => view! { <EpubView src entry=e.clone()/> }.into_any(),
                         _ if has_ext(&e, ZIP_EXTS) => view! { <ZipList src entry=e.clone()/> }.into_any(),
                         _ if is_text(&e) => view! { <TextPeek src entry=e.clone()/> }.into_any(),
                         _ if e.dir => thumb(&e).into_any(),

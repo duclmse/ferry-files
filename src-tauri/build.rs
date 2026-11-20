@@ -21,6 +21,8 @@ fn main() {
             "peek_bytes",
             "zip_list",
             "pdf_outline",
+            "epub_contents",
+            "epub_peek",
             "copy_text",
             "write_text",
             "colour_text",

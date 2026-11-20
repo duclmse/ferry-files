@@ -607,6 +607,38 @@ pub(super) async fn pdf_outline(
     blocking(move || crate::pdf::outline(&read_part(&dev, &path, inner.as_deref(), zip_size, 0, size)?)).await
 }
 
+#[derive(serde::Serialize)]
+pub(super) struct EpubContents {
+    title: String,
+    chapters: Vec<crate::epub::ChapterRef>,
+}
+
+/// An EPUB's title and chapters, from its ZIP directory, package document and table of contents
+/// only: the chapters and pictures aren't read.
+#[tauri::command(rename_all = "snake_case")]
+pub(super) async fn epub_contents(state: State<'_, AppState>, src: String, path: String, size: u64) -> Result<EpubContents, String> {
+    let dev = state.source(Some(&src))?;
+    blocking(move || {
+        let book = crate::archive::unpack_each(size, &mut |at, len| dev.read_range(&path, at, len).map_err(msg), UNPACK_MAX, |get| {
+            crate::epub::Book::contents_only(get)
+        })??;
+        Ok(EpubContents { title: book.meta().map(|m| m.title).unwrap_or_default(), chapters: book.chapters()? })
+    })
+    .await
+}
+
+/// One chapter of an EPUB, unopened, as HTML for a frame without scripts. Its pictures and styles
+/// load from the `inzip` route, one file at a time.
+#[tauri::command(rename_all = "snake_case")]
+pub(super) async fn epub_peek(state: State<'_, AppState>, src: String, path: String, size: u64, chapter: String) -> Result<String, String> {
+    let dev = state.source(Some(&src))?;
+    blocking(move || {
+        let data = crate::archive::unpack(size, &mut |at, len| dev.read_range(&path, at, len).map_err(msg), &chapter, UNPACK_MAX)?;
+        crate::epub::Book::chapter_alone(&chapter, data, &crate::protocol::inzip_base(&src, size, &path, &chapter))
+    })
+    .await
+}
+
 /// The files on the system clipboard (copied in Finder or File Explorer), as app paths.
 #[tauri::command(rename_all = "snake_case")]
 pub(super) fn clip_files() -> Vec<String> {

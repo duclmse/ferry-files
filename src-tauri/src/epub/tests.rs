@@ -36,6 +36,10 @@ const CH1: &str = r#"<?xml version="1.0" encoding="utf-8"?>
 const CH2: &str = r#"<html xmlns="http://www.w3.org/1999/xhtml"><head><title>2</title></head><body><p>Concatenate the cat.</p></body></html>"#;
 
 fn sample() -> Book {
+    Book::open(&sample_bytes(), "/sdcard/b.epub".into(), "v1".into()).unwrap()
+}
+
+fn sample_bytes() -> Vec<u8> {
     let mut w = zip::ZipWriter::new(Cursor::new(Vec::new()));
     let o = zip::write::SimpleFileOptions::default();
     for (n, d) in [
@@ -50,8 +54,7 @@ fn sample() -> Book {
         w.start_file(n, o).unwrap();
         w.write_all(d.as_bytes()).unwrap();
     }
-    let bytes = w.finish().unwrap().into_inner();
-    Book::open(&bytes, "/sdcard/b.epub".into(), "v1".into()).unwrap()
+    w.finish().unwrap().into_inner()
 }
 
 #[test]
@@ -175,4 +178,27 @@ fn covers_and_round_trip() {
     assert_eq!(again.meta().unwrap(), b.meta().unwrap());
     assert_eq!(again.file("OEBPS/images/cover.jpg"), Some(&b"PNG2"[..]));
     assert_eq!(again.chapters().unwrap().len(), 2);
+}
+
+#[test]
+fn lists_chapters_from_a_few_files() {
+    let bytes = sample_bytes();
+    let mut asked = vec![];
+    let mut read = |at: u64, len: u64| Ok(bytes.iter().skip(at as usize).take(len as usize).copied().collect());
+    let b = crate::archive::unpack_each(bytes.len() as u64, &mut read, 1 << 20, |get| {
+        Book::contents_only(&mut |name: &str| {
+            asked.push(name.to_string());
+            get(name)
+        })
+    })
+    .unwrap()
+    .unwrap();
+    assert_eq!(asked, ["META-INF/container.xml", "OEBPS/content.opf", "OEBPS/nav.xhtml"]);
+    assert_eq!(b.meta().unwrap().title, "Old & Tired");
+    let ch = b.chapters().unwrap();
+    assert_eq!((ch[0].path.as_str(), ch[0].label.as_str()), ("OEBPS/text/ch 1.xhtml", "Chapter One"));
+
+    let html = Book::chapter_alone("OEBPS/text/ch2.xhtml", CH2.as_bytes().to_vec(), "ferry://localhost/inzip/x/1/b.epub/OEBPS/text/").unwrap();
+    assert!(html.contains(r#"<base href="ferry://localhost/inzip/x/1/b.epub/OEBPS/text/">"#), "{html}");
+    assert!(html.contains("Concatenate the cat."));
 }

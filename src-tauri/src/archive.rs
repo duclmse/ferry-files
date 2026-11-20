@@ -139,15 +139,24 @@ impl std::io::Seek for Ranged<'_, '_> {
 /// One file packed in the ZIP, unpacked; only its part of the ZIP (and the directory) is read.
 /// Refused when it unpacks to more than `max` bytes.
 pub fn unpack(size: u64, read: &mut Read, name: &str, max: u64) -> Result<Vec<u8>, String> {
+    unpack_each(size, read, max, |get| get(name))?
+}
+
+/// Unpacks the files `with` asks `get` for, reading the directory once. Each is refused when it
+/// unpacks to more than `max` bytes.
+pub fn unpack_each<T>(size: u64, read: &mut Read, max: u64, with: impl FnOnce(&mut dyn FnMut(&str) -> Result<Vec<u8>, String>) -> T) -> Result<T, String> {
     let r = Ranged { read, size, at: 0, block: (0, Vec::new()) };
     let mut zip = zip::ZipArchive::new(r).map_err(|e| format!("Not a ZIP file, or a damaged one ({e})."))?;
-    let mut f = zip.by_name(name).map_err(|e| format!("{name}: {e}"))?;
-    if f.size() > max {
-        return Err(format!("Too big to show ({} MB unpacked).", f.size() / (1024 * 1024)));
-    }
-    let mut out = Vec::with_capacity(f.size() as usize);
-    std::io::Read::read_to_end(&mut f, &mut out).map_err(|e| format!("{name}: {e}"))?;
-    Ok(out)
+    let mut get = |name: &str| {
+        let mut f = zip.by_name(name).map_err(|e| format!("{name}: {e}"))?;
+        if f.size() > max {
+            return Err(format!("Too big to show ({} MB unpacked).", f.size() / (1024 * 1024)));
+        }
+        let mut out = Vec::with_capacity(f.size() as usize);
+        std::io::Read::read_to_end(&mut f, &mut out).map_err(|e| format!("{name}: {e}"))?;
+        Ok(out)
+    };
+    Ok(with(&mut get))
 }
 
 #[cfg(test)]

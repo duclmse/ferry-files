@@ -203,6 +203,8 @@ pub fn run() {
             files::peek_bytes,
             files::zip_list,
             files::pdf_outline,
+            files::epub_contents,
+            files::epub_peek,
             files::copy_text,
             files::clip_files,
             files::clip_set,

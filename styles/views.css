@@ -982,6 +982,47 @@ td.name input.rename {
   background: #fff;
 }
 
+/* An EPUB read in the preview, a chapter at a time. */
+.viewer-bar.epub-bar {
+  flex: none;
+}
+
+.epub-bar .btn.active {
+  background: var(--sel);
+}
+
+.epub-bar .epub-chapters {
+  min-width: 0;
+  max-width: 200px;
+  height: 26px;
+  padding: 0 4px;
+  border: 1px solid var(--line);
+  border-radius: 6px;
+  background: var(--bg);
+  color: var(--ink);
+}
+
+.epub-bar .epub-of {
+  color: var(--muted);
+  font-size: 12px;
+  font-variant-numeric: tabular-nums;
+}
+
+.preview iframe.epub-page {
+  width: 100%;
+  flex: 1 1 0;
+  min-height: 240px;
+  border: 1px solid var(--line);
+  border-radius: 6px;
+  background: #fbfaf7;
+}
+
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) .preview iframe.epub-page {
+    background: #1c1c1e;
+  }
+}
+
 .font-sample {
   width: 100%;
   min-height: 0;

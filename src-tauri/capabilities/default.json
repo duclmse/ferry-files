@@ -24,6 +24,8 @@
     "allow-peek-bytes",
     "allow-zip-list",
     "allow-pdf-outline",
+    "allow-epub-contents",
+    "allow-epub-peek",
     "allow-copy-text",
     "allow-write-text",
     "allow-colour-text",

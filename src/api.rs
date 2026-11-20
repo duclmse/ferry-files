@@ -312,6 +312,13 @@ pub struct Meta {
     pub description: String,
 }
 
+/// An EPUB's title and chapters, read without opening it (`epub_contents`).
+#[derive(Clone, Debug, PartialEq, Deserialize)]
+pub struct EpubContents {
+    pub title: String,
+    pub chapters: Vec<ChapterRef>,
+}
+
 #[derive(Clone, Debug, PartialEq, Deserialize)]
 pub struct ChapterRef {
     pub path: String,
