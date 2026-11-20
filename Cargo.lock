@@ -1427,6 +1427,7 @@ dependencies = [
  "base64 0.22.1",
  "chrono",
  "dirs 6.0.0",
+ "flate2",
  "image",
  "keyring",
  "libloading 0.8.9",

@@ -581,11 +581,23 @@ fn read_part(dev: &Device, path: &str, inner: Option<&str>, zip_size: Option<u64
     }
 }
 
-/// What's in a ZIP file of `size` bytes, read from its end.
+/// What's in a ZIP file of `size` bytes, read from its end; or in a TAR, gzipped or not.
 #[tauri::command(rename_all = "snake_case")]
 pub(super) async fn zip_list(state: State<'_, AppState>, src: Option<String>, path: String, size: u64) -> Result<crate::archive::Listing, String> {
     let dev = state.source(src.as_deref())?;
-    blocking(move || crate::archive::list(size, &mut |at, len| dev.read_range(&path, at, len).map_err(msg))).await
+    // By its name: a TAR (.tar, or gzipped .tar.gz, .tgz), else a ZIP.
+    let lower = path.to_lowercase();
+    let tar = [".tar", ".tar.gz", ".tgz"].iter().any(|x| lower.ends_with(x));
+    let gz = tar && !lower.ends_with(".tar");
+    blocking(move || {
+        let mut read = |at, len| dev.read_range(&path, at, len).map_err(msg);
+        if tar {
+            crate::archive::list_tar(size, &mut read, gz)
+        } else {
+            crate::archive::list(size, &mut read)
+        }
+    })
+    .await
 }
 
 /// The files on the system clipboard (copied in Finder or File Explorer), as app paths.

@@ -47,18 +47,25 @@ fn OpenAs(#[prop(into)] pick: Callback<PeekAs>, #[prop(optional)] now: Option<Pe
     // Where the list is, under the arrow; None while closed.
     let at = RwSignal::new(None::<(f64, f64)>);
     let ways: Vec<PeekAs> = [PeekAs::Text, PeekAs::Hex, PeekAs::Image, PeekAs::Video].into_iter().chain(zip.then_some(PeekAs::Zip)).collect();
-    let toggle = move |ev: web_sys::MouseEvent| {
+    let rows = ways.len();
+    let wrap = NodeRef::<html::Span>::new();
+    // Under the whole button, or over it when there's no room below; kept in the window.
+    let toggle = move |_| {
         if at.get_untracked().is_some() {
             at.set(None);
             return;
         }
-        if let Some(el) = ev.current_target().and_then(|t| t.dyn_into::<web_sys::Element>().ok()) {
-            let r = el.get_bounding_client_rect();
-            at.set(Some((r.left(), r.bottom() + 4.0)));
-        }
+        let Some(el) = wrap.get_untracked() else { return };
+        let r = el.get_bounding_client_rect();
+        let size = |v: Result<wasm_bindgen::JsValue, _>| v.ok().and_then(|v| v.as_f64()).unwrap_or(800.0);
+        let (vw, vh) = (size(window().inner_width()), size(window().inner_height()));
+        let (w, h) = (140.0_f64.max(r.width()), rows as f64 * 26.0 + 12.0);
+        let x = r.left().min(vw - w - 4.0).max(4.0);
+        let y = if r.bottom() + 4.0 + h <= vh - 4.0 { r.bottom() + 4.0 } else { (r.top() - 4.0 - h).max(4.0) };
+        at.set(Some((x, y)));
     };
     view! {
-        <span class="open-as" class:small=small>
+        <span class="open-as" class:small=small node_ref=wrap>
             <button class="btn main" class:small=small title="Open as text" on:click=move |_| pick.run(PeekAs::Text)>{ico(Icon::Text)}"Open as…"</button>
             <button class="btn more" class:small=small title="Open as…" aria-label="Other ways to open it" aria-haspopup="menu"
                 aria-expanded=move || at.get().is_some().to_string() on:click=toggle>{ico(Icon::Chevron)}</button>
@@ -66,7 +73,7 @@ fn OpenAs(#[prop(into)] pick: Callback<PeekAs>, #[prop(optional)] now: Option<Pe
                 let ways = ways.clone();
                 view! {
                     <div class="menu-backdrop" on:click=move |_| at.set(None) on:contextmenu=move |ev| { ev.prevent_default(); at.set(None) }></div>
-                    <div class="menu open-as-list" role="menu" style=format!("left: {x}px; top: {y}px")
+                    <div class="menu open-as-list" role="menu" style=format!("left: {x}px; top: {y}px; min-width: {}px", wrap.get_untracked().map_or(140.0, |w| w.get_bounding_client_rect().width().max(140.0)))
                         on:keydown=move |ev| if ev.key() == "Escape" { at.set(None) }>
                         {ways.into_iter().map(|w| view! {
                             <button role="menuitemradio" aria-checked=(now == Some(w)).to_string() class:on=now == Some(w)
@@ -81,7 +88,13 @@ fn OpenAs(#[prop(into)] pick: Callback<PeekAs>, #[prop(optional)] now: Option<Pe
 
 const PDF_EXTS: &[&str] = &["pdf"];
 const FONT_EXTS: &[&str] = &["ttf", "otf", "woff", "woff2"];
-pub(super) const ZIP_EXTS: &[&str] = &["zip", "apk", "jar", "cbz", "xapk"];
+pub(super) const ZIP_EXTS: &[&str] = &["zip", "apk", "jar", "cbz", "xapk", "ipa", "aar", "war", "whl", "vsix", "nupkg"];
+
+/// A TAR file, gzipped or not (listed like a ZIP, in the preview only).
+fn is_tar(e: &Entry) -> bool {
+    let n = e.name.to_lowercase();
+    !e.dir && [".tar", ".tar.gz", ".tgz"].iter().any(|x| n.ends_with(x))
+}
 /// The backend serves a whole file (a PDF, a font) up to this size.
 const WHOLE_MAX: u64 = 64 * 1024 * 1024;
 
@@ -165,7 +178,7 @@ pub(super) fn Preview(pane: Pane, #[prop(optional)] entry: Option<Entry>, #[prop
                         }.into_any(),
                         _ if has_ext(&e, FONT_EXTS) && e.size <= WHOLE_MAX => view! { <FontSample src entry=e.clone()/> }.into_any(),
                         _ if has_ext(&e, &["epub"]) => view! { <BigCover src entry=e.clone()/> }.into_any(),
-                        _ if has_ext(&e, ZIP_EXTS) => view! { <ZipList src entry=e.clone()/> }.into_any(),
+                        _ if has_ext(&e, ZIP_EXTS) || is_tar(&e) => view! { <ZipList src entry=e.clone()/> }.into_any(),
                         _ if is_text(&e) => view! { <TextPeek src entry=e.clone()/> }.into_any(),
                         _ if e.dir => thumb(&e).into_any(),
                         // A type the preview doesn't know: offer to look inside anyway.
@@ -564,8 +577,8 @@ fn zip_parents(path: &str) -> impl Iterator<Item = &str> {
     path.match_indices('/').map(move |(at, _)| &path[..=at])
 }
 
-/// What's in a ZIP (or APK, JAR, CBZ), as a tree whose folders open and close: read from the
-/// end of the file, not the whole of it.
+/// What's in a ZIP (or APK, JAR, CBZ) or TAR, as a tree whose folders open and close: a ZIP's read
+/// from the end of the file, a TAR's from the headers before its files (a .tar.gz read through).
 #[component]
 fn ZipList(src: Src, entry: Entry) -> impl IntoView {
     let got = RwSignal::new(None::<Result<Listing, String>>);
@@ -594,7 +607,7 @@ fn ZipList(src: Src, entry: Entry) -> impl IntoView {
                         }
                     }
                     view! {
-                        <span class="sub">{format!("{} items · {} packed, {} unpacked", l.total, human_size(packed), human_size(unpacked))}</span>
+                        <span class="sub">{format!("{}{} items · {} packed, {} unpacked", l.total, if l.partial { "+" } else { "" }, human_size(packed), human_size(unpacked))}</span>
                         <div class="zip-list">
                             <table>
                                 <tbody>
@@ -620,8 +633,12 @@ fn ZipList(src: Src, entry: Entry) -> impl IntoView {
                                 </tbody>
                             </table>
                         </div>
-                        {(shown < l.total).then(|| view! { <span class="more">{format!("Only the first {shown} are listed.")}</span> })}
-                        {(l.total == 0).then(|| view! { <span class="hint">"Empty"</span> })}
+                        {match (l.partial, shown < l.total) {
+                            (true, _) => Some(view! { <span class="more">{format!("Only the first {shown} are listed: the rest of the file isn't read.")}</span> }.into_any()),
+                            (false, true) => Some(view! { <span class="more">{format!("Only the first {shown} are listed.")}</span> }.into_any()),
+                            _ => None,
+                        }}
+                        {(l.total == 0 && !l.partial).then(|| view! { <span class="hint">"Empty"</span> })}
                     }.into_any()
                 }
             }}

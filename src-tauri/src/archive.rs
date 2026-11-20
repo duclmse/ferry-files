@@ -1,5 +1,6 @@
 //! What's in a ZIP file (and APK, JAR…), from its central directory at the end: only the end of
-//! the file and that directory are read, never the files packed in it.
+//! the file and that directory are read, never the files packed in it. And what's in a TAR file,
+//! from the header before each file (the files skipped), or in a .tar.gz, read through.
 
 use crate::media::Read;
 use serde::Serialize;
@@ -16,8 +17,10 @@ pub struct Packed {
 pub struct Listing {
     /// The first `LIST_MAX`.
     pub items: Vec<Packed>,
-    /// How many there are in all.
+    /// How many there are in all; for a TAR not read to its end, how many were found.
     pub total: u64,
+    /// A TAR not read to its end (too many items, or a .tar.gz too big to read through).
+    pub partial: bool,
 }
 
 const LIST_MAX: usize = 5000;
@@ -43,15 +46,23 @@ pub fn list(size: u64, read: &mut Read) -> Result<Listing, String> {
     // The last end-of-directory signature.
     let end = (0..tail.len().saturating_sub(21)).rev().find(|&i| tail[i..i + 4] == [0x50, 0x4B, 0x05, 0x06]).ok_or_else(bad)?;
     let (mut total, mut dir_size, mut dir_at) = (u16_at(&tail, end + 10), u32_at(&tail, end + 12), u32_at(&tail, end + 16));
+    let mut zip64 = false;
     // ZIP64: the real numbers are in another record, found through the locator just before.
     if [total, dir_size, dir_at].iter().any(|v| matches!(v, Some(0xFFFF) | Some(0xFFFF_FFFF))) && end >= 20 && tail[end - 20..end - 16] == [0x50, 0x4B, 0x06, 0x07] {
         let rec_at = u64_at(&tail, end - 12).ok_or_else(bad)?;
         let rec = read(rec_at, 56)?;
         if rec.get(0..4) == Some(&[0x50, 0x4B, 0x06, 0x06]) {
             (total, dir_size, dir_at) = (u64_at(&rec, 32), u64_at(&rec, 40), u64_at(&rec, 48));
+            zip64 = true;
         }
     }
-    let (Some(total), Some(dir_size), Some(dir_at)) = (total, dir_size, dir_at) else { return Err(bad()) };
+    let (Some(total), Some(dir_size), Some(mut dir_at)) = (total, dir_size, dir_at) else { return Err(bad()) };
+    // With something before the ZIP (a self-extracting one), offsets are from the ZIP's start:
+    // the directory ends where the end record starts.
+    let end_at = tail_at + end as u64;
+    if !zip64 && dir_at + dir_size < end_at {
+        dir_at = end_at - dir_size;
+    }
     let dir = read(dir_at, dir_size.min(DIR_MAX))?;
     let mut items = Vec::new();
     let mut at = 0usize;
@@ -59,7 +70,8 @@ pub fn list(size: u64, read: &mut Read) -> Result<Listing, String> {
         let (Some(mut size), Some(name_len), Some(extra_len), Some(note_len)) = (u32_at(&dir, at + 24), u16_at(&dir, at + 28), u16_at(&dir, at + 30), u16_at(&dir, at + 32)) else { break };
         let name_at = at + 46;
         let Some(name) = dir.get(name_at..name_at + name_len as usize) else { break };
-        let name = String::from_utf8_lossy(name).into_owned();
+        // Some Windows tools write \ between folders.
+        let name = String::from_utf8_lossy(name).replace('\\', "/");
         if size == 0xFFFF_FFFF {
             // The ZIP64 extra field starts with the unpacked size when it didn't fit.
             let extra = dir.get(name_at + name_len as usize..name_at + (name_len + extra_len) as usize).unwrap_or(&[]);
@@ -75,7 +87,164 @@ pub fn list(size: u64, read: &mut Read) -> Result<Listing, String> {
         items.push(Packed { dir: name.ends_with('/'), name, size });
         at = name_at + (name_len + extra_len + note_len) as usize;
     }
-    Ok(Listing { items, total })
+    Ok(Listing { items, total, partial: false })
+}
+
+/// The most of a .tar.gz read, packed: past it, what's found is listed.
+const GZ_MAX: u64 = 256 * 1024 * 1024;
+
+/// What's in a TAR file of `size` bytes, or with `gz`, a gzipped one (.tar.gz, .tgz).
+pub fn list_tar(size: u64, read: &mut Read, gz: bool) -> Result<Listing, String> {
+    let bad = || "Not a TAR file, or a damaged one.".to_string();
+    let (items, total, mut done) = if gz {
+        let r = Ranged { read, size: size.min(GZ_MAX), at: 0, block: (0, Vec::new()) };
+        let mut z = flate2::read::MultiGzDecoder::new(r);
+        tar_walk(&mut z, |r, n| std::io::copy(&mut std::io::Read::take(r, n), &mut std::io::sink()).map(drop))
+    } else {
+        let mut r = Ranged { read, size, at: 0, block: (0, Vec::new()) };
+        tar_walk(&mut r, |r, n| {
+            r.at += n;
+            Ok(())
+        })
+    };
+    // Not all read.
+    done &= !(gz && size > GZ_MAX);
+    if items.is_empty() && !done {
+        return Err(bad());
+    }
+    Ok(Listing { total, items, partial: !done })
+}
+
+/// Reads TAR headers from `r`, passing over each file's data with `skip`: the first `LIST_MAX`
+/// items, how many were found, and whether the end was reached.
+fn tar_walk<R: std::io::Read>(r: &mut R, mut skip: impl FnMut(&mut R, u64) -> std::io::Result<()>) -> (Vec<Packed>, u64, bool) {
+    let mut items = Vec::new();
+    let mut total = 0u64;
+    // A name (or size) from a GNU long-name or PAX header, for the next item.
+    let (mut long_name, mut pax_size) = (None::<String>, None::<u64>);
+    let mut h = [0u8; 512];
+    loop {
+        // Ending right after an item, without the two empty blocks, is an end too.
+        match read_full(r, &mut h) {
+            Ok(0) => return (items, total, total > 0),
+            Ok(512) => {}
+            _ => return (items, total, false),
+        }
+        if h.iter().all(|&b| b == 0) {
+            return (items, total, true);
+        }
+        if !tar_sum_ok(&h) {
+            return (items, total, false);
+        }
+        let Some(mut size) = tar_num(&h[124..136]) else { return (items, total, false) };
+        let kind = h[156];
+        let padded = |n: u64| n.div_ceil(512) * 512;
+        match kind {
+            // The next item's long name (GNU), or its PAX attributes.
+            b'L' | b'x' => {
+                let mut data = vec![0u8; size.min(1 << 20) as usize];
+                if std::io::Read::read_exact(r, &mut data).is_err() || skip(r, padded(size) - data.len() as u64).is_err() {
+                    return (items, total, false);
+                }
+                if kind == b'L' {
+                    long_name = Some(cstr(&data));
+                } else {
+                    for (k, v) in pax(&data) {
+                        match k.as_str() {
+                            "path" => long_name = Some(v),
+                            "size" => pax_size = v.parse().ok(),
+                            _ => {}
+                        }
+                    }
+                }
+                continue;
+            }
+            // Global PAX attributes, a long link name: nothing to list.
+            b'g' | b'K' => {
+                if skip(r, padded(size)).is_err() {
+                    return (items, total, false);
+                }
+                continue;
+            }
+            _ => {}
+        }
+        size = pax_size.take().unwrap_or(size);
+        let name = long_name.take().unwrap_or_else(|| {
+            let name = cstr(&h[0..100]);
+            // POSIX ustar: a prefix before the name.
+            let prefix = if &h[257..263] == b"ustar\0" { cstr(&h[345..500]) } else { String::new() };
+            if prefix.is_empty() { name } else { format!("{prefix}/{name}") }
+        });
+        let dir = kind == b'5' || name.ends_with('/');
+        // Links have no data of their own.
+        let data = if matches!(kind, b'1' | b'2') { 0 } else { size };
+        let name = name.trim_start_matches("./").to_string();
+        if !name.is_empty() {
+            total += 1;
+            if items.len() < LIST_MAX {
+                items.push(Packed { name: if dir && !name.ends_with('/') { format!("{name}/") } else { name }, size: if dir { 0 } else { data }, dir });
+            } else {
+                // Enough to show: the rest isn't read.
+                return (items, total, false);
+            }
+        }
+        if skip(r, padded(data)).is_err() {
+            return (items, total, false);
+        }
+    }
+}
+
+/// Fills `buf` as far as `r` goes: how much was read.
+fn read_full(r: &mut impl std::io::Read, buf: &mut [u8]) -> std::io::Result<usize> {
+    let mut n = 0;
+    while n < buf.len() {
+        match r.read(&mut buf[n..])? {
+            0 => break,
+            k => n += k,
+        }
+    }
+    Ok(n)
+}
+
+/// A header's checksum: its bytes added up, the checksum's own 8 as spaces.
+fn tar_sum_ok(h: &[u8; 512]) -> bool {
+    let sum: u64 = h.iter().enumerate().map(|(i, &b)| if (148..156).contains(&i) { b' ' as u64 } else { b as u64 }).sum();
+    tar_num(&h[148..156]) == Some(sum)
+}
+
+/// A header's number: octal text, or (for big ones) binary after a first byte with its top bit.
+fn tar_num(f: &[u8]) -> Option<u64> {
+    if f.first().is_some_and(|b| b & 0x80 != 0) {
+        return Some(f[1..].iter().fold(0u64, |n, &b| (n << 8) | b as u64));
+    }
+    let s = std::str::from_utf8(f).ok()?.trim_matches(|c: char| c == '\0' || c == ' ');
+    if s.is_empty() {
+        return Some(0);
+    }
+    u64::from_str_radix(s, 8).ok()
+}
+
+fn cstr(b: &[u8]) -> String {
+    let end = b.iter().position(|&c| c == 0).unwrap_or(b.len());
+    String::from_utf8_lossy(&b[..end]).into_owned()
+}
+
+/// PAX attributes: "<length> <key>=<value>\n", one after another.
+fn pax(data: &[u8]) -> Vec<(String, String)> {
+    let mut out = Vec::new();
+    let mut at = 0;
+    while at < data.len() {
+        let rest = &data[at..];
+        let Some(sp) = rest.iter().position(|&c| c == b' ') else { break };
+        let Some(len) = std::str::from_utf8(&rest[..sp]).ok().and_then(|s| s.parse::<usize>().ok()) else { break };
+        let Some(rec) = rest.get(sp + 1..len) else { break };
+        let rec = String::from_utf8_lossy(rec.strip_suffix(b"\n").unwrap_or(rec)).into_owned();
+        if let Some((k, v)) = rec.split_once('=') {
+            out.push((k.to_string(), v.to_string()));
+        }
+        at += len.max(1);
+    }
+    out
 }
 
 /// Reads a file through `read` a block at a time, for `zip::ZipArchive`.
@@ -195,5 +364,93 @@ mod tests {
         assert_eq!(super::unpack(file.len() as u64, &mut read, "big.bin", 1 << 20).unwrap().len(), 600_000);
         assert!(super::unpack(file.len() as u64, &mut read, "big.bin", 1000).is_err());
         assert!(super::unpack(file.len() as u64, &mut read, "nope", 1000).is_err());
+    }
+
+    /// A TAR header: `name`, `kind` ('0' file, '5' folder, 'L' long name, 'x' PAX), `size`.
+    fn tar_header(name: &str, kind: u8, size: u64) -> [u8; 512] {
+        let mut h = [0u8; 512];
+        h[..name.len()].copy_from_slice(name.as_bytes());
+        h[100..107].copy_from_slice(b"0000644");
+        h[124..135].copy_from_slice(format!("{size:011o}").as_bytes());
+        h[156] = kind;
+        h[257..263].copy_from_slice(b"ustar\0");
+        h[263..265].copy_from_slice(b"00");
+        h[148..156].copy_from_slice(b"        ");
+        let sum: u32 = h.iter().map(|&b| b as u32).sum();
+        h[148..155].copy_from_slice(format!("{sum:06o}\0").as_bytes());
+        h
+    }
+
+    fn tar_item(out: &mut Vec<u8>, name: &str, kind: u8, data: &[u8]) {
+        out.extend_from_slice(&tar_header(name, kind, data.len() as u64));
+        out.extend_from_slice(data);
+        out.resize(out.len().div_ceil(512) * 512, 0);
+    }
+
+    fn sample_tar() -> Vec<u8> {
+        let mut t = Vec::new();
+        tar_item(&mut t, "./pics/", b'5', b"");
+        tar_item(&mut t, "./pics/a.txt", b'0', &[b'x'; 100_000]);
+        let long = format!("{}/deep.txt", "d".repeat(120));
+        tar_item(&mut t, "././@LongLink", b'L', format!("{long}\0").as_bytes());
+        tar_item(&mut t, "cut", b'0', b"hello");
+        let rec = "21 path=pax/név.txt\n";
+        tar_item(&mut t, "PaxHeader", b'x', rec.as_bytes());
+        tar_item(&mut t, "short", b'0', b"hi");
+        t.extend_from_slice(&[0u8; 1024]);
+        t
+    }
+
+    #[test]
+    fn lists_a_tar() {
+        let file = sample_tar();
+        let mut read_bytes = 0;
+        let mut read = |at: u64, len: u64| {
+            let v: Vec<u8> = file.iter().skip(at as usize).take(len as usize).copied().collect();
+            read_bytes += v.len();
+            Ok(v)
+        };
+        let l = super::list_tar(file.len() as u64, &mut read, false).unwrap();
+        let got: Vec<_> = l.items.iter().map(|p| (p.name.as_str(), p.size, p.dir)).collect();
+        let long = format!("{}/deep.txt", "d".repeat(120));
+        assert_eq!(got, [("pics/", 0, true), ("pics/a.txt", 100_000, false), (long.as_str(), 5, false), ("pax/név.txt", 2, false)]);
+        assert_eq!((l.total, l.partial), (4, false));
+
+        let mut read = |_: u64, _: u64| Ok(b"not a tar at all, just some text".to_vec());
+        assert!(super::list_tar(32, &mut read, false).is_err());
+    }
+
+    #[test]
+    fn lists_a_tar_gz() {
+        use flate2::write::GzEncoder;
+        let mut z = GzEncoder::new(Vec::new(), flate2::Compression::default());
+        z.write_all(&sample_tar()).unwrap();
+        let file = z.finish().unwrap();
+        let mut read = |at: u64, len: u64| Ok(file.iter().skip(at as usize).take(len as usize).copied().collect());
+        let l = super::list_tar(file.len() as u64, &mut read, true).unwrap();
+        assert_eq!((l.items.len(), l.total, l.partial), (4, 4, false));
+        // Cut short: what's found, marked as not all.
+        let cut = file.len() as u64 / 2;
+        let mut read = |at: u64, len: u64| Ok(file.iter().take(cut as usize).skip(at as usize).take(len as usize).copied().collect());
+        let l = super::list_tar(cut, &mut read, true);
+        assert!(l.is_err() || l.unwrap().partial);
+    }
+
+    #[test]
+    fn lists_a_zip_with_something_before_it() {
+        let mut buf = Cursor::new(Vec::new());
+        {
+            let mut z = zip::ZipWriter::new(&mut buf);
+            let o = zip::write::SimpleFileOptions::default().compression_method(zip::CompressionMethod::Stored);
+            z.start_file("a\\b.txt", o).unwrap();
+            z.write_all(b"hi").unwrap();
+            z.finish().unwrap();
+        }
+        let mut file = vec![b'#'; 1000];
+        file.extend(buf.into_inner());
+        let mut read = |at: u64, len: u64| Ok(file.iter().skip(at as usize).take(len as usize).copied().collect());
+        let l = super::list(file.len() as u64, &mut read).unwrap();
+        let got: Vec<_> = l.items.iter().map(|p| p.name.as_str()).collect();
+        assert_eq!(got, ["a/b.txt"]);
     }
 }
