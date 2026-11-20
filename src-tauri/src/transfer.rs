@@ -128,6 +128,31 @@ pub(super) fn run_transfer(
     Ok(report)
 }
 
+/// Files at least this big are read in pieces, so the progress moves while a big file is read.
+const PIECE: u64 = 8 * 1024 * 1024;
+
+/// The whole file at `path` (`size` bytes, as listed). From a server or this computer, a big
+/// file is read a piece at a time, with `read` told each piece's size; other devices read it in
+/// one go, as reading part of a file is slow on them.
+fn read_in_pieces(a: &Device, path: &str, size: u64, stop: &std::sync::atomic::AtomicBool, mut read: impl FnMut(u64)) -> Result<Vec<u8>, String> {
+    if size < PIECE || !matches!(a.kind(), "sftp" | "everything" | "mac") {
+        return a.read(path).map(|(d, _)| d).map_err(msg);
+    }
+    let mut data = Vec::with_capacity(size as usize);
+    loop {
+        if stop.load(Ordering::Relaxed) {
+            return Err("Cancelled.".into());
+        }
+        let part = a.read_range(path, data.len() as u64, PIECE).map_err(msg)?;
+        let n = part.len() as u64;
+        data.extend_from_slice(&part);
+        read(n);
+        if n < PIECE {
+            return Ok(data);
+        }
+    }
+}
+
 /// Copies (or moves) each item in turn: folders are made (or merged into), files are written
 /// only where nothing is there yet. With `resume` (running a stopped or failed job again), a file
 /// already at the target with the same size counts as done instead of skipped; when moving, its
@@ -202,8 +227,13 @@ pub(super) fn run_items(
                 }
             }
         }
+        let mut counted = 0u64;
         let done = (|| -> Result<(), String> {
-            let (data, _) = a.read(&it.from).map_err(msg)?;
+            let data = read_in_pieces(a, &it.from, it.size, stop, |n| {
+                counted += n;
+                p.bytes_done += n;
+                emit(p.clone());
+            })?;
             let w = b.write(&it.to, &data, None, !replace).map_err(|e| match e {
                 DevError::Conflict(_) => "Already there.".to_string(),
                 e => e.to_string(),
@@ -235,7 +265,7 @@ pub(super) fn run_items(
             }
         }
         p.files_done += 1;
-        p.bytes_done += it.size;
+        p.bytes_done += it.size.saturating_sub(counted);
     }
     if !report.cancelled {
         for d in emptied.iter().rev() {

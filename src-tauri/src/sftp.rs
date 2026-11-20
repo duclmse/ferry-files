@@ -44,10 +44,12 @@ const OPEN_WRITE: u32 = 2;
 const OPEN_CREATE: u32 = 8;
 const OPEN_TRUNC: u32 = 0x10;
 
-/// Bytes asked for or sent per request; any server takes this much.
-const CHUNK: u32 = 32 * 1024;
-/// Requests sent before waiting for the answers, so a copy isn't one round trip per chunk.
-const AHEAD: usize = 16;
+/// Bytes asked for or sent per request. OpenSSH takes up to 256 KB; a server that sends less
+/// is asked again for the rest.
+const CHUNK: u32 = 64 * 1024;
+/// Requests sent before waiting for the answers, so a copy isn't one round trip per chunk
+/// (4 MB in flight, like OpenSSH's own sftp with its usual settings).
+const AHEAD: usize = 64;
 
 /// An SFTP address: what to give `ssh` (a host from `~/.ssh/config`, or user@host) and the port.
 #[derive(Clone, Debug, Default, PartialEq)]

@@ -109,8 +109,8 @@ files and disks too, so books can be copied between them.
   forgets its password. Connections made before this list are moved into it.
   - SFTP: this computer's ssh keys, agent and ~/.ssh/config, a key file, or a
     password (handed to ssh by the app itself, never on a command line). It
-    works like a phone: browse, copy both ways, rename,
-    delete.
+    works like a phone: browse, copy both ways (with bytes and speed shown),
+    rename, delete.
   - SMB: mounted by the system; it asks for the password when connecting, or
     uses the saved one (with an optional domain). It then opens as a folder on
     this computer. ⏏ disconnects it. Shares mounted outside the app also show
