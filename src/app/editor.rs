@@ -81,7 +81,7 @@ impl Ctx {
                     let (text, crlf, mixed) = to_lf(f.text);
                     let ed = Editor { src, pane: p.id, path, version: f.version, saved_text: text.as_str().into(), crlf, mixed };
                     // Its text is in the editor while it's shown.
-                    let doc = Doc { ed: ed.clone(), text: String::new() };
+                    let doc = Doc { ed: ed.clone(), text: None };
                     let at = p.doc_at.get_untracked();
                     let keep = p.slot().dirty();
                     stash(p);
@@ -96,7 +96,7 @@ impl Ctx {
                         }
                     });
                     let at = if keep { at + 1 } else { at.min(p.docs.with_untracked(Vec::len) - 1) };
-                    show(p, at, Doc { ed, text });
+                    show(p, at, ed, text);
                     p.peek_on.set(false);
                 }
                 Err(e) => p.error(e),
@@ -147,22 +147,22 @@ impl Ctx {
     /// Shows the Editor view's tab `i`.
     pub(super) fn show_doc(self, p: Pane, i: usize) {
         p.peek_on.set(false);
-        if i == p.doc_at.get_untracked() && p.doc.with_untracked(Option::is_some) {
+        if (i == p.doc_at.get_untracked() && p.doc.with_untracked(Option::is_some)) || i >= p.docs.with_untracked(Vec::len) {
             return;
         }
         stash(p);
         // Its text goes to the editor, not copied.
-        let taken = p.docs.try_update(|ds| ds.get_mut(i).map(|d| Doc { ed: d.ed.clone(), text: std::mem::take(&mut d.text) })).flatten();
-        if let Some(d) = taken {
-            reveal(p, &d.ed.path);
-            show(p, i, d);
+        let taken = p.docs.try_update(|ds| ds.get_mut(i).map(|d| (d.ed.clone(), d.take_text()))).flatten();
+        if let Some((ed, text)) = taken {
+            reveal(p, &ed.path);
+            show(p, i, ed, text);
         }
     }
 
     /// Closes the Editor view's tab `i`; with unsaved changes, unless `force`, it's shown and asks.
     pub(super) fn close_doc(self, p: Pane, i: usize, force: bool) {
         let at = p.doc_at.get_untracked();
-        let dirty = if i == at { p.slot().dirty() } else { p.docs.with_untracked(|ds| ds.get(i).is_some_and(|d| *d.ed.saved_text != *d.text)) };
+        let dirty = if i == at { p.slot().dirty() } else { p.docs.with_untracked(|ds| ds.get(i).is_some_and(Doc::dirty)) };
         if dirty && !force {
             self.show_doc(p, i);
             p.doc_ask.set(true);
@@ -177,13 +177,17 @@ impl Ctx {
         let n = p.docs.with_untracked(Vec::len);
         if i == at {
             let next = i.min(n.saturating_sub(1));
-            match p.docs.try_update(|ds| ds.get_mut(next).map(|d| Doc { ed: d.ed.clone(), text: std::mem::take(&mut d.text) })).flatten() {
-                Some(d) => show(p, next, d),
+            match p.docs.try_update(|ds| ds.get_mut(next).map(|d| (d.ed.clone(), d.take_text()))).flatten() {
+                Some((ed, text)) => show(p, next, ed, text),
                 None => {
                     p.doc.set(None);
                     p.doc_text.set(String::new());
                     p.doc_at.set(0);
                     p.doc_ask.set(false);
+                    // The preview tab, if there's one, is what's left to show.
+                    if p.doc_peek.with_untracked(Option::is_some) {
+                        p.peek_on.set(true);
+                    }
                 }
             }
         } else if i < at {
@@ -208,11 +212,13 @@ impl Ctx {
     }
 }
 
-/// Keeps the shown tab's file and text in its entry of `docs`.
+/// Keeps the shown tab's file in its entry of `docs`, and its text if it has changes: unchanged,
+/// it's made again from the saved text when shown.
 fn stash(p: Pane) {
     let Some(ed) = p.doc.get_untracked() else { return };
     let at = p.doc_at.get_untracked();
-    let text = p.doc_text.get_untracked();
+    let text = p.doc_text.try_update_untracked(std::mem::take).unwrap_or_default();
+    let text = (text != *ed.saved_text).then_some(text);
     p.docs.update(|ds| {
         if let Some(d) = ds.get_mut(at) {
             *d = Doc { ed, text };
@@ -221,9 +227,9 @@ fn stash(p: Pane) {
 }
 
 /// Puts tab `at`'s file in the editor. Its text goes first: the editor reads it when it's made.
-fn show(p: Pane, at: usize, d: Doc) {
-    p.doc_text.set(d.text);
-    p.doc.set(Some(d.ed));
+fn show(p: Pane, at: usize, ed: Editor, text: String) {
+    p.doc_text.set(text);
+    p.doc.set(Some(ed));
     p.doc_at.set(at);
     p.doc_ask.set(false);
     p.doc_status.set((String::new(), ""));
