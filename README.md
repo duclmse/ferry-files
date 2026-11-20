@@ -35,7 +35,7 @@ files and disks too, so books can be copied between them.
   the folder. PDFs (up to 64
   MB) show in the preview, fonts (TTF, OTF, WOFF, WOFF2) as samples, EPUBs as
   their cover (the cover itself once the preview is bigger than its thumbnail),
-  ZIP, APK and JAR (and TAR, .tar.gz, .tgz) files as a tree of what's in them,
+  and ZIP, APK and JAR (and TAR, .tar.gz, .tgz) files as a tree of what's in them,
   folders opening and closing, each with the size of all in it (a ZIP read from
   the end of the file, without unpacking; the first 5000 items; a TAR from its
   headers, a .tar.gz read through, up to its first 256 MB); in the column view, a ZIP
