@@ -1,8 +1,22 @@
 /* The Editor view (code.rs): the pane's folder as a tree, a grip, then the open file in tabs. */
 .code-view {
+  --status-h: 27px;
   flex: 1;
   display: flex;
   min-height: 0;
+  /* The status bar runs under the tree and the editor both. */
+  position: relative;
+  padding-bottom: var(--status-h);
+}
+
+.code-view .statusbar {
+  position: absolute;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  height: var(--status-h);
+  min-height: 0;
+  box-sizing: border-box;
 }
 
 .code-tree {
@@ -69,7 +83,6 @@
   background: var(--panel);
 }
 
-/* Find and the editor's buttons, in one row. */
 /* The open files' tabs: they keep their width and scroll sideways when there are many. */
 .doc-tabs {
   flex: none;

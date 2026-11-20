@@ -295,6 +295,18 @@ impl Ctx {
         p.term.update(|t| *t = !*t);
     }
 
+    /// Shows the terminal and goes to `dir` in its shell. A shell that's starting (or starts when
+    /// the terminal is shown) gets the cd once it runs.
+    pub(super) fn cd_in_terminal(self, p: Pane, dir: String) {
+        let cd = format!("cd '{}'\r", dir.replace('\'', r"'\''")).into_bytes();
+        if p.term_id.get_untracked().is_some() || p.term_starting.get_value() {
+            self.type_in(p, cd);
+        } else if dir != p.cwd.get_untracked() {
+            with_screen(p.id, |s| s.typed.extend_from_slice(&cd));
+        }
+        p.term.set(true);
+    }
+
     /// Listens for the terminals' output, and stores what they printed now and then. Once, at launch.
     pub(super) fn watch_terminals(self) {
         crate::api::listen("term", move |o: TermOut| {

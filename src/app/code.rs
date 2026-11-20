@@ -27,7 +27,7 @@ pub(super) fn CodeView(pane: Pane) -> impl IntoView {
     };
     view! {
         <div class="code-view">
-            <div class="code-tree" role="tree" aria-label="Files"
+            <div class="code-tree" role="tree" aria-label="Files" on:contextmenu=move |ev| ctx.show_tree_menu(p, &ev, None)
                 style=move || match p.tree_w.get() { w if w > 0.0 => format!("width: {w}px"), _ => String::new() }>
                 <div class="code-tree-head" title=move || p.cwd.get()>{root}</div>
                 <div class="code-tree-scroll">
@@ -64,6 +64,8 @@ fn CodeNode(pane: Pane, entry: Entry, depth: usize) -> impl IntoView {
     let style = format!("--depth: {depth}");
     let title = entry.path.clone();
     let name = entry.name.clone();
+    let row_entry = StoredValue::new(entry.clone());
+    let menu = move |ev: web_sys::MouseEvent| ctx.show_tree_menu(p, &ev, Some(row_entry.get_value()));
     if entry.dir {
         let open = Memo::new(move |_| path.with_value(|x| p.tree_open.with(|o| o.contains(x))));
         // What's in it: None until listed. A listing that fails shows nothing under it.
@@ -88,7 +90,7 @@ fn CodeNode(pane: Pane, entry: Entry, depth: usize) -> impl IntoView {
         };
         let leaf = move || kids.with(|k| k.as_ref().is_some_and(Vec::is_empty));
         view! {
-            <div class="tree-row" style=style role="treeitem" aria-expanded=move || open.get().to_string()>
+            <div class="tree-row" style=style role="treeitem" aria-expanded=move || open.get().to_string() on:contextmenu=menu>
                 <button class="twisty" class:none=leaf tabindex="-1" aria-hidden="true" on:click=toggle>{chev(open.into())}</button>
                 <button class="item dir" title=title on:click=toggle>{name}</button>
             </div>
@@ -113,9 +115,9 @@ fn CodeNode(pane: Pane, entry: Entry, depth: usize) -> impl IntoView {
             }
         });
         let text = kind(&entry) == Kind::Text;
-        let e = StoredValue::new(entry);
+        let e = row_entry;
         view! {
-            <div class="tree-row file" style=style role="treeitem" aria-selected=move || active.get().to_string()>
+            <div class="tree-row file" style=style role="treeitem" aria-selected=move || active.get().to_string() on:contextmenu=menu>
                 <span class="twisty none"></span>
                 <button class="item" class:active=active class:off=!text node_ref=row
                     title=if text { title } else { format!("{title}\nNot a text file: double-click to open it") }

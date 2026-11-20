@@ -231,6 +231,7 @@ pub fn run() {
             files::rename,
             safety::space,
             files::open_file,
+            files::reveal,
             settings::app_folders,
             settings::open_folder,
             settings::clear_cache,

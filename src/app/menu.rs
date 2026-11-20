@@ -23,7 +23,7 @@ impl Ctx {
             }
         }
         let (x, y) = menu_at(ev, 240.0, self.menu_items(p, entry.as_ref()).len());
-        self.menu.set(Some(Menu { x, y, pane: p.id, entry, columns: false, folders: vec![], place: None, sections: false }));
+        self.menu.set(Some(Menu { x, y, pane: p.id, entry, columns: false, folders: vec![], place: None, sections: false, tree: false }));
     }
 
     /// The list's columns to show or hide, from a right-click on its header.
@@ -32,7 +32,7 @@ impl Ctx {
         ev.stop_propagation();
         self.active.set(p.id);
         let (x, y) = menu_at(ev, 220.0, self.column_items(p).len());
-        self.menu.set(Some(Menu { x, y, pane: p.id, entry: None, columns: true, folders: vec![], place: None, sections: false }));
+        self.menu.set(Some(Menu { x, y, pane: p.id, entry: None, columns: true, folders: vec![], place: None, sections: false, tree: false }));
     }
 
     /// A folder in the sidebar: open it here or in a new tab, or (un)favourite it.
@@ -41,7 +41,7 @@ impl Ctx {
         ev.stop_propagation();
         let p = self.act();
         let (x, y) = menu_at(ev, 220.0, self.place_items(src, &path).len());
-        self.menu.set(Some(Menu { x, y, pane: p.id, entry: None, columns: false, folders: vec![], place: Some((src, path)), sections: false }));
+        self.menu.set(Some(Menu { x, y, pane: p.id, entry: None, columns: false, folders: vec![], place: Some((src, path)), sections: false, tree: false }));
     }
 
     pub(super) fn place_items(self, src: Src, path: &str) -> Vec<MenuItem> {
@@ -65,7 +65,7 @@ impl Ctx {
         ev.stop_propagation();
         let p = self.act();
         let (x, y) = menu_at(ev, 220.0, self.section_items().len());
-        self.menu.set(Some(Menu { x, y, pane: p.id, entry: None, columns: false, folders: vec![], place: None, sections: true }));
+        self.menu.set(Some(Menu { x, y, pane: p.id, entry: None, columns: false, folders: vec![], place: None, sections: true, tree: false }));
     }
 
     /// ✓ beside each of the sidebar's sections that's shown.
@@ -101,7 +101,7 @@ impl Ctx {
             let r = el.get_bounding_client_rect();
             (x, y) = (r.left(), r.bottom() + 2.0);
         }
-        self.menu.set(Some(Menu { x, y, pane: p.id, entry: None, columns: false, folders, place: None, sections: false }));
+        self.menu.set(Some(Menu { x, y, pane: p.id, entry: None, columns: false, folders, place: None, sections: false, tree: false }));
     }
 
     /// ✓ beside each of the list's columns that's shown; Name is always shown.
@@ -226,6 +226,129 @@ impl Ctx {
             }
             self.transfer(p, from, items, to_src, to_dir, clip.moving);
         });
+    }
+
+    /// A row of the Editor view's tree (or, with None, its folder at the top).
+    pub(super) fn show_tree_menu(self, p: Pane, ev: &web_sys::MouseEvent, entry: Option<Entry>) {
+        ev.prevent_default();
+        ev.stop_propagation();
+        self.active.set(p.id);
+        let (x, y) = menu_at(ev, 240.0, self.tree_items(p, entry.as_ref()).len());
+        self.menu.set(Some(Menu { x, y, pane: p.id, entry, columns: false, folders: vec![], place: None, sections: false, tree: true }));
+    }
+
+    pub(super) fn tree_items(self, p: Pane, entry: Option<&Entry>) -> Vec<MenuItem> {
+        let src = p.src.get_untracked();
+        let mac = src == Src::Mac;
+        let shell = self.has_shell(src);
+        let reveal = format!("Show in {}", crate::os::file_manager());
+        let copies = |v: &mut Vec<MenuItem>, top: bool| {
+            v.push(MenuItem::Sep);
+            if !top {
+                v.push(item("Copy name", "", Act::CopyName));
+            }
+            v.push(item("Copy path", "", Act::CopyPath));
+            if !top {
+                v.push(item("Copy relative path", "", Act::CopyRelPath));
+            }
+        };
+        let Some(e) = entry else {
+            let cwd = p.cwd.get_untracked();
+            let mut v = vec![
+                MenuItem::Do { label: "Set root to the folder above".into(), key: "", act: Act::Up, danger: false, enabled: cwd != "/" && !cwd.is_empty() },
+                MenuItem::Do { label: "Collapse all folders".into(), key: "", act: Act::CollapseAll, danger: false, enabled: !p.tree_open.with_untracked(HashSet::is_empty) },
+                item("Refresh", "", Act::Refresh),
+                MenuItem::Sep,
+                item("New text file…", "", Act::NewFile),
+                item("New folder…", "", Act::NewFolder),
+            ];
+            if mac || shell {
+                v.push(MenuItem::Sep);
+            }
+            if mac {
+                v.push(item(reveal, "", Act::Reveal));
+            }
+            if shell {
+                v.push(item("Open in terminal", "", Act::Terminal));
+            }
+            copies(&mut v, true);
+            return v;
+        };
+        let mut v = vec![];
+        if e.dir {
+            let open = p.tree_open.with_untracked(|o| o.contains(&e.path));
+            v.push(item("Set root here", "", Act::SetRoot));
+            v.push(item(if open { "Collapse" } else { "Expand" }, "", Act::Expand));
+            v.push(item("Open in new tab", "", Act::NewTab));
+        } else if kind(e) == Kind::Text {
+            v.push(item("Open", "", Act::Open));
+            if mac {
+                v.push(item("Open in default app", "", Act::OpenInApp));
+            }
+        } else {
+            v.push(item("Open in default app", "", Act::OpenInApp));
+        }
+        if mac || (e.dir && shell) {
+            v.push(MenuItem::Sep);
+        }
+        if mac {
+            v.push(item(reveal, "", Act::Reveal));
+        }
+        if e.dir && shell {
+            v.push(item("Open in terminal", "", Act::Terminal));
+        }
+        copies(&mut v, false);
+        if e.dir {
+            let fav = if self.is_fav(src, &e.path) { "Remove from Favourites" } else { "Add to Favourites" };
+            v.extend([MenuItem::Sep, item(fav, "", Act::Favourite)]);
+        }
+        v
+    }
+
+    /// What a tree menu's item does with its row (None: the tree's folder).
+    fn run_tree(self, p: Pane, act: Act, entry: Option<Entry>) {
+        let src = p.src.get_untracked();
+        let cwd = p.cwd.get_untracked();
+        let path = entry.as_ref().map_or_else(|| cwd.clone(), |e| e.path.clone());
+        match act {
+            Act::SetRoot => self.navigate(p, path),
+            Act::Up => self.navigate(p, parent(&cwd)),
+            Act::Expand => p.tree_open.update(|o| {
+                if !o.remove(&path) {
+                    o.insert(path);
+                }
+            }),
+            Act::CollapseAll => p.tree_open.update(HashSet::clear),
+            Act::Refresh => {
+                // Open folders are listed again too.
+                let open = p.tree_open.get_untracked();
+                p.tree_open.update(HashSet::clear);
+                spawn_local(async move {
+                    let _ = call::<()>("refresh", json!({ "src": src.key() })).await;
+                    self.reload(p);
+                    p.tree_open.set(open);
+                });
+            }
+            Act::Open => match entry {
+                Some(e) if kind(&e) == Kind::Text => self.open_doc(p, e.path),
+                _ => {}
+            },
+            Act::OpenInApp => self.open_in_app(p, path),
+            Act::NewTab => self.new_tab(p, src, path),
+            Act::NewFile => p.notice.set(Notice::NewItem { folder: false }),
+            Act::NewFolder => p.notice.set(Notice::NewItem { folder: true }),
+            Act::Reveal => spawn_local(async move {
+                if let Err(e) = call::<()>("reveal", json!({ "path": path })).await {
+                    p.error(e);
+                }
+            }),
+            Act::Terminal => self.cd_in_terminal(p, path),
+            Act::CopyName => copy_text(p, base(&path)),
+            Act::CopyPath => copy_text(p, if src == Src::Mac { crate::os::native_path(&path) } else { path }),
+            Act::CopyRelPath => copy_text(p, relative(&cwd, &path)),
+            Act::Favourite => self.toggle_fav(src, path),
+            _ => {}
+        }
     }
 
     pub(super) fn menu_items(self, p: Pane, entry: Option<&Entry>) -> Vec<MenuItem> {
@@ -457,7 +580,9 @@ pub(super) fn ContextMenu() -> impl IntoView {
     let ctx = expect_context::<Ctx>();
     move || ctx.menu.get().map(|m| {
         let p = ctx.panes[m.pane];
-        let items = if let Some((src, path)) = &m.place {
+        let items = if m.tree {
+            ctx.tree_items(p, m.entry.as_ref())
+        } else if let Some((src, path)) = &m.place {
             ctx.place_items(*src, path)
         } else if !m.folders.is_empty() {
             m.folders.iter().enumerate().map(|(i, f)| item(base(f), "", Act::Go(i))).collect()
@@ -485,6 +610,10 @@ pub(super) fn ContextMenu() -> impl IntoView {
                                         ctx.run_place(act, src, path);
                                         return;
                                     }
+                                    if m.tree {
+                                        ctx.run_tree(p, act, entry.clone());
+                                        return;
+                                    }
                                     match act {
                                         Act::Go(i) => if let Some(f) = folders.with_value(|f| f.get(i).cloned()) { ctx.navigate(p, f) },
                                         _ => ctx.run(p, act, entry.clone()),
@@ -498,6 +627,26 @@ pub(super) fn ContextMenu() -> impl IntoView {
             </div>
         }
     })
+}
+
+/// `path` from the folder `root`: "src/main.rs" under "/a/b" for "/a/b/src/main.rs".
+fn relative(root: &str, path: &str) -> String {
+    let root = root.trim_end_matches('/');
+    match path.strip_prefix(root).and_then(|r| r.strip_prefix('/')) {
+        Some(r) if !r.is_empty() => r.to_string(),
+        _ => base(path),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    #[test]
+    fn relative_paths() {
+        assert_eq!(super::relative("/a/b", "/a/b/src/x.rs"), "src/x.rs");
+        assert_eq!(super::relative("/", "/etc/hosts"), "etc/hosts");
+        // Not under the root: its name.
+        assert_eq!(super::relative("/a/b", "/a/bc/x"), "x");
+    }
 }
 
 /// Puts `text` on the clipboard.

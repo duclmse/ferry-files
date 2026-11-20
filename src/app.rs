@@ -253,6 +253,8 @@ struct Menu {
     place: Option<(Src, String)>,
     /// The sidebar's sections to show or hide, from a right-click on the sidebar.
     sections: bool,
+    /// From the Editor view's tree: `entry` is a row of it, or None for its folder.
+    tree: bool,
 }
 
 #[derive(Clone, Copy, PartialEq)]
@@ -310,6 +312,19 @@ enum Act {
     Section(usize),
     /// Shows all the sidebar's sections.
     AllSections,
+    /// The Editor view's tree: shows this folder at its top.
+    SetRoot,
+    /// The Editor view's tree: shows the folder above at its top.
+    Up,
+    /// The Editor view's tree: shows or hides what's in the folder.
+    Expand,
+    /// The Editor view's tree: hides what's in every folder.
+    CollapseAll,
+    CopyRelPath,
+    /// Shows it in Finder (File Explorer, Files).
+    Reveal,
+    /// Shows the terminal, in this folder.
+    Terminal,
 }
 
 enum MenuItem {
