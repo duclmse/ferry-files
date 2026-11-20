@@ -281,6 +281,17 @@ pub struct TextFile {
     pub version: String,
 }
 
+/// Colours for text being edited (`colour_text`).
+#[derive(Clone, Debug, Default, Deserialize)]
+pub struct TextColours {
+    /// (kind, bytes) runs over the text; None when it's plain.
+    #[serde(default)]
+    pub runs: Option<Vec<(u8, u32)>>,
+    /// Colours stopped partway: the rest is plain.
+    #[serde(default)]
+    pub stopped: bool,
+}
+
 #[derive(Clone, Debug, Deserialize)]
 pub struct WriteResult {
     pub version: String,

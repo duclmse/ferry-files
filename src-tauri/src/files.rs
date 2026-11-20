@@ -162,6 +162,24 @@ pub(super) async fn peek_text(
     .await
 }
 
+/// Colours for text being edited (see `highlight`): `name`, the file's name, picks the language.
+#[derive(Serialize)]
+pub(super) struct TextColours {
+    /// (kind, bytes) runs over the text; None when it's plain.
+    runs: Option<Vec<(u8, u32)>>,
+    /// Colours stopped partway (too far in, or too slow): the rest is plain.
+    stopped: bool,
+}
+
+#[tauri::command(rename_all = "snake_case")]
+pub(super) async fn colour_text(name: String, text: String) -> Result<TextColours, String> {
+    blocking(move || {
+        let c = crate::highlight::colour(&format!("edit\n{name}"), &name, 0, &text, None);
+        Ok(TextColours { runs: c.runs, stopped: c.stopped })
+    })
+    .await
+}
+
 #[tauri::command(rename_all = "snake_case")]
 pub(super) async fn write_text(
     state: State<'_, AppState>,

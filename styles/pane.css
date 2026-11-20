@@ -427,6 +427,161 @@ th.num {
   tab-size: 4;
 }
 
+/* The text editor (editor.rs): a clear-lettered textarea over a layer that draws the text, its
+   colours, line numbers and find marks. Both must lay text out the same, so they share every
+   metric, and both always have scroll bars (thin, from base.css) so their widths match. */
+.code-edit {
+  position: relative;
+  flex: 1;
+  min-height: 0;
+  background: var(--panel);
+  --ln-w: 2ch;
+  --gut: 0px;
+}
+
+.code-edit.numbered {
+  --gut: calc(var(--ln-w) + 2ch);
+}
+
+.code-layer,
+.code-input {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  margin: 0;
+  border: 0;
+  border-radius: 0;
+  box-sizing: border-box;
+  padding: 8px 16px 40vh calc(16px + var(--gut));
+  font: 13px/20px ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-variant-ligatures: none;
+  letter-spacing: 0;
+  tab-size: 4;
+  white-space: pre-wrap;
+  overflow-wrap: break-word;
+  word-break: normal;
+  overflow: scroll;
+}
+
+.code-edit.nowrap .code-layer,
+.code-edit.nowrap .code-input {
+  white-space: pre;
+  overflow-wrap: normal;
+}
+
+.code-layer {
+  color: var(--ink);
+  pointer-events: none;
+  /* It must scroll at least as far as the box over it. */
+  padding-bottom: calc(40vh + 40px);
+}
+
+.code-layer::-webkit-scrollbar-thumb {
+  background: transparent;
+}
+
+.code-input {
+  resize: none;
+  outline: none;
+  background: transparent;
+  color: var(--ink);
+  caret-color: var(--ink);
+  -webkit-user-select: text;
+  user-select: text;
+}
+
+/* Over the layer, the box's letters are clear: the layer shows them. */
+.code-edit.layered .code-input {
+  color: transparent;
+  -webkit-text-fill-color: transparent;
+}
+
+.code-edit.layered .code-input::selection {
+  background: color-mix(in srgb, var(--accent) 28%, transparent);
+}
+
+.code-edit.nowrap .code-layer {
+  padding-left: 16px;
+  padding-right: 56px;
+}
+
+.code-layer .ln {
+  display: block;
+  position: relative;
+}
+
+.code-layer .ln.cur {
+  background: var(--hover);
+}
+
+/* The number is CSS content, left of the line; wrapped lines hang under the text. */
+.code-edit.numbered .code-layer .ln::before {
+  content: attr(data-n);
+  position: absolute;
+  left: calc(-1 * var(--gut));
+  width: var(--ln-w);
+  text-align: right;
+  color: var(--muted);
+}
+
+/* Unwrapped, the number stays put while the text scrolls sideways. */
+.code-edit.numbered.nowrap .code-layer .ln::before {
+  position: sticky;
+  left: 0;
+  display: inline-block;
+  box-sizing: content-box;
+  padding-right: 2ch;
+  background: var(--panel);
+  box-shadow: -16px 0 0 var(--panel);
+  z-index: 1;
+}
+
+.code-edit.numbered.nowrap .code-layer .ln.cur::before {
+  background: var(--hover);
+  box-shadow: -16px 0 0 var(--hover);
+}
+
+.code-edit.numbered .code-layer .ln.cur::before {
+  color: var(--ink);
+}
+
+.code-layer mark.hit {
+  color: inherit;
+  background: color-mix(in srgb, var(--accent) 22%, transparent);
+  border-radius: 2px;
+}
+
+.code-layer mark.hit.on {
+  background: color-mix(in srgb, var(--accent) 45%, transparent);
+  box-shadow: 0 0 0 1px var(--accent);
+}
+
+/* Find, above the text. */
+.find-bar {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  padding: 4px 8px;
+  background: var(--panel);
+  border-bottom: 1px solid var(--line);
+}
+
+.find-bar .filter-box {
+  width: min(320px, 100%);
+}
+
+.find-bar .count {
+  min-width: 80px;
+  padding: 0 6px;
+  color: var(--muted);
+  font-size: 12px;
+}
+
+.find-bar .btn {
+  height: 26px;
+}
+
 .status {
   color: var(--muted);
   font-size: 12px;

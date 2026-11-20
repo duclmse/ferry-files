@@ -25,6 +25,7 @@
     "allow-zip-list",
     "allow-copy-text",
     "allow-write-text",
+    "allow-colour-text",
     "allow-mkdir",
     "allow-remove",
     "allow-remove-tree",

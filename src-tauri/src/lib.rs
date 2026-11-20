@@ -204,6 +204,7 @@ pub fn run() {
             files::clip_files,
             files::clip_set,
             files::write_text,
+            files::colour_text,
             files::mkdir,
             files::remove,
             files::remove_tree,

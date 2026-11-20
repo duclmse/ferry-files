@@ -374,68 +374,68 @@
   cursor: text;
 }
 
-/* Code colours in the text preview (kinds from the backend's highlight.rs). */
-.peek .tok-comment {
+/* Code colours in the text preview and the editor (kinds from the backend's highlight.rs). */
+:is(.peek, .code-layer) .tok-comment {
   color: var(--tok-comment);
   font-style: italic;
 }
 
-.peek .tok-string {
+:is(.peek, .code-layer) .tok-string {
   color: var(--tok-string);
 }
 
-.peek .tok-number {
+:is(.peek, .code-layer) .tok-number {
   color: var(--tok-number);
 }
 
-.peek .tok-keyword {
+:is(.peek, .code-layer) .tok-keyword {
   color: var(--tok-keyword);
 }
 
-.peek .tok-type {
+:is(.peek, .code-layer) .tok-type {
   color: var(--tok-type);
 }
 
-.peek .tok-function {
+:is(.peek, .code-layer) .tok-function {
   color: var(--tok-function);
 }
 
-.peek .tok-tag {
+:is(.peek, .code-layer) .tok-tag {
   color: var(--tok-tag);
 }
 
-.peek .tok-attr {
+:is(.peek, .code-layer) .tok-attr {
   color: var(--tok-attr);
 }
 
-.peek .tok-heading {
+:is(.peek, .code-layer) .tok-heading {
   font-weight: 600;
 }
 
-.peek .tok-link,
-.peek .tok-list {
+:is(.peek, .code-layer) .tok-link,
+:is(.peek, .code-layer) .tok-list {
   color: var(--accent);
 }
 
-.peek .tok-url {
+:is(.peek, .code-layer) .tok-url {
   color: var(--accent);
   text-decoration: underline;
 }
 
-.peek .tok-bold {
+:is(.peek, .code-layer) .tok-bold {
   font-weight: 600;
 }
 
-.peek .tok-italic {
+:is(.peek, .code-layer) .tok-italic {
   font-style: italic;
 }
 
-.peek .tok-quote {
+:is(.peek, .code-layer) .tok-quote {
   color: var(--muted);
   font-style: italic;
 }
 
-.peek .tok-code {
+:is(.peek, .code-layer) .tok-code {
   color: var(--tok-string);
   background: var(--hover);
   border-radius: 3px;

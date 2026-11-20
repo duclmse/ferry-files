@@ -1425,6 +1425,8 @@ pub fn App() -> impl IntoView {
 fn Browser() -> impl IntoView {
     let ctx = expect_context::<Ctx>();
     let ep = ctx.ep;
+    // Only opening and closing the editor rebuilds the main area, not saving in it.
+    let editing = Memo::new(move |_| ctx.editor.with(Option::is_some));
     move || if ep.book.with(|b| b.is_some()) { view! { <crate::epub::EpubEditor/> }.into_any() } else { view! {
         <div class="app browse" class:no-side=move || !ctx.side.get() style=move || match ctx.side_w.get() {
             w if w > 0.0 && ctx.side.get() => format!("grid-template-columns: auto {}px auto 1fr", w.max(SIDE_MIN)),
@@ -1436,7 +1438,7 @@ fn Browser() -> impl IntoView {
                 <Grip size=ctx.side_w key=SIDE_W_KEY.into() min=SIDE_MIN max=480.0 room=480.0 class="grip side-grip"/>
             })}
             <div class="main">
-                {move || if ctx.editor.get().is_some() { view! { <TextEditor/> }.into_any() } else { view! {
+                {move || if editing.get() { view! { <TextEditor/> }.into_any() } else { view! {
                     <div class="panes">
                         <PaneView pane=ctx.panes[0]/>
                         {move || ctx.split.get().then(|| view! {
