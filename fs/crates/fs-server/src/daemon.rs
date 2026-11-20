@@ -149,7 +149,6 @@ pub async fn run_with_shutdown(
     let _instance_guard = win_guard::acquire(&cfg.data_dir)?;
 
     // ── 4-5. Stores ────────────────────────────────────────────────────────
-    tracing::info!("store mode: {:?}", cfg.store.mode);
     let sqlite = Arc::new(FileStore::from_config(&cfg)?);
     let t_tantivy = std::time::Instant::now();
     let tantivy = Arc::new(TantivyStore::new(&cfg.data_dir.join("tantivy"))?);
@@ -760,6 +759,9 @@ fn spawn_crawl(
             tracing::error!("full_crawl error: {e}");
         } else {
             tracing::info!("full crawl complete");
+            if let Some(summary) = store.heap_summary() {
+                tracing::info!("memory store: {summary}");
+            }
         }
         // On shutdown, skip the rebuild: it can take tens of seconds, and
         // SqliteStore::with_indexes recreates missing indexes on the next start.

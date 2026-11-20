@@ -20,8 +20,12 @@ log_dir = "/var/log/fs"
 # ── Store ─────────────────────────────────────────────────────────────────────
 
 [store]
-# "sqlite" (default) or "memory".
-mode = "sqlite"
+# "auto" (default), "memory" or "sqlite". auto is the memory store, unless
+# data_dir holds only an index.db from before it was the default. Over all of
+# C: the memory store answered substring, parent: and dupe: searches 3-10x
+# faster than SQLite and used 78 MB on disk against 933 MB; SQLite keeps less
+# in process memory. See docs/plans/performance-assessment.md.
+mode = "auto"
 # Optional SQLite indexes (sqlite mode). Each one makes queries on its column
 # fast and slows every write; see docs/plans/everything-borrowing.md, phase 7.
 # Changes apply on restart: missing indexes are built, unlisted ones dropped.

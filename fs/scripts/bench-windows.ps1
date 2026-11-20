@@ -572,6 +572,9 @@ try {
         foreach ($m in $fromTable) { Say "Enumeration:  $m" }
         foreach ($m in $walked) { Say "Enumeration:  $m" }
     }
+    # The memory store logs its own heap use, to set against private bytes.
+    $heap = Find-Log $d1 '^memory store: \d+ MB for'
+    if ($heap) { Say "Store heap:   $($heap -replace '^memory store: ', '')" }
 
     if (-not (Wait-Expectations $d1 $baseline 60 "baseline")) {
         foreach ($e in $baseline | Where-Object { -not $_.Ok }) { Say "  BASELINE FAIL  $($e.Desc): $($e.Seen)" }
@@ -646,6 +649,8 @@ try {
     Say "Path:         $path"
     if ($fallback) { Say "Fallback:     $fallback" }
     Say "Decision:     $decision2"
+    $heap2 = Find-Log $d2 '^memory store: \d+ MB for'
+    if ($heap2) { Say "Store heap:   $($heap2 -replace '^memory store: ', '') after loading index.bin" }
     Say ("Timing:       /health {0:N2}s, decision logged {1:N2}s, all changes visible {2}" -f `
         $d2.Ready, $decisionAt, $(if ($allOk) { "{0:N2}s" -f $verifiedAt } else { "NEVER (timed out)" }))
     Say "Checks:"

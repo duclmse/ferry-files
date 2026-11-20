@@ -190,7 +190,9 @@ fn spawn_side_workers(
 /// Returns false, having sent nothing, if the file table cannot be used.
 ///
 /// Rows go out in walk order because the memory store shares a parent's path
-/// only with entries added after it.
+/// only with entries added after it. They go out as the walk reaches them:
+/// collecting them first held every row of a whole volume at once (840-880
+/// MB peak over 1.4M entries against about 230 MB for Everything).
 fn crawl_from_mft(
     root: &Path,
     cache: &mut MftCache,
@@ -208,33 +210,26 @@ fn crawl_from_mft(
         }
     };
     let now = unix_now();
-    let mut rows = Vec::new();
+    let mut sent = 0u64;
     let walked = index.walk(root, |path, file| {
         let is_hidden = is_hidden_name(path);
         if excl.should_exclude(path, is_hidden) {
             return false;
         }
-        rows.push(record_from_mft(path, file, is_hidden, now));
+        let row = record_from_mft(path, file, is_hidden, now);
+        let side = side_work.wanted(path, row.is_dir).then(|| row.clone());
+        let _ = tx.send((row, root_str.to_owned()));
+        if let Some(side) = side {
+            let _ = side_tx.send(side);
+        }
+        sent += 1;
         true
     });
     if let Err(e) = walked {
         tracing::warn!("file table unusable, walking {}: {e}", root.display());
         return false;
     }
-    tracing::info!(
-        "file table: {} entries under {}",
-        rows.len(),
-        root.display()
-    );
-    for row in rows {
-        let side = side_work
-            .wanted(Path::new(&row.path), row.is_dir)
-            .then(|| row.clone());
-        let _ = tx.send((row, root_str.to_owned()));
-        if let Some(side) = side {
-            let _ = side_tx.send(side);
-        }
-    }
+    tracing::info!("file table: {sent} entries under {}", root.display());
     true
 }
 
@@ -279,7 +274,7 @@ pub async fn full_crawl(
 
     tokio::task::spawn_blocking(move || -> Result<()> {
         let mut mft_cache = MftCache::default();
-        for watch_path in &watch_paths {
+        for (i, watch_path) in watch_paths.iter().enumerate() {
             if shutdown_w.is_cancelled() {
                 break;
             }
@@ -385,6 +380,9 @@ pub async fn full_crawl(
                     &side_work,
                     &side_tx,
                 );
+            if try_mft {
+                mft_cache.release_unless_needed(watch_path, &watch_paths[i + 1..]);
+            }
             if !from_mft {
                 walker.run(|| {
                     let tx_w = tx.clone();

@@ -302,6 +302,8 @@ pub(super) enum Compiled<'a> {
     NameGlobNoCase(GlobNoCase<'a>),
     /// The `usize` is this condition's slot in [`PathMemo::verdicts`].
     PathLike(Like<'a>, usize),
+    Under(&'a str),
+    Depth(CmpOp, usize),
     Or(Vec<Vec<Compiled<'a>>>),
     Not(Vec<Compiled<'a>>),
     Other(&'a SqlCondition),
@@ -322,6 +324,8 @@ fn compile_with<'a>(conds: &'a [SqlCondition], slots: &mut usize) -> Vec<Compile
                 *slots += 1;
                 Compiled::PathLike(Like::new(p), *slots - 1)
             }
+            SqlCondition::ParentPath(dir) => Compiled::Under(dir),
+            SqlCondition::DepthOp(op, d) => Compiled::Depth(*op, *d),
             SqlCondition::Or(branches) => {
                 Compiled::Or(branches.iter().map(|b| compile_with(b, slots)).collect())
             }
@@ -338,6 +342,8 @@ impl Compiled<'_> {
             Self::NameGlob(glob) => glob.matches(e.name_str()),
             Self::NameGlobNoCase(glob) => glob.matches(e.name_str()),
             Self::PathLike(like, slot) => memo.path_matches(e, like, *slot),
+            Self::Under(dir) => memo.under(e, dir),
+            Self::Depth(op, d) => cmp_op_usize(*op, memo.depth(e), *d),
             Self::Or(branches) => branches
                 .iter()
                 .any(|b| b.iter().all(|c| c.matches(e, memo))),
@@ -351,11 +357,20 @@ impl Compiled<'_> {
 /// known about its path. Siblings are nearly always adjacent, so each
 /// directory's path is built and tested once and its files inherit the
 /// answer. The first full-path walk per entry was the bulk of a `path:` scan.
+/// `parent:` and `depth:` use it too: walking each entry's parent chain
+/// cost 200-470 ms and 140-150 ms over the 1.4M entries of a volume, where
+/// every path shares the prefix and none is rejected early.
 pub(super) struct PathMemo {
     parent: u32,
     path: String,
     parent_len: usize,
+    /// Separators in the parent's path.
+    parent_depth: usize,
     verdicts: Vec<Option<bool>>,
+}
+
+fn separators(s: &str) -> usize {
+    s.bytes().filter(|&b| b == b'/' || b == b'\\').count()
 }
 
 impl PathMemo {
@@ -364,8 +379,44 @@ impl PathMemo {
             parent: NO_PARENT,
             path: String::new(),
             parent_len: 0,
+            parent_depth: 0,
             verdicts: Vec::new(),
         }
+    }
+
+    /// Makes `parent` the current directory; false for an entry without one.
+    fn enter(&mut self, e: &EntryRef<'_>) -> bool {
+        let parent = e.parent_index();
+        if parent == NO_PARENT {
+            return false;
+        }
+        if parent != self.parent {
+            self.parent = parent;
+            self.path.clear();
+            e.write_parent_path(&mut self.path);
+            self.parent_len = self.path.len();
+            self.parent_depth = separators(&self.path);
+            self.verdicts.fill(None);
+        }
+        true
+    }
+
+    /// `ParentPath`: the path is below `dir`, joined with '/' or '\'.
+    fn under(&mut self, e: &EntryRef<'_>, dir: &str) -> bool {
+        if !self.enter(e) {
+            return under_dir(e.tail(), dir);
+        }
+        self.path.truncate(self.parent_len);
+        self.path.push_str(e.tail());
+        under_dir(&self.path, dir)
+    }
+
+    /// `DepthOp`: separators in the full path.
+    fn depth(&mut self, e: &EntryRef<'_>) -> usize {
+        if !self.enter(e) {
+            return separators(e.tail());
+        }
+        self.parent_depth + separators(e.tail())
     }
 
     fn path_matches(&mut self, e: &EntryRef<'_>, like: &Like<'_>, slot: usize) -> bool {
@@ -374,13 +425,7 @@ impl PathMemo {
             // The tail is the whole path, and there is no directory to share.
             return like.matches(e.tail());
         }
-        if parent != self.parent {
-            self.parent = parent;
-            self.path.clear();
-            e.write_parent_path(&mut self.path);
-            self.parent_len = self.path.len();
-            self.verdicts.fill(None);
-        }
+        self.enter(e);
         if slot >= self.verdicts.len() {
             self.verdicts.resize(slot + 1, None);
         }
@@ -433,6 +478,12 @@ impl SqlCondition {
             SqlCondition::Not(conds) => !conds.iter().all(|c| c.matches(r)),
         }
     }
+}
+
+fn under_dir(path: &str, dir: &str) -> bool {
+    path.len() > dir.len()
+        && path.starts_with(dir)
+        && matches!(path.as_bytes()[dir.len()], b'/' | b'\\')
 }
 
 fn cmp_op_u64(op: CmpOp, lhs: u64, rhs: u64) -> bool {

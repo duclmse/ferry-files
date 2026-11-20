@@ -882,3 +882,126 @@ fn few_and_many_matches_sort_identically() {
         ["f0000", "f0001"]
     );
 }
+
+#[test]
+fn parent_and_depth_scans_agree_with_the_per_record_check() {
+    let store = make_store();
+    let mut records = Vec::new();
+    // Added before its parent, so its tail is the whole path.
+    records.push(sample(r"C:\w\late\early.txt"));
+    for p in [
+        r"C:\w",
+        r"C:\w\src",
+        r"C:\w\src\a.rs",
+        r"C:\w\src\deep",
+        r"C:\w\src\deep\b.rs",
+        r"C:\w\late",
+        r"C:\w\gone",
+        r"C:\w\gone\kept.txt",
+        r"C:\w2\x.txt",
+        "/u/a",
+        "/u/a/b.txt",
+    ] {
+        records.push(sample(p));
+    }
+    for r in &records {
+        store.upsert_file(r);
+    }
+    // A removed folder whose child stays: a ghost on the child's chain.
+    store.remove_file(r"C:\w\gone");
+    let live: Vec<&FileRecord> = records.iter().filter(|r| r.path != r"C:\w\gone").collect();
+
+    let cases = [
+        vec![SqlCondition::ParentPath(r"C:\w".into())],
+        vec![
+            SqlCondition::ParentPath(r"C:\w".into()),
+            SqlCondition::DepthOp(CmpOp::Eq, 2),
+        ],
+        vec![SqlCondition::ParentPath(r"C:\w\src".into())],
+        vec![SqlCondition::ParentPath("C:".into())],
+        vec![SqlCondition::ParentPath("/u".into())],
+        vec![SqlCondition::DepthOp(CmpOp::Eq, 3)],
+        vec![SqlCondition::DepthOp(CmpOp::Gte, 2)],
+        vec![SqlCondition::DepthOp(CmpOp::Lt, 2)],
+    ];
+    for conds in cases {
+        let mut got: Vec<String> = store
+            .search_conditions(&conds, 100)
+            .unwrap()
+            .into_iter()
+            .map(|r| r.path)
+            .collect();
+        // The store's rule, unlike FileRecord's: '\\' separates too.
+        let sep = |b: u8| b == b'/' || b == b'\\';
+        let holds = |path: &str, c: &SqlCondition| match c {
+            SqlCondition::ParentPath(dir) => {
+                path.len() > dir.len()
+                    && path.starts_with(dir.as_str())
+                    && sep(path.as_bytes()[dir.len()])
+            }
+            SqlCondition::DepthOp(op, d) => {
+                let n = path.bytes().filter(|&b| sep(b)).count();
+                match op {
+                    CmpOp::Eq => n == *d,
+                    CmpOp::Gte => n >= *d,
+                    CmpOp::Lt => n < *d,
+                    _ => unreachable!(),
+                }
+            }
+            _ => unreachable!(),
+        };
+        let mut want: Vec<String> = live
+            .iter()
+            .filter(|r| conds.iter().all(|c| holds(&r.path, c)))
+            .map(|r| r.path.clone())
+            .collect();
+        got.sort();
+        want.sort();
+        assert_eq!(got, want, "{conds:?}");
+    }
+}
+
+#[test]
+fn a_v4_snapshot_from_before_compression_still_loads() {
+    let dir = TempDir::new().unwrap();
+    let store = make_store();
+    store.upsert_file(&sample("/a/b.rs"));
+    store.set_usn_checkpoint(42);
+    // The v4 layout: magic, version, checkpoint, data_len, plain body.
+    let mut body = Vec::new();
+    super::snapshot::write(&mut body, &store.read_state().to_snapshot()).unwrap();
+    let mut file = b"FSID".to_vec();
+    file.extend_from_slice(&4u16.to_le_bytes());
+    file.extend_from_slice(&42u64.to_le_bytes());
+    file.extend_from_slice(&(body.len() as u64).to_le_bytes());
+    file.extend_from_slice(&body);
+    std::fs::write(dir.path().join("index.bin"), file).unwrap();
+
+    let loaded = MemoryStore::new(dir.path()).unwrap();
+    assert!(loaded.get_by_path("/a/b.rs").unwrap().is_some());
+    assert_eq!(loaded.get_usn_checkpoint(), 42);
+    // Saved again, it is v5 and still loads.
+    loaded.flush_to_disk(dir.path()).unwrap();
+    let saved = std::fs::read(dir.path().join("index.bin")).unwrap();
+    assert_eq!(u16::from_le_bytes([saved[4], saved[5]]), 5);
+    let again = MemoryStore::new(dir.path()).unwrap();
+    assert!(again.get_by_path("/a/b.rs").unwrap().is_some());
+    assert_eq!(again.get_usn_checkpoint(), 42);
+}
+
+#[test]
+fn a_truncated_compressed_snapshot_is_refused() {
+    let dir = TempDir::new().unwrap();
+    let store = MemoryStore::new(dir.path()).unwrap();
+    for i in 0..200 {
+        store.upsert_file(&sample(&format!("/a/f{i}.rs")));
+    }
+    store.flush_to_disk(dir.path()).unwrap();
+    let path = dir.path().join("index.bin");
+    let mut bytes = std::fs::read(&path).unwrap();
+    bytes.truncate(bytes.len() - 10);
+    std::fs::write(&path, bytes).unwrap();
+    // A refused snapshot starts empty and the daemon re-crawls.
+    let reloaded = MemoryStore::new(dir.path()).unwrap();
+    assert!(reloaded.get_by_path("/a/f0.rs").unwrap().is_none());
+}

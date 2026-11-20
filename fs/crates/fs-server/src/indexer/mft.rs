@@ -13,7 +13,7 @@
 
 use std::collections::HashMap;
 use std::io;
-use std::path::{Component, Path};
+use std::path::{Component, Path, PathBuf};
 use std::sync::Arc;
 
 const ROOT_RECORD: u32 = 5;
@@ -217,16 +217,95 @@ fn mft_extents(vol: &impl Volume, geo: &Geometry) -> Result<(Vec<(u64, u64)>, u6
     Ok((runs, size))
 }
 
-#[derive(Default)]
+const NO_LINK: u32 = u32::MAX;
+
+// One per record. Names live in `Table::names` and links in `Table::links`:
+// a `Vec` and a `Box<str>` per record cost two allocations each, about 130
+// MB over the 1.4M records of a whole volume.
 struct Node {
     in_use: bool,
     is_dir: bool,
-    links: Vec<(u32, Box<str>)>,
+    /// Head of this record's list in `Table::links`.
+    first_link: u32,
     size: u64,
     mtime: i64,
     ctime: i64,
     attributes: u32,
     reparse_tag: u32,
+}
+
+impl Default for Node {
+    fn default() -> Self {
+        Self {
+            in_use: false,
+            is_dir: false,
+            first_link: NO_LINK,
+            size: 0,
+            mtime: 0,
+            ctime: 0,
+            attributes: 0,
+            reparse_tag: 0,
+        }
+    }
+}
+
+/// One name of a record in its parent directory; hard links have several.
+struct Link {
+    parent: u32,
+    next: u32,
+    name_off: u32,
+    name_len: u32,
+}
+
+#[derive(Default)]
+struct Table {
+    nodes: Vec<Node>,
+    links: Vec<Link>,
+    names: String,
+}
+
+impl Table {
+    fn name(&self, link: u32) -> &str {
+        let l = &self.links[link as usize];
+        &self.names[l.name_off as usize..(l.name_off + l.name_len) as usize]
+    }
+
+    fn links_of(&self, node: u32) -> impl Iterator<Item = u32> + '_ {
+        let mut at = self.nodes[node as usize].first_link;
+        std::iter::from_fn(move || {
+            let cur = at;
+            (cur != NO_LINK).then(|| {
+                at = self.links[cur as usize].next;
+                cur
+            })
+        })
+    }
+
+    /// Adds a name unless the record already has it under that parent.
+    fn add_link(&mut self, node: u32, parent: u32, units: impl Iterator<Item = u16>) -> Option<()> {
+        let start = self.names.len();
+        self.names
+            .extend(char::decode_utf16(units).map(|c| c.unwrap_or(char::REPLACEMENT_CHARACTER)));
+        let name_off = u32::try_from(start).ok()?;
+        let name_len = u32::try_from(self.names.len() - start).ok()?;
+        let duplicate = self.links_of(node).any(|l| {
+            self.links[l as usize].parent == parent && self.name(l) == &self.names[start..]
+        });
+        if duplicate {
+            self.names.truncate(start);
+            return Some(());
+        }
+        let link = u32::try_from(self.links.len()).ok()?;
+        let head = &mut self.nodes[node as usize].first_link;
+        self.links.push(Link {
+            parent,
+            next: *head,
+            name_off,
+            name_len,
+        });
+        *head = link;
+        Some(())
+    }
 }
 
 /// One file as the crawl sees it.
@@ -239,19 +318,20 @@ pub struct MftFile {
     pub attributes: u32,
 }
 
-fn merge_record(nodes: &mut Vec<Node>, number: u32, record: &[u8]) -> Option<()> {
+fn merge_record(table: &mut Table, number: u32, record: &[u8]) -> Option<()> {
     let flags = u16_at(record, 22)?;
     let base = (u64_at(record, 32)? & REFERENCE_MASK) as u32;
-    let index = if base == 0 { number } else { base } as usize;
-    if index >= nodes.len() {
-        nodes.resize_with(index + 1, Node::default);
+    let index = if base == 0 { number } else { base };
+    if index as usize >= table.nodes.len() {
+        table.nodes.resize_with(index as usize + 1, Node::default);
     }
-    let node = &mut nodes[index];
+    let node = &mut table.nodes[index as usize];
     if base == 0 {
         node.in_use = flags & RECORD_IN_USE != 0;
         node.is_dir = flags & RECORD_IS_DIRECTORY != 0;
     }
     for attr in attributes(record) {
+        let node = &mut table.nodes[index as usize];
         match attr.kind {
             ATTR_STANDARD_INFORMATION => {
                 let c = attr.content()?;
@@ -265,17 +345,13 @@ fn merge_record(nodes: &mut Vec<Node>, number: u32, record: &[u8]) -> Option<()>
                     continue;
                 }
                 let parent = (u64_at(c, 0)? & REFERENCE_MASK) as u32;
-                let units: Vec<u16> = c
+                let units = c
                     .get(66..66 + 2 * usize::from(*c.get(64)?))?
                     .as_chunks::<2>()
                     .0
                     .iter()
-                    .map(|u| u16::from_le_bytes(*u))
-                    .collect();
-                let name: Box<str> = String::from_utf16_lossy(&units).into();
-                if !node.links.iter().any(|l| l.0 == parent && l.1 == name) {
-                    node.links.push((parent, name));
-                }
+                    .map(|u| u16::from_le_bytes(*u));
+                table.add_link(index, parent, units)?;
             }
             ATTR_DATA if !attr.named => {
                 if let Some(size) = attr.data_size() {
@@ -295,8 +371,8 @@ fn merge_record(nodes: &mut Vec<Node>, number: u32, record: &[u8]) -> Option<()>
 
 /// The whole file table of one volume, ready to walk.
 pub struct MftIndex {
-    nodes: Vec<Node>,
-    /// `(parent, child, link number)`, sorted so a directory's children are
+    table: Table,
+    /// `(parent, child, link)`, sorted so a directory's children are
     /// one binary search away.
     children: Vec<(u32, u32, u32)>,
 }
@@ -311,7 +387,8 @@ impl MftIndex {
 
         let chunk = READ_CHUNK - READ_CHUNK % geo.cluster.max(geo.record as u64);
         let mut buf = vec![0u8; chunk as usize];
-        let mut nodes = Vec::with_capacity((size / geo.record as u64) as usize);
+        let mut table = Table::default();
+        table.nodes.reserve((size / geo.record as u64) as usize);
         let mut number = 0u32;
         let mut left = size;
         for (start, length) in extents {
@@ -330,27 +407,28 @@ impl MftIndex {
                     if record.starts_with(b"FILE") && apply_fixups(record).is_some() {
                         // A record that does not parse is skipped like a torn
                         // one; later changes come from the change log.
-                        let _ = merge_record(&mut nodes, number, record);
+                        let _ = merge_record(&mut table, number, record);
                     }
                     number += 1;
                 }
             }
         }
-        if nodes.len() <= ROOT_RECORD as usize || !nodes[ROOT_RECORD as usize].in_use {
+        if table.nodes.len() <= ROOT_RECORD as usize || !table.nodes[ROOT_RECORD as usize].in_use {
             return Err("$MFT has no root directory".into());
         }
+        table.names.shrink_to_fit();
 
-        let mut children = Vec::new();
-        for (child, node) in nodes.iter().enumerate() {
+        let mut children = Vec::with_capacity(table.links.len());
+        for (child, node) in table.nodes.iter().enumerate() {
             if !node.in_use || (child as u32) < FIRST_USER_RECORD {
                 continue;
             }
-            for (link, (parent, _)) in node.links.iter().enumerate() {
-                children.push((*parent, child as u32, link as u32));
+            for link in table.links_of(child as u32) {
+                children.push((table.links[link as usize].parent, child as u32, link));
             }
         }
         children.sort_unstable();
-        Ok(Self { nodes, children })
+        Ok(Self { table, children })
     }
 
     fn children_of(&self, dir: u32) -> &[(u32, u32, u32)] {
@@ -360,7 +438,7 @@ impl MftIndex {
     }
 
     fn file(&self, number: u32) -> MftFile {
-        let n = &self.nodes[number as usize];
+        let n = &self.table.nodes[number as usize];
         MftFile {
             is_dir: n.is_dir,
             is_symlink: matches!(n.reparse_tag, REPARSE_SYMLINK | REPARSE_MOUNT_POINT),
@@ -381,12 +459,7 @@ impl MftIndex {
             at = self
                 .children_of(at)
                 .iter()
-                .find(|(_, child, link)| {
-                    self.nodes[*child as usize].links[*link as usize]
-                        .1
-                        .to_lowercase()
-                        == want
-                })
+                .find(|(_, _, link)| self.table.name(*link).to_lowercase() == want)
                 .map(|c| c.1)
                 .ok_or_else(|| format!("{} is not in the file table", root.display()))?;
         }
@@ -395,6 +468,8 @@ impl MftIndex {
 
     /// Visits `root` and everything below it, each directory before its
     /// contents; `visit` returns false to leave a path out, and its subtree.
+    /// Fails only before the first visit, so a caller that streams what it
+    /// visits has sent nothing when this returns an error.
     pub fn walk(
         &self,
         root: &Path,
@@ -408,8 +483,7 @@ impl MftIndex {
                 continue;
             }
             for (_, child, link) in self.children_of(number) {
-                let name = &self.nodes[*child as usize].links[*link as usize].1;
-                stack.push((*child, path.join(&**name)));
+                stack.push((*child, path.join(self.table.name(*link))));
             }
         }
         Ok(())
@@ -493,6 +567,14 @@ impl MftCache {
     /// Whether this drive's table has been read already.
     pub fn has_drive_of(&self, root: &Path) -> bool {
         drive_of(root).is_ok_and(|d| self.0.contains_key(&d))
+    }
+
+    /// Frees this drive's table unless a root in `later` is on that drive.
+    pub fn release_unless_needed(&mut self, root: &Path, later: &[PathBuf]) {
+        let Ok(drive) = drive_of(root) else { return };
+        if !later.iter().any(|p| drive_of(p).is_ok_and(|d| d == drive)) {
+            self.0.remove(&drive);
+        }
     }
 
     pub fn for_root(&mut self, root: &Path) -> Result<Arc<MftIndex>, String> {

@@ -164,6 +164,15 @@ fn with_path_buf<T>(f: impl FnOnce(&mut String) -> T) -> T {
     })
 }
 
+/// How much to reserve before adding `more` to a buffer that is full: an
+/// eighth of it, at least 4096. Doubling left up to half of the two largest
+/// buffers allocated and never used, which Windows counts as private bytes:
+/// 203 MB held for 143 MB after a crawl of 1.4M entries, and after a restart
+/// the first new file doubled the exactly sized records from the snapshot.
+fn growth(len: usize, capacity: usize, more: usize) -> Option<usize> {
+    (len + more > capacity).then(|| more.max(len / 8).max(4096))
+}
+
 fn tail_in<'a>(tails: &'a str, e: &Entry) -> &'a str {
     &tails[e.tail_range()]
 }
@@ -296,6 +305,33 @@ impl IndexState {
             st.upsert(&r);
         }
         st
+    }
+
+    /// What the index holds on the heap, by part, for the log: the process
+    /// total on Windows (private bytes) was about twice the expected size,
+    /// and this says how much of it is the index.
+    pub(super) fn heap_summary(&self) -> String {
+        const MB: f64 = 1024.0 * 1024.0;
+        let entries = self.entries.capacity() * std::mem::size_of::<Entry>();
+        let names = self.tails.capacity();
+        // hashbrown: a power-of-two bucket count at most 7/8 full, with one
+        // control byte per bucket.
+        let buckets = (self.index.capacity() * 8 / 7).next_power_of_two();
+        let index = buckets * (std::mem::size_of::<u32>() + 1);
+        let sorted = self.sorted.heap_bytes();
+        let extra = self.extra.capacity() * (std::mem::size_of::<(u32, Extra)>() + 1);
+        let total = entries + names + index + sorted + extra;
+        format!(
+            "{:.0} MB for {} entries (records {:.0}, names {:.0}, path index {:.0}, \
+             sort orders {:.0}, extras {:.0})",
+            total as f64 / MB,
+            self.len(),
+            entries as f64 / MB,
+            names as f64 / MB,
+            index as f64 / MB,
+            sorted as f64 / MB,
+            extra as f64 / MB,
+        )
     }
 
     /// Live entries.
@@ -500,9 +536,16 @@ impl IndexState {
         }
         let (parent, cut) = self.parent_of(&r.path);
         let tail_off = self.tails.len() as u64;
-        self.tails.push_str(&r.path[cut..]);
+        let tail = &r.path[cut..];
+        if let Some(n) = growth(self.tails.len(), self.tails.capacity(), tail.len()) {
+            self.tails.reserve_exact(n);
+        }
+        self.tails.push_str(tail);
         let (entry, extra) = self.pack(r, tail_off, cut, parent);
         let i = self.entries.len() as u32;
+        if let Some(n) = growth(self.entries.len(), self.entries.capacity(), 1) {
+            self.entries.reserve_exact(n);
+        }
         self.entries.push(entry);
         self.set_extra(i, extra);
         self.touched(i);

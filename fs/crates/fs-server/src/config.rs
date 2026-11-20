@@ -52,15 +52,35 @@ pub struct Config {
 }
 
 /// Which backend persists the file-metadata index.
-#[derive(Debug, Clone, Deserialize, Default, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, Deserialize, Default, PartialEq, Eq)]
 #[serde(rename_all = "lowercase")]
 pub enum StoreMode {
-    /// SQLite WAL database (default). Best for concurrent API access.
+    /// The memory store, unless the data dir holds only a SQLite index from
+    /// before this was the default; that one stays, so an upgrade does not
+    /// re-crawl.
     #[default]
+    Auto,
+    /// SQLite WAL database: least resident memory, slower scans (substring,
+    /// `parent:`, `depth:`, `dupe:`), about 12x the disk.
     Sqlite,
     /// Packed entries with parent pointers and a shared name buffer, saved
     /// to `index.bin` on shutdown and periodically; single-writer only.
     Memory,
+}
+
+impl StoreMode {
+    /// `Auto` resolved against what `data_dir` already holds.
+    pub fn resolve(self, data_dir: &Path) -> StoreMode {
+        match self {
+            StoreMode::Auto
+                if data_dir.join("index.db").exists() && !data_dir.join("index.bin").exists() =>
+            {
+                StoreMode::Sqlite
+            }
+            StoreMode::Auto => StoreMode::Memory,
+            mode => mode,
+        }
+    }
 }
 
 #[derive(Debug, Clone, Deserialize)]
@@ -985,5 +1005,20 @@ log_dir     = "{dir}/logs"
             PathBuf::from(r"\\?\Volume{1234}\x")
         );
         assert_eq!(w("/already/plain"), PathBuf::from("/already/plain"));
+    }
+
+    #[test]
+    fn auto_store_keeps_an_existing_sqlite_index_and_is_memory_otherwise() {
+        let dir = tempfile::tempdir().unwrap();
+        let d = dir.path();
+        assert_eq!(StoreMode::Auto.resolve(d), StoreMode::Memory);
+        std::fs::write(d.join("index.db"), b"").unwrap();
+        assert_eq!(StoreMode::Auto.resolve(d), StoreMode::Sqlite);
+        assert_eq!(StoreMode::Memory.resolve(d), StoreMode::Memory);
+        std::fs::write(d.join("index.bin"), b"").unwrap();
+        assert_eq!(StoreMode::Auto.resolve(d), StoreMode::Memory);
+        assert_eq!(StoreMode::Sqlite.resolve(d), StoreMode::Sqlite);
+        let cfg: StoreConfig = toml::from_str("").unwrap();
+        assert_eq!(cfg.mode, StoreMode::Auto);
     }
 }

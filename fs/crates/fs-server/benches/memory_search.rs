@@ -125,6 +125,9 @@ fn bench_queries(c: &mut Criterion) {
         ("sort_size_all", "sort:size"),
         ("sort_date_no_match", "sort:dm zzqx"),
         ("dupe_size", "sizedupe: count:100"),
+        // Every path shares the prefix, as every path on C: shares C:\.
+        ("parent_shared_prefix", "parent:/bench"),
+        ("depth_no_match", "depth:99"),
     ] {
         group.bench_function(label, |b| {
             b.to_async(&rt).iter(|| {

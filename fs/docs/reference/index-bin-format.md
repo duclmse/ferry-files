@@ -1,8 +1,10 @@
 # `index.bin` file format
 
 `index.bin` is the on-disk snapshot of the memory store
-(`store.mode = "memory"`). It lives at `<data_dir>/index.bin`. This document
-describes **version 4**, the version `fsd` writes today.
+(`store.mode = "memory"`, or `"auto"`, the default). It lives at
+`<data_dir>/index.bin`. This document describes **version 5**, the version
+`fsd` writes today: a header, then the version 4 body compressed as one zstd
+frame.
 
 Source of truth: `crates/fs-server/src/store/memory_store/` (`crud.rs` for the
 header, `snapshot.rs` for the body, `state.rs` for entries).
@@ -11,8 +13,8 @@ header, `snapshot.rs` for the body, `state.rs` for entries).
 
 ```
 offset  size       field
-0       22         header
-22      data_len   body
+0       30         header
+30      data_len   body: one zstd frame that decompresses to raw_len bytes of
   arena_len   varint
   arena       arena_len bytes of UTF-8
   entry_count varint
@@ -33,16 +35,21 @@ Fixed-width integers, little-endian.
 | Offset | Size | Field            | Type  | Value                  |
 | -----: | ---: | ---------------- | ----- | ---------------------- |
 |      0 |    4 | `magic`          | bytes | `FSID` (`46 53 49 44`) |
-|      4 |    2 | `version`        | u16   | `4`                    |
+|      4 |    2 | `version`        | u16   | `5`                    |
 |      6 |    8 | `usn_checkpoint` | u64   | Legacy, see below      |
-|     14 |    8 | `data_len`       | u64   | Body length in bytes   |
+|     14 |    8 | `raw_len`        | u64   | Body length, decompressed |
+|     22 |    8 | `data_len`       | u64   | Body length in the file (compressed) |
 
 `usn_checkpoint` is still read and written, but nothing sets it, so it is `0` in
 practice. The real change-log position is the `journal_position` key in `meta`.
 
 ## Encoding
 
-The body is the [postcard](https://postcard.jamesmunns.com/wire-format) encoding
+`fsd` compresses at zstd level 1: paths repeat their folders' words, so the
+fastest level gets most of the gain. Every offset and length below refers to
+the decompressed body.
+
+The decompressed body is the [postcard](https://postcard.jamesmunns.com/wire-format) encoding
 of the snapshot:
 
 | Type          | Encoding                                                  |
@@ -192,9 +199,10 @@ starts with an empty index and crawls again.
 | --------------------------------------------------------------------- |
 | File shorter than the header, or `magic` is wrong                     |
 | `version` is not one the reader supports                              |
-| `22 + data_len` is past the end of the file                           |
-| `arena_len > data_len`, or `arena` is not valid UTF-8                 |
-| `entry_count` exceeds `(data_len - arena_len) / 12`                   |
+| `30 + data_len` is past the end of the file                           |
+| The body is not a valid zstd frame, or ends before `raw_len` bytes    |
+| `arena_len > raw_len`, or `arena` is not valid UTF-8                  |
+| `entry_count` exceeds `(raw_len - arena_len) / 12`                    |
 | A tail runs past `arena`                                              |
 | `tail_off`, its end, or `tail_off + name_off` is not a UTF-8 boundary |
 | `name_off > tail_len`                                                 |
@@ -204,14 +212,15 @@ starts with an empty index and crawls again.
 | Two entries rebuild to the same path, ghosts included                 |
 
 The `parent` rule guarantees a walk terminates and that one pass in entry order
-can resolve every parent. Bytes after `22 + data_len` are ignored, and `fsd`
+can resolve every parent. Bytes after `30 + data_len` are ignored, and `fsd`
 writes none. `archive_len` is not validated on load, so readers must
 bounds-check it.
 
 ## Writing
 
-1. Write the whole snapshot to `<data_dir>/index.bin.tmp`, with `data_len` as 0.
-2. Seek back, patch in `data_len`, and `fsync`.
+1. Write the whole snapshot to `<data_dir>/index.bin.tmp`, streaming the body
+   through the zstd encoder, with `raw_len` and `data_len` as 0.
+2. Seek back, patch in `raw_len` and `data_len`, and `fsync`.
 3. Rename over `index.bin`.
 
 A crash at any point leaves the previous snapshot intact. `fsd` saves on clean
@@ -225,9 +234,13 @@ shutdown and, when entries have changed and no crawl is running, every
 |       1 | 14 B: no `usn_checkpoint` | postcard `Vec<FileRecord>`                                              |
 |       2 | 22 B                      | postcard `Vec<FileRecord>`                                              |
 |       3 | 22 B                      | This body, but the arena holds whole paths and entries have no `parent` |
-|       4 | 22 B                      | Path tails and `parent`, as described here                              |
+|       4 | 22 B                      | Path tails and `parent`, as described here, uncompressed                |
+|       5 | 30 B: adds `raw_len`      | The version 4 body in one zstd frame                                    |
 
-`fsd` reads all four and always writes the latest. Any change to the bytes needs
+`fsd` reads all five and always writes the latest. Over the 1.43M entries of
+C: on a CI runner, version 4 took 78 MB. In version 4, the header is the
+first 22 bytes above without `raw_len`, and `data_len` is the plain body's
+length. Any change to the bytes needs
 a new `version`, a reader for the old one, and an update to this document.
 
 In version 3, entry fields 1-3 are replaced by `path_off` (u64) and `path_len`
@@ -235,7 +248,9 @@ In version 3, entry fields 1-3 are replaced by `path_off` (u64) and `path_len`
 
 ## Example
 
-The first 24 bytes of a real file with 771 body bytes and a 288-byte arena:
+The first 24 bytes of a real version 4 file with 771 body bytes and a 288-byte
+arena. In version 5 the same body bytes are what the zstd frame decompresses
+to:
 
 ```
 46 53 49 44               magic "FSID"

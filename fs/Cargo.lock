@@ -1680,6 +1680,7 @@ dependencies = [
  "windows 0.54.0",
  "windows-service",
  "zip",
+ "zstd",
 ]
 
 [[package]]

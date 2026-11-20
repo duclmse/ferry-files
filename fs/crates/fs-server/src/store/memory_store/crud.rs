@@ -30,15 +30,22 @@ use crate::error::{AppError, Result};
 //   generation). v1/v2 carried no `meta`, so `last_crawl_time` was lost and
 //   every restart re-crawled.
 //
-// Version 4 (current): as v3, but the arena holds path tails and each entry
+// Version 4: as v3, but the arena holds path tails and each entry
 //   names its parent entry (`state::Entry`) instead of holding a whole path.
+//
+// Version 5 (current): the v4 body in one zstd frame. The header adds the
+//   uncompressed length before data_len, which is the compressed length.
 // ---------------------------------------------------------------------------
 
 const MAGIC: &[u8; 4] = b"FSID";
-const VERSION: u16 = 4;
+const VERSION: u16 = 5;
 const HEADER_V1: usize = 4 + 2 + 8; // magic + version + data_len
 const HEADER_V2: usize = 4 + 2 + 8 + 8; // magic + version + checkpoint + data_len
-const HEADER: usize = HEADER_V2;
+const HEADER_V5: usize = HEADER_V2 + 8; // ... + checkpoint + raw_len + data_len
+const HEADER: usize = HEADER_V5;
+/// Paths repeat their folders' words, so the fastest level already gets most
+/// of the gain.
+const ZSTD_LEVEL: i32 = 1;
 
 fn le_u64(b: &[u8]) -> u64 {
     let mut a = [0u8; 8];
@@ -59,17 +66,18 @@ fn read_up_to(r: &mut impl Read, buf: &mut [u8]) -> std::io::Result<usize> {
 }
 
 impl MemoryStore {
+    pub fn heap_summary(&self) -> String {
+        self.read_state().heap_summary()
+    }
+
     /// Create a new store, loading a snapshot from `data_dir/index.bin` when one exists.
     pub fn new(data_dir: &Path) -> Result<Self> {
         let bin = data_dir.join("index.bin");
         let state = if bin.exists() {
             match Self::load_snapshot(&bin) {
                 Ok(s) => {
-                    tracing::info!(
-                        "memory store: loaded {} records from {}",
-                        s.len(),
-                        bin.display()
-                    );
+                    tracing::info!("memory store: loaded {}", bin.display());
+                    tracing::info!("memory store: {}", s.heap_summary());
                     s
                 }
                 Err(e) => {
@@ -90,7 +98,7 @@ impl MemoryStore {
     fn load_snapshot(path: &Path) -> Result<IndexState> {
         let mut file = File::open(path).map_err(AppError::Io)?;
         let file_len = file.metadata().map_err(AppError::Io)?.len();
-        let mut header = [0u8; HEADER_V2];
+        let mut header = [0u8; HEADER_V5];
         let got = read_up_to(&mut file, &mut header).map_err(AppError::Io)?;
         if got < HEADER_V1 {
             return Err(AppError::Index("corrupt index.bin: too short".into()));
@@ -99,16 +107,13 @@ impl MemoryStore {
             return Err(AppError::Index("corrupt index.bin: bad magic".into()));
         }
         let version = u16::from_le_bytes([header[4], header[5]]);
+        let short = || AppError::Index("corrupt index.bin: header too short".into());
         let (data_offset, usn_checkpoint) = match version {
             1 => (HEADER_V1, 0u64),
-            2..=4 => {
-                if got < HEADER_V2 {
-                    return Err(AppError::Index(
-                        "corrupt index.bin: header too short".into(),
-                    ));
-                }
-                (HEADER_V2, le_u64(&header[6..14]))
-            }
+            2..=4 if got < HEADER_V2 => return Err(short()),
+            2..=4 => (HEADER_V2, le_u64(&header[6..14])),
+            5 if got < HEADER_V5 => return Err(short()),
+            5 => (HEADER_V5, le_u64(&header[6..14])),
             v => return Err(AppError::Index(format!("unsupported index version {v}"))),
         };
         // data_len is always the last 8 bytes of the header.
@@ -120,6 +125,12 @@ impl MemoryStore {
             .map_err(AppError::Io)?;
         let decode = |e: std::io::Error| AppError::Index(format!("snapshot decode: {e}"));
         let corrupt = |e: String| AppError::Index(format!("corrupt index.bin: {e}"));
+        if version == 5 {
+            let raw_len = le_u64(&header[HEADER_V5 - 16..HEADER_V5 - 8]);
+            let body = zstd::Decoder::new(file.take(data_len)).map_err(decode)?;
+            let snap = snapshot::read(body, raw_len).map_err(decode)?;
+            return IndexState::from_snapshot(snap, usn_checkpoint).map_err(corrupt);
+        }
         if version == 4 {
             let snap = snapshot::read(&mut file, data_len).map_err(decode)?;
             return IndexState::from_snapshot(snap, usn_checkpoint).map_err(corrupt);
@@ -139,7 +150,7 @@ impl MemoryStore {
         Ok(state)
     }
 
-    /// Serialize the index to `data_dir/index.bin` in v4 format.
+    /// Serialize the index to `data_dir/index.bin` in v5 format.
     pub fn flush_to_disk(&self, data_dir: &Path) -> Result<()> {
         let _saving = self.saving.lock().unwrap_or_else(PoisonError::into_inner);
         let state = self.read_state();
@@ -151,12 +162,16 @@ impl MemoryStore {
             w.write_all(MAGIC)?;
             w.write_all(&VERSION.to_le_bytes())?;
             w.write_all(&state.usn_checkpoint.to_le_bytes())?;
-            // data_len is patched in once the body has been streamed out.
-            w.write_all(&0u64.to_le_bytes())?;
-            let len = snapshot::write(&mut w, &state.to_snapshot())?;
+            // raw_len and data_len are patched in once the body is out.
+            w.write_all(&[0u8; 16])?;
+            let mut z = zstd::Encoder::new(&mut w, ZSTD_LEVEL)?;
+            let raw_len = snapshot::write(&mut z, &state.to_snapshot())?;
+            z.finish()?;
             let mut file = w.into_inner().map_err(|e| e.into_error())?;
-            file.seek(SeekFrom::Start((HEADER - 8) as u64))?;
-            file.write_all(&len.to_le_bytes())?;
+            let data_len = file.stream_position()? - HEADER as u64;
+            file.seek(SeekFrom::Start((HEADER - 16) as u64))?;
+            file.write_all(&raw_len.to_le_bytes())?;
+            file.write_all(&data_len.to_le_bytes())?;
             file.sync_all()
         };
         write().map_err(AppError::Io)?;

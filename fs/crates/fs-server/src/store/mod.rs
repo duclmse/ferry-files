@@ -490,14 +490,26 @@ pub enum FileStore {
 
 impl FileStore {
     /// Create a `FileStore` from config.
+    /// The memory store's heap use by part; `None` for SQLite.
+    pub fn heap_summary(&self) -> Option<String> {
+        match self {
+            FileStore::Sqlite(_) => None,
+            FileStore::Memory(m) => Some(m.heap_summary()),
+        }
+    }
+
     pub fn from_config(cfg: &crate::config::Config) -> Result<Self> {
-        match cfg.store.mode {
-            crate::config::StoreMode::Sqlite => Ok(FileStore::Sqlite(Arc::new(
-                SqliteStore::with_indexes(&cfg.data_dir.join("index.db"), &cfg.store.indexes)?,
-            ))),
-            crate::config::StoreMode::Memory => Ok(FileStore::Memory(Arc::new(MemoryStore::new(
-                &cfg.data_dir,
+        use crate::config::StoreMode;
+        let mode = cfg.store.mode.resolve(&cfg.data_dir);
+        tracing::info!("store mode: {mode:?} (configured {:?})", cfg.store.mode);
+        match mode {
+            StoreMode::Sqlite => Ok(FileStore::Sqlite(Arc::new(SqliteStore::with_indexes(
+                &cfg.data_dir.join("index.db"),
+                &cfg.store.indexes,
             )?))),
+            StoreMode::Memory | StoreMode::Auto => Ok(FileStore::Memory(Arc::new(
+                MemoryStore::new(&cfg.data_dir)?,
+            ))),
         }
     }
 

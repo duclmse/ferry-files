@@ -82,6 +82,17 @@ fn merge_dirty(state: &IndexState, key: SortKey, order: &[u32], dirty: &mut Vec<
 }
 
 impl SortIndexes {
+    /// Bytes held by built orders and queued changes.
+    pub(super) fn heap_bytes(&self) -> usize {
+        self.slots
+            .iter()
+            .map(|m| {
+                let s = m.lock().unwrap_or_else(PoisonError::into_inner);
+                4 * (s.order.as_ref().map_or(0, |o| o.capacity()) + s.dirty.capacity())
+            })
+            .sum()
+    }
+
     fn each_slot(&mut self) -> impl Iterator<Item = &mut Slot> {
         self.slots
             .iter_mut()
