@@ -211,13 +211,58 @@ fsd's are server times, so both are approximate.
 | `depth:99` | 47-73 | 140-153 | 1,472 |
 | `dupe: count:10` | 400 | 420 | 3,400 |
 
-The memory store matches Everything on build, restart and catch-up, and is
-faster on substring searches. Still behind it:
+## Closing the gaps
 
-- The file table crawl peaks at 840-880 MB with either store: it holds every
-  record before writing any. Streaming them is the next change.
-- Private bytes are about twice Everything's; the record layout accounts for
-  about 130 MB, so the rest needs a breakdown first.
-- `parent:` and `depth:` scan every entry; Everything walks its folder tree.
-- SQLite is 3-10x slower than the memory store on every scan-type query, and
-  12x its size on disk.
+Changed after the head-to-head (commit `144c961`), measured in run
+`44662344370` on the same job:
+
+- `store.mode` defaults to `"auto"`: the memory store, unless the data dir
+  holds only an `index.db`, which is kept so an upgrade does not re-crawl.
+- The file table crawl sends each row as the walk reaches it; it collected
+  the whole volume first. The table keeps names in one buffer instead of two
+  allocations per record, and a drive's table is freed after its last root.
+- `parent:` and `depth:` reuse the scan's per-folder path; they walked each
+  entry's parent chain, and on a volume every path shares the prefix.
+- The memory store grows its records and names by an eighth. Doubling left up
+  to half of both allocated and unused, which Windows counts as private
+  bytes, and the first file added after a restart doubled the exactly sized
+  buffers loaded from the snapshot (277 MB for 143 MB of data, measured
+  locally; CI showed 286 MB private).
+- `index.bin` version 5 compresses the body with zstd level 1.
+
+| | Everything | fsd memory, before | fsd memory, after |
+| --- | ---: | ---: | ---: |
+| First index build | 17.3 s, 143.8 s on this run | 10.7 s | 13.5 s |
+| Restart until searchable | 0.6 s | 0.5-1.2 s | 1.1 s |
+| All 9 changes visible | 1.1-1.2 s | 0.7-1.5 s | 1.4 s |
+| Peak during the first index | ~231 MB | 837 MB | 301 MB sampled, 399 MB peak counter |
+| Working set, steady | 134-141 MB | 161-170 MB | 161-167 MB |
+| Private bytes, steady | 127-134 MB | 213-287 MB | 168-171 MB |
+| Store's own heap (logged) | | | 156 MB after a crawl, 144 MB after a load |
+| On disk | 53 MB | 78 MB | 15 MB |
+
+| Query (ms) | Everything | fsd memory, before | fsd memory, after |
+| --- | ---: | ---: | ---: |
+| `zzqx` | 61-255 | 30-46 | 23-38 |
+| `parent:C:\` | 42-51 | 198-467 | 61-62 |
+| `depth:99` | 68-85 | 140-153 | 49-60 |
+| `dupe: count:10` | 346-623 | 419-425 | 375-376 |
+
+Everything's times are es.exe medians less its process start, so they are
+approximate. Its first build took 143.8 s on this run against 17.3 s on the
+last, on the same image; the cold file table read on a fresh runner varies.
+
+Streaming also took the SQLite store's crawl peak from 879 MB to 250 MB.
+
+**Still behind Everything:**
+
+- The peak counter reached 399 MB at the end of the crawl, about 100 MB above
+  every sample. The likely cause is the store's last reallocations (old and
+  new buffer both live) while the file table is still held. The crawl knows
+  the table's entry count before it sends anything, so reserving the store
+  once up front would remove them.
+- Steady memory is about 35 MB above Everything's, close to what
+  `fsd` holds besides the index (runtime, full-text writer, threads).
+- `parent:` takes 61 ms against about 45 ms. Matching it needs a list of
+  children per folder, which costs memory and must handle entries added
+  before their parent.

@@ -44,6 +44,13 @@ performance plan:
   unchanged rows stopped rewriting every secondary index; peak RSS ~100 MiB.
 - `indexer.use_mft` defaults to `"auto"`: the file table crawl for
   whole-drive roots, the walk elsewhere.
+- `store.mode` defaults to `"auto"`, the memory store (an existing SQLite
+  index is kept). Over all of C: against voidtools Everything on the same
+  runner: restart 1.1 s against 0.6 s, substring search faster, `parent:`
+  61 ms against ~45, 15 MB on disk against 53, about 35 MB more memory. See
+  the [assessment](plans/performance-assessment.md#closing-the-gaps).
+- SQLite restarts took 40-100 s at 1.4M rows because a migration rebuilt an
+  index on every open; they now take 0.5 s.
 
 The same pass fixed watcher bugs. A renamed folder lost its contents, a
 moved-in folder was indexed empty, and a folder moved out left its rows.

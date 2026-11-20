@@ -184,5 +184,10 @@ disk. The commit loop in `daemon.rs` runs every `commit_interval_secs`.
   `LIKE` is case-insensitive here and scans the whole table.
 - Walkers come from `indexer::walk_builder`, which keeps git ignore rules
   out of the crawl.
+- The default store is the memory store (`store.mode = "auto"`). Every
+  `FileStore` method needs a memory arm, and memory store buffers grow by
+  an eighth (`state::growth`), not by doubling.
+- The file table crawl streams rows to the writer; do not collect a whole
+  volume's rows before sending them.
 - Tantivy's `IndexWriter` holds a lock file. Only one writer per index
   directory. The daemon enforces a PID file check before acquiring the writer.
