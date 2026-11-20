@@ -109,7 +109,6 @@ pub(super) const ZIP_EXTS: &[&str] = &[
     "zip", "apk", "jar", "cbz", "xapk", "ipa", "aar", "war", "whl", "vsix", "nupkg",
 ];
 
-const PDF_OUTLINE_KEY: &str = "ferry-files.pdf-outline";
 
 /// A PDF in the web view's own viewer, with a bar above it: the outline, go to a page, open it in
 /// its app, show it in its folder. The viewer is out of the app's reach: a page is gone to through
@@ -125,7 +124,8 @@ fn PdfView(pane: Pane, src: Src, entry: Entry, url: String, #[prop(optional)] in
     let what = StoredValue::new((path.clone(), inner));
     let page_url = StoredValue::new(url.clone());
     let outline = RwSignal::new(None::<Result<PdfOutline, String>>);
-    let show = RwSignal::new(stored_flag(PDF_OUTLINE_KEY, false));
+    // Hidden until asked for, every time.
+    let show = RwSignal::new(false);
     let typed = RwSignal::new(String::new());
     let load = move || {
         if outline.with_untracked(|o| matches!(o, Some(Ok(_)))) {
@@ -142,13 +142,9 @@ fn PdfView(pane: Pane, src: Src, entry: Entry, url: String, #[prop(optional)] in
             let _ = outline.try_set(Some(r));
         });
     };
-    if show.get_untracked() {
-        load();
-    }
     let toggle = move |_| {
         let on = !show.get_untracked();
         show.set(on);
-        store(PDF_OUTLINE_KEY, if on { "1" } else { "0" });
         if on {
             load();
         }

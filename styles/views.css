@@ -272,7 +272,8 @@
   gap: 6px;
 }
 
-/* Above what's shown: the name, then the facts, going on to a second line when they don't fit. */
+/* Above what's shown: the name, then the facts, on a second line when they don't fit beside it,
+   each cut off with … when too long. */
 .preview > .meta {
   flex: none;
   width: 100%;
@@ -296,8 +297,12 @@
 }
 
 .preview .meta .sub {
+  flex: 0 1 auto;
   min-width: 0;
-  overflow-wrap: anywhere;
+  max-width: 100%;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 .preview .meta .peek-as {
