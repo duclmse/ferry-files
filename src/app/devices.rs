@@ -2,6 +2,15 @@
 
 use super::*;
 
+/// How often a phone whose files aren't allowed yet is connected again.
+const ACCESS_RETRY: std::time::Duration = std::time::Duration::from_secs(5);
+
+/// Whether connecting failed because the phone's storage couldn't be read: it's locked, or it
+/// hasn't been allowed to share its files yet.
+fn needs_access(e: &str) -> bool {
+    e.contains("Reading the device's storage") || e.contains("shows no storage")
+}
+
 impl Ctx {
     /// A device is connected. With `show`, the active pane goes to it.
     pub(super) fn connected(self, info: Info, show: bool) {
@@ -31,6 +40,9 @@ impl Ctx {
                 for (id, name) in &d.gone {
                     self.forget(Src::of(id));
                     self.conn_error.set(Some(format!("{name} is no longer on USB, so it was disconnected.")));
+                }
+                if self.awaiting.with_untracked(|w| w.as_ref().is_some_and(|w| !d.found.contains(w))) {
+                    self.stop_awaiting();
                 }
                 let pick = self.auto_pick(&d);
                 if self.devices.get_untracked().as_ref() != Some(&d) {
@@ -98,10 +110,17 @@ impl Ctx {
         spawn_local(async move {
             match call::<Info>("connect", json!({ "transport": f.transport, "which": f.which, "serial": f.serial })).await {
                 Ok(info) => {
+                    self.stop_awaiting_for(&f);
                     self.failed.set_value(None);
                     self.connected(info, show);
                 }
+                Err(e) if needs_access(&e) => {
+                    self.failed.set_value(Some(f.clone()));
+                    self.conn_error.set(None);
+                    self.await_access(f, show);
+                }
                 Err(e) => {
+                    self.stop_awaiting_for(&f);
                     self.failed.set_value(Some(f));
                     self.conn_error.set(Some(e));
                 }
@@ -110,6 +129,47 @@ impl Ctx {
             self.connecting.set(None);
             self.scan();
         });
+    }
+
+    /// Connects `f` again in `ACCESS_RETRY`, while it's still on USB: the phone may be waiting for
+    /// someone to unlock it or allow access to its files.
+    fn await_access(self, f: UsbDevice, show: bool) {
+        self.stop_awaiting();
+        self.awaiting.set(Some(f.clone()));
+        let h = set_timeout_with_handle(
+            move || {
+                let _ = self.access_timer.try_set_value(None);
+                if self.awaiting.try_with_untracked(|w| w.as_ref() != Some(&f)).unwrap_or(true) {
+                    return;
+                }
+                if !self.devices.with_untracked(|d| d.as_ref().is_some_and(|d| d.found.contains(&f))) {
+                    self.stop_awaiting();
+                } else if self.busy.get_untracked() {
+                    self.await_access(f, show);
+                } else {
+                    self.connect(f, show);
+                }
+            },
+            ACCESS_RETRY,
+        );
+        self.access_timer.set_value(h.ok());
+    }
+
+    /// Stops connecting `f` again, if it's the phone being connected again.
+    fn stop_awaiting_for(self, f: &UsbDevice) {
+        if self.awaiting.with_untracked(|w| w.as_ref() == Some(f)) {
+            self.stop_awaiting();
+        }
+    }
+
+    /// Stops connecting a phone again (see `await_access`).
+    pub(super) fn stop_awaiting(self) {
+        if let Some(h) = self.access_timer.try_update_value(Option::take).flatten() {
+            h.clear();
+        }
+        if self.awaiting.with_untracked(Option::is_some) {
+            self.awaiting.set(None);
+        }
     }
 
     /// Lets go of a device. Panes showing it go back to the Mac.
@@ -189,6 +249,15 @@ pub(super) fn DeviceFinder() -> impl IntoView {
                 }
             })
         };
+        // A phone that's connected again until it lets its files be read.
+        let access = move || {
+            ctx.awaiting.get().map(|f| view! {
+                <div class="conn-error">
+                    <p class="hint">{format!("{} won't share its files yet. Unlock it and allow access to its data; trying again every 5 seconds.", f.name)}</p>
+                    <button class="btn small" on:click=move |_| ctx.stop_awaiting()>"Stop"</button>
+                </div>
+            })
+        };
         let Some(d) = ctx.devices.get() else {
             return view! { <p class="hint">"Looking for devices…"</p> }.into_any();
         };
@@ -198,7 +267,7 @@ pub(super) fn DeviceFinder() -> impl IntoView {
         let waiting = d.adb_waiting.then(|| view! { <p class="hint">"A phone is waiting: allow USB debugging on it to use adb."</p> });
         if found.is_empty() {
             if ctx.phones.with(|p| p.iter().any(Info::is_phone)) {
-                return view! { {waiting} {error} }.into_any();
+                return view! { {waiting} {access} {error} }.into_any();
             }
             let mut notes = vec!["No phone found. Plug one in by USB with debugging (adb) or File transfer mode (MTP).".to_string()];
             if !d.adb_found {
@@ -208,6 +277,7 @@ pub(super) fn DeviceFinder() -> impl IntoView {
             return view! {
                 {notes.into_iter().map(|n| view! { <p class="hint">{n}</p> }).collect_view()}
                 {waiting}
+                {access}
                 {error}
             }.into_any();
         }
@@ -266,6 +336,7 @@ pub(super) fn DeviceFinder() -> impl IntoView {
                 }
             }).collect_view()}
             {waiting}
+            {access}
             {error}
         }.into_any()
     }

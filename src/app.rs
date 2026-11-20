@@ -757,6 +757,11 @@ struct Ctx {
     failed: StoredValue<Option<UsbDevice>>,
     /// The device being connected (its `usb`).
     connecting: RwSignal<Option<String>>,
+    /// A phone whose storage couldn't be read (locked, or access to its files not allowed yet):
+    /// it's connected again every `ACCESS_RETRY` until that works, it's unplugged or Stop is
+    /// clicked. The timer for the next try.
+    awaiting: RwSignal<Option<UsbDevice>>,
+    access_timer: StoredValue<Option<TimeoutHandle>, LocalStorage>,
     conn_error: RwSignal<Option<String>>,
     /// Settings: connect phones as soon as they're found, with adb when it can, else MTP.
     auto_connect: RwSignal<bool>,
@@ -855,6 +860,8 @@ impl Ctx {
             looking: RwSignal::new(false),
             failed: StoredValue::new(None),
             connecting: RwSignal::new(None),
+            awaiting: RwSignal::new(None),
+            access_timer: StoredValue::new_local(None),
             conn_error: RwSignal::new(None),
             show_hidden: RwSignal::new(stored_flag(HIDDEN_KEY, false)),
             colour_code: RwSignal::new(stored_flag(COLOUR_KEY, true)),

@@ -377,7 +377,8 @@
   padding-bottom: 6px;
 }
 
-.conn-error .error {
+.conn-error .error,
+.conn-error .hint {
   flex-basis: 100%;
   margin-bottom: 0;
 }
