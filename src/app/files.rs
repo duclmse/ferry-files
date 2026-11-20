@@ -17,6 +17,7 @@ impl Ctx {
                     p.loading.set(false);
                 });
             }
+            Kind::Text if p.view.get_untracked() == ViewMode::Code => self.open_doc(p, e.path),
             Kind::Text => self.open_text(p, e.path),
             Kind::Other => self.open_in_app(p, e.path),
         }
@@ -154,7 +155,14 @@ impl Ctx {
                 Ok(()) => {
                     p.notice.set(Notice::None);
                     self.log_undo(format!("Created {}", path), Undo::Create { src, path: path.clone(), folder });
-                    if folder { self.changed(src, &dir) } else { self.open_text(p, path) }
+                    if folder {
+                        self.changed(src, &dir)
+                    } else if p.view.get_untracked() == ViewMode::Code {
+                        self.changed(src, &dir);
+                        self.open_doc(p, path)
+                    } else {
+                        self.open_text(p, path)
+                    }
                 }
                 Err(e) => p.error(e),
             }

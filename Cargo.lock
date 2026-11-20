@@ -1457,6 +1457,7 @@ dependencies = [
  "console_error_panic_hook",
  "js-sys",
  "leptos",
+ "regex",
  "serde",
  "serde-wasm-bindgen",
  "serde_json",

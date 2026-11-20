@@ -13,6 +13,7 @@ impl Ctx {
                     self.editor.set(Some(Editor { src, pane: p.id, path, version: f.version, saved_text: f.text }));
                     self.status.set((String::new(), ""));
                     self.confirm_discard.set(false);
+                    self.finding.set(false);
                 }
                 Err(e) => p.error(e),
             }
@@ -21,27 +22,122 @@ impl Ctx {
     }
 
     pub(super) fn save(self) {
-        let Some(ed) = self.editor.get_untracked() else { return };
+        self.save_in(self.full_slot());
+    }
+
+    pub(super) fn save_in(self, slot: Slot) {
+        let Some(ed) = slot.editor.get_untracked() else { return };
         if self.busy.get_untracked() {
             return;
         }
-        let text = self.text.get_untracked();
+        let text = slot.text.get_untracked();
         self.busy.set(true);
-        self.status.set(("Saving…".into(), ""));
+        slot.status.set(("Saving…".into(), ""));
         spawn_local(async move {
             let args = json!({ "src": ed.src.key(), "path": ed.path, "text": text, "base_version": ed.version, "create": false });
             match call::<WriteResult>("write_text", args).await {
                 Ok(r) => {
                     let note = if r.backup.is_some() { format!(" The old version is backed up on {}.", crate::os::the_computer()) } else { String::new() };
-                    self.status.set((format!("Saved to {}.{note}", self.place(ed.src)), "ok"));
+                    slot.status.set((format!("Saved to {}.{note}", self.place(ed.src)), "ok"));
                     self.log(format!("Saved {} on {}", base(&ed.path), self.place(ed.src)));
-                    self.editor.set(Some(Editor { version: r.version, saved_text: text, ..ed }));
-                    self.confirm_discard.set(false);
+                    let same = |e: &Editor| e.src == ed.src && e.path == ed.path;
+                    let saved = Editor { version: r.version, saved_text: text, ..ed.clone() };
+                    if slot.editor.with_untracked(|e| e.as_ref().is_some_and(same)) {
+                        slot.editor.set(Some(saved));
+                        slot.ask.set(false);
+                    } else if let Some(p) = slot.pane {
+                        // Another tab was shown meanwhile: the saved file is in the stash.
+                        p.docs.update(|ds| {
+                            if let Some(d) = ds.iter_mut().find(|d| same(&d.ed)) {
+                                d.ed = saved;
+                            }
+                        });
+                    }
                 }
-                Err(e) => self.status.set((e, "error")),
+                Err(e) => slot.status.set((e, "error")),
             }
             self.busy.set(false);
         });
+    }
+
+    /// Opens a text file in the pane's Editor view: in its tab if it's open, else in place of the
+    /// shown file, or in a new tab when the shown file has unsaved changes.
+    pub(super) fn open_doc(self, p: Pane, path: String) {
+        let src = p.src.get_untracked();
+        reveal(p, &path);
+        if let Some(i) = p.docs.with_untracked(|ds| ds.iter().position(|d| d.ed.src == src && d.ed.path == path)) {
+            self.show_doc(p, i);
+            return;
+        }
+        self.busy.set(true);
+        spawn_local(async move {
+            match call::<TextFile>("read_text", json!({ "src": src.key(), "path": path })).await {
+                Ok(f) => {
+                    let ed = Editor { src, pane: p.id, path, version: f.version, saved_text: f.text.clone() };
+                    let doc = Doc { ed: ed.clone(), text: f.text.clone() };
+                    let at = p.doc_at.get_untracked();
+                    let keep = p.slot().dirty();
+                    stash(p);
+                    p.docs.update(|ds| {
+                        if ds.is_empty() {
+                            ds.push(doc);
+                        } else if keep {
+                            ds.insert(at + 1, doc);
+                        } else {
+                            let last = ds.len() - 1;
+                            ds[at.min(last)] = doc;
+                        }
+                    });
+                    let at = if keep { at + 1 } else { at.min(p.docs.with_untracked(Vec::len) - 1) };
+                    show(p, at, Doc { ed, text: f.text });
+                }
+                Err(e) => p.error(e),
+            }
+            self.busy.set(false);
+        });
+    }
+
+    /// Shows the Editor view's tab `i`.
+    pub(super) fn show_doc(self, p: Pane, i: usize) {
+        if i == p.doc_at.get_untracked() && p.doc.with_untracked(Option::is_some) {
+            return;
+        }
+        stash(p);
+        if let Some(d) = p.docs.with_untracked(|ds| ds.get(i).cloned()) {
+            reveal(p, &d.ed.path);
+            show(p, i, d);
+        }
+    }
+
+    /// Closes the Editor view's tab `i`; with unsaved changes, unless `force`, it's shown and asks.
+    pub(super) fn close_doc(self, p: Pane, i: usize, force: bool) {
+        let at = p.doc_at.get_untracked();
+        let dirty = if i == at { p.slot().dirty() } else { p.docs.with_untracked(|ds| ds.get(i).is_some_and(|d| d.ed.saved_text != d.text)) };
+        if dirty && !force {
+            self.show_doc(p, i);
+            p.doc_ask.set(true);
+            return;
+        }
+        if i >= p.docs.with_untracked(Vec::len) {
+            return;
+        }
+        p.docs.update(|ds| {
+            ds.remove(i);
+        });
+        let n = p.docs.with_untracked(Vec::len);
+        if i == at {
+            match p.docs.with_untracked(|ds| ds.get(i.min(n.saturating_sub(1))).cloned()) {
+                Some(d) => show(p, i.min(n - 1), d),
+                None => {
+                    p.doc.set(None);
+                    p.doc_text.set(String::new());
+                    p.doc_at.set(0);
+                    p.doc_ask.set(false);
+                }
+            }
+        } else if i < at {
+            p.doc_at.set(at - 1);
+        }
     }
 
     pub(super) fn close_editor(self, force: bool) {
@@ -61,6 +157,41 @@ impl Ctx {
     }
 }
 
+/// Keeps the shown tab's file and text in its entry of `docs`.
+fn stash(p: Pane) {
+    let Some(ed) = p.doc.get_untracked() else { return };
+    let at = p.doc_at.get_untracked();
+    let text = p.doc_text.get_untracked();
+    p.docs.update(|ds| {
+        if let Some(d) = ds.get_mut(at) {
+            *d = Doc { ed, text };
+        }
+    });
+}
+
+/// Puts tab `at`'s file in the editor. Its text goes first: the editor reads it when it's made.
+fn show(p: Pane, at: usize, d: Doc) {
+    p.doc_text.set(d.text);
+    p.doc.set(Some(d.ed));
+    p.doc_at.set(at);
+    p.doc_ask.set(false);
+    p.doc_status.set((String::new(), ""));
+}
+
+/// Opens the folders in the Editor view's tree down to `path`, so its row is shown.
+fn reveal(p: Pane, path: &str) {
+    let root = p.cwd.get_untracked();
+    let mut dir = parent(path);
+    let mut open = vec![];
+    while dir.len() > root.len() && dir.starts_with(&root) {
+        open.push(dir.clone());
+        dir = parent(&dir);
+    }
+    if !open.is_empty() {
+        p.tree_open.update(|o| o.extend(open));
+    }
+}
+
 /// Text up to this size is drawn over the editing box, with colours, line numbers and find marks;
 /// bigger text is edited plain.
 const LAYER_MAX: usize = 512 * 1024;
@@ -76,16 +207,6 @@ const TOKEN_CLASSES: [&str; 17] = [
     "", "tok-comment", "tok-string", "tok-number", "tok-keyword", "tok-type", "tok-function", "tok-tag", "tok-attr", "tok-heading",
     "tok-link", "tok-url", "tok-bold", "tok-italic", "tok-quote", "tok-list", "tok-code",
 ];
-
-/// Where `q` is in `t`, as byte ranges: ignoring case when `q` is ASCII.
-fn find_all(t: &str, q: &str) -> Vec<(usize, usize)> {
-    if q.is_empty() {
-        return vec![];
-    }
-    let at = |t: &str, q: &str| t.match_indices(q).take(FIND_MAX).map(|(i, _)| (i, i + q.len())).collect();
-    // Lowercasing ASCII keeps every byte where it was.
-    if q.is_ascii() { at(&t.to_ascii_lowercase(), &q.to_ascii_lowercase()) } else { at(t, q) }
-}
 
 /// The runs over `from..to` of text the `runs` cover.
 fn slice_runs(runs: &[(u8, u32)], from: usize, to: usize) -> Vec<(u8, u32)> {
@@ -254,20 +375,22 @@ fn type_text(el: &web_sys::HtmlTextAreaElement, s: &str) {
     }
 }
 
-/// The text editor, full width: code colours, line numbers, wrap, the current line, and find (⌘F).
-/// The text is typed in a `<textarea>` whose letters are clear; a layer under it shows them, in
-/// colour, scrolled with it.
+/// The text editor: code colours, line numbers, wrap, the current line, and find (⌘F). Full width
+/// for `Ctx::full_slot`, or in a pane's Editor view, where the find box is always shown. The text
+/// is typed in a `<textarea>` whose letters are clear; a layer under it shows them, in colour,
+/// scrolled with it.
 #[component]
-pub(super) fn TextEditor() -> impl IntoView {
+pub(super) fn TextEditor(file: Slot) -> impl IntoView {
+    let slot = file;
     let ctx = expect_context::<Ctx>();
     let ta = NodeRef::<leptos::html::Textarea>::new();
     let layer = NodeRef::<leptos::html::Pre>::new();
     let find_box = NodeRef::<leptos::html::Input>::new();
-    let name = ctx.editor.with_untracked(|e| e.as_ref().map(|e| base(&e.path).to_string()).unwrap_or_default());
+    let name = slot.editor.with_untracked(|e| e.as_ref().map(|e| base(&e.path).to_string()).unwrap_or_default());
     let language = code_language(&name).unwrap_or("Text");
     let name = StoredValue::new(name);
     // Small enough to draw under the box.
-    let drawn_on = ctx.text.with_untracked(|t| t.len() <= LAYER_MAX);
+    let drawn_on = slot.text.with_untracked(|t| t.len() <= LAYER_MAX);
     // The text last drawn, and the colours for it.
     let drawn = StoredValue::new(String::new());
     let runs = StoredValue::new(None::<Vec<(u8, u32)>>);
@@ -277,12 +400,15 @@ pub(super) fn TextEditor() -> impl IntoView {
     let edits = StoredValue::new(0u64);
     let colour_timer = StoredValue::new_local(None::<TimeoutHandle>);
     let caret = RwSignal::new((1usize, 1usize));
-    let finding = RwSignal::new(false);
-    let query = RwSignal::new(String::new());
+    let finding = slot.find;
+    let FindState { query, with, opts, keep, replacing } = ctx.find_state;
+    let replace_box = NodeRef::<leptos::html::Input>::new();
+    // What's wrong with the regular expression.
+    let find_err = RwSignal::new(None::<String>);
     let hits = RwSignal::new(Vec::<(usize, usize)>::new());
     let shown = RwSignal::new(None::<usize>);
     let (wrap, numbers) = (ctx.wrap_text, ctx.line_numbers);
-    let lines = Memo::new(move |_| ctx.text.with(|t| t.matches('\n').count() + 1));
+    let lines = Memo::new(move |_| slot.text.with(|t| t.matches('\n').count() + 1));
 
     // The current line gets a highlight in the layer.
     let mark_line = move |line: usize| {
@@ -305,7 +431,7 @@ pub(super) fn TextEditor() -> impl IntoView {
             return;
         }
         let Some(l) = layer.get_untracked() else { return };
-        let html = ctx.text.with_untracked(|t| runs.with_value(|r| hits.with_untracked(|h| code_html(t, r.as_deref(), h, shown.get_untracked()))));
+        let html = slot.text.with_untracked(|t| runs.with_value(|r| hits.with_untracked(|h| code_html(t, r.as_deref(), h, shown.get_untracked()))));
         l.set_inner_html(&html);
         mark_line(caret.get_untracked().0);
         sync_scroll();
@@ -313,7 +439,7 @@ pub(super) fn TextEditor() -> impl IntoView {
     let update_caret = move || {
         let Some(el) = ta.get_untracked() else { return };
         let u = el.selection_start().ok().flatten().unwrap_or(0);
-        let (line, col) = ctx.text.with_untracked(|t| {
+        let (line, col) = slot.text.with_untracked(|t| {
             let b = byte_at(t, u);
             let before = &t[..b];
             let line_start = before.rfind('\n').map_or(0, |i| i + 1);
@@ -329,7 +455,7 @@ pub(super) fn TextEditor() -> impl IntoView {
             return;
         }
         let at = edits.get_value();
-        let text = ctx.text.get_untracked();
+        let text = slot.text.get_untracked();
         let name = name.get_value();
         spawn_local(async move {
             let Ok(c) = call::<crate::api::TextColours>("colour_text", json!({ "name": name, "text": text })).await else { return };
@@ -356,7 +482,16 @@ pub(super) fn TextEditor() -> impl IntoView {
     let refind = move || {
         if finding.get_untracked() {
             let q = query.get_untracked();
-            hits.set(ctx.text.with_untracked(|t| find_all(t, &q)));
+            match slot.text.with_untracked(|t| find::find(t, &q, opts.get_untracked(), FIND_MAX)) {
+                Ok(h) => {
+                    find_err.set(None);
+                    hits.set(h);
+                }
+                Err(e) => {
+                    find_err.set(Some(e));
+                    hits.set(vec![]);
+                }
+            }
             shown.set(shown.get_untracked().filter(|&i| i < hits.with_untracked(Vec::len)));
         }
     };
@@ -369,7 +504,11 @@ pub(super) fn TextEditor() -> impl IntoView {
             runs.set_value(shifted);
             drawn.set_value(v.clone());
         }
-        ctx.text.set(v);
+        slot.text.set(v);
+        // A message about what was done ("Saved.", "Replaced 3 matches.") is old after an edit.
+        if slot.status.with_untracked(|(_, k)| *k == "ok") {
+            slot.status.set((String::new(), ""));
+        }
         refind();
         update_caret();
         draw();
@@ -380,7 +519,7 @@ pub(super) fn TextEditor() -> impl IntoView {
         let Some((a, b)) = hits.with_untracked(|h| h.get(i).copied()) else { return };
         shown.set(Some(i));
         let Some(el) = ta.get_untracked() else { return };
-        let (ua, ub, line) = ctx.text.with_untracked(|t| (utf16_at(t, a), utf16_at(t, b), t[..a].matches('\n').count()));
+        let (ua, ub, line) = slot.text.with_untracked(|t| (utf16_at(t, a), utf16_at(t, b), t[..a].matches('\n').count()));
         let _ = el.set_selection_range(ua, ub);
         draw();
         let top = layer
@@ -406,25 +545,13 @@ pub(super) fn TextEditor() -> impl IntoView {
             None => {
                 // The first match after the caret.
                 let at = ta.get_untracked().and_then(|el| el.selection_start().ok().flatten()).unwrap_or(0);
-                let at = ctx.text.with_untracked(|t| byte_at(t, at));
+                let at = slot.text.with_untracked(|t| byte_at(t, at));
                 hits.with_untracked(|h| h.iter().position(|&(a, _)| a >= at).unwrap_or(0))
             }
         };
         show_hit(i);
     };
-    let open_find = move || {
-        // The selection, when it's on one line, is what's looked for.
-        if let Some(el) = ta.get_untracked() {
-            let (a, b) = (el.selection_start().ok().flatten().unwrap_or(0), el.selection_end().ok().flatten().unwrap_or(0));
-            let picked = ctx.text.with_untracked(|t| t.get(byte_at(t, a)..byte_at(t, b)).map(str::to_string)).unwrap_or_default();
-            if !picked.is_empty() && !picked.contains('\n') {
-                query.set(picked);
-            }
-        }
-        finding.set(true);
-        shown.set(None);
-        refind();
-        draw();
+    let focus_find = move || {
         request_animation_frame(move || {
             if let Some(i) = find_box.get_untracked() {
                 let _ = i.focus();
@@ -432,21 +559,116 @@ pub(super) fn TextEditor() -> impl IntoView {
             }
         });
     };
+    // The find bar shown or hidden, here or by the Editor view's Find button.
+    Effect::new(move |prev: Option<bool>| {
+        let on = finding.get();
+        if prev.is_none() && on {
+            // Shown already (the Editor view keeps it from file to file).
+            refind();
+        } else if prev.is_some_and(|p| p != on) {
+            shown.set(None);
+            if on {
+                refind();
+                focus_find();
+            } else {
+                hits.set(vec![]);
+            }
+            draw();
+        }
+        on
+    });
+    let open_find = move |replace: bool| {
+        // The selection, when it's on one line, is what's looked for.
+        if let Some(el) = ta.get_untracked() {
+            let (a, b) = (el.selection_start().ok().flatten().unwrap_or(0), el.selection_end().ok().flatten().unwrap_or(0));
+            let picked = slot.text.with_untracked(|t| t.get(byte_at(t, a)..byte_at(t, b)).map(str::to_string)).unwrap_or_default();
+            if !picked.is_empty() && !picked.contains('\n') {
+                query.set(picked);
+            }
+        }
+        if replace {
+            replacing.set(true);
+        }
+        if finding.get_untracked() {
+            shown.set(None);
+            refind();
+            draw();
+            focus_find();
+        } else {
+            finding.set(true);
+        }
+    };
     let close_find = move || {
         finding.set(false);
-        hits.set(vec![]);
-        shown.set(None);
-        draw();
         if let Some(el) = ta.get_untracked() {
             let _ = el.focus();
         }
     };
+    // Replaces the shown match (or, with none shown, picks the next) and shows the next one.
+    let replace_one = move || {
+        let Some(el) = ta.get_untracked() else { return };
+        let Some((a, b)) = shown.get_untracked().and_then(|i| hits.with_untracked(|h| h.get(i).copied())) else {
+            step(false);
+            return;
+        };
+        let w = slot.text.with_untracked(|t| find::replacement_at(t, &query.get_untracked(), opts.get_untracked(), &with.get_untracked(), keep.get_untracked(), a));
+        let Some(w) = w else { return };
+        let (ua, ub) = slot.text.with_untracked(|t| (utf16_at(t, a), utf16_at(t, b)));
+        // Typed into the text (focused, so it goes there), so ⌘Z undoes it; its input event finds
+        // the matches again.
+        let _ = el.focus();
+        let _ = el.set_selection_range(ua, ub);
+        type_text(&el, &w);
+        shown.set(None);
+        let after = a + w.len();
+        match hits.with_untracked(|h| h.iter().position(|&(s, _)| s >= after).or((!h.is_empty()).then_some(0))) {
+            Some(i) => show_hit(i),
+            None => draw(),
+        }
+        let _ = replace_box.get_untracked().map(|i| i.focus());
+    };
+    let replace_every = move || {
+        let Some(el) = ta.get_untracked() else { return };
+        let (q, w) = (query.get_untracked(), with.get_untracked());
+        let Ok((new, n)) = slot.text.with_untracked(|t| find::replace_all(t, &q, opts.get_untracked(), &w, keep.get_untracked())) else { return };
+        if n == 0 {
+            return;
+        }
+        let _ = el.focus();
+        el.select();
+        type_text(&el, &new);
+        let _ = el.set_selection_range(0, 0);
+        slot.status.set((format!("Replaced {n} {}.", if n == 1 { "match" } else { "matches" }), "ok"));
+    };
     let keys = move |ev: web_sys::KeyboardEvent| {
         let meta = ev.meta_key() || ev.ctrl_key();
-        match ev.key().as_str() {
-            "f" if meta => {
+        // ⌥⌘C, W and R turn the find options on or off, ⌥⌘P Preserve case (⌥ changes the key, so by
+        // the code).
+        if meta && ev.alt_key() && finding.get_untracked() {
+            let flip: Option<fn(&mut find::FindOpts)> = match ev.code().as_str() {
+                "KeyC" => Some(|o| o.case = !o.case),
+                "KeyW" => Some(|o| o.word = !o.word),
+                "KeyR" => Some(|o| o.regex = !o.regex),
+                _ => None,
+            };
+            if let Some(f) = flip {
                 ev.prevent_default();
-                open_find();
+                opts.update(f);
+                shown.set(None);
+                refind();
+                draw();
+                return;
+            }
+            if ev.code() == "KeyP" {
+                ev.prevent_default();
+                keep.update(|k| *k = !*k);
+                return;
+            }
+        }
+        match ev.key().as_str() {
+            "f" | "ƒ" if meta => {
+                ev.prevent_default();
+                open_find(ev.alt_key());
             }
             "g" if meta && finding.get_untracked() => {
                 ev.prevent_default();
@@ -463,12 +685,12 @@ pub(super) fn TextEditor() -> impl IntoView {
         match ev.key().as_str() {
             "Tab" if !ev.shift_key() => {
                 ev.prevent_default();
-                type_text(&el, ctx.text.with_untracked(|t| indent_unit(t)));
+                type_text(&el, slot.text.with_untracked(|t| indent_unit(t)));
             }
             // A new line starts as indented as the one it's split from.
             "Enter" if !ev.shift_key() => {
                 let at = el.selection_start().ok().flatten().unwrap_or(0);
-                let indent = ctx.text.with_untracked(|t| {
+                let indent = slot.text.with_untracked(|t| {
                     let b = byte_at(t, at);
                     let start = t[..b].rfind('\n').map_or(0, |i| i + 1);
                     t[start..b].chars().take_while(|c| *c == ' ' || *c == '\t').collect::<String>()
@@ -497,9 +719,9 @@ pub(super) fn TextEditor() -> impl IntoView {
     ta.on_load(move |el| {
         // macOS would otherwise "correct" code as it's typed.
         let _ = el.set_attribute("autocorrect", "off");
-        el.set_value(&ctx.text.get_untracked());
+        el.set_value(&slot.text.get_untracked());
         if drawn_on {
-            drawn.set_value(ctx.text.get_untracked());
+            drawn.set_value(slot.text.get_untracked());
         }
         request_animation_frame(move || {
             draw();
@@ -529,46 +751,71 @@ pub(super) fn TextEditor() -> impl IntoView {
         on
     });
 
-    let path = move || ctx.editor.get().map(|e| e.path).unwrap_or_default();
-    let dirty = Memo::new(move |_| ctx.dirty());
-    view! {
-        <div class="bar">
-            <button class="btn back" title="Back to files" aria-label="Back to files" on:click=move |_| ctx.close_editor(false)><svg class="back-icon" viewBox="0 0 16 16" aria-hidden="true"><path d="M13 8H3M7.5 3.5 3 8l4.5 4.5"/></svg></button>
-            <span class="title">{path}{move || dirty.get().then_some(" •")}</span>
-            <span class="kind">{move || ctx.editor.get().map(|e| match e.src {
-                Src::Mac => crate::os::computer().to_string(),
-                src => ctx.src_info(src).map_or_else(|| "Device".into(), |i| i.label),
-            })}</span>
-            <span class="spacer"></span>
-            <button class="btn icon-only" class:active=move || finding.get() title=crate::os::keys("Find (⌘F)") aria-label="Find"
-                on:click=move |_| if finding.get_untracked() { close_find() } else { open_find() }>{ico(Icon::Search)}</button>
-            <button class="btn icon-only" class:active=move || wrap.get() aria-pressed=move || wrap.get().to_string()
-                aria-label="Wrap long lines" title=move || if wrap.get() { "Wrap long lines: on" } else { "Wrap long lines: off" }
-                on:click=move |_| { ctx.set_wrap_text(!wrap.get_untracked()); request_animation_frame(move || { draw(); }); }>{ico(Icon::Wrap)}</button>
-            {drawn_on.then(|| view! {
-                <button class="btn icon-only" class:active=move || numbers.get() aria-pressed=move || numbers.get().to_string()
-                    aria-label="Line numbers" title=move || if numbers.get() { "Line numbers: on" } else { "Line numbers: off" }
-                    on:click=move |_| ctx.set_line_numbers(!numbers.get_untracked())>{ico(Icon::LineNumbers)}</button>
-            })}
-            <button class="btn primary" title=crate::os::keys("⌘S") disabled=move || !dirty.get() || ctx.busy.get() on:click=move |_| ctx.save()>{ico(Icon::Save)}"Save"</button>
-        </div>
-        {move || ctx.confirm_discard.get().then(|| view! {
-            <div class="notice">
-                <span class="text">"You have unsaved changes."</span>
-                <button class="btn primary" on:click=move |_| ctx.save()>{ico(Icon::Save)}"Save"</button>
-                <button class="btn danger" on:click=move |_| ctx.close_editor(true)>{ico(Icon::Trash)}"Discard changes"</button>
-                <button class="btn" on:click=move |_| ctx.confirm_discard.set(false)>"Keep editing"</button>
+    // Wrapping, turned on or off in Settings, moves the lines the layer's marks are on.
+    Effect::new(move |prev: Option<bool>| {
+        let w = wrap.get();
+        if prev.is_some() {
+            request_animation_frame(draw);
+        }
+        w
+    });
+    let path = move || slot.editor.get().map(|e| e.path).unwrap_or_default();
+    let dirty = Memo::new(move |_| slot.dirty());
+    let replace_keys = move |ev: web_sys::KeyboardEvent| match ev.key().as_str() {
+        "Enter" => {
+            ev.prevent_default();
+            if ev.meta_key() || ev.ctrl_key() { replace_every() } else { replace_one() }
+        }
+        "Escape" => {
+            ev.prevent_default();
+            ev.stop_propagation();
+            close_find();
+        }
+        _ => {}
+    };
+    let toggle_replace = move |_| {
+        let on = !replacing.get_untracked();
+        replacing.set(on);
+        request_animation_frame(move || {
+            let el = if on { replace_box.get_untracked() } else { find_box.get_untracked() };
+            if let Some(i) = el {
+                let _ = i.focus();
+            }
+        });
+    };
+    let none = move || hits.with(Vec::is_empty);
+    // An option of how to find, turned on or off: the matches are found again.
+    let opt = move |f: fn(&mut find::FindOpts)| {
+        opts.update(f);
+        shown.set(None);
+        refind();
+        draw();
+    };
+    let opt_btn = move |label: &'static str, keys: &'static str, on: fn(find::FindOpts) -> bool, flip: fn(&mut find::FindOpts), glyph: &'static str, class: &'static str| view! {
+        <button class="filter-opt" class:on=move || on(opts.get()) aria-pressed=move || on(opts.get()).to_string()
+            title=crate::os::keys(keys).to_string() aria-label=label
+            on:mousedown=|ev: web_sys::MouseEvent| ev.prevent_default() on:click=move |_| opt(flip)>
+            <span class=class>{glyph}</span>
+        </button>
+    };
+    // Shown on request (⌘F, or the Find button): the find box and its counts, and Replace with
+    // under it (⌥⌘F, or the chevron).
+    let find_bar = move || finding.get().then(|| view! {
+        <div class="find-bar" class:replacing=move || replacing.get() on:keydown=keys>
+            <button class="btn icon-only chevron" class:open=move || replacing.get() aria-expanded=move || replacing.get().to_string()
+                title=move || if replacing.get() { "Hide Replace with".to_string() } else { crate::os::keys("Replace (⌥⌘F)").to_string() } aria-label="Replace"
+                on:mousedown=|ev: web_sys::MouseEvent| ev.prevent_default() on:click=toggle_replace>{ico(Icon::Chevron)}</button>
+            <div class="filter-box find" class:bad=move || !query.with(String::is_empty) && none() title=move || find_err.get()>
+                {ico(Icon::Search)}
+                <input class="filter" node_ref=find_box type="text" placeholder="Find" aria-label="Find" spellcheck="false"
+                    prop:value=move || query.get()
+                    on:input=move |ev| { query.set(event_target_value(&ev)); shown.set(None); refind(); draw(); }
+                    on:keydown=find_keys/>
+                {opt_btn("Match case", "Match case (⌥⌘C)", |o| o.case, |o| o.case = !o.case, "Aa", "")}
+                {opt_btn("Match whole word", "Match whole word (⌥⌘W)", |o| o.word, |o| o.word = !o.word, "ab", "word")}
+                {opt_btn("Use regular expression", "Use regular expression (⌥⌘R)", |o| o.regex, |o| o.regex = !o.regex, ".*", "")}
             </div>
-        })}
-        {move || finding.get().then(|| view! {
-            <div class="find-bar" on:keydown=keys>
-                <div class="filter-box" class:bad=move || !query.with(String::is_empty) && hits.with(Vec::is_empty)>
-                    {ico(Icon::Search)}
-                    <input class="filter" node_ref=find_box type="text" placeholder="Find" aria-label="Find" spellcheck="false"
-                        prop:value=move || query.get()
-                        on:input=move |ev| { query.set(event_target_value(&ev)); shown.set(None); refind(); draw(); }
-                        on:keydown=find_keys/>
-                </div>
+            <div class="find-tools">
                 <span class="count">{move || {
                     let n = hits.with(Vec::len);
                     match (n, shown.get()) {
@@ -578,11 +825,63 @@ pub(super) fn TextEditor() -> impl IntoView {
                         (n, None) => format!("{n}{} {}", if n >= FIND_MAX { "+" } else { "" }, if n == 1 { "match" } else { "matches" }),
                     }
                 }}</span>
-                <button class="btn icon-only" title="Previous match (⇧Enter)" aria-label="Previous match" disabled=move || hits.with(Vec::is_empty)
+                <button class="btn icon-only" title="Previous match (⇧Enter)" aria-label="Previous match" disabled=none
                     on:click=move |_| step(true)>{ico(Icon::Prev)}</button>
-                <button class="btn icon-only" title="Next match (Enter)" aria-label="Next match" disabled=move || hits.with(Vec::is_empty)
+                <button class="btn icon-only" title="Next match (Enter)" aria-label="Next match" disabled=none
                     on:click=move |_| step(false)>{ico(Icon::Next)}</button>
-                <button class="btn icon-only" title="Close (Esc)" aria-label="Close find" on:click=move |_| close_find()>{ico(Icon::Close)}</button>
+            </div>
+            <button class="btn icon-only close-find" title="Close (Esc)" aria-label="Close find" on:click=move |_| close_find()>{ico(Icon::Close)}</button>
+            {move || replacing.get().then(|| view! {
+                <div class="filter-box with">
+                    {ico(Icon::Edit)}
+                    <input class="filter" node_ref=replace_box type="text" placeholder="Replace with" aria-label="Replace with" spellcheck="false"
+                        prop:value=move || with.get()
+                        on:input=move |ev| with.set(event_target_value(&ev))
+                        on:keydown=replace_keys/>
+                    <button class="filter-opt" class:on=move || keep.get() aria-pressed=move || keep.get().to_string()
+                        title=crate::os::keys("Preserve case: Foo becomes Bar, FOO becomes BAR (⌥⌘P)") aria-label="Preserve case"
+                        on:mousedown=|ev: web_sys::MouseEvent| ev.prevent_default() on:click=move |_| keep.update(|k| *k = !*k)><span>"AB"</span></button>
+                </div>
+                <div class="replace-tools">
+                    <button class="btn icon-only" title="Replace (Enter): this match, then shows the next" aria-label="Replace" disabled=none
+                        on:click=move |_| replace_one()>{ico(Icon::Replace)}</button>
+                    <button class="btn icon-only" title=crate::os::keys("Replace all (⌘Enter)") aria-label="Replace all" disabled=none
+                        on:click=move |_| replace_every()>{ico(Icon::ReplaceAll)}</button>
+                </div>
+            })}
+        </div>
+    });
+    let head = match slot.pane {
+        // The Editor view: its tabs have the Find button.
+        Some(_) => ().into_any(),
+        None => view! {
+            <div class="bar">
+                <button class="btn back" title="Back to files" aria-label="Back to files" on:click=move |_| ctx.close_editor(false)><svg class="back-icon" viewBox="0 0 16 16" aria-hidden="true"><path d="M13 8H3M7.5 3.5 3 8l4.5 4.5"/></svg></button>
+                <span class="title">{path}{move || dirty.get().then_some(" •")}</span>
+                <span class="kind">{move || slot.editor.get().map(|e| match e.src {
+                    Src::Mac => crate::os::computer().to_string(),
+                    src => ctx.src_info(src).map_or_else(|| "Device".into(), |i| i.label),
+                })}</span>
+                <span class="spacer"></span>
+                <button class="btn icon-only" class:active=move || finding.get() title=crate::os::keys("Find (⌘F)") aria-label="Find"
+                    aria-pressed=move || finding.get().to_string()
+                    on:click=move |_| if finding.get_untracked() { close_find() } else { open_find(false) }>{ico(Icon::Search)}</button>
+            </div>
+        }
+        .into_any(),
+    };
+    view! {
+        {head}
+        {find_bar}
+        {move || slot.ask.get().then(|| view! {
+            <div class="notice">
+                <span class="text">"You have unsaved changes."</span>
+                <button class="btn primary" on:click=move |_| ctx.save_in(slot)>{ico(Icon::Save)}"Save"</button>
+                <button class="btn danger" on:click=move |_| match slot.pane {
+                    Some(p) => ctx.close_doc(p, p.doc_at.get_untracked(), true),
+                    None => ctx.close_editor(true),
+                }>{ico(Icon::Trash)}"Discard changes"</button>
+                <button class="btn" on:click=move |_| slot.ask.set(false)>"Keep editing"</button>
             </div>
         })}
         <div class="code-edit" class:layered=drawn_on class:nowrap=move || !wrap.get() class:numbered=move || drawn_on && numbers.get()
@@ -600,8 +899,8 @@ pub(super) fn TextEditor() -> impl IntoView {
                 on:select=move |_| update_caret()></textarea>
         </div>
         <div class="statusbar">
-            <span class=move || format!("status {}", ctx.status.get().1)>{move || {
-                let (msg, _) = ctx.status.get();
+            <span class=move || format!("status {}", slot.status.get().1)>{move || {
+                let (msg, _) = slot.status.get();
                 if !msg.is_empty() { msg } else if dirty.get() { "Unsaved changes".into() } else { "Saved".into() }
             }}</span>
             <span class="spacer"></span>
@@ -611,9 +910,10 @@ pub(super) fn TextEditor() -> impl IntoView {
             <span>{language}</span>
             <span>{move || {
                 let n = lines.get();
-                let chars = ctx.text.with(|t| t.chars().count());
+                let chars = slot.text.with(|t| t.chars().count());
                 format!("{n} {} · {chars} {}", if n == 1 { "line" } else { "lines" }, if chars == 1 { "character" } else { "characters" })
             }}</span>
+            {slot.pane.map(|p| view! { <ViewSeg pane=p/> })}
         </div>
     }
 }
@@ -647,7 +947,7 @@ mod tests {
         let t = "let x";
         // Runs that don't fit the text are left out.
         assert_eq!(code_html(t, Some(&[(4, 9)]), &[], None), "<span class=\"ln\" data-n=\"1\">let x\n</span>");
-        let h = code_html(t, Some(&[(4, 3), (0, 2)]), &find_all(t, "ET"), Some(0));
+        let h = code_html(t, Some(&[(4, 3), (0, 2)]), &find::find(t, "ET", find::FindOpts::default(), FIND_MAX).unwrap(), Some(0));
         assert_eq!(h, "<span class=\"ln\" data-n=\"1\"><span class=\"tok-keyword\">l</span><mark class=\"hit on\"><span class=\"tok-keyword\">et</span></mark> x\n</span>");
     }
 

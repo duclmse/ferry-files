@@ -367,6 +367,7 @@ pub(super) fn PaneView(pane: Pane) -> impl IntoView {
     let ctx = expect_context::<Ctx>();
     let p = pane;
     let active = move || ctx.active.get() == p.id;
+    let coding = Memo::new(move |_| p.view.get() == ViewMode::Code);
     view! {
         <section class="pane" class:active=active data-pane=p.id.to_string() on:mousedown=move |_| ctx.active.set(p.id)
             // The left pane keeps the width it was dragged to; the right one takes the rest.
@@ -379,7 +380,7 @@ pub(super) fn PaneView(pane: Pane) -> impl IntoView {
                 <button class="btn icon-only" title=move || ctx.with_key("Up", "up") aria-label="Up" disabled=move || p.cwd.get() == "/" on:click=move |_| ctx.go_up(p)>{ico(Icon::Up)}</button>
                 <Crumbs pane=p/>
                 {move || p.loading.get().then(|| view! { <span class="spin"></span> })}
-                <button class="btn icon-only search-toggle" class:active=move || p.filters_open.get() || !p.filter.with(String::is_empty) || p.filtering()
+                <button class="btn icon-only search-toggle" class:hidden=move || p.view.get() == ViewMode::Code class:active=move || p.filters_open.get() || !p.filter.with(String::is_empty) || p.filtering()
                     title=move || ctx.with_key("Filter and search", "filter") aria-label="Filter and search"
                     aria-expanded=move || p.filters_open.get().to_string()
                     on:click=move |_| if p.filters_open.get_untracked() { ctx.close_search(p) } else { ctx.open_search(p, false) }>{ico(Icon::Search)}</button>
@@ -392,23 +393,30 @@ pub(super) fn PaneView(pane: Pane) -> impl IntoView {
             </div>
             <SearchPane pane=p/>
             <CompareBar pane=p/>
-            <div class="body">
-                <div class="files" class:beside=move || p.preview.get()>
-                    {move || match p.view.get() {
-                        ViewMode::List => view! { <ListView pane=p/> }.into_any(),
-                        ViewMode::Thumbs => view! { <ThumbView pane=p/> }.into_any(),
-                        ViewMode::Columns => view! { <ColumnView pane=p/> }.into_any(),
-                    }}
-                </div>
-                {move || p.preview.get().then(|| view! {
-                    <Grip size=p.preview_w key=format!("ferry-files.preview-w.{}", p.id) min=PREVIEW_MIN target=Target::Next room=200.0/>
-                    <Preview pane=p/>
-                })}
-            </div>
+            {move || if coding.get() {
+                view! { <CodeView pane=p/> }.into_any()
+            } else {
+                view! {
+                    <div class="body">
+                        <div class="files" class:beside=move || p.preview.get()>
+                            {move || match p.view.get() {
+                                ViewMode::List => view! { <ListView pane=p/> }.into_any(),
+                                ViewMode::Thumbs => view! { <ThumbView pane=p/> }.into_any(),
+                                ViewMode::Columns | ViewMode::Code => view! { <ColumnView pane=p/> }.into_any(),
+                            }}
+                        </div>
+                        {move || p.preview.get().then(|| view! {
+                            <Grip size=p.preview_w key=format!("ferry-files.preview-w.{}", p.id) min=PREVIEW_MIN target=Target::Next room=200.0/>
+                            <Preview pane=p/>
+                        })}
+                    </div>
+                }
+                .into_any()
+            }}
             // Messages and questions about this pane, above its status bar.
             <Notices pane=p/>
             {move || p.term.get().then(|| view! { <Terminal pane=p/> })}
-            <ListStatus pane=p/>
+            {move || (!coding.get()).then(|| view! { <ListStatus pane=p/> })}
         </section>
     }
 }
@@ -575,13 +583,7 @@ pub(super) fn ListStatus(pane: Pane) -> impl IntoView {
             <span class="spacer"></span>
             <span class="free">{move || ctx.free_text(p)}</span>
             <span>{place}</span>
-            <div class="seg" role="group" aria-label="View">
-                {ViewMode::ALL.map(|m| view! {
-                    <button title=if m == ViewMode::List { "View as list (right-click to choose its columns)".to_string() } else { format!("View as {}", m.label()) }
-                        aria-label=m.label() class:active=move || p.view.get() == m on:click=move |_| ctx.set_view(p, m)
-                        on:contextmenu=move |ev| if m == ViewMode::List { ctx.show_columns_menu(p, &ev) }>{m.glyph()}</button>
-                })}
-            </div>
+            <ViewSeg pane=p/>
             <button class="btn small preview-toggle" class:active=move || p.preview.get()
                 title=move || if p.preview.get() { "Hide the preview" } else { "Show the preview" } aria-label="Preview"
                 on:click=move |_| {
@@ -591,6 +593,26 @@ pub(super) fn ListStatus(pane: Pane) -> impl IntoView {
                 }>
                 <svg viewBox="0 0 16 16" aria-hidden="true"><rect x="1.5" y="2.5" width="13" height="11" rx="1.5"/><path d="M9.5 2.5v11"/></svg>
             </button>
+        </div>
+    }
+}
+
+/// Buttons for the pane's views.
+#[component]
+pub(super) fn ViewSeg(pane: Pane) -> impl IntoView {
+    let ctx = expect_context::<Ctx>();
+    let p = pane;
+    view! {
+        <div class="seg" role="group" aria-label="View">
+            {ViewMode::ALL.map(|m| view! {
+                <button title=match m {
+                        ViewMode::List => "View as list (right-click to choose its columns)".to_string(),
+                        ViewMode::Code => "Editor: a folder tree and text files in tabs".to_string(),
+                        m => format!("View as {}", m.label()),
+                    }
+                    aria-label=m.label() class:active=move || p.view.get() == m on:click=move |_| ctx.set_view(p, m)
+                    on:contextmenu=move |ev| if m == ViewMode::List { ctx.show_columns_menu(p, &ev) }>{m.glyph()}</button>
+            })}
         </div>
     }
 }

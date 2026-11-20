@@ -19,7 +19,9 @@ mod everything;
 mod servers;
 mod dupes;
 mod editor;
+mod code;
 mod files;
+mod find;
 mod import;
 mod icons;
 mod keymap;
@@ -52,6 +54,7 @@ use dupes::*;
 use import::*;
 use devices::*;
 use editor::*;
+use code::*;
 use icons::{ico, Icon};
 use keymap::*;
 use layout::*;
@@ -99,16 +102,19 @@ enum ViewMode {
     List,
     Thumbs,
     Columns,
+    /// A folder tree beside a text editor with tabs, as in a code editor.
+    Code,
 }
 
 impl ViewMode {
-    const ALL: [ViewMode; 3] = [ViewMode::List, ViewMode::Thumbs, ViewMode::Columns];
+    const ALL: [ViewMode; 4] = [ViewMode::List, ViewMode::Thumbs, ViewMode::Columns, ViewMode::Code];
 
     fn key(self) -> &'static str {
         match self {
             ViewMode::List => "list",
             ViewMode::Thumbs => "thumbs",
             ViewMode::Columns => "columns",
+            ViewMode::Code => "code",
         }
     }
 
@@ -117,6 +123,7 @@ impl ViewMode {
             ViewMode::List => "List",
             ViewMode::Thumbs => "Thumbnails",
             ViewMode::Columns => "Columns",
+            ViewMode::Code => "Editor",
         }
     }
 
@@ -125,6 +132,7 @@ impl ViewMode {
             ViewMode::List => "☰",
             ViewMode::Thumbs => "▦",
             ViewMode::Columns => "▥",
+            ViewMode::Code => "✎",
         }
     }
 
@@ -337,6 +345,39 @@ struct Editor {
     saved_text: String,
 }
 
+/// Where a text editor keeps its file: the full-window editor's (`Ctx::full_slot`) or a pane's
+/// Editor view's (`Pane::slot`).
+/// The editors' find bar: what's looked for, how, and what Replace puts in.
+#[derive(Clone, Copy)]
+struct FindState {
+    query: RwSignal<String>,
+    with: RwSignal<String>,
+    opts: RwSignal<find::FindOpts>,
+    /// Replace keeps each match's case.
+    keep: RwSignal<bool>,
+    /// The Replace with box is shown.
+    replacing: RwSignal<bool>,
+}
+
+#[derive(Clone, Copy)]
+struct Slot {
+    editor: RwSignal<Option<Editor>>,
+    text: RwSignal<String>,
+    /// Asking whether to save or discard unsaved changes.
+    ask: RwSignal<bool>,
+    status: RwSignal<(String, &'static str)>,
+    /// The find bar is shown.
+    find: RwSignal<bool>,
+    /// The pane, for the Editor view.
+    pane: Option<Pane>,
+}
+
+impl Slot {
+    fn dirty(self) -> bool {
+        self.editor.with(|e| e.as_ref().is_some_and(|e| e.saved_text != self.text.get()))
+    }
+}
+
 /// One pane of files. Each pane has its own place (phone or Mac, and folder), selection and view.
 #[derive(Clone, Copy)]
 struct Pane {
@@ -441,6 +482,28 @@ struct Pane {
     tabs: RwSignal<Vec<Tab>>,
     /// Which of `tabs` is shown.
     tab: RwSignal<usize>,
+    /// The Editor view's file: the shown tab's file, its text, and whether closing it asks about
+    /// unsaved changes.
+    doc: RwSignal<Option<Editor>>,
+    doc_text: RwSignal<String>,
+    doc_ask: RwSignal<bool>,
+    doc_status: RwSignal<(String, &'static str)>,
+    doc_find: RwSignal<bool>,
+    /// The Editor view's tabs. The shown one's entry is only brought up to date when another is
+    /// shown; until then `doc` and `doc_text` are where it is.
+    docs: RwSignal<Vec<Doc>>,
+    /// Which of `docs` is shown.
+    doc_at: RwSignal<usize>,
+    /// The Editor view's tree: the folders open in it, and its width (0: the default).
+    tree_open: RwSignal<HashSet<String>>,
+    tree_w: RwSignal<f64>,
+}
+
+/// A file open in a tab of the Editor view.
+#[derive(Clone)]
+struct Doc {
+    ed: Editor,
+    text: String,
 }
 
 /// Where a tab was when another was shown.
@@ -512,7 +575,21 @@ impl Pane {
             term_starting: StoredValue::new(false),
             tabs: RwSignal::new(vec![Tab { src: Src::Mac, cwd: String::new(), selected: None, view: ViewMode::stored(id), root: String::new() }]),
             tab: RwSignal::new(0),
+            doc: RwSignal::new(None),
+            doc_text: RwSignal::new(String::new()),
+            doc_ask: RwSignal::new(false),
+            doc_status: RwSignal::new((String::new(), "")),
+            doc_find: RwSignal::new(false),
+            docs: RwSignal::new(vec![]),
+            doc_at: RwSignal::new(0),
+            tree_open: RwSignal::new(HashSet::new()),
+            tree_w: stored_px(&format!("ferry-files.tree-w.{id}")),
         }
+    }
+
+    /// Where the Editor view keeps its file.
+    fn slot(self) -> Slot {
+        Slot { editor: self.doc, text: self.doc_text, ask: self.doc_ask, status: self.doc_status, find: self.doc_find, pane: Some(self) }
     }
 
     fn error(self, msg: impl Into<String>) {
@@ -741,6 +818,10 @@ struct Ctx {
     text: RwSignal<String>,
     status: RwSignal<(String, &'static str)>,
     confirm_discard: RwSignal<bool>,
+    /// The full-window editor's find bar is shown.
+    finding: RwSignal<bool>,
+    /// What's looked for and how, the same in every editor.
+    find_state: FindState,
     busy: RwSignal<bool>,
     ep: crate::epub::Ep,
     menu: RwSignal<Option<Menu>>,
@@ -850,6 +931,14 @@ impl Ctx {
             text: RwSignal::new(String::new()),
             status: RwSignal::new((String::new(), "")),
             confirm_discard: RwSignal::new(false),
+            finding: RwSignal::new(false),
+            find_state: FindState {
+                query: RwSignal::new(String::new()),
+                with: RwSignal::new(String::new()),
+                opts: RwSignal::new(find::FindOpts::default()),
+                keep: RwSignal::new(false),
+                replacing: RwSignal::new(false),
+            },
             busy: RwSignal::new(false),
             ep: crate::epub::Ep::new(),
             menu: RwSignal::new(None),
@@ -1010,7 +1099,12 @@ impl Ctx {
     }
 
     fn dirty(&self) -> bool {
-        self.editor.with(|e| e.as_ref().is_some_and(|e| e.saved_text != self.text.get()))
+        self.full_slot().dirty()
+    }
+
+    /// Where the full-window editor keeps its file.
+    fn full_slot(self) -> Slot {
+        Slot { editor: self.editor, text: self.text, ask: self.confirm_discard, status: self.status, find: self.finding, pane: None }
     }
 }
 
@@ -1138,6 +1232,32 @@ pub fn App() -> impl IntoView {
             return;
         }
         let p = ctx.act();
+        // The Editor view: ⌘S saves, ⌘W closes the file's tab, and only shortcuts that work
+        // anywhere do the rest; the others act on files, which aren't shown.
+        if p.view.get_untracked() == ViewMode::Code && p.notice.with_untracked(|n| matches!(n, Notice::None | Notice::Ok(_) | Notice::Error(_))) {
+            if e.default_prevented() {
+                return;
+            }
+            let id = bound.map(|b| b.id);
+            if meta && e.key() == "s" {
+                e.prevent_default();
+                ctx.save_in(p.slot());
+            } else if meta && matches!(e.key().as_str(), "f" | "ƒ") && p.doc.with_untracked(Option::is_some) {
+                // Find in the shown file, from anywhere in the pane (the editor's own ⌘F takes the selection).
+                e.prevent_default();
+                if e.alt_key() {
+                    ctx.find_state.replacing.set(true);
+                }
+                p.doc_find.set(true);
+            } else if id == Some("close_tab") && p.doc.with_untracked(Option::is_some) {
+                e.prevent_default();
+                ctx.close_doc(p, p.doc_at.get_untracked(), false);
+            } else if bound.is_some_and(|b| b.anywhere && b.id != "replace") && chord.as_deref().is_some_and(held) {
+                // Falls through to the shortcut below.
+            } else {
+                return;
+            }
+        }
         if !matches!(p.notice.get_untracked(), Notice::None | Notice::Ok(_) | Notice::Error(_)) {
             return;
         }
@@ -1438,7 +1558,7 @@ fn Browser() -> impl IntoView {
                 <Grip size=ctx.side_w key=SIDE_W_KEY.into() min=SIDE_MIN max=480.0 room=480.0 class="grip side-grip"/>
             })}
             <div class="main">
-                {move || if editing.get() { view! { <TextEditor/> }.into_any() } else { view! {
+                {move || if editing.get() { view! { <TextEditor file=ctx.full_slot()/> }.into_any() } else { view! {
                     <div class="panes">
                         <PaneView pane=ctx.panes[0]/>
                         {move || ctx.split.get().then(|| view! {

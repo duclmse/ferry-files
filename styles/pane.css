@@ -557,18 +557,61 @@ th.num {
   box-shadow: 0 0 0 1px var(--accent);
 }
 
-/* Find, above the text. */
+/* Find, above the text: the chevron, the find box with Replace with under it (same column, so
+   the same width), then their buttons, and Close at the right end. */
 .find-bar {
-  display: flex;
+  display: grid;
+  grid-template-columns: 22px minmax(120px, 320px) max-content minmax(26px, 1fr);
   align-items: center;
-  gap: 4px;
+  gap: 4px 6px;
   padding: 4px 8px;
   background: var(--panel);
   border-bottom: 1px solid var(--line);
 }
 
 .find-bar .filter-box {
-  width: min(320px, 100%);
+  grid-column: 2;
+  width: auto;
+  min-width: 0;
+}
+
+.find-bar .find-tools,
+.find-bar .replace-tools {
+  grid-column: 3;
+  display: flex;
+  align-items: center;
+  gap: 4px;
+}
+
+.find-bar .close-find {
+  grid-column: 4;
+  grid-row: 1;
+  justify-self: end;
+}
+
+/* Before the find box: opens Replace with under it, and points down while it's open. */
+.find-bar .btn.chevron {
+  grid-column: 1;
+  grid-row: 1;
+  align-self: stretch;
+  display: grid;
+  place-items: center;
+  width: 22px;
+  height: auto;
+  padding: 0;
+}
+
+/* Beside both boxes, its arrow halfway down them. */
+.find-bar .btn.chevron.open {
+  grid-row: 1 / span 2;
+}
+
+.find-bar .chevron .ico {
+  transition: transform 0.15s ease;
+}
+
+.find-bar .chevron.open .ico {
+  transform: rotate(90deg);
 }
 
 .find-bar .count {
@@ -758,4 +801,18 @@ th.num {
 
 .more-row .count {
   margin-right: 10px;
+}
+
+/* The find options (match case, whole word, regex) and Preserve case, in their boxes. */
+.find-bar .filter-opt.on {
+  background: var(--accent);
+  color: var(--accent-ink);
+}
+
+/* Whole word: "ab" over a ⊔. */
+.find-bar .filter-opt .word {
+  padding: 0 2px 1px;
+  border: 1.5px solid currentColor;
+  border-top: 0;
+  line-height: 1;
 }

@@ -48,6 +48,10 @@ pub(super) enum Icon {
     LineNumbers,
     /// A prompt: › and a line.
     Terminal,
+    /// A box, and an arrow from it into another.
+    Replace,
+    /// Replace's, into a stack of boxes.
+    ReplaceAll,
 }
 
 impl Icon {
@@ -82,6 +86,8 @@ impl Icon {
             Icon::Text => r#"<path d="M3 3.5h10M8 3.5v9.5"/>"#,
             Icon::Wifi => r#"<path d="M1.5 6a9.5 9.5 0 0 1 13 0M3.8 8.6a6.2 6.2 0 0 1 8.4 0M6.1 11.1a2.9 2.9 0 0 1 3.8 0M8 13.5h.01"/>"#,
             Icon::Eject => r#"<path d="M3.5 9.5 8 4.5l4.5 5z"/><path d="M3.5 12.5h9"/>"#,
+            Icon::Replace => r#"<rect x="1.5" y="1.5" width="5" height="4" rx="1"/><path d="M6.5 3.5H9a1.5 1.5 0 0 1 1.5 1.5v3M8.5 6.5l2 2 2-2"/><rect x="7.5" y="10" width="6" height="4.5" rx="1"/>"#,
+            Icon::ReplaceAll => r#"<rect x="1.5" y="1.5" width="5" height="4" rx="1"/><path d="M6.5 3.5H9a1.5 1.5 0 0 1 1.5 1.5v2.5M8.5 5.5l2 2 2-2"/><rect x="6.5" y="10.5" width="6" height="4" rx="1"/><path d="M8.5 10.5V9.5a1 1 0 0 1 1-1h4a1 1 0 0 1 1 1V12a1 1 0 0 1-1 1h-1"/>"#,
             Icon::Chevron => r#"<path d="M6 3.5 10.5 8 6 12.5"/>"#,
             Icon::Play => r#"<path d="M5 3.5v9l7.5-4.5z"/>"#,
             Icon::Pause => r#"<path d="M5.5 3.5v9M10.5 3.5v9"/>"#,

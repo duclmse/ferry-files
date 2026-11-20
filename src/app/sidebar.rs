@@ -150,7 +150,7 @@ pub(super) fn Sidebar() -> impl IntoView {
                     open.set(now);
                     store(&storage_key, if now { "0" } else { "1" });
                 }>
-                {chev(open)}{title}
+                {chev(open.into())}{title}
             </button>
             <span class="head-buttons" data-no-grip>{buttons.as_ref().map(|b| b.run())}</span></h2>
             }
@@ -164,13 +164,13 @@ pub(super) fn Sidebar() -> impl IntoView {
     let ws_name = RwSignal::new(None::<String>);
     let (mac_heading, mac_open) = section("mac", crate::os::computer(), None);
     let dev_buttons = ViewFn::from(move || view! {
+        <button class="refresh" title="Connect a phone over Wi-Fi (adb Wireless debugging)" aria-label="Connect over Wi-Fi"
+            on:click=move |_| ctx.wifi.set(true)>{ico(Icon::Wifi)}</button>
         <button class="refresh" class:turning=move || ctx.looking.get()
             title="Look for devices and disks again" aria-label="Look for devices again"
             on:click=move |_| ctx.refresh_devices()>
             <svg viewBox="0 0 16 16" aria-hidden="true"><path d="M13 8a5 5 0 1 1-1.5-3.6"/><path d="M13 2.5v3h-3"/></svg>
         </button>
-        <button class="refresh" title="Connect a phone over Wi-Fi (adb Wireless debugging)" aria-label="Connect over Wi-Fi"
-            on:click=move |_| ctx.wifi.set(true)>{ico(Icon::Wifi)}</button>
     });
     let (dev_heading, dev_open) = section("devices", "Devices", Some(dev_buttons));
     let open_conns = move || {
@@ -203,7 +203,7 @@ pub(super) fn Sidebar() -> impl IntoView {
                         open.set(now);
                         store(&fold_key, if now { "0" } else { "1" });
                     }>
-                    {chev(open)}
+                    {chev(open.into())}
                 </button>
                 // The device's name shows all its storage ("/").
                 <button class="name" title=format!("All storage on {}", i.label)
@@ -546,7 +546,7 @@ fn TreeNode(
         <div class=format!("tree-row {class}") style=format!("--depth: {depth}")>
             <button class="twisty" class:none=leaf title=fold_tip aria-label=fold_tip
                 aria-expanded=move || open.get().to_string() on:click=toggle>
-                {chev(open)}
+                {chev(open.into())}
             </button>
             // A middle click opens it in a new tab; right-click for a menu.
             <button class="item" class:active=active title=title
@@ -562,7 +562,7 @@ fn TreeNode(
 }
 
 /// The arrow that folds or unfolds a row, pointing down when open.
-fn chev(open: RwSignal<bool>) -> impl IntoView {
+pub(super) fn chev(open: Signal<bool>) -> impl IntoView {
     view! {
         <svg class="chev" class:open=move || open.get() viewBox="0 0 16 16" aria-hidden="true">
             <path d="M6 3.5 10.5 8 6 12.5"/>
@@ -648,8 +648,10 @@ pub(super) fn Settings() -> impl IntoView {
     }.into_any();
     let files = move || view! {
         {check(ctx.show_hidden.into(), Ctx::set_show_hidden, "Show hidden files (names starting with a dot)")}
-        {check(ctx.colour_code.into(), Ctx::set_colour_code, "Colour code in the preview")}
+        {check(ctx.colour_code.into(), Ctx::set_colour_code, "Colour code in the preview and the editor")}
         <p class="hint">"Colours keywords, strings and comments in code files, by the file's extension or its first line (#!)."</p>
+        {check(ctx.wrap_text.into(), Ctx::set_wrap_text, "Wrap long lines in the editor and the preview")}
+        {check(ctx.line_numbers.into(), Ctx::set_line_numbers, "Line numbers in the editor")}
         {check(ctx.verify.into(), Ctx::set_verify, "Check copies")}
         <p class="hint">"Reads each copied file back and compares it with the original; a copy that doesn't match is removed and reported, and a move keeps its original. Copies to a phone over MTP take about twice as long. (adb copies are always checked.)"</p>
     }.into_any();

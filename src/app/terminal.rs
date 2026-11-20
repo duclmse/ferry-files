@@ -542,11 +542,11 @@ pub(super) fn Terminal(pane: Pane) -> impl IntoView {
                 {move || (scrolled() > 0).then(|| view! {
                     <button class="btn small" on:click=move |_| { with_screen(p.id, |s| s.parser.screen_mut().set_scrollback(0)); p.term_tick.update(|t| *t += 1) }>"Back to the bottom"</button>
                 })}
-                <button class="btn small" title="Type cd and the pane's folder into the shell" disabled=move || p.term_id.get().is_none()
-                    on:click=cd_here>"cd here"</button>
+                <button class="btn icon-only small" title="cd here: type cd and the pane's folder into the shell" aria-label="cd here"
+                    disabled=move || p.term_id.get().is_none() on:click=cd_here>{ico(Icon::Folder)}</button>
                 <button class="btn icon-only small" title="Clear" aria-label="Clear the terminal" on:click=clear>{ico(Icon::Trash)}</button>
                 {move || match p.term_id.get() {
-                    Some(_) => view! { <button class="btn small" title="End the shell" on:click=move |_| ctx.end_shell(p)>"End"</button> }.into_any(),
+                    Some(_) => view! { <button class="btn icon-only small" title="End the shell" aria-label="End the shell" on:click=move |_| ctx.end_shell(p)>{ico(Icon::Stop)}</button> }.into_any(),
                     None => view! { <button class="btn small" title="Start a new shell in the pane's folder"
                         on:click=move |_| { let (r, c) = size.get_untracked(); ctx.start_shell(p, r, c) }>"New shell"</button> }.into_any(),
                 }}
