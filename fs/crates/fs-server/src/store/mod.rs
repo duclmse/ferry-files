@@ -490,6 +490,14 @@ pub enum FileStore {
 
 impl FileStore {
     /// Create a `FileStore` from config.
+    /// Makes room for a crawl that will add about this many new entries; a
+    /// no-op for SQLite.
+    pub fn reserve(&self, entries: usize, tail_bytes: usize) {
+        if let FileStore::Memory(m) = self {
+            m.reserve(entries, tail_bytes);
+        }
+    }
+
     /// The memory store's heap use by part; `None` for SQLite.
     pub fn heap_summary(&self) -> Option<String> {
         match self {

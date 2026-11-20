@@ -193,9 +193,11 @@ fn spawn_side_workers(
 /// only with entries added after it. They go out as the walk reaches them:
 /// collecting them first held every row of a whole volume at once (840-880
 /// MB peak over 1.4M entries against about 230 MB for Everything).
+#[allow(clippy::too_many_arguments)]
 fn crawl_from_mft(
     root: &Path,
     cache: &mut MftCache,
+    store: &FileStore,
     excl: &ExclusionEngine,
     tx: &mpsc::SyncSender<(FileRecord, String)>,
     root_str: &str,
@@ -209,6 +211,15 @@ fn crawl_from_mft(
             return false;
         }
     };
+    // Only a root's first crawl adds its entries; later ones mostly update
+    // entries in place, and reserving for them would double the store. The
+    // crawl indexes the root itself, so an indexed root has been crawled.
+    if store.get_by_path(root_str).ok().flatten().is_none() {
+        if let Ok((entries, name_bytes)) = index.count_under(root) {
+            // A tail is the name and the separator before it.
+            store.reserve(entries, name_bytes + entries);
+        }
+    }
     let now = unix_now();
     let mut sent = 0u64;
     let walked = index.walk(root, |path, file| {
@@ -361,19 +372,21 @@ pub async fn full_crawl(
             let side_workers =
                 spawn_side_workers(content_threads, &side_work, side_rx, &shutdown_w);
 
+            let previous = last_entries(&sqlite_w, &watch_root);
             let try_mft = match use_mft {
                 MftMode::On => true,
                 MftMode::Off => false,
                 MftMode::Auto => {
                     super::mft::is_volume_root(watch_path)
                         || mft_cache.has_drive_of(watch_path)
-                        || last_entries(&sqlite_w, &watch_root) >= MFT_AUTO_MIN_ENTRIES
+                        || previous >= MFT_AUTO_MIN_ENTRIES
                 }
             };
             let from_mft = try_mft
                 && crawl_from_mft(
                     watch_path,
                     &mut mft_cache,
+                    &sqlite_w,
                     &excl,
                     &tx,
                     &root_str,

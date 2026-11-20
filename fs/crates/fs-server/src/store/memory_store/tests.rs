@@ -1005,3 +1005,24 @@ fn a_truncated_compressed_snapshot_is_refused() {
     let reloaded = MemoryStore::new(dir.path()).unwrap();
     assert!(reloaded.get_by_path("/a/f0.rs").unwrap().is_none());
 }
+
+#[test]
+fn a_reserved_store_takes_a_crawl_without_growing() {
+    let store = make_store();
+    let paths: Vec<String> = (0..10_000)
+        .map(|i| format!("/r/d{}/file{i}.rs", i / 50))
+        .collect();
+    let tail_bytes: usize = paths.iter().map(|p| p.len() - p.rfind('/').unwrap()).sum();
+    store.reserve(paths.len() + 201, tail_bytes + 200 * 8 + 2);
+    let sizes = |s: &MemoryStore| s.read_state().capacities();
+    let before = sizes(&store);
+    assert!(before.0 >= paths.len() + 201);
+    store.upsert_file(&sample("/r"));
+    for d in 0..200 {
+        store.upsert_file(&sample(&format!("/r/d{d}")));
+    }
+    for p in &paths {
+        store.upsert_file(&sample(p));
+    }
+    assert_eq!(sizes(&store), before);
+}

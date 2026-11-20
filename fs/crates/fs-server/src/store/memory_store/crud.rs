@@ -66,6 +66,11 @@ fn read_up_to(r: &mut impl Read, buf: &mut [u8]) -> std::io::Result<usize> {
 }
 
 impl MemoryStore {
+    /// See `IndexState::reserve`.
+    pub fn reserve(&self, entries: usize, tail_bytes: usize) {
+        self.write_state().reserve(entries, tail_bytes);
+    }
+
     pub fn heap_summary(&self) -> String {
         self.read_state().heap_summary()
     }

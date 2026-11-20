@@ -400,3 +400,34 @@ fn unix_paths_are_never_volume_roots() {
     assert!(!is_volume_root(Path::new("/")));
     assert!(!is_volume_root(Path::new("/mnt/c")));
 }
+
+#[test]
+fn count_under_matches_what_the_walk_visits() {
+    let img = image(vec![
+        (24, dir(5, "Users")),
+        (25, file(24, "a.txt", 12)),
+        (26, dir(24, "sub")),
+        (27, file(26, "deep.bin", 3)),
+        (28, file(5, "top", 1)),
+    ]);
+    let index = MftIndex::read(&img).unwrap();
+    for root in ["/", "/Users", "/Users/sub"] {
+        let mut visited = Vec::new();
+        index
+            .walk(Path::new(root), |p, _| {
+                visited.push(p.to_path_buf());
+                true
+            })
+            .unwrap();
+        let names: usize = visited
+            .iter()
+            .filter(|p| *p != Path::new(root))
+            .map(|p| p.file_name().unwrap().len())
+            .sum();
+        assert_eq!(
+            index.count_under(Path::new(root)).unwrap(),
+            (visited.len(), names),
+            "{root}"
+        );
+    }
+}

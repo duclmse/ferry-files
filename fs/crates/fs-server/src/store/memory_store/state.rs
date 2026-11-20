@@ -334,6 +334,27 @@ impl IndexState {
         )
     }
 
+    /// Room for `entries` more entries with `tail_bytes` of tails, in one
+    /// allocation per buffer: growing in steps while a crawl adds a whole
+    /// volume briefly held each buffer's old and new copy, about 100 MB above
+    /// the end state at 1.4M entries.
+    pub(super) fn reserve(&mut self, entries: usize, tail_bytes: usize) {
+        self.entries.reserve_exact(entries);
+        self.tails.reserve_exact(tail_bytes);
+        let (list, tails, hasher) = (&self.entries, &self.tails, &self.hasher);
+        self.index
+            .reserve(entries, |&j| hash_entry(list, tails, hasher, j));
+    }
+
+    #[cfg(test)]
+    pub(super) fn capacities(&self) -> (usize, usize, usize) {
+        (
+            self.entries.capacity(),
+            self.tails.capacity(),
+            self.index.capacity(),
+        )
+    }
+
     /// Live entries.
     pub(super) fn len(&self) -> usize {
         self.entries.len() - self.dead

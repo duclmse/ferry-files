@@ -466,6 +466,26 @@ impl MftIndex {
         Ok(at)
     }
 
+    /// Entries `walk` would visit under `root`, with no exclusions, and the
+    /// bytes of their names; reads numbers only, so it costs a fraction of
+    /// the walk.
+    pub fn count_under(&self, root: &Path) -> Result<(usize, usize), String> {
+        let mut stack = vec![self.find(root)?];
+        let (mut entries, mut name_bytes) = (0, 0);
+        while let Some(number) = stack.pop() {
+            entries += 1;
+            let file = self.file(number);
+            if !file.is_dir || file.is_symlink {
+                continue;
+            }
+            for (_, child, link) in self.children_of(number) {
+                name_bytes += self.table.name(*link).len();
+                stack.push(*child);
+            }
+        }
+        Ok((entries, name_bytes))
+    }
+
     /// Visits `root` and everything below it, each directory before its
     /// contents; `visit` returns false to leave a path out, and its subtree.
     /// Fails only before the first visit, so a caller that streams what it
