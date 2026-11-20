@@ -1145,23 +1145,29 @@ td.name input.rename {
 }
 
 /* "Open as…" and its arrow, joined as one button; the arrow lists the other ways. */
+/* As wide as its label: never squeezed by the row it's in. */
 .open-as {
   display: inline-flex;
+  flex: none;
 }
 
-.open-as .btn.main {
+.open-as .btn {
+  flex: none;
+}
+
+.open-as .btn.open-text {
   border-top-right-radius: 0;
   border-bottom-right-radius: 0;
 }
 
-.open-as .btn.more {
+.open-as .btn.open-list {
   margin-left: -1px;
   padding: 0 4px;
   border-top-left-radius: 0;
   border-bottom-left-radius: 0;
 }
 
-.open-as .btn.more .ico {
+.open-as .btn.open-list .ico {
   transform: rotate(90deg);
 }
 

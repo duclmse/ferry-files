@@ -136,13 +136,13 @@ pub fn kind_of(path: &str) -> Option<Kind> {
 pub fn list_tar(size: u64, read: &mut Read, pack: Pack) -> Result<Listing, String> {
     let bad = || "Not a TAR file, or a damaged one.".to_string();
     let (items, total, mut done) = if pack == Pack::None {
-        let mut r = Ranged { read, size, at: 0, block: (0, Vec::new()) };
+        let mut r = Ranged::new(read, size);
         tar_walk(&mut r, |r, n| {
             r.at += n;
             Ok(())
         })
     } else {
-        let r = Ranged { read, size: size.min(PACKED_MAX), at: 0, block: (0, Vec::new()) };
+        let r = Ranged::new(read, size.min(PACKED_MAX));
         let mut z: Box<dyn std::io::Read + '_> = match pack {
             Pack::Gz => Box::new(flate2::read::MultiGzDecoder::new(r)),
             Pack::Bz2 => Box::new(bzip2::read::MultiBzDecoder::new(r)),
@@ -328,9 +328,19 @@ struct Ranged<'r, 'a> {
     at: u64,
     /// The block last read, and where it starts.
     block: (u64, Vec<u8>),
+    /// How much the next block reads: small after a jump (a TAR's next header, past a big file),
+    /// growing while it's read straight through.
+    run: u64,
 }
 
 const BLOCK: u64 = 256 * 1024;
+const BLOCK_MIN: u64 = 16 * 1024;
+
+impl<'r, 'a> Ranged<'r, 'a> {
+    fn new(read: &'r mut Read<'a>, size: u64) -> Self {
+        Ranged { read, size, at: 0, block: (0, Vec::new()), run: 0 }
+    }
+}
 
 impl std::io::Read for Ranged<'_, '_> {
     fn read(&mut self, buf: &mut [u8]) -> std::io::Result<usize> {
@@ -339,7 +349,10 @@ impl std::io::Read for Ranged<'_, '_> {
         }
         let (start, data) = &self.block;
         if self.at < *start || self.at >= start + data.len() as u64 {
-            let len = BLOCK.max(buf.len() as u64).min(self.size - self.at);
+            // Straight on, or a jump shorter than a block: read through it, in bigger blocks.
+            let end = start + data.len() as u64;
+            self.run = if self.at >= end && self.at - end < self.run.max(BLOCK_MIN) { (self.run * 2).clamp(BLOCK_MIN, BLOCK) } else { BLOCK_MIN };
+            let len = self.run.max(buf.len() as u64).min(self.size - self.at);
             let data = (self.read)(self.at, len).map_err(std::io::Error::other)?;
             if data.is_empty() {
                 return Ok(0);
@@ -373,7 +386,7 @@ impl std::io::Seek for Ranged<'_, '_> {
 /// One file packed in the ZIP, unpacked; only its part of the ZIP (and the directory) is read.
 /// Refused when it unpacks to more than `max` bytes.
 pub fn unpack(size: u64, read: &mut Read, name: &str, max: u64) -> Result<Vec<u8>, String> {
-    let r = Ranged { read, size, at: 0, block: (0, Vec::new()) };
+    let r = Ranged::new(read, size);
     let mut zip = zip::ZipArchive::new(r).map_err(|e| format!("Not a ZIP file, or a damaged one ({e})."))?;
     let mut f = zip.by_name(name).map_err(|e| format!("{name}: {e}"))?;
     if f.size() > max {
@@ -508,6 +521,25 @@ mod tests {
         let mut read = |at: u64, len: u64| Ok(file.iter().take(cut as usize).skip(at as usize).take(len as usize).copied().collect());
         let l = super::list_tar(cut, &mut read, super::Pack::Gz);
         assert!(l.is_err() || l.unwrap().partial);
+    }
+
+    #[test]
+    fn lists_a_tar_of_big_files_from_its_headers() {
+        let mut file = Vec::new();
+        for i in 0..20 {
+            tar_item(&mut file, &format!("big{i}.bin"), b'0', &vec![7u8; 1_000_000]);
+        }
+        file.extend_from_slice(&[0u8; 1024]);
+        let mut read_bytes = 0;
+        let mut read = |at: u64, len: u64| {
+            let v: Vec<u8> = file.iter().skip(at as usize).take(len as usize).copied().collect();
+            read_bytes += v.len();
+            Ok(v)
+        };
+        let l = super::list_tar(file.len() as u64, &mut read, super::Pack::None).unwrap();
+        assert_eq!((l.total, l.partial), (20, false));
+        // A small block at each header, not the 20 MB of files.
+        assert!(read_bytes <= 21 * 16 * 1024, "{read_bytes}");
     }
 
     #[test]

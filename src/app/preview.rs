@@ -85,8 +85,8 @@ fn OpenAs(
     };
     view! {
         <span class="open-as" class:small=small node_ref=wrap>
-            <button class="btn main" class:small=small title="Open as text" on:click=move |_| pick.run(PeekAs::Text)>{ico(Icon::Text)}"Open as…"</button>
-            <button class="btn more" class:small=small title="Open as…" aria-label="Other ways to open it" aria-haspopup="menu"
+            <button class="btn open-text" class:small=small title="Open as text" on:click=move |_| pick.run(PeekAs::Text)>{ico(Icon::Text)}"Open as…"</button>
+            <button class="btn open-list" class:small=small title="Open as…" aria-label="Other ways to open it" aria-haspopup="menu"
                 aria-expanded=move || at.get().is_some().to_string() on:click=toggle>{ico(Icon::Chevron)}</button>
             {move || at.get().map(|(x, y)| {
                 let ways = ways.clone();
