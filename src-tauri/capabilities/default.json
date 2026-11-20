@@ -59,6 +59,8 @@
     "allow-smb-mounts",
     "allow-smb-unmount",
     "allow-run-command",
+    "allow-secret-set",
+    "allow-secret-clear",
     "allow-epub-open",
     "allow-epub-chapter",
     "allow-epub-set-source",

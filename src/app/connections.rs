@@ -1,118 +1,232 @@
-//! Settings > Connections (the servers added to the sidebar) and Settings > Sidebar (which
+//! Settings > Connections (the servers in the sidebar: a list filtered by the box at its top,
+//! and a form to add or change one) and Settings > Sidebar (which
 //! sections it shows, in what order).
 
 use super::*;
 
-/// One server in Settings > Connections: its address, whether it's connected (or why not), and a
-/// button to take it out.
-fn server_row(name: String, status: Signal<(bool, String)>, remove: impl Fn() + 'static) -> impl IntoView {
-    view! {
-        <div class="conn-row">
-            <span class="dot" class:on=move || status.get().0 aria-hidden="true"></span>
-            <div class="what">
-                <b>{name}</b>
-                <span class="about">{move || status.get().1}</span>
-            </div>
-            <button class="btn" on:click=move |_| remove()>{ico(Icon::Trash)}"Remove"</button>
-        </div>
+use servers::{Auth, Conn, ConnKind};
+
+/// Whether connection `c` is connected (or mounted), and what to say about it.
+fn status(ctx: Ctx, c: &Conn) -> (bool, String) {
+    match c.kind {
+        ConnKind::Smb => match ctx.smb_path(c) {
+            Some(path) => (true, format!("Connected at {path}")),
+            None => (false, ctx.conn_errors.with(|e| e.get(&c.id).cloned()).unwrap_or_else(|| "Not connected. Click it in the sidebar to connect.".into())),
+        },
+        _ if ctx.conn_on(c) => (true, "Connected".into()),
+        _ => (false, ctx.conn_errors.with(|e| e.get(&c.id).cloned()).unwrap_or_else(|| "Connecting…".into())),
     }
 }
 
-/// An address box with an Add button, and why adding failed.
-fn add_box(placeholder: &'static str, add: impl Fn(String, RwSignal<Option<String>>, RwSignal<bool>) + Copy + 'static) -> impl IntoView {
-    let text = RwSignal::new(String::new());
+/// What a connection logs in with, as shown in its row.
+fn auth_label(c: &Conn) -> &'static str {
+    match (c.kind, c.auth) {
+        (ConnKind::Everything, Auth::System) => "No login",
+        (ConnKind::Sftp, Auth::System) => "ssh keys",
+        (ConnKind::Smb, Auth::System) => "System asks",
+        (_, Auth::Password) if c.saved => "Password saved",
+        (_, Auth::Password) => "Password not saved",
+        (_, Auth::Key) => "Key file",
+    }
+}
+
+/// The ways connections of `kind` can log in: (value, label).
+fn auth_choices(kind: ConnKind) -> &'static [(Auth, &'static str)] {
+    match kind {
+        ConnKind::Sftp => &[(Auth::System, "This computer's ssh keys"), (Auth::Password, "Password"), (Auth::Key, "Key file")],
+        ConnKind::Smb => &[(Auth::System, "Ask when connecting"), (Auth::Password, "Password")],
+        ConnKind::Everything => &[(Auth::System, "No login"), (Auth::Password, "User name and password")],
+    }
+}
+
+fn auth_key(a: Auth) -> &'static str {
+    match a {
+        Auth::System => "system",
+        Auth::Password => "password",
+        Auth::Key => "key",
+    }
+}
+
+/// What each type is, under the form.
+fn kind_about(kind: ConnKind) -> &'static str {
+    match kind {
+        ConnKind::Sftp => "A server you can reach with ssh. Its files open like a phone's, and its terminal opens under the pane.",
+        ConnKind::Smb => "A shared folder on a Windows computer or NAS box. The system mounts it as a folder on this computer.",
+        ConnKind::Everything => "A Windows computer's disks, through the HTTP server of Everything (voidtools). Read-only.",
+    }
+}
+
+/// The form that adds or changes a connection. `editing` holds it while it's open.
+fn conn_form(ctx: Ctx, editing: RwSignal<Option<Conn>>, is_new: bool) -> impl IntoView {
+    let password = RwSignal::new(String::new());
     let error = RwSignal::new(None::<String>);
     let trying = RwSignal::new(false);
-    let go = move || {
-        let t = text.get_untracked();
-        if t.trim().is_empty() || trying.get_untracked() {
+    let get = move || editing.get().unwrap_or_else(|| Conn::new(ConnKind::Sftp));
+    let set = move |f: &dyn Fn(&mut Conn)| editing.update(|e| if let Some(c) = e { f(c) });
+    let kind = Memo::new(move |_| get().kind);
+    let auth = Memo::new(move |_| get().auth);
+    let save = move || {
+        let Some(c) = editing.get_untracked() else { return };
+        if trying.get_untracked() {
             return;
         }
         error.set(None);
         trying.set(true);
-        add(t, error, trying);
-        text.set(String::new());
+        let pw = password.get_untracked();
+        spawn_local(async move {
+            match ctx.save_conn(c, pw).await {
+                Ok(()) => editing.set(None),
+                // Saved, but not connected: say why and keep the form, to fix it.
+                Err(e) => error.set(Some(e)),
+            }
+            trying.set(false);
+        });
+    };
+    let text = move |label: &'static str, placeholder: &'static str, value: Signal<String>, put: fn(&mut Conn, String)| view! {
+        <label class="field">
+            <span>{label}</span>
+            <input type="text" spellcheck="false" autocomplete="off" placeholder=placeholder prop:value=move || value.get()
+                on:input=move |e| { let v = event_target_value(&e); set(&|c| put(c, v.clone())) }
+                on:keydown=move |e| if e.key() == "Enter" { save() }/>
+        </label>
+    };
+    let secret_label = move || if auth.get() == Auth::Key { "Passphrase" } else { "Password" };
+    let secret_hint = move || match (editing.with(|e| e.as_ref().is_some_and(|c| c.saved)), auth.get()) {
+        (true, _) => "Saved. Type a new one to replace it.",
+        (false, Auth::Key) => "Only if the key has one",
+        _ => "",
     };
     view! {
-        <div class="conn-add">
-            <input type="text" placeholder=placeholder prop:value=move || text.get()
-                on:input=move |e| text.set(event_target_value(&e))
-                on:keydown=move |e| if e.key() == "Enter" { go() }/>
-            <button class="btn" disabled=move || trying.get() on:click=move |_| go()>
-                {move || if trying.get() { "Adding…" } else { "Add" }}
-            </button>
+        <div class="conn-form">
+            <h3>{if is_new { "New connection" } else { "Change connection" }}</h3>
+            <div class="seg" role="group" aria-label="Type">
+                {ConnKind::ALL.into_iter().map(|k| view! {
+                    <button class:active=move || kind.get() == k aria-pressed=move || (kind.get() == k).to_string()
+                        disabled=!is_new
+                        on:click=move |_| set(&|c| { c.kind = k; if !auth_choices(k).iter().any(|a| a.0 == c.auth) { c.auth = Auth::System } })>
+                        {k.label()}
+                    </button>
+                }).collect_view()}
+            </div>
+            <p class="hint flush">{move || kind_about(kind.get())}</p>
+            <div class="row2">
+                {text("Server", "nas, 10.0.0.2 or a host from ~/.ssh/config", Signal::derive(move || get().host), |c, v| c.host = v)}
+                <label class="field port">
+                    <span>"Port"</span>
+                    <input type="text" inputmode="numeric" placeholder=move || match kind.get() { ConnKind::Sftp => "22", ConnKind::Smb => "445", ConnKind::Everything => "80" }
+                        prop:value=move || get().port.map(|p| p.to_string()).unwrap_or_default()
+                        on:input=move |e| { let v = event_target_value(&e); set(&|c| c.port = v.trim().parse().ok()) }
+                        on:keydown=move |e| if e.key() == "Enter" { save() }/>
+                </label>
+            </div>
+            {move || (kind.get() == ConnKind::Smb).then(|| text("Shared folder", "Photos", Signal::derive(move || get().share), |c, v| c.share = v))}
+            <label class="field">
+                <span>"Sign in with"</span>
+                <select prop:value=move || auth_key(auth.get())
+                    on:change=move |e| { let v = event_target_value(&e); set(&|c| c.auth = match v.as_str() { "password" => Auth::Password, "key" => Auth::Key, _ => Auth::System }) }>
+                    {move || auth_choices(kind.get()).iter().map(|(a, label)| view! { <option value=auth_key(*a)>{*label}</option> }).collect_view()}
+                </select>
+            </label>
+            {move || (kind.get() == ConnKind::Sftp || auth.get() != Auth::System || kind.get() == ConnKind::Smb)
+                .then(|| text("User name", if kind.get() == ConnKind::Sftp { "As in ~/.ssh/config when empty" } else { "me" }, Signal::derive(move || get().user), |c, v| c.user = v))}
+            {move || (kind.get() == ConnKind::Smb && auth.get() == Auth::Password)
+                .then(|| text("Domain or workgroup", "Only if the server wants one", Signal::derive(move || get().domain), |c, v| c.domain = v))}
+            {move || (auth.get() == Auth::Key).then(|| text("Key file", "~/.ssh/id_ed25519", Signal::derive(move || get().key_file), |c, v| c.key_file = v))}
+            {move || (auth.get() != Auth::System).then(|| view! {
+                <label class="field">
+                    <span>{secret_label}</span>
+                    <input type="password" autocomplete="new-password" placeholder=secret_hint prop:value=move || password.get()
+                        on:input=move |e| password.set(event_target_value(&e))
+                        on:keydown=move |e| if e.key() == "Enter" { save() }/>
+                </label>
+                <p class="hint flush">"Kept in the system's keychain, not in the app's settings."</p>
+            })}
+            {move || error.get().map(|e| view! { <p class="error">{e}</p> })}
+            <div class="buttons">
+                <button class="btn" on:click=move |_| editing.set(None)>"Cancel"</button>
+                <button class="btn primary" disabled=move || trying.get() on:click=move |_| save()>
+                    {move || if trying.get() { "Connecting…" } else if is_new { "Add" } else { "Save" }}
+                </button>
+            </div>
         </div>
-        {move || error.get().map(|e| view! { <p class="error">{e}</p> })}
     }
 }
 
 #[component]
 pub(super) fn ConnectionsSettings() -> impl IntoView {
     let ctx = expect_context::<Ctx>();
-    let add_ev = move |server: String, error: RwSignal<Option<String>>, trying: RwSignal<bool>| {
-        spawn_local(async move {
-            if let Err(e) = ctx.add_everything(server).await {
-                error.set(Some(e));
-            }
-            trying.set(false);
-        })
+    let query = RwSignal::new(String::new());
+    // The connection being added or changed, and whether it's new.
+    let editing = RwSignal::new(None::<Conn>);
+    let is_new = RwSignal::new(true);
+    let filter = NodeRef::<html::Input>::new();
+    filter.on_load(move |el| { request_animation_frame(move || { let _ = el.focus(); }); });
+    let start = move |text: String| {
+        let mut c = Conn::new(servers::kind_hint(&text));
+        let (user, host, port, share) = servers::split_address(&text);
+        (c.user, c.host, c.port, c.share) = (user, host, port, share);
+        is_new.set(true);
+        editing.set(Some(c));
     };
-    let add_sftp = move |server: String, error: RwSignal<Option<String>>, trying: RwSignal<bool>| {
-        spawn_local(async move {
-            if let Err(e) = ctx.add_sftp(server).await {
-                error.set(Some(e));
-            }
-            trying.set(false);
-        })
-    };
-    let add_smb = move |share: String, error: RwSignal<Option<String>>, trying: RwSignal<bool>| {
-        spawn_local(async move {
-            if let Err(e) = ctx.add_smb(share).await {
-                error.set(Some(e));
-            }
-            trying.set(false);
-        })
-    };
+    let shown = Memo::new(move |_| {
+        let q = query.get();
+        ctx.conns.with(|cs| cs.iter().filter(|c| c.matches(&q)).cloned().collect::<Vec<_>>())
+    });
+    let open_id = Memo::new(move |_| editing.with(|e| e.as_ref().map(|c| c.id.clone())));
     view! {
-        <h3>"Everything"</h3>
-        <p class="hint flush">"Windows computers' disks, through the HTTP server of Everything (voidtools). Read-only."</p>
-        {move || ctx.everything.get().into_iter().map(|base| {
-            let b = base.clone();
-            let status = Signal::derive(move || match ctx.everything_src(&b) {
-                Some(_) => (true, "Connected".to_string()),
-                None => (false, ctx.everything_errors.with(|e| e.get(&b).cloned()).unwrap_or_else(|| "Connecting…".into())),
-            });
-            let name = base.trim_start_matches("http://").to_string();
-            server_row(name, status, move || ctx.remove_everything(&base))
-        }).collect_view()}
-        {move || ctx.everything.with(Vec::is_empty).then(|| view! { <p class="hint flush">"None added."</p> })}
-        {add_box("Address, like pc:8080", add_ev)}
-
-        <h3>"SFTP"</h3>
-        <p class="hint flush">"Servers you can reach with ssh. The app uses this computer's ssh keys and settings; it can't use passwords."</p>
-        {move || ctx.sftp.get().into_iter().map(|addr| {
-            let a = addr.clone();
-            let status = Signal::derive(move || match ctx.sftp_src(&a) {
-                Some(_) => (true, "Connected".to_string()),
-                None => (false, ctx.server_errors.with(|e| e.get(&a).cloned()).unwrap_or_else(|| "Connecting…".into())),
-            });
-            server_row(addr.clone(), status, move || ctx.remove_sftp(&addr))
-        }).collect_view()}
-        {move || ctx.sftp.with(Vec::is_empty).then(|| view! { <p class="hint flush">"None added."</p> })}
-        {add_box("Address, like me@server or me@server:2222", add_sftp)}
-
-        <h3>"SMB"</h3>
-        <p class="hint flush">"Shared folders on Windows computers and NAS boxes. The system asks for the password and can keep it in its keychain."</p>
-        {move || ctx.smb.get().into_iter().map(|share| {
-            let s = share.clone();
-            let status = Signal::derive(move || match ctx.smb_path(&s) {
-                Some(path) => (true, format!("Connected at {path}")),
-                None => (false, ctx.server_errors.with(|e| e.get(&s).cloned()).unwrap_or_else(|| "Not connected. Click it in the sidebar to connect.".into())),
-            });
-            server_row(share.trim_start_matches("smb://").to_string(), status, move || ctx.remove_smb(&share))
-        }).collect_view()}
-        {move || ctx.smb.with(Vec::is_empty).then(|| view! { <p class="hint flush">"None added."</p> })}
-        {add_box("Share, like smb://nas/Photos", add_smb)}
+        <div class="conn-filter">
+            <input node_ref=filter type="search" spellcheck="false" autocomplete="off"
+                placeholder="Find by server or user, or type an address to add"
+                aria-label="Find or add a connection"
+                prop:value=move || query.get()
+                on:input=move |e| query.set(event_target_value(&e))
+                on:keydown=move |e| if e.key() == "Enter" {
+                    let q = query.get_untracked();
+                    match shown.get_untracked().as_slice() {
+                        [one] => { is_new.set(false); editing.set(Some(one.clone())) }
+                        [] if !q.trim().is_empty() => start(q),
+                        _ => {}
+                    }
+                }/>
+            <button class="btn" on:click=move |_| start(query.get_untracked())>{ico(Icon::Plus)}"New"</button>
+        </div>
+        {move || (editing.with(Option::is_some) && is_new.get()).then(|| conn_form(ctx, editing, true))}
+        <div class="conn-list">
+            {move || shown.get().into_iter().map(|c| {
+                let id = c.id.clone();
+                let c2 = c.clone();
+                let status = Signal::derive({ let c = c.clone(); move || status(ctx, &c) });
+                let is_open = { let id = id.clone(); move || !is_new.get() && open_id.get().as_deref() == Some(id.as_str()) };
+                let (is_open2, is_open3) = (is_open.clone(), is_open.clone());
+                view! {
+                    <div class="conn-row">
+                        <span class="dot" class:on=move || status.get().0 aria-hidden="true"></span>
+                        <span class="badge">{c.kind.label()}</span>
+                        <div class="what">
+                            <b>{c.name()}</b>
+                            <span class="about">{move || status.get().1}" · "{auth_label(&c)}</span>
+                        </div>
+                        <button class="btn" aria-expanded=move || is_open().to_string()
+                            on:click=move |_| if is_open2() { editing.set(None) } else { is_new.set(false); editing.set(Some(c2.clone())) }>"Edit"</button>
+                        <button class="btn" on:click=move |_| { if open_id.get_untracked().as_deref() == Some(id.as_str()) { editing.set(None) } ctx.remove_conn(&id) }>
+                            {ico(Icon::Trash)}"Remove"</button>
+                    </div>
+                    {move || is_open3().then(|| conn_form(ctx, editing, false))}
+                }
+            }).collect_view()}
+        </div>
+        {move || shown.with(Vec::is_empty).then(|| {
+            let q = query.get();
+            if q.trim().is_empty() {
+                view! { <p class="hint flush">"No connections yet. Type a server's address above, like me@server, nas/Photos or pc:8080."</p> }.into_any()
+            } else {
+                let label = format!("Add {}…", q.trim());
+                view! {
+                    <p class="hint flush">"No connection matches."</p>
+                    <button class="btn" on:click=move |_| start(q.clone())>{ico(Icon::Plus)}{label}</button>
+                }.into_any()
+            }
+        })}
     }
 }
 

@@ -1,7 +1,8 @@
 //! SFTP servers, through the computer's own `ssh`: it's started with the sftp subsystem and the
 //! app speaks SFTP (version 3) over its input and output. So `~/.ssh/config`, keys, the agent and
-//! known hosts work as in a terminal, and the app never sees a password: `ssh` runs in batch
-//! mode, so a server that wants one is refused with a note to set up a key.
+//! known hosts work as in a terminal. A server can also get a key file of its own, or a password
+//! saved in the keychain, which `ssh` gets from the app as its askpass program (see `secrets`).
+//! Without a saved password `ssh` runs in batch mode, so it never waits for one.
 //!
 //! On macOS and Linux the connection is shared (ControlMaster), so the terminal's commands don't
 //! log in again.
@@ -49,10 +50,14 @@ const CHUNK: u32 = 32 * 1024;
 const AHEAD: usize = 16;
 
 /// An SFTP address: what to give `ssh` (a host from `~/.ssh/config`, or user@host) and the port.
-#[derive(Clone, Debug, PartialEq)]
+#[derive(Clone, Debug, Default, PartialEq)]
 pub struct Address {
     pub host: String,
     pub port: Option<u16>,
+    /// A private key file to log in with, instead of the ones `ssh` would try.
+    pub key: Option<String>,
+    /// The connection whose password (or the key's passphrase) is saved in the keychain.
+    pub secret: Option<String>,
 }
 
 impl Address {
@@ -68,7 +73,7 @@ impl Address {
         if host.is_empty() || host.starts_with('-') || host.contains(char::is_whitespace) {
             return Err("Enter a server, like me@example.com or a host from ~/.ssh/config.".into());
         }
-        Ok(Address { host: host.to_string(), port })
+        Ok(Address { host: host.to_string(), port, ..Default::default() })
     }
 
     /// As it's shown and kept: "user@host" or "user@host:port".
@@ -81,8 +86,25 @@ impl Address {
 
     /// `ssh` with the options the app always uses, for this server.
     pub fn ssh(&self) -> std::process::Command {
-        let mut c = crate::platform::command("ssh");
-        c.args(["-o", "BatchMode=yes", "-o", "StrictHostKeyChecking=accept-new", "-o", "ConnectTimeout=10", "-o", "ServerAliveInterval=15"]);
+        self.ssh_with(crate::platform::command("ssh"), &[])
+    }
+
+    /// `ssh` set up as `ssh`, with `options` before the server.
+    fn ssh_with(&self, mut c: std::process::Command, options: &[&str]) -> std::process::Command {
+        c.args(options);
+        c.args(["-o", "StrictHostKeyChecking=accept-new", "-o", "ConnectTimeout=10", "-o", "ServerAliveInterval=15"]);
+        match &self.secret {
+            Some(id) => {
+                c.args(["-o", "NumberOfPasswordPrompts=1"]);
+                crate::secrets::ssh_asks(&mut c, id);
+            }
+            None => {
+                c.args(["-o", "BatchMode=yes"]);
+            }
+        }
+        if let Some(key) = &self.key {
+            c.args(["-i", key, "-o", "IdentitiesOnly=yes"]);
+        }
         if cfg!(unix) {
             c.args(["-o", "ControlMaster=auto", "-o", "ControlPath=/tmp/ferry-ssh-%C", "-o", "ControlPersist=60"]);
         }
@@ -98,8 +120,12 @@ impl Address {
 fn ssh_failed(addr: &Address, said: &str) -> String {
     let said = said.trim();
     let host = addr.text();
-    if said.contains("Permission denied") {
-        format!("{host} wants a password or a key it knows. The app only uses keys: add yours with ssh-copy-id {host}, or load it with ssh-add.")
+    if said.contains("Permission denied") && addr.secret.is_some() {
+        format!("{host} didn't take the password. Check it in Settings > Connections.")
+    } else if said.contains("Permission denied") && addr.key.is_some() {
+        format!("{host} didn't take the key file. Check its path, and add a passphrase in Settings > Connections if it has one.")
+    } else if said.contains("Permission denied") {
+        format!("{host} wants a password or a key it knows. Add a password or a key file in Settings > Connections, or add your key with ssh-copy-id {host}.")
     } else if said.contains("Host key verification failed") || said.contains("REMOTE HOST IDENTIFICATION HAS CHANGED") {
         format!("{host}'s key isn't the one in ~/.ssh/known_hosts. If the server was set up again, remove the old key with ssh-keygen -R and try again.")
     } else if said.contains("Could not resolve") || said.contains("Connection refused") || said.contains("timed out") || said.contains("No route") {
@@ -397,8 +423,7 @@ pub struct Sftp {
 }
 
 impl Sftp {
-    pub fn open(server: &str) -> std::result::Result<Sftp, String> {
-        let addr = Address::parse(server)?;
+    pub fn open(addr: Address) -> std::result::Result<Sftp, String> {
         let mut s = Session::start(&addr)?;
         let r = s.ask(REALPATH, |o| {
             o.str(".");
@@ -726,8 +751,23 @@ impl Transport for Sftp {
 }
 
 #[tauri::command(rename_all = "snake_case")]
-pub(super) async fn sftp_connect(state: State<'_, AppState>, server: String) -> std::result::Result<connect::Info, String> {
-    let s = blocking(move || Sftp::open(&server)).await?;
+pub(super) async fn sftp_connect(
+    state: State<'_, AppState>,
+    server: String,
+    key_file: Option<String>,
+    secret: Option<String>,
+) -> std::result::Result<connect::Info, String> {
+    let mut addr = Address::parse(&server)?;
+    addr.key = key_file.map(|k| k.trim().to_string()).filter(|k| !k.is_empty());
+    addr.secret = secret.filter(|s| !s.is_empty());
+    if let Some(k) = &addr.key {
+        let path = crate::platform::native(&expand_home(k));
+        if !path.is_file() {
+            return Err(format!("There's no key file at {k}."));
+        }
+        addr.key = Some(path.display().to_string());
+    }
+    let s = blocking(move || Sftp::open(addr)).await?;
     let usb = Some(format!("sftp:{}", s.address().text()));
     if state.devs().values().any(|c| c.usb == usb) {
         return Err(format!("{} is already added.", s.address().text()));
@@ -739,14 +779,25 @@ pub(super) async fn sftp_connect(state: State<'_, AppState>, server: String) -> 
     Ok(info)
 }
 
+/// "~/.ssh/id_ed25519" as an app path in the home folder.
+fn expand_home(path: &str) -> String {
+    match path.strip_prefix("~/").or_else(|| path.strip_prefix("~\\")) {
+        Some(rest) => {
+            let home = dirs::home_dir().map(|h| crate::platform::app_path(&h)).unwrap_or_default();
+            format!("{}/{}", home.trim_end_matches('/'), rest.replace('\\', "/"))
+        }
+        None => crate::platform::app_path(std::path::Path::new(path)),
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
 
     #[test]
     fn addresses() {
-        assert_eq!(Address::parse("me@box").unwrap(), Address { host: "me@box".into(), port: None });
-        assert_eq!(Address::parse(" sftp://me@box:2222/home ").unwrap(), Address { host: "me@box".into(), port: Some(2222) });
+        assert_eq!(Address::parse("me@box").unwrap(), Address { host: "me@box".into(), ..Default::default() });
+        assert_eq!(Address::parse(" sftp://me@box:2222/home ").unwrap(), Address { host: "me@box".into(), port: Some(2222), ..Default::default() });
         assert_eq!(Address::parse("me@box:2222").unwrap().text(), "me@box:2222");
         assert!(Address::parse("").is_err());
         assert!(Address::parse("-oProxyCommand=x").is_err());

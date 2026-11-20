@@ -24,6 +24,8 @@ mod everything;
 mod sftp;
 mod smb;
 mod terminal;
+mod secrets;
+pub use secrets::askpass;
 mod import;
 mod editor;
 mod files;
@@ -235,6 +237,8 @@ pub fn run() {
             smb::smb_mount,
             smb::smb_mounts,
             smb::smb_unmount,
+            secrets::secret_set,
+            secrets::secret_clear,
             terminal::run_command,
             editor::epub_open,
             editor::epub_chapter,

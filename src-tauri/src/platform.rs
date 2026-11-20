@@ -355,17 +355,84 @@ fn unc_to_slashes(unc: &str) -> String {
     unc.replace('\\', "/")
 }
 
-/// Mounts the SMB share at `url` ("smb://[user@]host/share"); the system asks for the password
-/// (and keeps it in the keychain) when the share needs one.
-pub fn smb_mount(url: &str) -> Result<(), String> {
+/// A login for an SMB share: user name, domain (may be empty) and password.
+pub struct SmbLogin<'a> {
+    pub user: &'a str,
+    pub domain: &'a str,
+    pub password: &'a str,
+}
+
+/// Runs `c` with `input` written to it, and waits for it.
+fn run_with_input(mut c: Command, input: &str) -> std::io::Result<std::process::Output> {
+    use std::io::Write;
+    use std::process::Stdio;
+    let mut child = c.stdin(Stdio::piped()).stdout(Stdio::piped()).stderr(Stdio::piped()).spawn()?;
+    if let Some(mut i) = child.stdin.take() {
+        // A program that stops reading early isn't an error here: its exit says what happened.
+        let _ = i.write_all(input.as_bytes());
+    }
+    child.wait_with_output()
+}
+
+/// Text in an AppleScript string literal.
+#[cfg(any(target_os = "macos", test))]
+fn applescript_text(s: &str) -> String {
+    s.replace('\\', "\\\\").replace('"', "\\\"")
+}
+
+/// Text in a PowerShell single-quoted string.
+#[cfg(any(windows, test))]
+fn powershell_text(s: &str) -> String {
+    s.replace('\'', "''")
+}
+
+/// Mounts the SMB share at `url` ("smb://[user@]host/share"). Without `login`, the system asks
+/// for the password when the share needs one (and may keep it in its keychain). A login is
+/// given to the system on its input, so it's never in a command line.
+pub fn smb_mount(url: &str, login: Option<&SmbLogin>) -> Result<(), String> {
     #[cfg(target_os = "macos")]
-    let out = command("osascript").args(["-e", &format!("mount volume \"{}\"", url.replace('"', ""))]).output();
+    let out = {
+        let mut script = format!("mount volume \"{}\"", applescript_text(url));
+        if let Some(l) = login {
+            let user = if l.domain.is_empty() { l.user.to_string() } else { format!("{};{}", l.domain, l.user) };
+            script += &format!(" as user name \"{}\" with password \"{}\"", applescript_text(&user), applescript_text(l.password));
+        }
+        let mut c = command("osascript");
+        c.arg("-");
+        run_with_input(c, &script)
+    };
     #[cfg(all(unix, not(target_os = "macos")))]
-    let out = command("gio").args(["mount", url]).stdin(std::process::Stdio::null()).output();
+    let out = {
+        let mut c = command("gio");
+        c.args(["mount", url]);
+        // gio asks in turn for what the server wants: user, domain, password.
+        let answers = login.map(|l| format!("{}\n{}\n{}\n", l.user, if l.domain.is_empty() { "WORKGROUP" } else { l.domain }, l.password));
+        run_with_input(c, &answers.unwrap_or_default())
+    };
     #[cfg(windows)]
     let out = {
         let unc = url.trim_start_matches("smb:").replace('/', "\\");
-        command("net").args(["use", "*", &unc, "/persistent:no"]).stdin(std::process::Stdio::null()).output()
+        match login {
+            None => command("net").args(["use", "*", &unc, "/persistent:no"]).stdin(std::process::Stdio::null()).output(),
+            Some(l) => {
+                let user = if l.domain.is_empty() { l.user.to_string() } else { format!("{}\\{}", l.domain, l.user) };
+                // The script (password included) goes in on PowerShell's input.
+                let script = format!(
+                    "$ErrorActionPreference = 'Stop'\n\
+                     $p = ConvertTo-SecureString '{}' -AsPlainText -Force\n\
+                     $c = New-Object System.Management.Automation.PSCredential('{}', $p)\n\
+                     $l = [char[]](68..90) | Where-Object {{ -not (Test-Path \"$($_):\\\") }} | Select-Object -Last 1\n\
+                     if (-not $l) {{ throw 'There is no free drive letter.' }}\n\
+                     New-PSDrive -Name $l -PSProvider FileSystem -Root '{}' -Credential $c -Persist -Scope Global | Out-Null\n",
+                    powershell_text(l.password),
+                    powershell_text(&user),
+                    powershell_text(&unc)
+                );
+                let mut c = command("powershell");
+                c.args(["-NoProfile", "-NonInteractive", "-Command", "-"]);
+                run_with_input(c, &script)
+            }
+        }
     };
     let out = out.map_err(|e| format!("Couldn't mount {url}: {e}"))?;
     if out.status.success() {
@@ -428,6 +495,8 @@ mod tests {
         assert_eq!(smb_in_mount(mount), vec![("//me@nas._smb._tcp.local/Photos".to_string(), "/Volumes/Photos 1".to_string())]);
         let net = "Status       Local     Remote                    Network\n-----\nOK           Z:        \\\\nas\\Photos              Microsoft Windows Network\nThe command completed successfully.\n";
         assert_eq!(smb_in_net_use(net), vec![("//nas/Photos".to_string(), "/Z:".to_string())]);
+        assert_eq!(applescript_text(r#"a"b\c"#), r#"a\"b\\c"#);
+        assert_eq!(powershell_text("it's"), "it''s");
     }
 
     #[cfg(all(unix, not(target_os = "macos")))]

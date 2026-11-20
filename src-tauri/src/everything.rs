@@ -112,16 +112,27 @@ fn parse(body: &str) -> std::result::Result<Found, String> {
     Ok(Found { hits, total })
 }
 
+/// Where an Everything server is, and the Authorization header for it when it wants a login.
+#[derive(Clone)]
+struct Server {
+    base: String,
+    auth: Option<String>,
+}
+
 fn agent() -> ureq::Agent {
     ureq::AgentBuilder::new().timeout_connect(Duration::from_secs(3)).timeout(Duration::from_secs(60)).build()
 }
 
 /// What went wrong talking to Everything, in words that say what to do.
-fn failed(e: ureq::Error, base: &str) -> String {
+fn failed(e: ureq::Error, srv: &Server) -> String {
+    let base = &srv.base;
     match e {
-        ureq::Error::Status(401, _) => format!(
-            "Everything at {base} asks for a user name and password. Clear them in Everything (Tools > Options > HTTP Server) to use it from here."
-        ),
+        ureq::Error::Status(401, _) if srv.auth.is_some() => {
+            format!("Everything at {base} didn't take the user name and password. Check them in Settings > Connections.")
+        }
+        ureq::Error::Status(401, _) => {
+            format!("Everything at {base} asks for a user name and password. Add them in Settings > Connections.")
+        }
         ureq::Error::Status(code, _) => format!("Everything at {base} answered with error {code}."),
         ureq::Error::Transport(_) => {
             format!("Can't reach Everything at {base}. Turn on its HTTP server (Tools > Options > HTTP Server) and check the address.")
@@ -129,10 +140,13 @@ fn failed(e: ureq::Error, base: &str) -> String {
     }
 }
 
-/// Asks the Everything at `base` for `query`, `count` results from `offset`.
-fn ask(base: &str, query: &str, offset: u64, count: u64) -> std::result::Result<Found, String> {
-    let body = agent()
-        .get(&format!("{base}/"))
+/// Asks the Everything at `srv` for `query`, `count` results from `offset`.
+fn ask(srv: &Server, query: &str, offset: u64, count: u64) -> std::result::Result<Found, String> {
+    let mut req = agent().get(&format!("{}/", srv.base));
+    if let Some(a) = &srv.auth {
+        req = req.set("Authorization", a);
+    }
+    let body = req
         .query("search", query)
         .query("json", "1")
         .query("path_column", "1")
@@ -143,7 +157,7 @@ fn ask(base: &str, query: &str, offset: u64, count: u64) -> std::result::Result<
         .query("offset", &offset.to_string())
         .query("count", &count.to_string())
         .call()
-        .map_err(|e| failed(e, base))?
+        .map_err(|e| failed(e, srv))?
         .into_string()
         .map_err(|e| format!("Couldn't read Everything's answer: {e}"))?;
     parse(&body)
@@ -164,7 +178,7 @@ const LIST_MAX: u64 = 100_000;
 const KEEP: Duration = Duration::from_secs(10);
 
 pub struct Everything {
-    base: String,
+    srv: Server,
     /// The drives, as ("C:", "/C:"). Looked for again by `refresh`.
     drives: Mutex<Vec<(String, String)>>,
     /// The last folder listed, for `stat` of the files in it.
@@ -173,20 +187,24 @@ pub struct Everything {
 
 impl Everything {
     /// Connects to the Everything at `server`: it must answer.
-    pub fn open(server: &str) -> std::result::Result<Self, String> {
+    /// With `login` (user name, password), logs in with HTTP Basic authentication.
+    pub fn open(server: &str, login: Option<(&str, &str)>) -> std::result::Result<Self, String> {
+        use base64::Engine;
         let base = base_url(server)?;
-        let drives = Self::find_drives(&base)?;
-        Ok(Everything { base, drives: Mutex::new(drives), last: Mutex::new(None) })
+        let auth = login.map(|(u, p)| format!("Basic {}", base64::engine::general_purpose::STANDARD.encode(format!("{u}:{p}"))));
+        let srv = Server { base, auth };
+        let drives = Self::find_drives(&srv)?;
+        Ok(Everything { srv, drives: Mutex::new(drives), last: Mutex::new(None) })
     }
 
     /// The address its HTTP server is at ("http://pc:8080").
     pub fn base(&self) -> &str {
-        &self.base
+        &self.srv.base
     }
 
-    fn find_drives(base: &str) -> std::result::Result<Vec<(String, String)>, String> {
+    fn find_drives(srv: &Server) -> std::result::Result<Vec<(String, String)>, String> {
         let mut drives: Vec<(String, String)> =
-            ask(base, "root:", 0, 1000)?.hits.into_iter().filter(|h| h.dir).map(|h| (h.name, h.path)).collect();
+            ask(srv, "root:", 0, 1000)?.hits.into_iter().filter(|h| h.dir).map(|h| (h.name, h.path)).collect();
         drives.sort();
         Ok(drives)
     }
@@ -206,10 +224,10 @@ impl Everything {
             return Ok(drives.map(|(name, path)| Entry { name, path, dir: true, size: 0, mtime: 0 }).collect());
         }
         let win = windows_path(path);
-        let mut found = ask(&self.base, &format!("parent:\"{win}\""), offset, count).map_err(DevError::Msg)?;
+        let mut found = ask(&self.srv, &format!("parent:\"{win}\""), offset, count).map_err(DevError::Msg)?;
         // A drive's own path may be kept as "C:" rather than "C:\".
         if found.hits.is_empty() && offset == 0 && win.ends_with(":\\") {
-            found = ask(&self.base, &format!("parent:\"{}\"", win.trim_end_matches('\\')), offset, count).map_err(DevError::Msg)?;
+            found = ask(&self.srv, &format!("parent:\"{}\"", win.trim_end_matches('\\')), offset, count).map_err(DevError::Msg)?;
         }
         let entries: Vec<Entry> = found.hits.into_iter().map(Entry::from).collect();
         let mut last = self.last.lock().unwrap_or_else(|e| e.into_inner());
@@ -226,15 +244,18 @@ impl Everything {
 
     fn get(&self, url: &str, range: Option<(u64, u64)>) -> Result<ureq::Response> {
         let mut req = agent().get(url);
+        if let Some(a) = &self.srv.auth {
+            req = req.set("Authorization", a);
+        }
         if let Some((start, len)) = range {
             req = req.set("Range", &format!("bytes={start}-{}", start + len.max(1) - 1));
         }
         req.call().map_err(|e| match e {
             ureq::Error::Status(403 | 404, _) => DevError::Msg(format!(
                 "Everything at {} doesn't give out this file. Allow file downloads in Everything (Tools > Options > HTTP Server).",
-                self.base
+                self.srv.base
             )),
-            e => DevError::Msg(failed(e, &self.base)),
+            e => DevError::Msg(failed(e, &self.srv)),
         })
     }
 
@@ -244,7 +265,7 @@ impl Everything {
         let text = text.trim().replace('"', "");
         let term = if regex { format!("regex:\"{text}\"") } else { format!("\"{text}\"") };
         let query = if dir == "/" { term } else { format!("\"{}\\\" {term}", windows_path(dir).trim_end_matches('\\')) };
-        let found = ask(&self.base, &query, 0, max as u64).map_err(DevError::Msg)?;
+        let found = ask(&self.srv, &query, 0, max as u64).map_err(DevError::Msg)?;
         let all = found.total <= found.hits.len() as u64;
         let under = format!("{}/", dir.trim_end_matches('/'));
         Ok((found.hits.into_iter().filter(|h| h.path.starts_with(&under)).map(Entry::from).collect(), all))
@@ -257,7 +278,7 @@ impl Transport for Everything {
     }
 
     fn label(&self) -> String {
-        self.base.trim_start_matches("http://").to_string()
+        self.srv.base.trim_start_matches("http://").to_string()
     }
 
     fn default_dir(&self) -> String {
@@ -298,7 +319,7 @@ impl Transport for Everything {
 
     fn read(&self, path: &str) -> Result<(Vec<u8>, String)> {
         let mut data = vec![];
-        self.get(&file_url(&self.base, path), None)?
+        self.get(&file_url(&self.srv.base, path), None)?
             .into_reader()
             .read_to_end(&mut data)
             .map_err(|e| DevError::Msg(format!("Couldn't read {path} from Everything: {e}")))?;
@@ -307,7 +328,7 @@ impl Transport for Everything {
     }
 
     fn read_range(&self, path: &str, start: u64, len: u64) -> Result<Vec<u8>> {
-        let res = self.get(&file_url(&self.base, path), Some((start, len)))?;
+        let res = self.get(&file_url(&self.srv.base, path), Some((start, len)))?;
         // A server that ignores the range sends the whole file: skip to `start`.
         let skip = if res.status() == 206 { 0 } else { start };
         let mut reader = res.into_reader();
@@ -339,7 +360,7 @@ impl Transport for Everything {
 
     fn refresh(&self) {
         *self.last.lock().unwrap_or_else(|e| e.into_inner()) = None;
-        if let Ok(d) = Self::find_drives(&self.base) {
+        if let Ok(d) = Self::find_drives(&self.srv) {
             *self.drives.lock().unwrap_or_else(|e| e.into_inner()) = d;
         }
     }
@@ -355,8 +376,18 @@ fn read_only<T>() -> Result<T> {
 
 /// Connects the Everything server at `server` as a drive.
 #[tauri::command(rename_all = "snake_case")]
-pub(super) async fn everything_connect(state: State<'_, AppState>, server: String) -> std::result::Result<connect::Info, String> {
-    let ev = blocking(move || Everything::open(&server)).await?;
+pub(super) async fn everything_connect(
+    state: State<'_, AppState>,
+    server: String,
+    user: Option<String>,
+    secret: Option<String>,
+) -> std::result::Result<connect::Info, String> {
+    let ev = blocking(move || {
+        let user = user.filter(|u| !u.trim().is_empty());
+        let password = secret.as_deref().and_then(crate::secrets::get).unwrap_or_default();
+        Everything::open(&server, user.as_deref().map(|u| (u.trim(), password.as_str())))
+    })
+    .await?;
     let usb = Some(format!("everything:{}", ev.base()));
     if state.devs().values().any(|c| c.usb == usb) {
         return Err(format!("Everything at {} is already added.", ev.base()));
@@ -424,13 +455,15 @@ mod tests {
             ("200 OK", r#"{"results":[{"type":"folder","name":"C:","path":""}]}"#),
             ("200 OK", r#"{"results":[{"type":"file","name":"b.md","path":"C:\\Big","size":"2"}]}"#),
         ]);
-        let ev = Everything::open(&at).unwrap();
+        let ev = Everything::open(&at, Some(("me", "pw"))).unwrap();
         let page = ev.listdir_page("/C:/Big", 1000, 1000).unwrap().unwrap();
         assert_eq!(page.iter().map(|e| e.path.as_str()).collect::<Vec<_>>(), ["/C:/Big/b.md"]);
         assert_eq!(ev.listdir_page("/", 0, 1).unwrap().unwrap().len(), 1);
         let lines = asked.join().unwrap();
         let first = lines[1].lines().next().unwrap_or_default().to_string();
         assert!(first.contains("sort=name&ascending=1&offset=1000&count=1000"), "{first}");
+        // "me:pw" in base64.
+        assert!(lines[1].contains("Authorization: Basic bWU6cHc="), "{}", lines[1]);
     }
 
     #[test]
@@ -443,7 +476,7 @@ mod tests {
             ("206 Partial Content", "ell"),
             ("200 OK", r#"{"totalResults":"9","results":[{"type":"file","name":"x.md","path":"C:\\Users","size":"3"},{"type":"file","name":"x.md","path":"C:\\Other","size":"3"}]}"#),
         ]);
-        let ev = Everything::open(&at).unwrap();
+        let ev = Everything::open(&at, None).unwrap();
         assert_eq!(ev.quick_dirs(), vec![("C:".to_string(), "/C:".to_string()), ("D:".to_string(), "/D:".to_string())]);
         assert_eq!(ev.default_dir(), "/C:");
         assert_eq!(ev.listdir("/").unwrap().len(), 2);
@@ -470,7 +503,7 @@ mod tests {
     #[test]
     fn skips_to_the_range_when_the_server_sends_it_all() {
         let (asked, at) = serve(vec![("200 OK", r#"{"results":[]}"#), ("200 OK", "hello")]);
-        let ev = Everything::open(&at).unwrap();
+        let ev = Everything::open(&at, None).unwrap();
         assert_eq!(ev.read_range("/C:/x.md", 1, 3).unwrap(), b"ell");
         asked.join().unwrap();
     }
@@ -478,10 +511,10 @@ mod tests {
     #[test]
     fn says_what_went_wrong() {
         let (asked, at) = serve(vec![("401 Unauthorized", "")]);
-        assert!(Everything::open(&at).err().unwrap().contains("user name and password"));
+        assert!(Everything::open(&at, None).err().unwrap().contains("user name and password"));
         asked.join().unwrap();
         let port = std::net::TcpListener::bind("127.0.0.1:0").unwrap().local_addr().unwrap().port();
-        assert!(Everything::open(&format!("127.0.0.1:{port}")).err().unwrap().starts_with("Can't reach Everything"));
+        assert!(Everything::open(&format!("127.0.0.1:{port}"), None).err().unwrap().starts_with("Can't reach Everything"));
     }
 
     #[test]

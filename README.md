@@ -95,25 +95,37 @@ files and disks too, so books can be copied between them.
 - Disks under Mac in the sidebar have ⏏ to eject them.
 - The sidebar's places, disks, device folders and favourites have ▸ to show the
   folders in them, and theirs, as a tree.
-- Right-click the sidebar to show or hide its sections; Settings > Sidebar also
-  orders them.
-- Everything (sidebar): + adds a Windows computer running Everything (voidtools)
-  with its HTTP server on (allow file downloads). It shows as a read-only drive:
-  its disks open in panes and tabs, and work with favourites, workspaces, the
-  preview and copying to this computer or a phone. Folders are listed 1000 items
-  at a time; scrolling to the bottom loads more. Search in a pane uses
-  Everything's index; the magnifier beside a server searches all its disks.
-  Servers come back at launch; every 30 seconds offline ones are tried again and
-  disks that came or went are picked up. × removes one. Settings > Connections
-  lists, adds and removes them too.
-- Servers (sidebar, + or Settings > Connections): SFTP servers and SMB shares.
-  An SFTP server (`me@server` or `me@server:2222`) is reached with this
-  computer's ssh, its keys, agent and ~/.ssh/config; the app never asks for or
-  keeps a password, so a server that only takes passwords can't be added. It
-  works like a phone: browse, copy both ways, rename, delete. An SMB share
-  (`smb://nas/Photos` or `\\nas\Photos`) is mounted by the system, which asks for
-  the password and can keep it in its keychain; it then opens as a folder on
-  this computer. ⏏ disconnects it, × takes it out of the sidebar.
+- The sidebar's sections, top to bottom by default: Workspaces, Favourites, the
+  Mac (or this computer), Sync pairs, Devices, Servers. Right-click the sidebar
+  to show or hide them. Settings > Sidebar also orders
+  them.
+- Connections (Settings > Connections, or + in the sidebar's Servers section):
+  one list of every connection, each with a type and the sign-in that type
+  takes. The search box on top filters by server, user name or
+  shared folder; Enter opens the one match, or starts a new connection from what
+  was typed (`me@box:2222`, `smb://nas/Photos`, `\\nas\Photos`,
+  `http://pc`). Passwords go to the system's keychain (Keychain, Credential
+  Manager, Secret Service), never to the app's settings; removing a connection
+  forgets its password. Connections made before this list are moved into it.
+  - SFTP: this computer's ssh keys, agent and ~/.ssh/config, a key file, or a
+    password (handed to ssh by the app itself, never on a command line). It
+    works like a phone: browse, copy both ways, rename,
+    delete.
+  - SMB: mounted by the system; it asks for the password when connecting, or
+    uses the saved one (with an optional domain). It then opens as a folder on
+    this computer. ⏏ disconnects it. Shares mounted outside the app also show
+    under Servers and can be ejected.
+  - Everything (voidtools): a Windows computer with Everything's HTTP server on
+    (allow file downloads), with no login or a user name and password. It shows
+    as a read-only drive: its disks open in panes and tabs, and work with
+    favourites, workspaces, the preview and copying to this computer or a phone.
+    Folders are listed 1000 items at a time; scrolling to the
+    bottom loads more. Search in a pane uses Everything's index; the magnifier beside a
+    server searches all its disks.
+  All of them show under Servers in the sidebar: SFTP, then SMB, then
+  Everything, then shares mounted outside the app.
+  Connections come back at launch; every 30 seconds offline ones are tried again
+  and disks that came or went are picked up.
 - Terminal (the pane's terminal button, ⌃` or the palette): runs a command in
   the pane's folder on this computer, a phone connected with adb, or an SFTP
   server, and shows what it printed. One command at a time, without input, for

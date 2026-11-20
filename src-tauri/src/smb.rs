@@ -1,6 +1,7 @@
-//! SMB shares (Windows file sharing, NAS boxes): mounted by the system, which asks for the
-//! password itself, so the app never sees it. A mounted share is a folder on this computer, so
-//! everything that works on the computer's files works on it.
+//! SMB shares (Windows file sharing, NAS boxes): mounted by the system. With a password saved in
+//! the keychain the app gives it to the system; without one the system asks for it itself. A
+//! mounted share is a folder on this computer, so everything that works on the computer's files
+//! works on it.
 
 use super::*;
 use percent_encoding::percent_decode_str;
@@ -45,25 +46,40 @@ fn mounted_at(share: &str, mounts: &[SmbMount]) -> Option<String> {
     mounts.iter().find(|m| key(&m.share) == k).map(|m| m.path.clone())
 }
 
-/// The shares mounted now, each with the address kept in the sidebar when it's one of `shares`.
+/// All the shares mounted now, those that are one of `shares` with that address; the others
+/// (mounted outside the app) as the system names them.
 #[tauri::command(rename_all = "snake_case")]
 pub(super) async fn smb_mounts(shares: Vec<String>) -> Result<Vec<SmbMount>, String> {
-    blocking(move || {
-        let mounts = mounted();
-        Ok(shares.into_iter().filter_map(|s| mounted_at(&s, &mounts).map(|path| SmbMount { share: s, path })).collect())
-    })
-    .await
+    blocking(move || Ok(name_mounts(&shares, mounted()))).await
 }
 
-/// Mounts `share` (when it isn't already) and says where.
+fn name_mounts(shares: &[String], mounts: Vec<SmbMount>) -> Vec<SmbMount> {
+    mounts
+        .into_iter()
+        .map(|m| {
+            let k = key(&m.share);
+            match shares.iter().find(|s| key(s) == k) {
+                Some(s) => SmbMount { share: s.clone(), path: m.path },
+                None => SmbMount { share: format!("smb://{}", m.share.trim_start_matches("smb:").trim_start_matches('/')), path: m.path },
+            }
+        })
+        .collect()
+}
+
+/// Mounts `share` (when it isn't already) and says where. With `user`, logs in as that user
+/// (in `domain`, if given) with the password saved for connection `secret`.
 #[tauri::command(rename_all = "snake_case")]
-pub(super) async fn smb_mount(share: String) -> Result<SmbMount, String> {
+pub(super) async fn smb_mount(share: String, user: Option<String>, domain: Option<String>, secret: Option<String>) -> Result<SmbMount, String> {
     blocking(move || {
         let share = share_url(&share)?;
         if let Some(path) = mounted_at(&share, &mounted()) {
             return Ok(SmbMount { share, path });
         }
-        crate::platform::smb_mount(&share)?;
+        let user = user.map(|u| u.trim().to_string()).filter(|u| !u.is_empty());
+        let password = secret.as_deref().and_then(crate::secrets::get).unwrap_or_default();
+        let domain = domain.unwrap_or_default();
+        let login = user.as_deref().map(|user| crate::platform::SmbLogin { user, domain: domain.trim(), password: &password });
+        crate::platform::smb_mount(&share, login.as_ref())?;
         // The system may take a moment to show it.
         for _ in 0..20 {
             if let Some(path) = mounted_at(&share, &mounted()) {
@@ -95,5 +111,11 @@ mod tests {
         let mounts = vec![SmbMount { share: "smb://me@nas._smb._tcp.local/Photos".into(), path: "/Volumes/Photos".into() }];
         assert_eq!(mounted_at("smb://nas/photos", &mounts).as_deref(), Some("/Volumes/Photos"));
         assert_eq!(mounted_at("smb://nas/Music", &mounts), None);
+        let named = name_mounts(&["smb://nas/Photos".into()], vec![
+            SmbMount { share: "smb://me@nas._smb._tcp.local/Photos".into(), path: "/Volumes/Photos".into() },
+            SmbMount { share: "smb://pc/Music".into(), path: "/Volumes/Music".into() },
+        ]);
+        assert_eq!(named[0].share, "smb://nas/Photos");
+        assert_eq!(named[1].share, "smb://pc/Music");
     }
 }

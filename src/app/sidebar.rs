@@ -1,17 +1,15 @@
 //! The sidebar (workspaces, favourites, places, devices) and the settings window.
 
 use super::*;
-use super::everything::everything_base;
 
 /// The sidebar's sections, top to bottom: (key, title). The computer's title is its name.
-pub(super) const SECTIONS: [(&str, &str); 7] = [
+pub(super) const SECTIONS: [(&str, &str); 6] = [
     ("workspaces", "Workspaces"),
     ("favs", "Favourites"),
-    ("pairs", "Sync pairs"),
-    ("everything", "Everything"),
-    ("servers", "Servers"),
     ("mac", ""),
+    ("pairs", "Sync pairs"),
     ("devices", "Devices"),
+    ("servers", "Servers"),
 ];
 
 /// The sections in the order chosen (`stored`, keys of `SECTIONS`), then any it doesn't name.
@@ -65,21 +63,13 @@ pub(super) fn Sidebar() -> impl IntoView {
             on:click=move |_| ctx.wifi.set(true)>{ico(Icon::Wifi)}</button>
     });
     let (dev_heading, dev_open) = section("devices", "Devices", Some(dev_buttons));
-    // Adding an Everything server: the address typed (None when not asked), why it couldn't
-    // be added, and whether it's being tried.
-    let ev_adding = RwSignal::new(None::<String>);
-    let ev_error = RwSignal::new(None::<String>);
-    let ev_trying = RwSignal::new(false);
-    // Not ev_adding itself: the box would be made again at each key.
-    let ev_asking = Memo::new(move |_| ev_adding.with(Option::is_some));
-    let ev_buttons = ViewFn::from(move || view! {
-        <button class="refresh" title="Add an Everything server" aria-label="Add an Everything server"
-            on:click=move |_| { ev_error.set(None); ev_adding.set(Some(String::new())) }>{ico(Icon::Plus)}</button>
-    });
-    let (ev_heading, ev_open) = section("everything", "Everything", Some(ev_buttons));
+    let open_conns = move || {
+        ctx.settings_tab.set("connections");
+        ctx.settings.set(true);
+    };
     let srv_buttons = ViewFn::from(move || view! {
-        <button class="refresh" title="Add an SFTP server or SMB share" aria-label="Add a server"
-            on:click=move |_| { ctx.settings_tab.set("connections"); ctx.settings.set(true) }>{ico(Icon::Plus)}</button>
+        <button class="refresh" title="Add a server: SFTP, SMB share or Everything" aria-label="Add a server"
+            on:click=move |_| open_conns()>{ico(Icon::Plus)}</button>
     });
     let (srv_heading, srv_open) = section("servers", "Servers", Some(srv_buttons));
     // A section hidden with a right-click shows nothing, not even its title.
@@ -144,22 +134,16 @@ pub(super) fn Sidebar() -> impl IntoView {
                     }
                 })}
                 {match (i.transport.as_str(), i.usb.clone().unwrap_or_default()) {
-                    ("sftp", usb) => {
-                        let addr = usb.trim_start_matches("sftp:").to_string();
-                        view! {
-                            <button class="eject" title=format!("Remove {} from the sidebar", i.label) aria-label="Remove"
-                                on:click=move |_| ctx.remove_sftp(&addr)>{ico(Icon::Close)}</button>
-                        }.into_any()
-                    }
-                    ("everything", usb) => {
-                        let base = usb.trim_start_matches("everything:").to_string();
-                        view! {
-                            <button class="eject" title=format!("Search all drives on {}", i.label) aria-label="Search all drives"
-                                on:click=move |_| ctx.search_all(src)>{ico(Icon::Search)}</button>
-                            <button class="eject" title=format!("Remove {} from the sidebar", i.label) aria-label="Remove"
-                                on:click=move |_| ctx.remove_everything(&base)>{ico(Icon::Close)}</button>
-                        }.into_any()
-                    }
+                    ("sftp", _) => view! {
+                        <button class="eject" title=format!("Remove {} from the connections", i.label) aria-label="Remove"
+                            on:click=move |_| ctx.remove_conn_of(src)>{ico(Icon::Close)}</button>
+                    }.into_any(),
+                    ("everything", _) => view! {
+                        <button class="eject" title=format!("Search all drives on {}", i.label) aria-label="Search all drives"
+                            on:click=move |_| ctx.search_all(src)>{ico(Icon::Search)}</button>
+                        <button class="eject" title=format!("Remove {} from the connections", i.label) aria-label="Remove"
+                            on:click=move |_| ctx.remove_conn_of(src)>{ico(Icon::Close)}</button>
+                    }.into_any(),
                     _ => view! {
                         <button class="eject" title=format!("Disconnect {}", i.label) aria-label="Disconnect"
                             on:click=move |_| ctx.disconnect(src)>{ico(Icon::Eject)}</button>
@@ -274,137 +258,59 @@ pub(super) fn Sidebar() -> impl IntoView {
                 }
             }).collect_view())}
     });
-    let sec_everything = move || shown("everything").then(|| view! {
-            {ev_heading()}
-            {move || ev_open.get().then(|| view! {
-                {move || ctx.everything.get().into_iter().map(|base| {
-                    let on = ctx.phones.with(|ps| ps.iter().find(|i| i.usb.as_deref() == Some(&format!("everything:{base}"))).cloned());
-                    match on {
-                        Some(i) => device(i).into_any(),
-                        // Not connected: tried again every so often, or now with a click.
-                        None => {
-                            let name = base.trim_start_matches("http://").to_string();
-                            let (b1, b2) = (base.clone(), base.clone());
-                            let tip = move || ctx.everything_errors.with(|e| e.get(&b1).cloned())
-                                .unwrap_or_else(|| "Connecting…".into()) + " Click to try again.";
-                            view! {
-                                <div class="device">
-                                    <span class="fold none"></span>
-                                    <button class="name off" title=tip on:click=move |_| ctx.check_everything()><b>{name}</b></button>
-                                    <button class="eject" title="Remove from the sidebar" aria-label="Remove"
-                                        on:click=move |_| ctx.remove_everything(&b2)>{ico(Icon::Close)}</button>
-                                </div>
-                            }.into_any()
-                        }
-                    }
-                }).collect_view()}
-                {move || (ctx.everything.with(Vec::is_empty) && ev_adding.with(Option::is_none)).then(|| view! {
-                    <div class="tree-row" style="--depth: 1">
-                        <span class="twisty none"></span>
-                        <button class="item add" title="Browse and search a Windows computer's disks through Everything (voidtools)"
-                            on:click=move |_| ev_adding.set(Some(String::new()))>"Add a server…"</button>
-                    </div>
-                })}
-            })}
-            {move || ev_asking.get().then(|| {
-                let add = move || {
-                    let Some(server) = ev_adding.get_untracked().filter(|s| !s.trim().is_empty()) else { return };
-                    if ctx.everything.with_untracked(|s| s.contains(&everything_base(&server))) {
-                        ev_error.set(Some("That server is already in the list.".into()));
-                        return;
-                    }
-                    ev_trying.set(true);
-                    ev_error.set(None);
-                    spawn_local(async move {
-                        match ctx.add_everything(server).await {
-                            Ok(()) => ev_adding.set(None),
-                            Err(e) => ev_error.set(Some(e)),
-                        }
-                        ev_trying.set(false);
-                    });
-                };
-                let input = NodeRef::<html::Input>::new();
-                input.on_load(move |el| { request_animation_frame(move || { let _ = el.focus(); }); });
-                view! {
-                    <div class="ws-save">
-                        <input node_ref=input type="text" placeholder="localhost or pc:8080" aria-label="Everything server address"
-                            spellcheck="false"
-                            on:contextmenu=|e| e.stop_propagation()
-                            prop:value=move || ev_adding.get().unwrap_or_default()
-                            on:input=move |e| ev_adding.set(Some(event_target_value(&e)))
-                            on:keydown=move |e| match e.key().as_str() {
-                                "Enter" => add(),
-                                "Escape" => { e.stop_propagation(); ev_adding.set(None) }
-                                _ => {}
-                            }/>
-                        <button class="btn small" disabled=move || ev_trying.get() || ev_adding.with(|n| n.as_deref().is_none_or(|n| n.trim().is_empty()))
-                            on:click=move |_| add()>{move || if ev_trying.get() { "Adding…" } else { "Add" }}</button>
-                    </div>
-                    <p class="ev-note">"Turn on the HTTP server in Everything (Tools > Options > HTTP Server) and allow file downloads."</p>
-                    {move || ev_error.get().map(|e| view! { <p class="ev-note error">{e}</p> })}
-                }
-            })}
-    });
+    // A mounted SMB share: a folder on the computer, with a button to disconnect it.
+    let mounted = move |name: String, path: String| {
+        let (tip, at, n) = (format!("Disconnect {name}"), path.clone(), name.clone());
+        let extra = ViewFn::from(move || {
+            let (tip, at, n) = (tip.clone(), at.clone(), n.clone());
+            view! { <button class="act" title=tip aria-label="Disconnect" on:click=move |_| ctx.unmount_smb(at.clone(), n.clone())>{ico(Icon::Eject)}</button> }
+        });
+        view! { <TreeNode src=Src::Mac name path depth=1 class="drive" extra/> }
+    };
+    // A connection that isn't connected (or an SMB share not mounted): connects with a click.
+    let off_row = move |c: servers::Conn| {
+        let (id, c1) = (c.id.clone(), c.clone());
+        let id2 = id.clone();
+        let usual = if c.kind == servers::ConnKind::Smb { "Click to connect." } else { "Connecting… Click to try again." };
+        let tip = move || ctx.conn_errors.with(|e| e.get(&id).cloned()).map_or_else(|| usual.to_string(), |e| e + " Click to try again.");
+        view! {
+            <div class="device">
+                <span class="fold none"></span>
+                <button class="name off" title=tip on:click=move |_| {
+                    let c = c1.clone();
+                    spawn_local(async move { let _ = ctx.connect_conn(c, true).await; });
+                }><b>{c.name()}</b></button>
+                <button class="eject" title="Remove from the connections" aria-label="Remove"
+                    on:click=move |_| ctx.remove_conn(&id2)>{ico(Icon::Close)}</button>
+            </div>
+        }
+    };
+    let add_row = move |tip: &'static str| view! {
+        <div class="tree-row" style="--depth: 1">
+            <span class="twisty none"></span>
+            <button class="item add" title=tip on:click=move |_| open_conns()>"Add a server…"</button>
+        </div>
+    };
     let sec_servers = move || shown("servers").then(|| view! {
         {srv_heading()}
         {move || srv_open.get().then(|| view! {
-            {move || ctx.sftp.get().into_iter().map(|addr| {
-                let on = ctx.phones.with(|ps| ps.iter().find(|i| i.usb.as_deref() == Some(&format!("sftp:{addr}"))).cloned());
-                match on {
-                    Some(i) => device(i).into_any(),
-                    // Not connected: tried again every so often, or now with a click.
-                    None => {
-                        let (a1, a2) = (addr.clone(), addr.clone());
-                        let tip = move || ctx.server_errors.with(|e| e.get(&a1).cloned())
-                            .unwrap_or_else(|| "Connecting…".into()) + " Click to try again.";
-                        view! {
-                            <div class="device">
-                                <span class="fold none"></span>
-                                <button class="name off" title=tip on:click=move |_| ctx.check_servers()><b>{addr}</b></button>
-                                <button class="eject" title="Remove from the sidebar" aria-label="Remove"
-                                    on:click=move |_| ctx.remove_sftp(&a2)>{ico(Icon::Close)}</button>
-                            </div>
-                        }.into_any()
-                    }
-                }
+            {move || ctx.conns_of(servers::ConnKind::Sftp).into_iter().map(|c| match ctx.conn_src(&c).and_then(|s| ctx.src_info(s)) {
+                Some(i) => device(i).into_any(),
+                None => off_row(c).into_any(),
             }).collect_view()}
-            {move || ctx.smb.get().into_iter().map(|share| {
-                let name = share.trim_start_matches("smb://").to_string();
-                match ctx.smb_path(&share) {
-                    // Mounted: a folder on the computer.
-                    Some(path) => {
-                        let tip = format!("Disconnect {name}");
-                        let extra = ViewFn::from(move || {
-                            let (tip, share) = (tip.clone(), share.clone());
-                            view! { <button class="act" title=tip aria-label="Disconnect" on:click=move |_| ctx.unmount_smb(&share)>{ico(Icon::Eject)}</button> }
-                        });
-                        view! { <TreeNode src=Src::Mac name path depth=1 class="drive" extra/> }.into_any()
-                    }
-                    None => {
-                        let (s1, s2, s3) = (share.clone(), share.clone(), share.clone());
-                        let tip = move || ctx.server_errors.with(|e| e.get(&s1).cloned())
-                            .map_or_else(|| "Click to connect. The system asks for the password when it needs one.".to_string(), |e| e + " Click to try again.");
-                        view! {
-                            <div class="device">
-                                <span class="fold none"></span>
-                                <button class="name off" title=tip on:click=move |_| {
-                                    let share = s2.clone();
-                                    spawn_local(async move { let _ = ctx.mount_smb(share).await; });
-                                }><b>{name}</b></button>
-                                <button class="eject" title="Remove from the sidebar" aria-label="Remove"
-                                    on:click=move |_| ctx.remove_smb(&s3)>{ico(Icon::Close)}</button>
-                            </div>
-                        }.into_any()
-                    }
-                }
+            {move || ctx.conns_of(servers::ConnKind::Smb).into_iter().map(|c| match ctx.smb_path(&c) {
+                // Mounted: a folder on the computer.
+                Some(path) => mounted(c.name(), path).into_any(),
+                None => off_row(c).into_any(),
             }).collect_view()}
-            {move || (ctx.sftp.with(Vec::is_empty) && ctx.smb.with(Vec::is_empty)).then(|| view! {
-                <div class="tree-row" style="--depth: 1">
-                    <span class="twisty none"></span>
-                    <button class="item add" title="Add an SFTP server or an SMB share (Windows sharing, NAS)"
-                        on:click=move |_| { ctx.settings_tab.set("connections"); ctx.settings.set(true) }>"Add a server…"</button>
-                </div>
-            })}
+            {move || ctx.conns_of(servers::ConnKind::Everything).into_iter().map(|c| match ctx.conn_src(&c).and_then(|s| ctx.src_info(s)) {
+                Some(i) => device(i).into_any(),
+                None => off_row(c).into_any(),
+            }).collect_view()}
+            // Shares mounted outside the app (or before the list had them).
+            {move || ctx.other_mounts().into_iter().map(|m| mounted(m.share.trim_start_matches("smb://").to_string(), m.path).into_any()).collect_view()}
+            {move || (ctx.conns.with(Vec::is_empty) && ctx.smb_mounts.with(Vec::is_empty))
+                .then(|| add_row("Add an SFTP server, an SMB share (Windows sharing, NAS) or a Windows computer running Everything"))}
         })}
     });
     let sec_mac = move || shown("mac").then(|| view! {
@@ -435,7 +341,6 @@ pub(super) fn Sidebar() -> impl IntoView {
                 "workspaces" => sec_workspaces().into_any(),
                 "favs" => sec_favs().into_any(),
                 "pairs" => sec_pairs().into_any(),
-                "everything" => sec_everything().into_any(),
                 "servers" => sec_servers().into_any(),
                 "mac" => sec_mac().into_any(),
                 "devices" => sec_devices().into_any(),

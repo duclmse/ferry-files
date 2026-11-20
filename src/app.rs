@@ -780,18 +780,12 @@ struct Ctx {
     hidden_sections: RwSignal<Vec<String>>,
     /// The sidebar's sections, top to bottom (keys of `SECTIONS`).
     section_order: RwSignal<Vec<&'static str>>,
-    /// The Everything servers added in the sidebar, by address ("http://pc:8080").
-    everything: RwSignal<Vec<String>>,
-    /// Why each Everything server that isn't connected couldn't be, by address.
-    everything_errors: RwSignal<HashMap<String, String>>,
-    /// The SFTP servers added in the sidebar, by address ("me@box:2222").
-    sftp: RwSignal<Vec<String>>,
-    /// The SMB shares added in the sidebar ("smb://nas/Photos").
-    smb: RwSignal<Vec<String>>,
-    /// Those of them mounted now, and where.
+    /// The connections added in Settings > Connections: Everything, SFTP and SMB servers.
+    conns: RwSignal<Vec<servers::Conn>>,
+    /// Why each connection that isn't connected couldn't be, by id.
+    conn_errors: RwSignal<HashMap<String, String>>,
+    /// The SMB shares mounted now (by the app or not), and where.
     smb_mounts: RwSignal<Vec<SmbMount>>,
-    /// Why each SFTP server or SMB share couldn't be connected, by address.
-    server_errors: RwSignal<HashMap<String, String>>,
     /// The transfer queue: running, waiting, and stopped ones to retry.
     jobs: RwSignal<Vec<Job>>,
     next_job: StoredValue<u32>,
@@ -864,13 +858,18 @@ impl Ctx {
             section_order: RwSignal::new(sidebar::section_order(
                 &stored(SECTION_ORDER_KEY).and_then(|s| serde_json::from_str::<Vec<String>>(&s).ok()).unwrap_or_default(),
             )),
-            hidden_sections: RwSignal::new(stored(HIDDEN_SECTIONS_KEY).and_then(|s| serde_json::from_str(&s).ok()).unwrap_or_default()),
-            everything: RwSignal::new(stored(EVERYTHING_KEY).and_then(|s| serde_json::from_str(&s).ok()).unwrap_or_default()),
-            everything_errors: RwSignal::new(HashMap::new()),
-            sftp: RwSignal::new(stored(SFTP_KEY).and_then(|s| serde_json::from_str(&s).ok()).unwrap_or_default()),
-            smb: RwSignal::new(stored(SMB_KEY).and_then(|s| serde_json::from_str(&s).ok()).unwrap_or_default()),
+            // Only sections there still are (Everything is now part of Servers).
+            hidden_sections: RwSignal::new(
+                stored(HIDDEN_SECTIONS_KEY)
+                    .and_then(|s| serde_json::from_str::<Vec<String>>(&s).ok())
+                    .unwrap_or_default()
+                    .into_iter()
+                    .filter(|k| sidebar::SECTIONS.iter().any(|s| s.0 == k))
+                    .collect(),
+            ),
+            conns: RwSignal::new(servers::stored_conns()),
+            conn_errors: RwSignal::new(HashMap::new()),
             smb_mounts: RwSignal::new(vec![]),
-            server_errors: RwSignal::new(HashMap::new()),
             auto_connect: RwSignal::new(stored_flag(AUTO_CONNECT_KEY, true)),
             verify: RwSignal::new(stored_flag(VERIFY_KEY, false)),
             comparing: RwSignal::new(false),
@@ -946,11 +945,6 @@ impl Ctx {
     fn set_section_order(self, order: Vec<&'static str>) {
         store(SECTION_ORDER_KEY, &serde_json::to_string(&order).unwrap_or_default());
         self.section_order.set(order);
-    }
-
-    fn set_everything(self, servers: Vec<String>) {
-        store(EVERYTHING_KEY, &serde_json::to_string(&servers).unwrap_or_default());
-        self.everything.set(servers);
     }
 
     fn set_phone_thumbs(self, on: bool) {
@@ -1035,8 +1029,7 @@ pub fn App() -> impl IntoView {
             ctx.connected(info, false);
         }
         ctx.restore_session();
-        ctx.check_everything();
-        ctx.check_servers();
+        ctx.check_conns();
     });
     ctx.keep_session();
     // Look for devices and disks now, then when the backend says something was plugged in or taken
@@ -1064,10 +1057,7 @@ pub fn App() -> impl IntoView {
         std::time::Duration::from_secs(3),
     );
     let _ = set_interval_with_handle(
-        move || {
-            ctx.check_everything();
-            ctx.check_servers();
-        },
+        move || ctx.check_conns(),
         everything::EVERYTHING_EVERY,
     );
 

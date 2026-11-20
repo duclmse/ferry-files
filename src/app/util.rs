@@ -325,7 +325,9 @@ pub(super) const LINE_NUMBERS_KEY: &str = "ferry-files.line-numbers";
 pub(super) const HIDDEN_SECTIONS_KEY: &str = "ferry-files.hidden-sections";
 /// The sidebar's sections in the order chosen (a JSON list of `SECTIONS` keys).
 pub(super) const SECTION_ORDER_KEY: &str = "ferry-files.section-order";
-/// The Everything servers added in the sidebar (a JSON list of addresses).
+/// The connections (a JSON list of `servers::Conn`).
+pub(super) const CONNS_KEY: &str = "ferry-files.connections";
+/// Kept by older versions, read once to fill `CONNS_KEY`: the Everything servers (a JSON list of addresses).
 pub(super) const EVERYTHING_KEY: &str = "ferry-files.everything-servers";
 /// The SFTP servers added in the sidebar (a JSON list of addresses, like "me@box:2222").
 pub(super) const SFTP_KEY: &str = "ferry-files.sftp-servers";

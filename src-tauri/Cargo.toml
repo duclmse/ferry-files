@@ -43,9 +43,23 @@ regex = { version = "1", default-features = false, features = [
 syntect = { version = "5", default-features = false, features = ["parsing", "default-syntaxes", "regex-fancy"] }
 # Searching with Everything over its HTTP server (plain http, so no TLS).
 ureq = { version = "2", default-features = false }
+base64 = "0.22"
 
 [target.'cfg(unix)'.dependencies]
 signal-hook = "0.3"
+
+# Saved passwords go in the system's keychain.
+[target.'cfg(target_os = "macos")'.dependencies]
+keyring = { version = "3", features = ["apple-native"] }
+
+[target.'cfg(windows)'.dependencies.keyring]
+version = "3"
+features = ["windows-native"]
+
+# Secret Service over zbus, so no C library.
+[target.'cfg(all(unix, not(target_os = "macos")))'.dependencies.keyring]
+version = "3"
+features = ["async-secret-service", "tokio", "crypto-rust"]
 
 [target.'cfg(windows)'.dependencies]
 windows = { version = "0.62", features = [
