@@ -272,32 +272,32 @@
   gap: 6px;
 }
 
-/* One line above what's shown: the name, then the facts, cut off with … when too long. */
+/* Above what's shown: the name, then the facts, going on to a second line when they don't fit. */
 .preview > .meta {
   flex: none;
   width: 100%;
   display: flex;
-  align-items: center;
-  gap: 8px;
+  flex-wrap: wrap;
+  align-items: baseline;
+  column-gap: 8px;
+  row-gap: 2px;
   font-size: 12px;
   line-height: 1.35;
   text-align: left;
-  white-space: nowrap;
 }
 
 .preview .meta .name {
-  flex: 0 1 auto;
   min-width: 0;
+  max-width: 100%;
   overflow: hidden;
   text-overflow: ellipsis;
+  white-space: nowrap;
   font-size: 13px;
 }
 
 .preview .meta .sub {
-  flex: 1 1 0;
   min-width: 0;
-  overflow: hidden;
-  text-overflow: ellipsis;
+  overflow-wrap: anywhere;
 }
 
 .preview .meta .peek-as {
