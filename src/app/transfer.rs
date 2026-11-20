@@ -228,6 +228,7 @@ impl Ctx {
                 Some(JobState::Failed(e))
             }
         };
+        let finished = state.is_none();
         match state {
             Some(s) => self.set_state(job.id, s),
             // Done: it leaves the queue (the report is in the pane and History).
@@ -236,6 +237,12 @@ impl Ctx {
         match &job.work {
             Work::Copy { items, to_dir, moving, .. } => {
                 self.changed(to_src, to_dir);
+                // Open files that moved on the same side follow them.
+                if *moving && finished && from_src == to_src {
+                    for x in items {
+                        self.doc_moved(from_src, x, &join(to_dir, &base(x)));
+                    }
+                }
                 if *moving {
                     let mut seen = vec![];
                     for d in items.iter().map(|x| parent(x)) {

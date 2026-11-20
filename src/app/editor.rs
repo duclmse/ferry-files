@@ -97,6 +97,7 @@ impl Ctx {
                     });
                     let at = if keep { at + 1 } else { at.min(p.docs.with_untracked(Vec::len) - 1) };
                     show(p, at, Doc { ed, text });
+                    p.peek_on.set(false);
                 }
                 Err(e) => p.error(e),
             }
@@ -104,8 +105,48 @@ impl Ctx {
         });
     }
 
+    /// Shows a file that isn't text in the Editor view's preview tab, in place of the one there.
+    pub(super) fn peek_doc(self, p: Pane, e: Entry) {
+        reveal(p, &e.path);
+        p.doc_peek.set(Some(e));
+        p.peek_on.set(true);
+    }
+
+    /// Closes the Editor view's preview tab.
+    pub(super) fn close_peek(self, p: Pane) {
+        p.doc_peek.set(None);
+        p.peek_on.set(false);
+    }
+
+    /// After `old` on `src` was renamed or moved to `new`: open files in it (or it) and the
+    /// preview tab follow it.
+    pub(super) fn doc_moved(self, src: Src, old: &str, new: &str) {
+        let moved = |path: &mut String| {
+            if let Some(rest) = path.strip_prefix(old).filter(|r| r.is_empty() || r.starts_with('/')) {
+                *path = format!("{new}{rest}");
+            }
+        };
+        for p in self.panes {
+            p.docs.update(|ds| ds.iter_mut().filter(|d| d.ed.src == src).for_each(|d| moved(&mut d.ed.path)));
+            p.doc.update(|d| {
+                if let Some(ed) = d.as_mut().filter(|ed| ed.src == src) {
+                    moved(&mut ed.path);
+                }
+            });
+            if p.src.get_untracked() == src {
+                p.doc_peek.update(|e| {
+                    if let Some(e) = e.as_mut() {
+                        moved(&mut e.path);
+                        e.name = base(&e.path);
+                    }
+                });
+            }
+        }
+    }
+
     /// Shows the Editor view's tab `i`.
     pub(super) fn show_doc(self, p: Pane, i: usize) {
+        p.peek_on.set(false);
         if i == p.doc_at.get_untracked() && p.doc.with_untracked(Option::is_some) {
             return;
         }

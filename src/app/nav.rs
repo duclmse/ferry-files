@@ -102,6 +102,8 @@ impl Ctx {
                     let new_src = p.src.get_untracked() != src;
                     if new_src {
                         p.cols.set(HashMap::new());
+                        p.doc_peek.set(None);
+                        p.peek_on.set(false);
                         p.src.set(src);
                     }
                     if new_src || !self.space.with_untracked(|m| m.contains_key(&src.key())) {
@@ -327,6 +329,11 @@ impl Ctx {
     /// Lists again every shown pane that's in folder `dir` on `src`, after something changed there.
     pub(super) fn changed(self, src: Src, dir: &str) {
         self.load_space(src);
+        for p in self.panes {
+            if p.src.get_untracked() == src {
+                p.tree_gen.update(|g| *g += 1);
+            }
+        }
         for p in self.shown() {
             if p.src.get_untracked() == src && p.cwd.get_untracked() == dir {
                 self.reload(p);

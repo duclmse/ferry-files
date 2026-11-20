@@ -158,6 +158,14 @@ files and disks too, so books can be copied between them.
   default, on the phone and the Mac), turn phone thumbnails off, and see, open
   or clear the app's folders on the Mac.
 - Edit text files.
+- Editor view: the pane's folder as a tree beside text files in tabs. Clicking
+  a file that isn't text shows it in a preview tab (its name in italics), as the
+  preview shows it; the next one replaces it. Drag files and folders in the tree
+  onto a folder (or the tree's empty space) to move them, or copy with ⌥, as in
+  the panes; open files that move or are renamed follow. Right-click a file or
+  folder to rename it in place or refresh. The terminal shows above the status
+  bar.
+- Tabs (the panes' and the editor's) close with a middle click too.
 - Books in this folder (right-click empty space): every EPUB in the folder and
   its subfolders, with cover, title, authors and language (read once, then
   remembered in `~/Library/Caches/ferry-files/library` until the file changes).

@@ -212,7 +212,7 @@ pub(super) fn Sidebar() -> impl IntoView {
                         pane.src.get() == src && pane.cwd.get() == "/"
                     }
                     on:click=move |_| ctx.open_place(src, "/".into())
-                    on:auxclick=move |ev| if ev.button() == 1 { ev.prevent_default(); ctx.new_tab(ctx.act(), src, "/".into()) }
+                    on:mousedown=middle_down on:mouseup=move |ev| if ev.button() == 1 { ev.prevent_default(); ctx.new_tab(ctx.act(), src, "/".into()) }
                     on:contextmenu=move |ev| ctx.show_place_menu(&ev, src, "/".into())>
                     <b>{i.label.clone()}</b>
                 </button>
@@ -551,7 +551,7 @@ fn TreeNode(
             // A middle click opens it in a new tab; right-click for a menu.
             <button class="item" class:active=active title=title
                 on:click=move |_| ctx.open_place(src, at.get_value())
-                on:auxclick=move |ev| if ev.button() == 1 { ev.prevent_default(); ctx.new_tab(ctx.act(), src, at.get_value()) }
+                on:mousedown=middle_down on:mouseup=move |ev| if ev.button() == 1 { ev.prevent_default(); ctx.new_tab(ctx.act(), src, at.get_value()) }
                 on:contextmenu=move |ev| ctx.show_place_menu(&ev, src, at.get_value())>{name}</button>
             {extra.map(|f| f.run())}
         </div>

@@ -248,6 +248,14 @@ pub(super) fn thumb_url(src: Src, e: &Entry) -> Option<String> {
 }
 
 /// Whether `path` is `dir` or inside it.
+/// A middle press: kept from scrolling or pasting, so its release can close a tab. WebKit has no
+/// `auxclick`, so tabs close on the middle button's `mouseup`.
+pub(super) fn middle_down(ev: web_sys::MouseEvent) {
+    if ev.button() == 1 {
+        ev.prevent_default();
+    }
+}
+
 pub(super) fn within(path: &str, dir: &str) -> bool {
     let dir = dir.trim_end_matches('/');
     path == dir || dir.is_empty() || path.strip_prefix(dir).is_some_and(|rest| rest.starts_with('/'))

@@ -127,6 +127,7 @@ impl Ctx {
             match call::<String>("rename", json!({ "src": src.key(), "path": e.path, "name": name })).await {
                 Ok(new) => {
                     self.log_undo(format!("Renamed {} to {}", e.name, base(&new)), Undo::Renames { src, items: vec![(new.clone(), e.name.clone())] });
+                    self.doc_moved(src, &e.path, &new);
                     p.select_only(Some(new));
                     self.changed(src, &parent(&e.path));
                 }

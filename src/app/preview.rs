@@ -40,15 +40,22 @@ pub(super) fn has_ext(e: &Entry, exts: &[&str]) -> bool {
 
 /// What's selected, to the right of the files: the picture, video, sound, text or contents, and
 /// details. Shown in every view; the button at the end of the status bar hides it.
+/// `entry`: this file instead of the pane's selected item (the Editor view's preview tab), with
+/// no ‹ › (the files around it aren't the pane's).
 #[component]
-pub(super) fn Preview(pane: Pane) -> impl IntoView {
+pub(super) fn Preview(pane: Pane, #[prop(optional)] entry: Option<Entry>) -> impl IntoView {
     let p = pane;
+    let alone = entry.is_some();
     // Kept as the preview moves from one picture to the next, and from one video to the next.
     let (pic_turn, video_turn) = (Turn::new(), Turn::new());
     // Only a different item (or a different "show as") rebuilds it, so a reload doesn't restart
     // a playing video.
     let shown = Memo::new(move |_| {
-        p.selected_entry().map(|e| {
+        let picked = match &entry {
+            Some(e) => Some(e.clone()),
+            None => p.selected_entry(),
+        };
+        picked.map(|e| {
             let forced = p.peek_as.with(|f| f.as_ref().filter(|(path, _)| *path == e.path).map(|f| f.1));
             // A file picked in this ZIP's columns.
             let src = p.src.get();
@@ -58,7 +65,7 @@ pub(super) fn Preview(pane: Pane) -> impl IntoView {
     });
     view! {
         <div class="preview" style=move || match p.preview_w.get() {
-            w if w > 0.0 => format!("flex-basis: {w}px"),
+            w if w > 0.0 && !alone => format!("flex-basis: {w}px"),
             _ => String::new(),
         }>
             {move || match shown.get() {
@@ -91,11 +98,12 @@ pub(super) fn Preview(pane: Pane) -> impl IntoView {
                     let body = match (forced, media(&e)) {
                         (Some(PeekAs::Text), _) => view! { <TextPeek src entry=e.clone()/> }.into_any(),
                         (Some(PeekAs::Hex), _) => view! { <HexPeek src entry=e.clone()/> }.into_any(),
+                        (None, Some(Media::Image)) if alone => view! { <FullImage pane=p src entry=e.clone() info turn=pic_turn url=stream_url(src, &e)/> }.into_any(),
                         (None, Some(Media::Image)) => view! { <FullImage pane=p src entry=e.clone() info turn=pic_turn/> }.into_any(),
-                        (None, Some(Media::Video)) => view! { <Player pane=p entry=e.clone() url=stream_url(src, &e) video=true info turn=video_turn/> }.into_any(),
+                        (None, Some(Media::Video)) => view! { <Player pane=p entry=e.clone() url=stream_url(src, &e) video=true info turn=video_turn alone/> }.into_any(),
                         (None, Some(Media::Audio)) => view! {
                             {thumb(&e)}
-                            <Player pane=p entry=e.clone() url=stream_url(src, &e) video=false info turn=video_turn/>
+                            <Player pane=p entry=e.clone() url=stream_url(src, &e) video=false info turn=video_turn alone/>
                         }.into_any(),
                         _ if has_ext(&e, PDF_EXTS) && e.size <= WHOLE_MAX => view! {
                             <iframe class="pdf" src=stream_url(src, &e) title="PDF"></iframe>

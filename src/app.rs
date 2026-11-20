@@ -518,6 +518,12 @@ struct Pane {
     /// The Editor view's tree: the folders open in it, and its width (0: the default).
     tree_open: RwSignal<HashSet<String>>,
     tree_w: RwSignal<f64>,
+    /// Bumped when files on the pane's side change, so the tree's open folders are listed again.
+    tree_gen: RwSignal<u32>,
+    /// The Editor view's preview tab: a file that isn't text, shown as the preview shows it, and
+    /// whether it's the tab shown (over the text file's).
+    doc_peek: RwSignal<Option<Entry>>,
+    peek_on: RwSignal<bool>,
 }
 
 /// A file open in a tab of the Editor view.
@@ -606,6 +612,9 @@ impl Pane {
             doc_at: RwSignal::new(0),
             tree_open: RwSignal::new(HashSet::new()),
             tree_w: stored_px(&format!("ferry-files.tree-w.{id}")),
+            tree_gen: RwSignal::new(0),
+            doc_peek: RwSignal::new(None),
+            peek_on: RwSignal::new(false),
         }
     }
 

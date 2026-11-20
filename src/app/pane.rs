@@ -315,7 +315,7 @@ pub(super) fn Name(pane: Pane, entry: Entry) -> impl IntoView {
 }
 
 #[component]
-fn NameEdit(pane: Pane, entry: Entry) -> impl IntoView {
+pub(super) fn NameEdit(pane: Pane, entry: Entry) -> impl IntoView {
     let ctx = expect_context::<Ctx>();
     let p = pane;
     let input = NodeRef::<html::Input>::new();
@@ -415,7 +415,8 @@ pub(super) fn PaneView(pane: Pane) -> impl IntoView {
             }}
             // Messages and questions about this pane, above its status bar.
             <Notices pane=p/>
-            {move || p.term.get().then(|| view! { <Terminal pane=p/> })}
+            // The Editor view shows it inside, above its status bar.
+            {move || (p.term.get() && !coding.get()).then(|| view! { <Terminal pane=p/> })}
             {move || (!coding.get()).then(|| view! { <ListStatus pane=p/> })}
         </section>
     }
@@ -474,7 +475,7 @@ pub(super) fn drop_events(
         let Some((src, paths)) = ctx.drag.get_value() else { return };
         let target = dir_or_cwd(p, &d);
         // Not into one of the dragged folders, nor into the folder they're already in.
-        if src == p.src.get_untracked() && paths.iter().any(|x| *x == target || parent(x) == target) {
+        if src == p.src.get_untracked() && paths.iter().any(|x| within(&target, x) || parent(x) == target) {
             if ctx.drop_at.get_untracked().is_some() {
                 ctx.drop_at.set(None);
             }
@@ -652,7 +653,7 @@ fn Tabs(pane: Pane) -> impl IntoView {
                     <div class="tab" class:shown=shown role="tab" aria-selected=move || shown().to_string() title=title
                         on:click=move |_| ctx.show_tab(p, i)
                         // A middle click closes it.
-                        on:auxclick=move |ev| if ev.button() == 1 { ev.prevent_default(); ctx.close_tab(p, i) }>
+                        on:mousedown=middle_down on:mouseup=move |ev| if ev.button() == 1 { ev.prevent_default(); ctx.close_tab(p, i) }>
                         <span class="name">{name}</span>
                         <button class="close" title=move || ctx.with_key("Close tab", "close_tab") aria-label="Close tab"
                             hidden=move || p.tabs.with(Vec::len) < 2

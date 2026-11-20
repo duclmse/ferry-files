@@ -288,6 +288,13 @@ impl Ctx {
         } else {
             v.push(item("Open in default app", "", Act::OpenInApp));
         }
+        // A device's storages, at the top of MTP, can't be renamed.
+        let renamable = !(parent(&e.path) == "/" && self.src_info(src).is_some_and(|i| i.transport == "mtp")) && !self.read_only(src);
+        v.extend([
+            MenuItem::Sep,
+            MenuItem::Do { label: "Rename".into(), key: "", act: Act::Rename, danger: false, enabled: renamable },
+            item("Refresh", "", Act::Refresh),
+        ]);
         if mac || (e.dir && shell) {
             v.push(MenuItem::Sep);
         }
@@ -347,6 +354,7 @@ impl Ctx {
             Act::CopyPath => copy_text(p, if src == Src::Mac { crate::os::native_path(&path) } else { path }),
             Act::CopyRelPath => copy_text(p, relative(&cwd, &path)),
             Act::Favourite => self.toggle_fav(src, path),
+            Act::Rename => p.renaming.set(entry.map(|e| e.path)),
             _ => {}
         }
     }
