@@ -173,8 +173,51 @@ whole-volume walk rate varies by up to 40% between runs on the same image,
 so it does not confirm or rule out the per-entry savings; System32's
 1.8x does.
 
-**Still open.** Opening the 1.4M-row store on restart took 39-47 s on
-`main` and 63-100 s on this branch's runs, before catch-up starts. Nothing
-here changes that path, and the variance between runs is as large, but it
-needs a breakdown (schema checks, index sync, WAL replay) before anyone
-can say whether the branch added to it.
+**Found and fixed: the slow store open.** Opening the 1.4M-row store on
+restart took 39-100 s before catch-up started. A migration that re-points
+`idx_files_parent` dropped and rebuilt that index over every row on every
+start. It now runs only when the index is on another column, and the open
+logs a time per step. Run `44656692722`: the store opens in under 0.1 s, and
+the daemon answers 0.5 s after launch with every change visible at 1.4-2.1 s.
+
+## Head-to-head with voidtools Everything
+
+The `windows-everything` CI job runs `scripts/bench-everything.ps1`
+(Everything 1.4.1.1032 portable, queries through `es.exe`) and then
+`bench-windows.ps1` over all of C: from the file table, with each store,
+one after the other on the same 2-core runner. Everything runs first, so it
+reads the file table cold. Runs `44655688723` and `44656692722` (restart
+row: after the fix above):
+
+| | Everything | fsd, memory store | fsd, SQLite |
+| --- | ---: | ---: | ---: |
+| First index build (1.43M entries) | 17.3 s | 10.7 s | 30.2 s |
+| Restart until searchable | 0.6 s | 0.5 s | 0.5 s |
+| All 9 offline changes visible | 1.2 s | 0.7-1.5 s | 1.4 s |
+| Working set, steady | 133-141 MB | 161-170 MB | 25-70 MB plus OS cache |
+| Private bytes, steady | 126-133 MB | 213-287 MB | 17-63 MB |
+| Peak during the first index | ~231 MB | 837 MB | 879 MB |
+| On disk | 53 MB | 78 MB | 933 MB |
+
+Query times in ms: Everything's are es.exe medians less its 47.6 ms start,
+fsd's are server times, so both are approximate.
+
+| Query | Everything | fsd memory | fsd SQLite |
+| --- | ---: | ---: | ---: |
+| `*.rs`, `ext:rs` | 13-16 | 7-10 | 0-2 |
+| `zzqx` (substring, no hits) | 92-190 | 30-46 | 155-837 |
+| `readme` | 70-160 | 2-3 | 66-115 |
+| `parent:C:\` | 41 | 198-467 | 1,625 |
+| `depth:99` | 47-73 | 140-153 | 1,472 |
+| `dupe: count:10` | 400 | 420 | 3,400 |
+
+The memory store matches Everything on build, restart and catch-up, and is
+faster on substring searches. Still behind it:
+
+- The file table crawl peaks at 840-880 MB with either store: it holds every
+  record before writing any. Streaming them is the next change.
+- Private bytes are about twice Everything's; the record layout accounts for
+  about 130 MB, so the rest needs a breakdown first.
+- `parent:` and `depth:` scan every entry; Everything walks its folder tree.
+- SQLite is 3-10x slower than the memory store on every scan-type query, and
+  12x its size on disk.
