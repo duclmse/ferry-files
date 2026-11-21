@@ -480,6 +480,11 @@ impl Ctx {
         if !e.dir && kind(e) != Kind::Other && crate::os::is_mac() {
             v.push(item("Open in default app", "", Act::OpenInApp));
         }
+        // The column view opens a ZIP's folders as more columns; any file can be tried as one
+        // (an EPUB, an Office file).
+        if !e.dir && p.view.get_untracked() == ViewMode::Columns && !super::preview::has_ext(e, super::preview::ZIP_EXTS) {
+            v.push(item("Open as ZIP in columns", "", Act::ShowAs(PeekAs::Zip)));
+        }
         if device && !e.dir {
             v.push(item(format!("Download to {}…", crate::os::computer()), "", Act::Download));
         }

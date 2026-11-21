@@ -359,7 +359,13 @@ pub(super) fn ColumnView(pane: Pane) -> impl IntoView {
     });
     let strip = NodeRef::<html::Div>::new();
     // A ZIP file picked in the last column: what's in it, as more columns.
-    let zip = Memo::new(move |_| p.selected_entry().filter(|e| super::preview::has_ext(e, super::preview::ZIP_EXTS)));
+    // Also any file the menu's Open as ZIP in columns (or the preview's Show as ZIP) was used on.
+    let zip = Memo::new(move |_| {
+        p.selected_entry().filter(|e| {
+            super::preview::has_ext(e, super::preview::ZIP_EXTS)
+                || p.peek_as.with(|f| matches!(f, Some((path, PeekAs::Zip)) if *path == e.path))
+        })
+    });
     let zip_open = RwSignal::new(Vec::<String>::new());
     // Show the newest column: scroll to the right end when the folder changes.
     Effect::new(move |_| {
