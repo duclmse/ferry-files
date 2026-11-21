@@ -245,8 +245,10 @@ pub(super) fn fit_url(src: Src, e: &Entry) -> Option<String> {
 }
 
 /// Thumbnail URL for images and EPUBs (their cover), served by the backend's `ferry://` scheme.
+/// On Windows, any of the computer's own files: Windows makes those (videos, PDFs and so on).
 pub(super) fn thumb_url(src: Src, e: &Entry) -> Option<String> {
-    (!e.dir && e.size <= THUMB_MAX && THUMB_EXTS.contains(&ext(&e.name).as_str())).then(|| {
+    let system = src == Src::Mac && crate::os::os() == crate::os::Os::Windows;
+    (!e.dir && (system || (e.size <= THUMB_MAX && THUMB_EXTS.contains(&ext(&e.name).as_str())))).then(|| {
         let p = uri_part(&e.path);
         crate::os::served(&format!("thumb?src={}&p={p}&s={}&m={}", src.key(), e.size, e.mtime))
     })

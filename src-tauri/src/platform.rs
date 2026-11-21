@@ -54,6 +54,90 @@ pub fn backup_dir() -> PathBuf {
     }
 }
 
+/// The thumbnail Windows shows for the file in Explorer (pictures, videos, PDFs, documents and
+/// whatever else has a thumbnail handler), about `px` on its longest side. None when there's
+/// none: Windows' generic icons aren't used.
+#[cfg(windows)]
+pub fn system_thumb(path: &Path, px: u32) -> Option<image::DynamicImage> {
+    let path = path.to_path_buf();
+    // Thumbnail handlers expect a single-threaded COM apartment, which the caller's thread may
+    // not be in (or may be in the other kind), so this runs on a thread of its own.
+    std::thread::spawn(move || {
+        use windows::Win32::System::Com::{CoInitializeEx, CoUninitialize, COINIT_APARTMENTTHREADED};
+        let inited = unsafe { CoInitializeEx(None, COINIT_APARTMENTTHREADED) }.is_ok();
+        let img = unsafe { shell_thumb(&path, px) };
+        if inited {
+            unsafe { CoUninitialize() };
+        }
+        img
+    })
+    .join()
+    .ok()
+    .flatten()
+}
+
+#[cfg(windows)]
+unsafe fn shell_thumb(path: &Path, px: u32) -> Option<image::DynamicImage> {
+    use windows::core::{HSTRING, PCWSTR};
+    use windows::Win32::Foundation::SIZE;
+    use windows::Win32::Graphics::Gdi::{
+        CreateCompatibleDC, DeleteDC, DeleteObject, GetDIBits, GetObjectW, BITMAP, BITMAPINFO, BITMAPINFOHEADER, BI_RGB, DIB_RGB_COLORS,
+    };
+    use windows::Win32::UI::Shell::{IShellItemImageFactory, SHCreateItemFromParsingName, SIIGBF_BIGGERSIZEOK, SIIGBF_THUMBNAILONLY};
+    let wide = HSTRING::from(path.as_os_str());
+    let f: IShellItemImageFactory = unsafe { SHCreateItemFromParsingName(PCWSTR(wide.as_ptr()), None) }.ok()?;
+    let side = px as i32;
+    let hbm = unsafe { f.GetImage(SIZE { cx: side, cy: side }, SIIGBF_THUMBNAILONLY | SIIGBF_BIGGERSIZEOK) }.ok()?;
+    let read = || -> Option<image::DynamicImage> {
+        let mut bm = BITMAP::default();
+        let got = unsafe { GetObjectW(hbm.into(), std::mem::size_of::<BITMAP>() as i32, Some((&mut bm as *mut BITMAP).cast())) };
+        if got == 0 || bm.bmWidth <= 0 || bm.bmHeight == 0 {
+            return None;
+        }
+        let (w, h) = (bm.bmWidth as u32, bm.bmHeight.unsigned_abs());
+        // Asked for top-down rows (a negative height) of 32-bit BGRA.
+        let mut info = BITMAPINFO {
+            bmiHeader: BITMAPINFOHEADER {
+                biSize: std::mem::size_of::<BITMAPINFOHEADER>() as u32,
+                biWidth: w as i32,
+                biHeight: -(h as i32),
+                biPlanes: 1,
+                biBitCount: 32,
+                biCompression: BI_RGB.0,
+                ..Default::default()
+            },
+            ..Default::default()
+        };
+        let mut px = vec![0u8; w as usize * h as usize * 4];
+        let dc = unsafe { CreateCompatibleDC(None) };
+        let lines = unsafe { GetDIBits(dc, hbm, 0, h, Some(px.as_mut_ptr().cast()), &mut info, DIB_RGB_COLORS) };
+        let _ = unsafe { DeleteDC(dc) };
+        if lines != h as i32 {
+            return None;
+        }
+        // No alpha at all means an opaque picture; otherwise the colours are premultiplied.
+        let opaque = px.chunks_exact(4).all(|p| p[3] == 0);
+        for p in px.chunks_exact_mut(4) {
+            p.swap(0, 2);
+            if opaque {
+                p[3] = 255;
+            } else if p[3] > 0 && p[3] < 255 {
+                let a = p[3] as u32;
+                for c in &mut p[..3] {
+                    *c = (*c as u32 * 255 / a).min(255) as u8;
+                }
+            }
+        }
+        image::RgbaImage::from_raw(w, h, px).map(image::DynamicImage::ImageRgba8)
+    };
+    let img = read();
+    let _ = unsafe { DeleteObject(hbm.into()) };
+    img
+}
+
+/// Whether the computer can make thumbnails of its own files of any type (`system_thumb`).
+pub const SYSTEM_THUMBS: bool = cfg!(windows);
+
 /// The computer's path for an app path.
 pub fn native(path: &str) -> PathBuf {
     #[cfg(windows)]

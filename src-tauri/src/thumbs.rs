@@ -57,8 +57,10 @@ fn previews_dir() -> PathBuf {
 /// `src` ("mac" or names the device) is part of the key: the same path can be on several. `px`
 /// is the size made, so a change to it makes new ones.
 fn key(src: &str, path: &str, size: u64, mtime: i64, px: u32) -> String {
-    // "2": made upright since; the ones made before may be on their side.
-    format!("{:x}", md5::compute(format!("{src}\n{path}\n{size}\n{mtime}\n{px}\n2")))
+    // "2": made upright since; the ones made before may be on their side. "3" on Windows, where
+    // the system makes them now, for files of any type: the ones marked "none" before may have one.
+    let v = if crate::platform::SYSTEM_THUMBS { 3 } else { 2 };
+    format!("{:x}", md5::compute(format!("{src}\n{path}\n{size}\n{mtime}\n{px}\n{v}")))
 }
 
 /// Marks a cached file used, for `trim`: its modified time, at most once a day.
@@ -323,13 +325,26 @@ pub fn cover_in(data: &[u8], name: &str) -> Option<(Vec<u8>, String)> {
     book.file(&at).map(|d| (d.to_vec(), book.media_type(&at)))
 }
 
+/// The thumbnail the system shows for one of this computer's files (on Windows), shrunk to fit.
+fn system(src: &str, path: &str) -> Option<DynamicImage> {
+    #[cfg(windows)]
+    if src == "mac" {
+        let img = crate::platform::system_thumb(&crate::platform::native(path), SIZE)?;
+        return Some(if img.width().max(img.height()) > SIZE { img.resize(SIZE, SIZE, FilterType::Triangle) } else { img });
+    }
+    let _ = (src, path);
+    None
+}
+
 /// Reads the file (from `dev`, the phone or the Mac), makes the thumbnail and caches it.
 /// `size` and `mtime` are what the listing showed; they're only used for the cache key.
 pub fn make(src: &str, dev: &Device, path: &str, size: u64, mtime: i64) -> Result<Thumb, String> {
     let dir = cache_dir();
     std::fs::create_dir_all(&dir).map_err(|e| e.to_string())?;
     let base = dir.join(key(src, path, size, mtime, SIZE));
-    let thumb = if !supported(path) || size > MAX_SOURCE {
+    let thumb = if let Some(img) = system(src, path) {
+        Some(encode(img)?)
+    } else if !supported(path) || size > MAX_SOURCE {
         None
     } else if let Some(img) = embedded(dev, path, size) {
         Some(encode(img)?)
