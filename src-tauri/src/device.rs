@@ -4,7 +4,8 @@
 
 use serde::Serialize;
 use std::fmt;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
+use std::sync::atomic::AtomicBool;
 use std::sync::Mutex;
 
 #[derive(Clone, Debug, Serialize)]
@@ -53,6 +54,21 @@ pub trait Transport: Send + Sync {
     fn version(&self, path: &str) -> Result<Option<String>>;
     /// Writes the whole file (under a temporary name, then swapped in). Returns the new version.
     fn replace(&self, path: &str, data: &[u8], exists: bool) -> Result<String>;
+    /// Copies the file into `to` on this computer, so a big file isn't held in memory, and
+    /// returns its version. `read` is told the size of each piece read, and `stop` cancels
+    /// between pieces. By default the whole file is read first.
+    fn read_to(&self, path: &str, to: &Path, read: &mut dyn FnMut(u64), _stop: &AtomicBool) -> Result<String> {
+        let (data, version) = self.read(path)?;
+        read(data.len() as u64);
+        std::fs::write(to, &data).map_err(|e| DevError::Msg(format!("Can't write {}: {e}", to.display())))?;
+        Ok(version)
+    }
+    /// As `replace`, with the new contents in file `from` on this computer. By default the whole
+    /// file is read first.
+    fn replace_from(&self, path: &str, from: &Path, exists: bool) -> Result<String> {
+        let data = std::fs::read(from).map_err(|e| DevError::Msg(format!("Can't read {}: {e}", from.display())))?;
+        self.replace(path, &data, exists)
+    }
     fn delete(&self, path: &str, is_dir: bool) -> Result<()>;
     fn make_dir(&self, path: &str) -> Result<()>;
     /// Renames a file or folder within its folder. The caller has checked the new name is free.
@@ -272,9 +288,36 @@ impl Device {
         self.t.read_range(&path, start, len)
     }
 
+    /// Copies a file into `to` on this computer (see `Transport::read_to`). Returns its version.
+    pub fn read_to(&self, path: &str, to: &Path, read: &mut dyn FnMut(u64), stop: &AtomicBool) -> Result<String> {
+        let path = norm(path)?;
+        let _g = self.lock();
+        let got = self.t.read_to(&path, to, read, stop);
+        if got.is_err() {
+            let _ = std::fs::remove_file(to);
+        }
+        got
+    }
+
     /// Writes a file. With `base_version`, refuses if the device copy changed since it was read.
     /// With `create`, refuses if the file already exists.
     pub fn write(&self, path: &str, data: &[u8], base_version: Option<&str>, create: bool) -> Result<WriteResult> {
+        self.write_with(path, base_version, create, |t, p, exists| t.replace(p, data, exists))
+    }
+
+    /// As `write`, with the new contents in file `from` on this computer, which isn't read into
+    /// memory where the transport can help it.
+    pub fn write_from(&self, path: &str, from: &Path, base_version: Option<&str>, create: bool) -> Result<WriteResult> {
+        self.write_with(path, base_version, create, |t, p, exists| t.replace_from(p, from, exists))
+    }
+
+    fn write_with(
+        &self,
+        path: &str,
+        base_version: Option<&str>,
+        create: bool,
+        put: impl FnOnce(&dyn Transport, &str, bool) -> Result<String>,
+    ) -> Result<WriteResult> {
         let path = norm(path)?;
         let _g = self.lock();
         let st = self.t.stat(&path)?;
@@ -297,7 +340,7 @@ impl Device {
             return err(format!("Folder doesn't exist: {parent}"));
         }
         let backup = if current.is_some() { Some(self.backup(&path, "replaced")?) } else { None };
-        let version = self.t.replace(&path, data, current.is_some())?;
+        let version = put(self.t.as_ref(), &path, current.is_some())?;
         Ok(WriteResult { version, backup: backup.map(|p| p.display().to_string()) })
     }
 
@@ -376,7 +419,6 @@ impl Device {
     }
 
     fn backup(&self, path: &str, reason: &str) -> Result<PathBuf> {
-        let (data, _) = self.t.read(path)?;
         let dir = backup_dir();
         std::fs::create_dir_all(&dir).map_err(|e| DevError::Msg(format!("Can't create {}: {e}", dir.display())))?;
         let stamp = chrono::Local::now().format("%Y%m%d-%H%M%S");
@@ -387,7 +429,11 @@ impl Device {
             dest = dir.join(format!("{stamp}-{n}-{name}"));
             n += 1;
         }
-        std::fs::write(&dest, data).map_err(|e| DevError::Msg(format!("Can't write backup {}: {e}", dest.display())))?;
+        // Copied straight into the backup, so a big file isn't held in memory.
+        if let Err(e) = self.t.read_to(path, &dest, &mut |_| {}, &AtomicBool::new(false)) {
+            let _ = std::fs::remove_file(&dest);
+            return Err(e);
+        }
         // Where it came from, so it can be put back. The backup itself is what matters, so a
         // failure to note it isn't an error.
         let line = BackupNote { file: file_name(&dest), place: self.place(), path: path.to_string(), reason: reason.into() };

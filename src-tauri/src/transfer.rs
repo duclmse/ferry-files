@@ -85,14 +85,84 @@ pub(super) struct Opts {
     pub replace: bool,
 }
 
-/// Whether the copy at `path` on `b` holds `data`. adb writes are already checked against an md5
-/// of the data on the phone (`Adb::replace`), so they aren't read back again.
-fn copy_matches(b: &Device, path: &str, data: &[u8]) -> Result<bool, String> {
-    if b.kind() == "adb" {
-        return Ok(true);
+/// What a file copy wrote: the bytes, or (for a big file) a file on this computer holding them.
+enum Copied {
+    Bytes(Vec<u8>),
+    File(Spooled),
+}
+
+impl Copied {
+    /// Whether the copy at `path` on `b` holds what was written. adb writes are already checked
+    /// against an md5 of the data on the phone (`Adb::replace`), so they aren't read back again.
+    fn matches(&self, b: &Device, path: &str, stop: &std::sync::atomic::AtomicBool) -> Result<bool, String> {
+        if b.kind() == "adb" {
+            return Ok(true);
+        }
+        match self {
+            Copied::Bytes(data) => {
+                let (back, _) = b.read(path).map_err(msg)?;
+                Ok(back == *data)
+            }
+            Copied::File(from) => {
+                let back = Spooled::temp();
+                b.read_to(path, &back.path, &mut |_| {}, stop).map_err(msg)?;
+                same_files(&from.path, &back.path).map_err(|e| format!("Couldn't compare the copy: {e}"))
+            }
+        }
     }
-    let (back, _) = b.read(path).map_err(msg)?;
-    Ok(back == data)
+}
+
+/// A file's contents on this computer, for copying a big file without holding it in memory: the
+/// file itself when it's on this computer, otherwise a copy in the temporary folder, deleted when
+/// this is dropped.
+struct Spooled {
+    path: std::path::PathBuf,
+    temp: bool,
+}
+
+impl Spooled {
+    fn of(a: &Device, path: &str, stop: &std::sync::atomic::AtomicBool, read: &mut dyn FnMut(u64)) -> Result<Spooled, String> {
+        if a.kind() == "mac" {
+            return Ok(Spooled { path: crate::platform::native(path), temp: false });
+        }
+        let s = Spooled::temp();
+        a.read_to(path, &s.path, read, stop).map_err(msg)?;
+        Ok(s)
+    }
+
+    fn temp() -> Spooled {
+        static N: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+        let n = N.fetch_add(1, Ordering::Relaxed);
+        Spooled { path: std::env::temp_dir().join(format!("ferry-files-copy-{}-{n}", std::process::id())), temp: true }
+    }
+}
+
+impl Drop for Spooled {
+    fn drop(&mut self) {
+        if self.temp {
+            let _ = std::fs::remove_file(&self.path);
+        }
+    }
+}
+
+/// Whether two files on this computer hold the same bytes, read a piece at a time.
+fn same_files(a: &std::path::Path, b: &std::path::Path) -> std::io::Result<bool> {
+    use std::io::Read;
+    let (mut fa, mut fb) = (std::fs::File::open(a)?, std::fs::File::open(b)?);
+    if fa.metadata()?.len() != fb.metadata()?.len() {
+        return Ok(false);
+    }
+    let (mut ba, mut bb) = (vec![0u8; 1 << 20], vec![0u8; 1 << 20]);
+    loop {
+        let n = fa.read(&mut ba)?;
+        if n == 0 {
+            return Ok(true);
+        }
+        fb.read_exact(&mut bb[..n])?;
+        if ba[..n] != bb[..n] {
+            return Ok(false);
+        }
+    }
 }
 
 /// The work of `transfer`, apart from the app, so it can be tested.
@@ -128,30 +198,8 @@ pub(super) fn run_transfer(
     Ok(report)
 }
 
-/// Files at least this big are read in pieces, so the progress moves while a big file is read.
+/// Files at least this big are copied through a file on this computer instead of memory.
 const PIECE: u64 = 8 * 1024 * 1024;
-
-/// The whole file at `path` (`size` bytes, as listed). From a server or this computer, a big
-/// file is read a piece at a time, with `read` told each piece's size; other devices read it in
-/// one go, as reading part of a file is slow on them.
-fn read_in_pieces(a: &Device, path: &str, size: u64, stop: &std::sync::atomic::AtomicBool, mut read: impl FnMut(u64)) -> Result<Vec<u8>, String> {
-    if size < PIECE || !matches!(a.kind(), "sftp" | "everything" | "mac") {
-        return a.read(path).map(|(d, _)| d).map_err(msg);
-    }
-    let mut data = Vec::with_capacity(size as usize);
-    loop {
-        if stop.load(Ordering::Relaxed) {
-            return Err("Cancelled.".into());
-        }
-        let part = a.read_range(path, data.len() as u64, PIECE).map_err(msg)?;
-        let n = part.len() as u64;
-        data.extend_from_slice(&part);
-        read(n);
-        if n < PIECE {
-            return Ok(data);
-        }
-    }
-}
 
 /// Copies (or moves) each item in turn: folders are made (or merged into), files are written
 /// only where nothing is there yet. With `resume` (running a stopped or failed job again), a file
@@ -229,19 +277,28 @@ pub(super) fn run_items(
         }
         let mut counted = 0u64;
         let done = (|| -> Result<(), String> {
-            let data = read_in_pieces(a, &it.from, it.size, stop, |n| {
+            let mut moved = |n: u64| {
                 counted += n;
                 p.bytes_done += n;
                 emit(p.clone());
-            })?;
-            let w = b.write(&it.to, &data, None, !replace).map_err(|e| match e {
+            };
+            let conflict = |e: DevError| match e {
                 DevError::Conflict(_) => "Already there.".to_string(),
                 e => e.to_string(),
-            })?;
+            };
+            // A big file goes through a file on this computer rather than memory.
+            let (w, copied) = if it.size < PIECE {
+                let (data, _) = a.read(&it.from).map_err(msg)?;
+                moved(data.len() as u64);
+                (b.write(&it.to, &data, None, !replace).map_err(conflict)?, Copied::Bytes(data))
+            } else {
+                let from = Spooled::of(a, &it.from, stop, &mut moved)?;
+                (b.write_from(&it.to, &from.path, None, !replace).map_err(conflict)?, Copied::File(from))
+            };
             if let Some(bk) = w.backup {
                 report.backups.push(bk);
             }
-            if verify && !copy_matches(b, &it.to, &data)? {
+            if verify && !copied.matches(b, &it.to, stop)? {
                 if replace {
                     return Err("The copy didn't match the original. The file it replaced is in Backups; try again.".into());
                 }
@@ -564,6 +621,66 @@ pub(super) fn cancel_transfer(state: State<'_, AppState>, job: u32) {
 
 #[cfg(test)]
 mod tests {
+    use crate::device::{Entry, Result, Transport};
+
+    /// The computer's files, as if on another device: kind "test", so copies from it go through
+    /// a temporary file, with the default `read_to` and `replace_from`.
+    struct Other;
+
+    impl Transport for Other {
+        fn kind(&self) -> &'static str { "test" }
+        fn label(&self) -> String { "test".into() }
+        fn default_dir(&self) -> String { "/".into() }
+        fn quick_dirs(&self) -> Vec<(String, String)> { vec![] }
+        fn listdir(&self, path: &str) -> Result<Vec<Entry>> { crate::local::Local.listdir(path) }
+        fn stat(&self, path: &str) -> Result<Option<Entry>> { crate::local::Local.stat(path) }
+        fn read(&self, path: &str) -> Result<(Vec<u8>, String)> { crate::local::Local.read(path) }
+        fn read_range(&self, path: &str, start: u64, len: u64) -> Result<Vec<u8>> { crate::local::Local.read_range(path, start, len) }
+        fn version(&self, path: &str) -> Result<Option<String>> { crate::local::Local.version(path) }
+        fn replace(&self, path: &str, data: &[u8], exists: bool) -> Result<String> { crate::local::Local.replace(path, data, exists) }
+        fn delete(&self, path: &str, is_dir: bool) -> Result<()> { crate::local::Local.delete(path, is_dir) }
+        fn make_dir(&self, path: &str) -> Result<()> { crate::local::Local.make_dir(path) }
+        fn rename(&self, path: &str, new_name: &str) -> Result<()> { crate::local::Local.rename(path, new_name) }
+    }
+
+    #[test]
+    fn big_files_are_copied_through_a_file() {
+        use std::fs;
+        let root = std::env::temp_dir().join(format!("ferry-big-copy-test-{}", std::process::id()));
+        let (src, dst) = (root.join("src"), root.join("dst"));
+        fs::create_dir_all(&src).unwrap();
+        fs::create_dir_all(&dst).unwrap();
+        let big: Vec<u8> = (0..super::PIECE + 12345).map(|i| (i % 251) as u8).collect();
+        fs::write(src.join("big.bin"), &big).unwrap();
+        let s = |p: &std::path::Path| crate::platform::app_path(p);
+        let stop = std::sync::atomic::AtomicBool::new(false);
+        let mac = crate::Device::new(Box::new(crate::local::Local));
+        let other = crate::Device::new(Box::new(Other));
+        let opts = super::Opts { verify: true, ..Default::default() };
+        // From the other device (through a temporary file) to this computer, and back as a move.
+        let r = super::run_transfer(&other, &mac, false, 1, &[s(&src.join("big.bin"))], &s(&dst), opts, &stop, |_| {}).unwrap();
+        assert_eq!((r.copied, r.skipped.len()), (1, 0), "{:?}", r.skipped);
+        assert!(fs::read(dst.join("big.bin")).unwrap() == big);
+        fs::create_dir(root.join("back")).unwrap();
+        let r = super::run_transfer(&mac, &other, false, 1, &[s(&dst.join("big.bin"))], &s(&root.join("back")), super::Opts { moving: true, ..opts }, &stop, |_| {}).unwrap();
+        assert_eq!((r.copied, r.skipped.len(), r.backups.len()), (1, 0, 1), "{:?}", r.skipped);
+        assert!(fs::read(root.join("back/big.bin")).unwrap() == big);
+        assert!(fs::read(&r.backups[0]).unwrap() == big, "the moved original was backed up whole");
+        assert!(!dst.join("big.bin").exists());
+        // Replacing a big file backs the old one up through a file too.
+        let r = super::run_transfer(&other, &mac, false, 1, &[s(&src.join("big.bin"))], &s(&root.join("back")), super::Opts { replace: true, ..opts }, &stop, |_| {}).unwrap();
+        assert_eq!((r.copied, r.backups.len()), (1, 1));
+        assert!(fs::read(&r.backups[0]).unwrap() == big);
+        for b in r.backups {
+            fs::remove_file(b).unwrap();
+        }
+        let left: Vec<_> = fs::read_dir(std::env::temp_dir()).unwrap().flatten()
+            .filter(|e| e.file_name().to_string_lossy().starts_with(&format!("ferry-files-copy-{}-", std::process::id())))
+            .collect();
+        assert!(left.is_empty(), "temporary copies are deleted");
+        fs::remove_dir_all(&root).unwrap();
+    }
+
     #[test]
     fn transfer_copies_and_moves_folders() {
         use std::fs;

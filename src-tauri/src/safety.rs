@@ -78,13 +78,15 @@ pub(super) async fn restore(state: State<'_, AppState>, file: String, src: Strin
         if f.parent() != Some(dir.as_path()) {
             return Err("That isn't one of the app's backups.".into());
         }
-        let data = std::fs::read(&f).map_err(|e| format!("Can't read {file}: {e}"))?;
+        if !f.is_file() {
+            return Err(format!("Can't find the backup {file}."));
+        }
         let parent = device::dirname(&path);
         if !dev.stat(&parent).map_err(msg)?.is_some_and(|e| e.dir) {
             return Err(format!("The folder {parent} isn't there any more. Restore it into another folder."));
         }
         let now = dev.version(&path).map_err(msg)?;
-        dev.write(&path, &data, now.as_deref(), now.is_none()).map_err(msg)
+        dev.write_from(&path, &f, now.as_deref(), now.is_none()).map_err(msg)
     })
     .await
 }

@@ -5,6 +5,8 @@
 use crate::device::{basename, dirname, err, DevError, Entry, Result, Transport};
 use crate::platform::{app_path, native};
 use std::fs;
+use std::path::Path;
+use std::sync::atomic::AtomicBool;
 use std::time::UNIX_EPOCH;
 
 pub struct Local;
@@ -21,6 +23,25 @@ fn secs(m: &fs::Metadata) -> i64 {
 fn version_of(m: &fs::Metadata) -> String {
     let ns = m.modified().ok().and_then(|t| t.duration_since(UNIX_EPOCH).ok()).map_or(0, |d| d.as_nanos());
     format!("{}-{ns}", m.len())
+}
+
+/// Writes the file next to `path` with `write`, then renames it over `path`, so a failed write
+/// leaves the old file intact. Checks the new file has `size` bytes; returns its version.
+fn swap_in(path: &str, size: u64, write: impl FnOnce(&Path) -> std::io::Result<()>) -> Result<String> {
+    let tmp = crate::device::join(&dirname(path), &format!(".{}.ferry-tmp", basename(path)));
+    if let Err(e) = write(&native(&tmp)) {
+        let _ = fs::remove_file(native(&tmp));
+        return Err(io(&tmp, e));
+    }
+    if let Err(e) = fs::rename(native(&tmp), native(path)) {
+        let _ = fs::remove_file(native(&tmp));
+        return Err(io(path, e));
+    }
+    let m = fs::metadata(native(path)).map_err(|e| io(path, e))?;
+    if m.len() != size {
+        return err(format!("{path}: wrote {size} bytes but the file has {}.", m.len()));
+    }
+    Ok(version_of(&m))
 }
 
 fn entry(path: &str, m: &fs::Metadata) -> Entry {
@@ -113,17 +134,23 @@ impl Transport for Local {
 
     /// Writes next to the file, then renames over it, so a failed write leaves the old file intact.
     fn replace(&self, path: &str, data: &[u8], _exists: bool) -> Result<String> {
-        let tmp = crate::device::join(&dirname(path), &format!(".{}.ferry-tmp", basename(path)));
-        fs::write(native(&tmp), data).map_err(|e| io(&tmp, e))?;
-        if let Err(e) = fs::rename(native(&tmp), native(path)) {
-            let _ = fs::remove_file(native(&tmp));
-            return Err(io(path, e));
-        }
+        swap_in(path, data.len() as u64, |tmp| fs::write(tmp, data))
+    }
+
+    /// Copied by the system (a clone on APFS, which takes no time or space).
+    fn read_to(&self, path: &str, to: &Path, read: &mut dyn FnMut(u64), _stop: &AtomicBool) -> Result<String> {
         let m = fs::metadata(native(path)).map_err(|e| io(path, e))?;
-        if m.len() != data.len() as u64 {
-            return err(format!("{path}: wrote {} bytes but the file has {}.", data.len(), m.len()));
+        if m.is_dir() {
+            return err(format!("{path} is a folder."));
         }
+        let n = fs::copy(native(path), to).map_err(|e| io(path, e))?;
+        read(n);
         Ok(version_of(&m))
+    }
+
+    fn replace_from(&self, path: &str, from: &Path, _exists: bool) -> Result<String> {
+        let size = fs::metadata(from).map_err(|e| DevError::Msg(format!("{}: {e}", from.display())))?.len();
+        swap_in(path, size, |tmp| fs::copy(from, tmp).map(|_| ()))
     }
 
     fn delete(&self, path: &str, is_dir: bool) -> Result<()> {

@@ -154,6 +154,36 @@ impl Adb {
     }
 }
 
+impl Adb {
+    /// Pushes local file `from` next to `path`, moves it over `path`, and checks the phone's md5
+    /// of it is `expected` (the local file's). Returns the new version.
+    fn push_in(&self, path: &str, from: &std::path::Path, expected: String) -> Result<String> {
+        let tmp_remote = join(&dirname(path), &format!(".{}.ferry-tmp", basename(path)));
+        self.run(&["push", &from.to_string_lossy(), &tmp_remote])?;
+        self.shell(&format!("mv -f {} {}", q(&tmp_remote), q(path)))?;
+        let version = self.version(path)?;
+        if version.as_deref() != Some(expected.as_str()) {
+            return err(format!("Verification failed after writing {path}."));
+        }
+        Ok(expected)
+    }
+}
+
+/// The md5 of a file on this computer, read a piece at a time.
+fn md5_file(path: &std::path::Path) -> Result<String> {
+    use std::io::Read;
+    let mut f = std::fs::File::open(path).map_err(|e| DevError::Msg(format!("Can't read {}: {e}", path.display())))?;
+    let mut ctx = md5::Context::new();
+    let mut buf = vec![0u8; 1 << 20];
+    loop {
+        let n = f.read(&mut buf).map_err(|e| DevError::Msg(format!("Can't read {}: {e}", path.display())))?;
+        if n == 0 {
+            return Ok(format!("{:x}", ctx.compute()));
+        }
+        ctx.consume(&buf[..n]);
+    }
+}
+
 impl Transport for Adb {
     fn shell(&self, dir: &str) -> Option<std::process::Command> {
         let mut c = std::process::Command::new(&self.adb);
@@ -232,19 +262,29 @@ impl Transport for Adb {
     }
 
     fn replace(&self, path: &str, data: &[u8], _exists: bool) -> Result<String> {
-        let tmp_remote = join(&dirname(path), &format!(".{}.ferry-tmp", basename(path)));
         let tmp_local = std::env::temp_dir().join(format!("ferry-files-{}-{}", std::process::id(), md5_hex(path.as_bytes())));
         std::fs::write(&tmp_local, data).map_err(|e| DevError::Msg(format!("Can't write temp file: {e}")))?;
-        let pushed = self.run(&["push", &tmp_local.to_string_lossy(), &tmp_remote]);
+        let done = self.push_in(path, &tmp_local, md5_hex(data));
         let _ = std::fs::remove_file(&tmp_local);
-        pushed?;
-        self.shell(&format!("mv -f {} {}", q(&tmp_remote), q(path)))?;
-        let version = self.version(path)?;
-        let expected = md5_hex(data);
-        if version.as_deref() != Some(expected.as_str()) {
-            return err(format!("Verification failed after writing {path}."));
+        done
+    }
+
+    /// `adb pull` straight into the file, then checked against the phone's size and md5.
+    fn read_to(&self, path: &str, to: &std::path::Path, read: &mut dyn FnMut(u64), _stop: &std::sync::atomic::AtomicBool) -> Result<String> {
+        let Some(st) = self.stat(path)?.filter(|e| !e.dir) else {
+            return err(format!("No such file (or no permission): {path}"));
+        };
+        self.run(&["pull", path, &to.to_string_lossy()])?;
+        let got = std::fs::metadata(to).map(|m| m.len()).unwrap_or(0);
+        if got != st.size {
+            return err(format!("Read {got} bytes but the file has {}. Is it readable?", st.size));
         }
-        Ok(expected)
+        read(got);
+        md5_file(to)
+    }
+
+    fn replace_from(&self, path: &str, from: &std::path::Path, _exists: bool) -> Result<String> {
+        self.push_in(path, from, md5_file(from)?)
     }
 
     fn delete(&self, path: &str, is_dir: bool) -> Result<()> {

@@ -425,6 +425,51 @@ pub struct Sftp {
 }
 
 impl Sftp {
+    /// Writes the file under a temporary name with `write` (given the open file's name and
+    /// handle), renames it over `path`, and checks it has `size` bytes. Returns its version.
+    fn put(&self, path: &str, size: u64, write: impl FnOnce(&mut Session, &str, &[u8]) -> Result<()>) -> Result<String> {
+        self.with(|s| {
+            let tmp = join(&dirname(path), &format!(".{}.ferry-tmp", basename(path)));
+            let r = s.ask(OPEN, |o| {
+                o.str(&tmp).u32(OPEN_WRITE | OPEN_CREATE | OPEN_TRUNC).no_attrs();
+            })?;
+            let h = handle(&tmp, &r)?;
+            let wrote = write(s, &tmp, &h);
+            Self::close(s, &h);
+            let remove_tmp = |s: &mut Session| {
+                let _ = s.ask(REMOVE, |o| {
+                    o.str(&tmp);
+                });
+            };
+            if let Err(e) = wrote {
+                remove_tmp(s);
+                return Err(e);
+            }
+            // In one step where the server can; else the old file goes first.
+            let renamed = if s.posix_rename {
+                s.ask(EXTENDED, |o| {
+                    o.str("posix-rename@openssh.com").str(&tmp).str(path);
+                })
+            } else {
+                let _ = s.ask(REMOVE, |o| {
+                    o.str(path);
+                });
+                s.ask(RENAME, |o| {
+                    o.str(&tmp).str(path);
+                })
+            };
+            if let Err(e) = renamed.and_then(|r| ok(path, &r)) {
+                remove_tmp(s);
+                return Err(e);
+            }
+            let a = Self::attrs_of(s, path, STAT)?.unwrap_or_default();
+            if a.size != size {
+                return err(format!("{path}: wrote {size} bytes but the file has {}.", a.size));
+            }
+            Ok(Self::version_of(&a))
+        })
+    }
+
     pub fn open(addr: Address) -> std::result::Result<Sftp, String> {
         let mut s = Session::start(&addr)?;
         let r = s.ask(REALPATH, |o| {
@@ -528,7 +573,8 @@ impl Sftp {
         Ok(data)
     }
 
-    fn write_all(s: &mut Session, path: &str, h: &[u8], data: &[u8]) -> Result<()> {
+    /// Writes `data` at `base` in the open file.
+    fn write_all(s: &mut Session, path: &str, h: &[u8], base: u64, data: &[u8]) -> Result<()> {
         let mut waiting = 0usize;
         let mut chunks = data.chunks(CHUNK as usize).enumerate();
         loop {
@@ -536,7 +582,7 @@ impl Sftp {
                 let Some((i, chunk)) = chunks.next() else { break };
                 let id = s.id();
                 let mut o = Out::new(WRITE, id);
-                o.bytes(h).u64(i as u64 * CHUNK as u64).bytes(chunk);
+                o.bytes(h).u64(base + i as u64 * CHUNK as u64).bytes(chunk);
                 s.send(o.done())?;
                 waiting += 1;
             }
@@ -562,6 +608,9 @@ impl Sftp {
 pub fn sh_quote(text: &str) -> String {
     format!("'{}'", text.replace('\'', "'\\''"))
 }
+
+/// How much a copy reads or writes at a time.
+const PIECE: u64 = 8 << 20;
 
 impl Transport for Sftp {
     fn kind(&self) -> &'static str {
@@ -665,45 +714,57 @@ impl Transport for Sftp {
     }
 
     fn replace(&self, path: &str, data: &[u8], _exists: bool) -> Result<String> {
+        self.put(path, data.len() as u64, |s, tmp, h| Self::write_all(s, tmp, h, 0, data))
+    }
+
+    /// Read a piece at a time into the file.
+    fn read_to(&self, path: &str, to: &std::path::Path, read: &mut dyn FnMut(u64), stop: &std::sync::atomic::AtomicBool) -> Result<String> {
+        use std::io::Write;
+        let mut f = std::fs::File::create(to).map_err(|e| DevError::Msg(format!("Can't write {}: {e}", to.display())))?;
         self.with(|s| {
-            let tmp = join(&dirname(path), &format!(".{}.ferry-tmp", basename(path)));
+            let a = Self::attrs_of(s, path, STAT)?.ok_or_else(|| DevError::Msg(format!("{path}: no such file.")))?;
             let r = s.ask(OPEN, |o| {
-                o.str(&tmp).u32(OPEN_WRITE | OPEN_CREATE | OPEN_TRUNC).no_attrs();
+                o.str(path).u32(OPEN_READ).no_attrs();
             })?;
-            let h = handle(&tmp, &r)?;
-            let wrote = Self::write_all(s, &tmp, &h, data);
+            let h = handle(path, &r)?;
+            let copied = (|| -> Result<()> {
+                let mut at = 0u64;
+                loop {
+                    if stop.load(std::sync::atomic::Ordering::Relaxed) {
+                        return err("Cancelled.");
+                    }
+                    let part = Self::read_from(s, path, &h, at, PIECE)?;
+                    f.write_all(&part).map_err(|e| DevError::Msg(format!("Can't write {}: {e}", to.display())))?;
+                    at += part.len() as u64;
+                    read(part.len() as u64);
+                    if (part.len() as u64) < PIECE {
+                        return Ok(());
+                    }
+                }
+            })();
             Self::close(s, &h);
-            let remove_tmp = |s: &mut Session| {
-                let _ = s.ask(REMOVE, |o| {
-                    o.str(&tmp);
-                });
-            };
-            if let Err(e) = wrote {
-                remove_tmp(s);
-                return Err(e);
-            }
-            // In one step where the server can; else the old file goes first.
-            let renamed = if s.posix_rename {
-                s.ask(EXTENDED, |o| {
-                    o.str("posix-rename@openssh.com").str(&tmp).str(path);
-                })
-            } else {
-                let _ = s.ask(REMOVE, |o| {
-                    o.str(path);
-                });
-                s.ask(RENAME, |o| {
-                    o.str(&tmp).str(path);
-                })
-            };
-            if let Err(e) = renamed.and_then(|r| ok(path, &r)) {
-                remove_tmp(s);
-                return Err(e);
-            }
-            let a = Self::attrs_of(s, path, STAT)?.unwrap_or_default();
-            if a.size != data.len() as u64 {
-                return err(format!("{path}: wrote {} bytes but the file has {}.", data.len(), a.size));
-            }
+            copied?;
             Ok(Self::version_of(&a))
+        })
+    }
+
+    /// Sent a piece at a time from the file.
+    fn replace_from(&self, path: &str, from: &std::path::Path, _exists: bool) -> Result<String> {
+        use std::io::Read;
+        let cant = |e: std::io::Error| DevError::Msg(format!("Can't read {}: {e}", from.display()));
+        let mut f = std::fs::File::open(from).map_err(cant)?;
+        let size = f.metadata().map_err(cant)?.len();
+        self.put(path, size, |s, tmp, h| {
+            let mut buf = vec![0u8; PIECE as usize];
+            let mut at = 0u64;
+            loop {
+                let n = f.read(&mut buf).map_err(cant)?;
+                if n == 0 {
+                    return Ok(());
+                }
+                Self::write_all(s, tmp, h, at, &buf[..n])?;
+                at += n as u64;
+            }
         })
     }
 

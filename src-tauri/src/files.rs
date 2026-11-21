@@ -239,8 +239,7 @@ pub(super) async fn download(app: AppHandle, state: State<'_, AppState>, src: St
             return Ok(None);
         };
         let dest = dest.into_path().map_err(|e| e.to_string())?;
-        let (data, _) = dev.read(&path).map_err(msg)?;
-        std::fs::write(&dest, data).map_err(|e| format!("Can't write {}: {e}", dest.display()))?;
+        dev.read_to(&path, &dest, &mut |_| {}, &std::sync::atomic::AtomicBool::new(false)).map_err(msg)?;
         Ok(Some(dest.display().to_string()))
     })
     .await
@@ -258,15 +257,12 @@ pub(super) async fn upload(app: AppHandle, state: State<'_, AppState>, src: Stri
             let local = f.into_path().map_err(|e| e.to_string())?;
             let name = local.file_name().map(|n| n.to_string_lossy().into_owned()).unwrap_or_default();
             let target = device::join(&dir, &name);
-            let line = match std::fs::read(&local) {
-                Err(e) => format!("{name}: can't read it ({e})"),
-                Ok(data) => match dev.write(&target, &data, None, false) {
-                    Ok(r) => match r.backup {
-                        Some(_) => format!("{name}: replaced (old version backed up)"),
-                        None => format!("{name}: uploaded"),
-                    },
-                    Err(e) => format!("{name}: {e}"),
+            let line = match dev.write_from(&target, &local, None, false) {
+                Ok(r) => match r.backup {
+                    Some(_) => format!("{name}: replaced (old version backed up)"),
+                    None => format!("{name}: uploaded"),
                 },
+                Err(e) => format!("{name}: {e}"),
             };
             report.push(line);
         }
@@ -294,9 +290,8 @@ pub(super) fn local_copy(dev: &Device, mac: bool, path: &str) -> Result<std::pat
     // One folder per device and path, so files with the same name don't overwrite each other.
     let dir = opened_dir().join(format!("{:016x}", h.finish()));
     std::fs::create_dir_all(&dir).map_err(|e| format!("Can't create {}: {e}", dir.display()))?;
-    let (data, _) = dev.read(path).map_err(msg)?;
     let local = dir.join(device::basename(path));
-    std::fs::write(&local, data).map_err(|e| format!("Can't write {}: {e}", local.display()))?;
+    dev.read_to(path, &local, &mut |_| {}, &std::sync::atomic::AtomicBool::new(false)).map_err(msg)?;
     Ok(local)
 }
 

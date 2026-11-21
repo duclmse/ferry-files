@@ -390,14 +390,21 @@ impl Link {
     fn upload(&self, data: &[u8], name: &str, storage: u32, parent: u32) -> Result<u32> {
         let tmp = temp_path("ul");
         std::fs::write(&tmp, data).map_err(|e| DevError::Msg(format!("Can't write temp file: {e}")))?;
-        let path = CString::new(tmp.to_string_lossy().as_bytes()).unwrap();
+        let done = self.upload_file(&tmp, data.len() as u64, name, storage, parent);
+        let _ = std::fs::remove_file(&tmp);
+        done
+    }
+
+    /// Sends file `from` on this computer (`size` bytes) as `name`. Returns its id.
+    fn upload_file(&self, from: &std::path::Path, size: u64, name: &str, storage: u32, parent: u32) -> Result<u32> {
+        let path = CString::new(from.to_string_lossy().as_bytes()).map_err(|_| DevError::Msg("Bad file name.".into()))?;
         let cname = CString::new(name).map_err(|_| DevError::Msg("Bad file name.".into()))?;
         let mut meta = MtpFile {
             item_id: 0,
             parent_id: parent,
             storage_id: storage,
             filename: cname.as_ptr() as *mut c_char,
-            filesize: data.len() as u64,
+            filesize: size,
             modificationdate: 0,
             filetype: FILETYPE_UNKNOWN,
             next: std::ptr::null_mut(),
@@ -405,7 +412,6 @@ impl Link {
         let rc = unsafe {
             (self.lib.send_file_from_file)(self.dev, path.as_ptr(), &mut meta, Some(progress), self.stop_flag())
         };
-        let _ = std::fs::remove_file(&tmp);
         if rc != 0 {
             return Err(self.error(&format!("Uploading {name}")));
         }
@@ -636,6 +642,39 @@ pub struct Mtp {
 }
 
 impl Mtp {
+    /// Writes the file with `send` (which sends it under the name given, returning its id): under
+    /// a temporary name when there's a file to replace, swapped in once it's all there.
+    fn put(&self, path: &str, exists: bool, size: u64, send: &dyn Fn(&Link, &str, u32, u32) -> Result<u32>) -> Result<String> {
+        self.forget_streamed();
+        let mut inner = self.inner();
+        let name = basename(path).to_string();
+        let (sid, pid) = self.parent_of(&mut inner, path)?;
+        let old = if exists { self.resolve(&mut inner, path) } else { None };
+        let new_id = match old {
+            None => send(&inner.link, &name, sid, pid)?,
+            Some(old) => {
+                let tmp_name = format!(".{name}.ferry-tmp");
+                inner.invalidate(sid, pid);
+                if let Some(stale) = inner.children(sid, pid).into_iter().find(|k| k.name == tmp_name) {
+                    inner.link.delete(stale.id)?;
+                }
+                let tmp_id = send(&inner.link, &tmp_name, sid, pid)?;
+                Self::check_size(&mut inner, sid, pid, tmp_id, size, &tmp_name)?;
+                inner.link.delete(old.id)?;
+                match inner.link.rename(tmp_id, &name) {
+                    Ok(()) => tmp_id,
+                    Err(_) => {
+                        // Some devices can't rename: upload again under the real name.
+                        inner.link.delete(tmp_id)?;
+                        send(&inner.link, &name, sid, pid)?
+                    }
+                }
+            }
+        };
+        let k = Self::check_size(&mut inner, sid, pid, new_id, size, &name)?;
+        Ok(format!("{}:{}:{}", k.id, k.size, k.mtime))
+    }
+
     /// Opens the MTP device at `location` (from `detect`), or the first one found.
     pub fn open(location: Option<&str>) -> Result<Mtp> {
         let lib = lib()?;
@@ -871,34 +910,28 @@ impl Transport for Mtp {
 
     /// MTP can't overwrite: upload under a temporary name, delete the old file, rename.
     fn replace(&self, path: &str, data: &[u8], exists: bool) -> Result<String> {
-        self.forget_streamed();
+        self.put(path, exists, data.len() as u64, &|link, name, sid, pid| link.upload(data, name, sid, pid))
+    }
+
+    /// libmtp writes the file straight into `to`.
+    fn read_to(&self, path: &str, to: &std::path::Path, read: &mut dyn FnMut(u64), stop: &AtomicBool) -> Result<String> {
         let mut inner = self.inner();
-        let name = basename(path).to_string();
-        let (sid, pid) = self.parent_of(&mut inner, path)?;
-        let old = if exists { self.resolve(&mut inner, path) } else { None };
-        let new_id = match old {
-            None => inner.link.upload(data, &name, sid, pid)?,
-            Some(old) => {
-                let tmp_name = format!(".{name}.ferry-tmp");
-                inner.invalidate(sid, pid);
-                if let Some(stale) = inner.children(sid, pid).into_iter().find(|k| k.name == tmp_name) {
-                    inner.link.delete(stale.id)?;
-                }
-                let tmp_id = inner.link.upload(data, &tmp_name, sid, pid)?;
-                Self::check_size(&mut inner, sid, pid, tmp_id, data.len() as u64, &tmp_name)?;
-                inner.link.delete(old.id)?;
-                match inner.link.rename(tmp_id, &name) {
-                    Ok(()) => tmp_id,
-                    Err(_) => {
-                        // Some devices can't rename: upload again under the real name.
-                        inner.link.delete(tmp_id)?;
-                        inner.link.upload(data, &name, sid, pid)?
-                    }
-                }
-            }
+        self.invalidate_parent(&mut inner, path);
+        let Some(node) = self.resolve(&mut inner, path).filter(|n| !n.dir) else {
+            return err(format!("No such file: {path}"));
         };
-        let k = Self::check_size(&mut inner, sid, pid, new_id, data.len() as u64, &name)?;
-        Ok(format!("{}:{}:{}", k.id, k.size, k.mtime))
+        inner.link.download_until(node.id, to, stop)?;
+        let got = std::fs::metadata(to).map(|m| m.len()).unwrap_or(0);
+        if got != node.size {
+            return err(format!("Read {got} bytes but the device reports {}.", node.size));
+        }
+        read(got);
+        Ok(Self::version_of(&node))
+    }
+
+    fn replace_from(&self, path: &str, from: &std::path::Path, exists: bool) -> Result<String> {
+        let size = std::fs::metadata(from).map_err(|e| DevError::Msg(format!("Can't read {}: {e}", from.display())))?.len();
+        self.put(path, exists, size, &|link, name, sid, pid| link.upload_file(from, size, name, sid, pid))
     }
 
     fn delete(&self, path: &str, _is_dir: bool) -> Result<()> {
