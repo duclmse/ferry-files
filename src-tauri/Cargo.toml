@@ -51,6 +51,9 @@ hex = "0.4"
 portable-pty = "0.9"
 base64 = "0.22"
 lopdf = { version = "0.47.0", default-features = false }
+# FTP and FTPS (rustls with its root certificates, no OpenSSL).
+suppaftp = { version = "13.0.0", default-features = false, features = ["rustls-ring"] }
+webpki-roots = "0.26"
 
 [target.'cfg(unix)'.dependencies]
 signal-hook = "0.3"

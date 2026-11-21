@@ -8,7 +8,7 @@ own files and disks, with tools for EPUB books in particular.
 
 - **Panes and views**: one or two panes (⌘\\), each with tabs (⌘T, ⌘W), shown as
   a list, thumbnails or columns (names too long to show keep their extension in view). The list can
-  show folders as a tree (right-click its header). Sort, filter (⌘F; Enter searches subfolders),
+  show folders as a tree (right-click its header). Sort, filter (⌘F; Enter searches subfolders), show hidden files (⌘.),
   type a path (⌘L). All edges can be dragged to resize, and sizes are remembered.
 - **Preview** beside the files:
   - pictures that zoom and turn;
@@ -38,8 +38,9 @@ own files and disks, with tools for EPUB books in particular.
 - **Sidebar**: favourites, workspaces, disks (with eject), devices, servers,
   sync pairs, backups and history. Folders show as trees, and sections can be
   moved and hidden.
-- **Connections**: SFTP, SMB, and Everything (voidtools) over HTTP. Passwords
-  are kept in the system keychain.
+- **Connections**: SFTP, SMB, WebDAV (Nextcloud, NAS boxes), FTP and FTPS,
+  S3 buckets (AWS, Cloudflare R2, Backblaze B2, MinIO), and Everything
+  (voidtools) over HTTP. Passwords and keys are kept in the system keychain.
 - **Terminal** in a pane, on this computer, an adb phone or an SFTP server.
 - **Editor view**: a folder tree beside text files in tabs.
 - **Books**: list every EPUB under a folder. Check them, change their info, or
@@ -119,7 +120,8 @@ cargo run --example epub_smoke [-- adb|mtp]
 - `styles/`: the CSS, one file per part. `base.css` has the colour tokens.
 - `src-tauri/`: the backend.
   - Transports: `device.rs`, `adb.rs`, `mtp.rs` (`wpd.rs` on Windows),
-    `local.rs`, and the servers (`sftp.rs`, `smb.rs`, `everything.rs`).
+    `local.rs`, and the servers (`sftp.rs`, `smb.rs`, `webdav.rs`, `ftp.rs`,
+    `s3.rs`, `everything.rs`).
   - `platform.rs`: what differs between operating systems.
   - `protocol.rs`: the `ferry://` scheme that serves files to the web view.
   - EPUB: `epub/`, `epub.rs`, `xml.rs`, `books.rs`.
