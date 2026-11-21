@@ -1,5 +1,5 @@
-//! What sort of file an item is, and a big icon for it (thumbnails, and the preview while a
-//! picture loads).
+//! What sort of file an item is, and its icon (every view, and the preview while a picture
+//! loads).
 
 use super::*;
 
@@ -49,7 +49,7 @@ pub(super) fn file_type(e: &Entry) -> FileType {
     }
 }
 
-/// The item's icon, 48×48 drawn at 1.25em: a page with a mark in the type's colour, a folder or a
+/// The item's icon, drawn on a 48×48 grid: a page with a mark in the type's colour, a folder or a
 /// book. Any other file shows its extension on the page.
 pub(super) fn type_icon(e: &Entry) -> AnyView {
     const PAGE: &str = r#"<path class="page" d="M12 4h17l9 9v29a2 2 0 0 1-2 2H12a2 2 0 0 1-2-2V6a2 2 0 0 1 2-2z"/><path class="page" d="M29 4v9h9"/>"#;

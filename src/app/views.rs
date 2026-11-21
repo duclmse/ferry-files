@@ -124,7 +124,6 @@ pub(super) fn ListView(pane: Pane) -> impl IntoView {
                             None => p.entries.with(|es| win.slice(es)).into_iter().map(|e| (e, 0)).collect(),
                         }) key=|(e, _)| (e.path.clone(), e.size, e.mtime) let((e, depth))>
                         {
-                            let k = kind(&e);
                             // In the tree: a folder's arrow (or room for one), indented by depth.
                             let twisty = {
                                 let path = StoredValue::new(e.path.clone());
@@ -156,7 +155,7 @@ pub(super) fn ListView(pane: Pane) -> impl IntoView {
                                     on:dragstart=drag_start(ctx, p, e.path.clone()) on:dragend=drag_end(ctx)
                                     on:dragover=move |ev| if e.dir { over(ev) } on:drop=move |ev| if e.dir { drop(ev) }
                                     on:click=click on:dblclick=dbl on:contextmenu=menu>
-                                    <td class="name" title=e.path.clone() style=(depth > 0).then(|| format!("padding-left: {}px", 12 + depth * 16))>{twisty}<span class="icon">{icon(k)}</span><Name pane=p entry=e.clone() split=true/>
+                                    <td class="name" title=e.path.clone() style=(depth > 0).then(|| format!("padding-left: {}px", 12 + depth * 16))>{twisty}<span class="icon">{type_icon(&e)}</span><Name pane=p entry=e.clone() split=true/>
                                         {where_.map(|w| view! { <span class="where">{w}</span> })}</td>
                                     {move || p.list_cols.get().into_iter().map(|c| {
                                         view! { <td class=if c == 0 { "kindcol" } else { "num" }>{cells[c].clone()}</td> }
@@ -505,7 +504,7 @@ fn ZipColumns(pane: Pane, src: Src, entry: Entry, open: RwSignal<Vec<String>>) -
                                                     }
                                                 });
                                             }>
-                                            <span class="icon">{icon(if i.dir { Kind::Folder } else { Kind::Other })}</span>
+                                            <span class="icon">{type_icon(&Entry { name: i.name.clone(), path: c.clone(), dir: i.dir, size: i.size, mtime: 0 })}</span>
                                             <span class="name">{split_name(&i.name, i.dir)}</span>
                                             {(!i.dir).then(|| view! { <span class="size">{human_size(i.size)}</span> })}
                                             {i.dir.then(|| view! { <span class="chev">"›"</span> })}
@@ -580,7 +579,6 @@ pub(super) fn Column(pane: Pane, dir: String, chain: Memo<Vec<String>>, width: R
                             ctx.navigate_select(p, p.src.get_untracked(), dir.clone(), Some(e1.path.clone()));
                         }
                     };
-                    let k = kind(&e);
                     let (fdir, key) = (e.dir.then(|| e.path.clone()), format!("{}:{}", p.id, e.path));
                     let (over, drop) = drop_events(ctx, p, fdir.clone());
                     let is_dir = e.dir;
@@ -596,7 +594,7 @@ pub(super) fn Column(pane: Pane, dir: String, chain: Memo<Vec<String>>, width: R
                             on:click=click
                             on:dblclick=move |_| if !e2.dir { ctx.open(p, e2.clone()) }
                             on:contextmenu=move |ev| ctx.show_menu(p, &ev, Some(e.clone()))>
-                            <span class="icon">{icon(k)}</span>
+                            <span class="icon">{type_icon(&e)}</span>
                             <span class="name"><Name pane=p entry=e.clone() split=true/></span>
                             {e.dir.then(|| view! { <span class="chev">"›"</span> })}
                         </div>

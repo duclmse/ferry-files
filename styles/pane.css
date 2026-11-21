@@ -393,8 +393,30 @@ th.num {
 }
 
 .icon {
-  display: inline-block;
+  display: inline-flex;
+  align-items: center;
   width: 20px;
+  flex: none;
+  vertical-align: -3px;
+}
+
+/* The type icons small (filetype.rs): heavier lines, and no extension text, too small to read. */
+.icon .ft {
+  width: 16px;
+  height: 16px;
+}
+
+.icon .ft .page,
+.icon .ft .fill {
+  stroke-width: 3;
+}
+
+.icon .ft .mark {
+  stroke-width: 4;
+}
+
+.icon .ft text {
+  display: none;
 }
 
 .empty {

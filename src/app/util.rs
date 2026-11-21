@@ -191,15 +191,6 @@ pub(super) fn base(path: &str) -> String {
     }
 }
 
-pub(super) fn icon(k: Kind) -> &'static str {
-    match k {
-        Kind::Folder => "📁",
-        Kind::Epub => "📘",
-        Kind::Text => "📝",
-        Kind::Other => "📄",
-    }
-}
-
 pub(super) const THUMB_EXTS: &[&str] = &["jpg", "jpeg", "png", "gif", "webp", "bmp", "epub"];
 /// Same limit as the backend (src-tauri/src/thumbs.rs): bigger files aren't read for a thumbnail.
 pub(super) const THUMB_MAX: u64 = 60 * 1024 * 1024;
