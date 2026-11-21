@@ -19,8 +19,8 @@ pub(super) struct Popped {
     /// The subtitles loaded, and which one shows.
     #[serde(default, skip_serializing_if = "serde_json::Value::is_null")]
     tracks: serde_json::Value,
-    #[serde(default)]
-    shown: Option<usize>,
+    #[serde(default, skip_serializing_if = "serde_json::Value::is_null")]
+    shown: serde_json::Value,
 }
 
 static NEXT: AtomicU32 = AtomicU32::new(1);

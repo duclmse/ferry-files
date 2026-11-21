@@ -7,14 +7,16 @@ own files and disks, with tools for EPUB books in particular.
 ## Features
 
 - **Panes and views**: one or two panes (⌘\\), each with tabs (⌘T, ⌘W), shown as
-  a list, thumbnails or columns. Sort, filter (⌘F; Enter searches subfolders),
+  a list, thumbnails or columns (long names keep their extension in view). Sort, filter (⌘F; Enter searches subfolders),
   type a path (⌘L). All edges can be dragged to resize, and sizes are remembered.
 - **Preview** beside the files:
   - pictures that zoom and turn;
   - video and audio streamed from the device, with their own controls, full
     screen and a pop-out window. Subtitles (.srt, .sub, .vtt) named like the
     video in its folder are shown, and more can be dropped on the video, from
-    a pane or Finder. C turns them on and off;
+    a pane or Finder. Two can show at once (the second at the top), and
+    Settings picks the languages shown first. C turns them on and off. In full
+    screen the controls hide while the mouse is still;
   - text and code in colour (about 50 languages), read as you scroll;
   - hex, read by range, with go-to-offset;
   - PDFs, with an outline, go to page, zoom, turn, Open and Show in Finder;

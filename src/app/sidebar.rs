@@ -675,6 +675,13 @@ pub(super) fn Settings() -> impl IntoView {
             "Turn the controls with the video"
         </label>
         <p class="hint">"On: the controls stay along the bottom of the picture, so they're on its side when the video is. Off: they stay level under it."</p>
+        <label class="row">
+            "Subtitle languages"
+            <input type="text" class="text" placeholder="en, vi" spellcheck="false" autocomplete="off"
+                prop:value=move || prefs.sub_langs.get()
+                on:change=move |e| prefs.set_sub_langs(event_target_value(&e).trim().to_string())/>
+        </label>
+        <p class="hint">"Up to two, such as \"en, vi\" or \"English\". A video shows the subtitles in these languages, the first at the bottom and the second at the top, when their file names say the language (Movie.en.srt). If none do, the first subtitle file shows."</p>
     }.into_any();
     let storage = move || view! {
         {folder("backups", "Backups", "Copies of files from before they were replaced or deleted. Kept until you clear them in Backups, which moves them to the Trash.")}

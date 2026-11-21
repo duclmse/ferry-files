@@ -481,7 +481,7 @@ fn ZipColumns(pane: Pane, src: Src, entry: Entry, open: RwSignal<Vec<String>>) -
                                                 });
                                             }>
                                             <span class="icon">{icon(if i.dir { Kind::Folder } else { Kind::Other })}</span>
-                                            <span class="name">{i.name.clone()}</span>
+                                            <span class="name">{split_name(&i.name, i.dir)}</span>
                                             {(!i.dir).then(|| view! { <span class="size">{human_size(i.size)}</span> })}
                                             {i.dir.then(|| view! { <span class="chev">"›"</span> })}
                                         </div>
@@ -572,7 +572,7 @@ pub(super) fn Column(pane: Pane, dir: String, chain: Memo<Vec<String>>, width: R
                             on:dblclick=move |_| if !e2.dir { ctx.open(p, e2.clone()) }
                             on:contextmenu=move |ev| ctx.show_menu(p, &ev, Some(e.clone()))>
                             <span class="icon">{icon(k)}</span>
-                            <span class="name"><Name pane=p entry=e.clone()/></span>
+                            <span class="name"><Name pane=p entry=e.clone() split=true/></span>
                             {e.dir.then(|| view! { <span class="chev">"›"</span> })}
                         </div>
                     }

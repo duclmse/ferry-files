@@ -216,6 +216,22 @@
   text-overflow: ellipsis;
 }
 
+/* A file's extension stays in view; its stem is cut short instead. */
+.col .row .name .split {
+  display: flex;
+  min-width: 0;
+}
+
+.col .row .name .stem {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.col .row .name .ext {
+  flex: none;
+}
+
 .col .row .chev {
   color: var(--muted);
 }
@@ -1397,4 +1413,30 @@ td.name input.rename {
   margin: 2px 10px 4px;
   color: var(--muted);
   font-size: 11px;
+}
+
+/* Full screen: the controls lie over the bottom of the picture, and hide with the pointer while
+   the video plays and the mouse is still (video.rs). */
+.vplayer.full .vbox:not(.turned) {
+  position: relative;
+}
+
+.vplayer.full .vcontrols {
+  position: absolute;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  padding-top: 18px;
+  background: linear-gradient(transparent, rgba(0, 0, 0, 0.75));
+  transition: opacity 0.2s;
+}
+
+.vplayer.full.idle .vcontrols {
+  opacity: 0;
+  pointer-events: none;
+}
+
+.vplayer.full.idle,
+.vplayer.full.idle video.play {
+  cursor: none;
 }

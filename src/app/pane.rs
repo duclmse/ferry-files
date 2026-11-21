@@ -291,8 +291,21 @@ pub(super) fn Notices(pane: Pane) -> impl IntoView {
 
 /// The name of `e`, or a field to rename it when it's being renamed. Enter or clicking elsewhere
 /// renames; Escape leaves it as it was.
+/// A file's name as its stem and its extension, the stem cut short (…) to fit and the extension
+/// always shown (the column view). A folder's, or one with no short extension, as it is.
+pub(super) fn split_name(name: &str, dir: bool) -> AnyView {
+    match name.rsplit_once('.') {
+        Some((stem, ext)) if !dir && !stem.is_empty() && !ext.is_empty() && ext.chars().count() <= 10 => view! {
+            <span class="split" title=name.to_string()><span class="stem">{stem.to_string()}</span><span class="ext">"."{ext.to_string()}</span></span>
+        }
+        .into_any(),
+        _ => name.to_string().into_any(),
+    }
+}
+
+/// `split`: as `split_name`.
 #[component]
-pub(super) fn Name(pane: Pane, entry: Entry) -> impl IntoView {
+pub(super) fn Name(pane: Pane, entry: Entry, #[prop(optional)] split: bool) -> impl IntoView {
     let p = pane;
     let path = entry.path.clone();
     let e = StoredValue::new(entry);
@@ -309,6 +322,8 @@ pub(super) fn Name(pane: Pane, entry: Entry) -> impl IntoView {
                 <s>{e.with_value(|e| e.name.clone())}</s>" → "<b class:bad=bad>{name}</b>
             </span>
         }.into_any()
+    } else if split {
+        e.with_value(|e| split_name(&e.name, e.dir))
     } else {
         e.with_value(|e| e.name.clone()).into_any()
     }

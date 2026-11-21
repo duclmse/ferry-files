@@ -24,22 +24,34 @@ pub(super) struct VideoPrefs {
     pub(super) hold_speed: RwSignal<f64>,
     /// Whether the controls turn with the video, staying along its bottom edge.
     pub(super) turn_controls: RwSignal<bool>,
+    /// The subtitle languages shown first, as typed ("en, vi").
+    pub(super) sub_langs: RwSignal<String>,
 }
 
 const HOLD_SPEED_KEY: &str = "ferry-files.hold-speed";
 const TURN_CONTROLS_KEY: &str = "ferry-files.turn-controls";
+const SUB_LANGS_KEY: &str = "ferry-files.sub-langs";
 /// The speeds offered for holding.
 pub(super) const HOLD_SPEEDS: &[f64] = &[1.5, 2.0, 3.0, 4.0];
 
 impl VideoPrefs {
     pub(super) fn load() -> Self {
         let speed = stored(HOLD_SPEED_KEY).and_then(|s| s.parse().ok()).filter(|s| HOLD_SPEEDS.contains(s)).unwrap_or(2.0);
-        VideoPrefs { hold_speed: RwSignal::new(speed), turn_controls: RwSignal::new(stored(TURN_CONTROLS_KEY).as_deref() == Some("1")) }
+        VideoPrefs {
+            hold_speed: RwSignal::new(speed),
+            turn_controls: RwSignal::new(stored(TURN_CONTROLS_KEY).as_deref() == Some("1")),
+            sub_langs: RwSignal::new(stored(SUB_LANGS_KEY).unwrap_or_default()),
+        }
     }
 
     pub(super) fn set_hold_speed(self, s: f64) {
         store(HOLD_SPEED_KEY, &s.to_string());
         self.hold_speed.set(s);
+    }
+
+    pub(super) fn set_sub_langs(self, s: String) {
+        store(SUB_LANGS_KEY, &s);
+        self.sub_langs.set(s);
     }
 
     pub(super) fn set_turn_controls(self, on: bool) {
@@ -326,7 +338,7 @@ pub struct Popped {
     #[serde(default)]
     tracks: Vec<Track>,
     #[serde(default)]
-    shown: Option<usize>,
+    shown: Vec<usize>,
 }
 
 // ---- Subtitles ----
@@ -344,6 +356,92 @@ const SUB_EXTS: &[&str] = &["srt", "sub", "vtt"];
 
 fn is_subtitle(path: &str) -> bool {
     path.rsplit_once('.').is_some_and(|(_, ext)| SUB_EXTS.iter().any(|e| ext.eq_ignore_ascii_case(e)))
+}
+
+/// How many subtitles show at once.
+const SHOWN_MAX: usize = 2;
+
+/// Languages by their two-letter code, with the other ways file names (and Settings) give them.
+const LANGS: &[(&str, &[&str])] = &[
+    ("en", &["eng", "english"]),
+    ("vi", &["vie", "vietnamese"]),
+    ("fr", &["fre", "fra", "french", "francais"]),
+    ("de", &["ger", "deu", "german", "deutsch"]),
+    ("es", &["spa", "spanish", "espanol"]),
+    ("it", &["ita", "italian"]),
+    ("pt", &["por", "portuguese"]),
+    ("ru", &["rus", "russian"]),
+    ("ja", &["jpn", "japanese", "jp"]),
+    ("zh", &["chi", "zho", "chinese", "chs", "cht"]),
+    ("ko", &["kor", "korean"]),
+    ("ar", &["ara", "arabic"]),
+    ("hi", &["hin", "hindi"]),
+    ("th", &["tha", "thai"]),
+    ("id", &["ind", "indonesian"]),
+    ("nl", &["dut", "nld", "dutch"]),
+    ("pl", &["pol", "polish"]),
+    ("tr", &["tur", "turkish"]),
+    ("sv", &["swe", "swedish"]),
+    ("uk", &["ukr", "ukrainian"]),
+];
+
+/// A language as its two-letter code where it's known ("English", "eng", "en-US": "en"), else
+/// as it's written, in lower case. None when it's not a language's (a year, a word).
+fn lang_code(s: &str) -> Option<String> {
+    let s = s.trim().to_lowercase();
+    let base = s.split('-').next().unwrap_or("");
+    if let Some((code, _)) = LANGS.iter().find(|(c, other)| *c == base || other.contains(&base)) {
+        return Some(code.to_string());
+    }
+    (matches!(base.len(), 2 | 3) && base.chars().all(|c| c.is_ascii_alphabetic())).then(|| base.to_string())
+}
+
+/// The language a subtitle file's name gives after the video's name: "Movie.en.srt",
+/// "Movie_English.srt", "Movie.en.forced.srt".
+fn track_lang(name: &str) -> Option<String> {
+    let stem = name.rsplit_once('.').map_or(name, |(s, _)| s);
+    let parts: Vec<&str> = stem.split(['.', '_', ' ']).collect();
+    // The first part is the video's name.
+    parts.iter().skip(1).rev().take(2).find_map(|p| {
+        let code = lang_code(p)?;
+        // A short word that isn't a known language counts only as the last part.
+        (LANGS.iter().any(|(c, _)| *c == code) || Some(p) == parts.last()).then_some(code)
+    })
+}
+
+/// The languages typed in Settings ("en, vi"), up to `SHOWN_MAX`.
+fn pref_langs(s: &str) -> Vec<String> {
+    s.split([',', ' ', ';']).filter_map(lang_code).take(SHOWN_MAX).collect()
+}
+
+/// Which of the subtitle files `names` show at first: one in each of the languages `prefs`, in
+/// that order; none of them there, the first file.
+fn default_shown(names: &[String], prefs: &[String]) -> Vec<usize> {
+    let langs: Vec<Option<String>> = names.iter().map(|n| track_lang(n)).collect();
+    let mut out = vec![];
+    for p in prefs {
+        if let Some(i) = (0..names.len()).find(|i| langs[*i].as_ref() == Some(p) && !out.contains(i)) {
+            out.push(i);
+        }
+    }
+    if out.is_empty() && !names.is_empty() {
+        out.push(0);
+    }
+    out
+}
+
+/// The cues of `vtt` placed at the top of the picture (the second subtitles shown), unless a
+/// cue says where it goes.
+fn at_top(vtt: &str) -> String {
+    let mut out = String::with_capacity(vtt.len() + vtt.len() / 8);
+    for line in vtt.lines() {
+        out.push_str(line);
+        if line.contains("-->") && !line.contains("line:") {
+            out.push_str(" line:0");
+        }
+        out.push('\n');
+    }
+    out
 }
 
 #[derive(Deserialize)]
@@ -399,7 +497,7 @@ fn track_mode(track: &web_sys::Element, mode: &str) {
 /// `pane`: takes that pane's media keys. `pop`: shows the pop-out button. `start` and `autoplay`:
 /// where it starts, and playing (a popped-out one). `near`: the device and path of the video, to
 /// load the subtitle files beside it with a name like it. `tracks` and `shown`: subtitles loaded
-/// already (a popped-out one's), and which one shows.
+/// already (a popped-out one's), and which ones show.
 #[component]
 pub(super) fn VideoPlayer(
     url: String,
@@ -413,7 +511,7 @@ pub(super) fn VideoPlayer(
     #[prop(optional)] autoplay: bool,
     #[prop(default = None)] near: Option<(Src, String)>,
     #[prop(optional)] tracks: Vec<Track>,
-    #[prop(default = None)] shown: Option<usize>,
+    #[prop(optional)] shown: Vec<usize>,
 ) -> impl IntoView {
     let prefs = use_context::<VideoPrefs>().unwrap_or_else(VideoPrefs::load);
     let el = StoredValue::new_local(None::<web_sys::HtmlMediaElement>);
@@ -457,13 +555,26 @@ pub(super) fn VideoPlayer(
         }
     };
 
-    // Subtitles: the files loaded, the one shown, and the menu to pick one.
+    // Subtitles: the files loaded, the ones shown (up to two, the second at the top), and the
+    // menu to pick them.
     let subs = RwSignal::new(tracks);
-    let shown = RwSignal::new(shown.filter(|i| *i < subs.with_untracked(Vec::len)));
+    let n = subs.with_untracked(Vec::len);
+    let shown = RwSignal::new(shown.into_iter().filter(|i| *i < n).take(SHOWN_MAX).collect::<Vec<usize>>());
     let subs_menu = RwSignal::new(false);
-    // Adds a track (or replaces one of the same name); `show`: shows it, else only when none is.
-    let add_track = move |t: Track, show: bool| {
-        let Some(i) = subs.try_update(|s| match s.iter().position(|o| o.name == t.name) {
+    // Shows track `i` beside the one shown, replacing the one picked earlier when two are.
+    let show_track = move |i: usize| {
+        let _ = shown.try_update(|s| {
+            if !s.contains(&i) {
+                if s.len() >= SHOWN_MAX {
+                    s.remove(0);
+                }
+                s.push(i);
+            }
+        });
+    };
+    // Adds a track (or replaces one of the same name), and says where it is.
+    let add_track = move |t: Track| {
+        subs.try_update(|s| match s.iter().position(|o| o.name == t.name) {
             Some(i) => {
                 s[i] = t;
                 i
@@ -472,20 +583,20 @@ pub(super) fn VideoPlayer(
                 s.push(t);
                 s.len() - 1
             }
-        }) else {
-            return;
-        };
-        if show || shown.get_untracked().is_none() {
-            shown.set(Some(i));
-        }
+        })
     };
     if let Some((src, path)) = near {
         spawn_local(async move {
             let Ok(found) = call::<Vec<SubFile>>("subtitles", json!({ "src": src.key(), "path": path })).await else { return };
             for f in found {
                 if let Ok(t) = fetch_track(src, f.path).await {
-                    add_track(t, false);
+                    add_track(t);
                 }
+            }
+            // The languages picked in Settings, or else the first file; unless one was dropped.
+            let Some(names) = subs.try_with_untracked(|s| s.iter().map(|t| t.name.clone()).collect::<Vec<_>>()) else { return };
+            if shown.get_untracked().is_empty() {
+                shown.set(default_shown(&names, &pref_langs(&prefs.sub_langs.get_untracked())));
             }
         });
     }
@@ -496,8 +607,8 @@ pub(super) fn VideoPlayer(
                 match fetch_track(src, path).await {
                     Ok(t) => {
                         let name = t.name.clone();
-                        add_track(t, true);
-                        if subs.try_get_untracked().is_some() {
+                        if let Some(i) = add_track(t) {
+                            show_track(i);
                             flash(format!("Subtitles: {name}"));
                         }
                     }
@@ -539,30 +650,31 @@ pub(super) fn VideoPlayer(
         }
         take_drop(src, paths);
     };
-    // C: subtitles off, or back on (the one shown last).
-    let last_shown = StoredValue::new(None::<usize>);
-    let toggle_subs = move || match shown.get_untracked() {
-        Some(i) => {
-            last_shown.set_value(Some(i));
-            shown.set(None);
+    // C: subtitles off, or back on (the ones shown last).
+    let last_shown = StoredValue::new(Vec::<usize>::new());
+    let toggle_subs = move || {
+        let now = shown.get_untracked();
+        if !now.is_empty() {
+            last_shown.set_value(now);
+            shown.set(vec![]);
             flash("Subtitles off".into());
+            return;
         }
-        None => {
-            let n = subs.with_untracked(Vec::len);
-            if n == 0 {
-                flash(if ctx.is_some() { "No subtitles. Drop a .srt or .sub file on the video." } else { "No subtitles" }.into());
-                return;
-            }
-            let i = last_shown.get_value().filter(|i| *i < n).unwrap_or(0);
-            shown.set(Some(i));
-            flash(format!("Subtitles: {}", subs.with_untracked(|s| s[i].name.clone())));
+        let names = subs.with_untracked(|s| s.iter().map(|t| t.name.clone()).collect::<Vec<_>>());
+        if names.is_empty() {
+            flash(if ctx.is_some() { "No subtitles. Drop a .srt or .sub file on the video." } else { "No subtitles" }.into());
+            return;
         }
+        let last: Vec<usize> = last_shown.get_value().into_iter().filter(|i| *i < names.len()).collect();
+        let on = if last.is_empty() { default_shown(&names, &pref_langs(&prefs.sub_langs.get_untracked())) } else { last };
+        flash(format!("Subtitles: {}", on.iter().map(|&i| names[i].as_str()).collect::<Vec<_>>().join(", ")));
+        shown.set(on);
     };
-    // The shown track, as a <track> in the video, its WebVTT in a blob: URL (the page's own
-    // origin, unlike the video's ferry: one). Each is let go of when another replaces it.
-    let track_el = StoredValue::new_local(None::<(web_sys::Element, String)>);
-    let free_track = move || {
-        if let Some((t, url)) = track_el.try_update_value(Option::take).flatten() {
+    // The shown tracks, as <track>s in the video, their WebVTT in blob: URLs (the page's own
+    // origin, unlike the video's ferry: one). They're let go of when the tracks shown change.
+    let track_els = StoredValue::new_local(Vec::<(web_sys::Element, String)>::new());
+    let free_tracks = move || {
+        for (t, url) in track_els.try_update_value(std::mem::take).unwrap_or_default() {
             track_mode(&t, "disabled");
             t.remove();
             let _ = web_sys::Url::revoke_object_url(&url);
@@ -570,25 +682,30 @@ pub(super) fn VideoPlayer(
     };
     Effect::new(move |_| {
         let Some(v) = video_ref.get() else { return };
-        let vtt = shown.get().and_then(|i| subs.with(|s| s.get(i).map(|t| (t.name.clone(), t.vtt.clone()))));
-        free_track();
-        let Some((name, vtt)) = vtt else { return };
-        let opts = web_sys::BlobPropertyBag::new();
-        opts.set_type("text/vtt");
-        let Ok(blob) = web_sys::Blob::new_with_str_sequence_and_options(&js_sys::Array::of1(&vtt.into()), &opts) else { return };
-        let Ok(url) = web_sys::Url::create_object_url_with_blob(&blob) else { return };
-        let Ok(t) = document().create_element("track") else {
-            let _ = web_sys::Url::revoke_object_url(&url);
-            return;
-        };
-        for (k, val) in [("kind", "subtitles"), ("label", name.as_str()), ("default", ""), ("src", url.as_str())] {
-            let _ = t.set_attribute(k, val);
+        let picked: Vec<(String, String)> = shown.get().iter().enumerate().filter_map(|(at, &i)| {
+            subs.with(|s| s.get(i).map(|t| (t.name.clone(), if at == 0 { t.vtt.clone() } else { at_top(&t.vtt) })))
+        }).collect();
+        free_tracks();
+        let mut made = vec![];
+        for (name, vtt) in picked {
+            let opts = web_sys::BlobPropertyBag::new();
+            opts.set_type("text/vtt");
+            let Ok(blob) = web_sys::Blob::new_with_str_sequence_and_options(&js_sys::Array::of1(&vtt.into()), &opts) else { continue };
+            let Ok(url) = web_sys::Url::create_object_url_with_blob(&blob) else { continue };
+            let Ok(t) = document().create_element("track") else {
+                let _ = web_sys::Url::revoke_object_url(&url);
+                continue;
+            };
+            for (k, val) in [("kind", "subtitles"), ("label", name.as_str()), ("default", ""), ("src", url.as_str())] {
+                let _ = t.set_attribute(k, val);
+            }
+            let _ = v.append_child(&t);
+            track_mode(&t, "showing");
+            made.push((t, url));
         }
-        let _ = v.append_child(&t);
-        track_mode(&t, "showing");
-        track_el.set_value(Some((t, url)));
+        track_els.set_value(made);
     });
-    on_cleanup(free_track);
+    on_cleanup(free_tracks);
 
     // 2× while the video (or a forward key) is held: Some(whether it was paused) while it is.
     let fast = StoredValue::new_local(None::<bool>);
@@ -699,6 +816,53 @@ pub(super) fn VideoPlayer(
 
     // Full screen: the player with its controls, or else the web view's own for the video.
     let player_ref = NodeRef::<html::Div>::new();
+    // In full screen the controls lie over the picture, and hide (with the pointer) when the
+    // mouse is still for a moment while it plays; moving it brings them back.
+    let full = RwSignal::new(false);
+    let idle = RwSignal::new(false);
+    let idle_timer = StoredValue::new_local(None::<TimeoutHandle>);
+    let wake = move || {
+        let _ = idle.try_set(false);
+        if let Some(t) = idle_timer.try_update_value(Option::take).flatten() {
+            t.clear();
+        }
+        if !full.get_untracked() {
+            return;
+        }
+        let t = set_timeout_with_handle(
+            move || {
+                let _ = idle_timer.try_set_value(None);
+                // Not while the mouse is on the controls.
+                let on_controls = player_ref
+                    .try_get_untracked()
+                    .flatten()
+                    .and_then(|p| p.query_selector(".vcontrols:hover").ok().flatten())
+                    .is_some();
+                if !on_controls {
+                    let _ = idle.try_set(true);
+                }
+            },
+            Duration::from_millis(CONTROLS_IDLE_MS),
+        )
+        .ok();
+        idle_timer.set_value(t);
+    };
+    let full_change = StoredValue::new_local(None::<Closure<dyn Fn()>>);
+    player_ref.on_load(move |p| {
+        let cb = Closure::<dyn Fn()>::new(move || {
+            let doc: JsValue = document().into();
+            let get = |k: &str| js_sys::Reflect::get(&doc, &k.into()).ok().filter(|v| !v.is_undefined() && !v.is_null());
+            let on = get("fullscreenElement").or_else(|| get("webkitFullscreenElement")).is_some_and(|el| {
+                player_ref.try_get_untracked().flatten().is_some_and(|p| JsValue::from(p) == el)
+            });
+            let _ = full.try_set(on);
+            wake();
+        });
+        for name in ["fullscreenchange", "webkitfullscreenchange"] {
+            let _ = p.add_event_listener_with_callback(name, cb.as_ref().unchecked_ref());
+        }
+        full_change.set_value(Some(cb));
+    });
     let full_screen = move || {
         let doc = document();
         let get = |o: &JsValue, k: &str| js_sys::Reflect::get(o, &k.into()).ok().filter(|v| !v.is_undefined() && !v.is_null());
@@ -728,6 +892,7 @@ pub(super) fn VideoPlayer(
             return;
         }
         let repeat = ev.repeat();
+        wake();
         let done = match ev.code().as_str() {
             "Space" | "KeyK" if !repeat => {
                 play();
@@ -941,7 +1106,8 @@ pub(super) fn VideoPlayer(
 
     view! {
         <div class="vplayer" tabindex="0" node_ref=player_ref data-player=player_id.to_string() on:keydown=keydown on:keyup=keyup
-            on:dragover=drag_over on:drop=drop>
+            on:dragover=drag_over on:drop=drop on:mousemove=move |_| wake()
+            class:full=full class:idle=move || full.get() && idle.get() && playing.get() && !subs_menu.get()>
             <div class="vbox" class:turned=move || prefs.turn_controls.get() && turn.get() != 0 style=box_style
                 on:transitionend=move |ev| if ev.target() == ev.current_target() { turn.settle() }>
             <div class="vstage" node_ref=stage>
@@ -955,7 +1121,7 @@ pub(super) fn VideoPlayer(
                         time.set(m.current_time());
                         resume.tick(&m);
                     }
-                    on:play=move |_| playing.set(true)
+                    on:play=move |_| { playing.set(true); wake(); }
                     on:pause=move |ev| {
                         playing.set(false);
                         if let Some(m) = target_media(&ev) { resume.save(&m) }
@@ -1001,25 +1167,31 @@ pub(super) fn VideoPlayer(
                     <span class="vtime">{move || format!("{} / {}", clock(time.get()), clock(length.get()))}</span>
                     <span class="grow"></span>
                     <span class="vsubs">
-                        <button class="btn icon-only" class:on=move || shown.get().is_some() on:mousedown=quiet
+                        <button class="btn icon-only" class:on=move || !shown.with(Vec::is_empty) on:mousedown=quiet
                             on:click=move |_| subs_menu.update(|o| *o = !*o)
                             title="Subtitles (C)" aria-label="Subtitles">{ico(Icon::Subtitles)}</button>
                         {move || subs_menu.get().then(|| view! {
                             <div class="menu vsubs-menu" role="menu" on:mousedown=quiet>
-                                <button role="menuitemradio" aria-checked=move || shown.get().is_none().to_string()
-                                    on:click=move |_| { shown.set(None); subs_menu.set(false); }>
-                                    <span>"Off"</span>{move || shown.get().is_none().then(|| ico(Icon::Check))}
+                                <button role="menuitemradio" aria-checked=move || shown.with(Vec::is_empty).to_string()
+                                    on:click=move |_| { shown.set(vec![]); subs_menu.set(false); }>
+                                    <span>"Off"</span>{move || shown.with(Vec::is_empty).then(|| ico(Icon::Check))}
                                 </button>
-                                {move || subs.with(|s| s.iter().enumerate().map(|(i, t)| view! {
-                                    <button role="menuitemradio" aria-checked=move || (shown.get() == Some(i)).to_string()
-                                        on:click=move |_| { shown.set(Some(i)); subs_menu.set(false); }>
-                                        <span>{t.name.clone()}</span>{move || (shown.get() == Some(i)).then(|| ico(Icon::Check))}
-                                    </button>
+                                {move || subs.with(|s| s.iter().enumerate().map(|(i, t)| {
+                                    let on = move || shown.with(|s| s.contains(&i));
+                                    view! {
+                                        <button role="menuitemcheckbox" aria-checked=move || on().to_string()
+                                            on:click=move |_| if on() { shown.update(|s| s.retain(|j| *j != i)) } else { show_track(i) }>
+                                            <span>{t.name.clone()}</span>
+                                            {move || (shown.with(|s| s.len() > 1 && s[1] == i)).then(|| view! { <span class="key">"top"</span> })}
+                                            {move || on().then(|| ico(Icon::Check))}
+                                        </button>
+                                    }
                                 }).collect_view())}
-                                {ctx.is_some().then(|| view! {
-                                    <div class="sep"></div>
-                                    <p class="vsubs-hint">"Drop a .srt or .sub file on the video to add it."</p>
-                                })}
+                                <div class="sep"></div>
+                                <p class="vsubs-hint">
+                                    "Up to two at once: the second shows at the top."
+                                    {ctx.is_some().then_some(" Drop a .srt or .sub file on the video to add one.")}
+                                </p>
                             </div>
                         })}
                     </span>
@@ -1043,6 +1215,9 @@ pub(super) fn VideoPlayer(
         </div>
     }
 }
+
+/// How long the mouse is still in full screen before the controls hide.
+const CONTROLS_IDLE_MS: u64 = 2500;
 
 /// The height of a video's controls, added to a popped-out window's.
 const CONTROLS_H: f64 = 64.0;
@@ -1095,5 +1270,32 @@ mod tests {
         assert!(is_subtitle("c.vtt"));
         assert!(!is_subtitle("d.mp4"));
         assert!(!is_subtitle("srt"));
+    }
+
+    #[test]
+    fn finds_languages_in_names() {
+        assert_eq!(track_lang("Movie.en.srt").as_deref(), Some("en"));
+        assert_eq!(track_lang("Movie_English.srt").as_deref(), Some("en"));
+        assert_eq!(track_lang("Movie.vie.forced.srt").as_deref(), Some("vi"));
+        assert_eq!(track_lang("Movie.pt-BR.srt").as_deref(), Some("pt"));
+        assert_eq!(track_lang("Movie.srt"), None);
+        assert_eq!(track_lang("Movie.2020.srt"), None);
+        assert_eq!(pref_langs("English, vi, fr"), ["en", "vi"]);
+    }
+
+    #[test]
+    fn shows_the_languages_picked_first() {
+        let names: Vec<String> = ["Movie.en.srt", "Movie.fr.srt", "Movie.vi.srt"].map(String::from).to_vec();
+        assert_eq!(default_shown(&names, &["vi".into(), "en".into()]), [2, 0]);
+        assert_eq!(default_shown(&names, &["de".into(), "fr".into()]), [1]);
+        assert_eq!(default_shown(&names, &["de".into()]), [0]);
+        assert_eq!(default_shown(&names, &[]), [0]);
+        assert!(default_shown(&[], &["en".into()]).is_empty());
+    }
+
+    #[test]
+    fn puts_the_second_subtitles_at_the_top() {
+        assert_eq!(at_top("WEBVTT\n\n00:01.000 --> 00:02.000\nHi\n"), "WEBVTT\n\n00:01.000 --> 00:02.000 line:0\nHi\n");
+        assert_eq!(at_top("00:01.000 --> 00:02.000 line:3\n"), "00:01.000 --> 00:02.000 line:3\n");
     }
 }
