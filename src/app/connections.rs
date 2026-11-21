@@ -24,6 +24,10 @@ fn auth_label(c: &Conn) -> &'static str {
         (ConnKind::Everything, Auth::System) => "No login",
         (ConnKind::Sftp, Auth::System) => "ssh keys",
         (ConnKind::Smb, Auth::System) => "System asks",
+        (ConnKind::WebDav, Auth::System) => "No login",
+        (ConnKind::Ftp, Auth::System) => "Anonymous",
+        (ConnKind::S3, _) if c.saved => "Key saved",
+        (ConnKind::S3, _) => "Key not saved",
         (_, Auth::Password) if c.saved => "Password saved",
         (_, Auth::Password) => "Password not saved",
         (_, Auth::Key) => "Key file",
@@ -35,7 +39,9 @@ fn auth_choices(kind: ConnKind) -> &'static [(Auth, &'static str)] {
     match kind {
         ConnKind::Sftp => &[(Auth::System, "This computer's ssh keys"), (Auth::Password, "Password"), (Auth::Key, "Key file")],
         ConnKind::Smb => &[(Auth::System, "Ask when connecting"), (Auth::Password, "Password")],
-        ConnKind::Everything => &[(Auth::System, "No login"), (Auth::Password, "User name and password")],
+        ConnKind::Everything | ConnKind::WebDav => &[(Auth::System, "No login"), (Auth::Password, "User name and password")],
+        ConnKind::Ftp => &[(Auth::System, "Anonymous"), (Auth::Password, "User name and password")],
+        ConnKind::S3 => &[(Auth::Password, "Access key")],
     }
 }
 
@@ -53,6 +59,19 @@ fn kind_about(kind: ConnKind) -> &'static str {
         ConnKind::Sftp => "A server you can reach with ssh. Its files open like a phone's, and its terminal opens under the pane.",
         ConnKind::Smb => "A shared folder on a Windows computer or NAS box. The system mounts it as a folder on this computer.",
         ConnKind::Everything => "A Windows computer's disks, through the HTTP server of Everything (voidtools). Read-only.",
+        ConnKind::WebDav => "A folder shared over WebDAV: Nextcloud, ownCloud, a NAS box, or a phone app that serves files.",
+        ConnKind::Ftp => "An FTP server: a NAS box, a router, or a phone app that serves files over Wi-Fi.",
+        ConnKind::S3 => "A bucket on Amazon S3 or a service like it: Cloudflare R2, Backblaze B2, MinIO.",
+    }
+}
+
+/// The server box's example for each type.
+fn host_example(kind: ConnKind) -> &'static str {
+    match kind {
+        ConnKind::WebDav => "cloud.example.com or 10.0.0.2",
+        ConnKind::Ftp => "ftp.example.com or 10.0.0.2",
+        ConnKind::S3 => "s3.us-east-1.amazonaws.com",
+        _ => "nas, 10.0.0.2 or a host from ~/.ssh/config",
     }
 }
 
@@ -65,6 +84,7 @@ fn conn_form(ctx: Ctx, editing: RwSignal<Option<Conn>>, is_new: bool) -> impl In
     let set = move |f: &dyn Fn(&mut Conn)| editing.update(|e| if let Some(c) = e { f(c) });
     let kind = Memo::new(move |_| get().kind);
     let auth = Memo::new(move |_| get().auth);
+    let tls = Memo::new(move |_| get().tls);
     let save = move || {
         let Some(c) = editing.get_untracked() else { return };
         if trying.get_untracked() {
@@ -90,7 +110,11 @@ fn conn_form(ctx: Ctx, editing: RwSignal<Option<Conn>>, is_new: bool) -> impl In
                 on:keydown=move |e| if e.key() == "Enter" { save() }/>
         </label>
     };
-    let secret_label = move || if auth.get() == Auth::Key { "Passphrase" } else { "Password" };
+    let secret_label = move || match (kind.get(), auth.get()) {
+        (_, Auth::Key) => "Passphrase",
+        (ConnKind::S3, _) => "Secret access key",
+        _ => "Password",
+    };
     let secret_hint = move || match (editing.with(|e| e.as_ref().is_some_and(|c| c.saved)), auth.get()) {
         (true, _) => "Saved. Type a new one to replace it.",
         (false, Auth::Key) => "Only if the key has one",
@@ -103,24 +127,44 @@ fn conn_form(ctx: Ctx, editing: RwSignal<Option<Conn>>, is_new: bool) -> impl In
                 {ConnKind::ALL.into_iter().map(|k| view! {
                     <button class:active=move || kind.get() == k aria-pressed=move || (kind.get() == k).to_string()
                         disabled=!is_new
-                        on:click=move |_| set(&|c| { c.kind = k; if !auth_choices(k).iter().any(|a| a.0 == c.auth) { c.auth = Auth::System } })>
+                        on:click=move |_| set(&|c| { c.set_kind(k); if !auth_choices(k).iter().any(|a| a.0 == c.auth) { c.auth = auth_choices(k)[0].0 } })>
                         {k.label()}
                     </button>
                 }).collect_view()}
             </div>
             <p class="hint flush">{move || kind_about(kind.get())}</p>
             <div class="row2">
-                {text("Server", "nas, 10.0.0.2 or a host from ~/.ssh/config", Signal::derive(move || get().host), |c, v| c.host = v)}
+                {move || text("Server", host_example(kind.get()), Signal::derive(move || get().host), |c, v| c.host = v)}
                 <label class="field port">
                     <span>"Port"</span>
-                    <input type="text" inputmode="numeric" placeholder=move || match kind.get() { ConnKind::Sftp => "22", ConnKind::Smb => "445", ConnKind::Everything => "80" }
+                    <input type="text" inputmode="numeric" placeholder=move || match (kind.get(), tls.get()) {
+                        (ConnKind::Sftp, _) => "22",
+                        (ConnKind::Smb, _) => "445",
+                        (ConnKind::Ftp, _) => "21",
+                        (ConnKind::WebDav | ConnKind::S3, true) => "443",
+                        _ => "80",
+                    }
                         prop:value=move || get().port.map(|p| p.to_string()).unwrap_or_default()
                         on:input=move |e| { let v = event_target_value(&e); set(&|c| c.port = v.trim().parse().ok()) }
                         on:keydown=move |e| if e.key() == "Enter" { save() }/>
                 </label>
             </div>
-            {move || (kind.get() == ConnKind::Smb).then(|| text("Shared folder", "Photos", Signal::derive(move || get().share), |c, v| c.share = v))}
-            <label class="field">
+            {move || match kind.get() {
+                ConnKind::Smb => Some(text("Shared folder", "Photos", Signal::derive(move || get().share), |c, v| c.share = v).into_any()),
+                ConnKind::WebDav => Some(text("Folder", "Empty for the top, or like remote.php/dav/files/me", Signal::derive(move || get().share), |c, v| c.share = v).into_any()),
+                ConnKind::S3 => Some(view! {
+                    {text("Bucket", "photos", Signal::derive(move || get().share), |c, v| c.share = v)}
+                    {text("Region", "us-east-1 when empty; auto for R2", Signal::derive(move || get().region), |c, v| c.region = v)}
+                }.into_any()),
+                _ => None,
+            }}
+            {move || matches!(kind.get(), ConnKind::WebDav | ConnKind::Ftp | ConnKind::S3).then(|| view! {
+                <label class="check">
+                    <input type="checkbox" prop:checked=move || tls.get() on:change=move |e| { let on = event_target_checked(&e); set(&|c| c.tls = on) }/>
+                    {move || if kind.get() == ConnKind::Ftp { "Encrypted (FTPS)" } else { "Encrypted (https)" }}
+                </label>
+            })}
+            <label class="field" class:hidden=move || auth_choices(kind.get()).len() < 2>
                 <span>"Sign in with"</span>
                 <select prop:value=move || auth_key(auth.get())
                     on:change=move |e| { let v = event_target_value(&e); set(&|c| c.auth = match v.as_str() { "password" => Auth::Password, "key" => Auth::Key, _ => Auth::System }) }>
@@ -128,7 +172,10 @@ fn conn_form(ctx: Ctx, editing: RwSignal<Option<Conn>>, is_new: bool) -> impl In
                 </select>
             </label>
             {move || (kind.get() == ConnKind::Sftp || auth.get() != Auth::System || kind.get() == ConnKind::Smb)
-                .then(|| text("User name", if kind.get() == ConnKind::Sftp { "As in ~/.ssh/config when empty" } else { "me" }, Signal::derive(move || get().user), |c, v| c.user = v))}
+                .then(|| match kind.get() {
+                    ConnKind::S3 => text("Access key ID", "AKIA…", Signal::derive(move || get().user), |c, v| c.user = v),
+                    k => text("User name", if k == ConnKind::Sftp { "As in ~/.ssh/config when empty" } else { "me" }, Signal::derive(move || get().user), |c, v| c.user = v),
+                })}
             {move || (kind.get() == ConnKind::Smb && auth.get() == Auth::Password)
                 .then(|| text("Domain or workgroup", "Only if the server wants one", Signal::derive(move || get().domain), |c, v| c.domain = v))}
             {move || (auth.get() == Auth::Key).then(|| text("Key file", "~/.ssh/id_ed25519", Signal::derive(move || get().key_file), |c, v| c.key_file = v))}
@@ -162,9 +209,18 @@ pub(super) fn ConnectionsSettings() -> impl IntoView {
     let filter = NodeRef::<html::Input>::new();
     filter.on_load(move |el| { request_animation_frame(move || { let _ = el.focus(); }); });
     let start = move |text: String| {
-        let mut c = Conn::new(servers::kind_hint(&text));
+        let (kind, tls) = servers::kind_and_tls(&text);
+        let mut c = Conn::new(kind);
         let (user, host, port, share) = servers::split_address(&text);
         (c.user, c.host, c.port, c.share) = (user, host, port, share);
+        match kind {
+            ConnKind::WebDav => (c.tls, c.share) = (tls, servers::split_path(&text)),
+            ConnKind::Ftp => c.tls = tls,
+            _ => {}
+        }
+        if kind == ConnKind::Ftp && !c.user.is_empty() {
+            c.auth = Auth::Password;
+        }
         is_new.set(true);
         editing.set(Some(c));
     };

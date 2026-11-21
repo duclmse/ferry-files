@@ -1,8 +1,8 @@
-//! The connections added in Settings > Connections: Everything servers, SFTP servers and SMB
-//! shares, in one list. Each has a type, an address and how it logs in; a password is kept in
+//! The connections added in Settings > Connections: SFTP, WebDAV, FTP and Everything servers, S3
+//! buckets and SMB shares, in one list. Each has a type, an address and how it logs in; a password is kept in
 //! the system's keychain under the connection's id, never here.
 //!
-//! Everything and SFTP servers are connected like phones, again at launch and every so often
+//! All but SMB shares are connected like phones, again at launch and every so often
 //! while they're offline. An SMB share is mounted by the system; mounted, it's a folder on the
 //! computer.
 
@@ -14,16 +14,23 @@ use serde::{Deserialize, Serialize};
 pub(super) enum ConnKind {
     Sftp,
     Smb,
+    #[serde(rename = "webdav")]
+    WebDav,
+    Ftp,
+    S3,
     Everything,
 }
 
 impl ConnKind {
-    pub(super) const ALL: [ConnKind; 3] = [ConnKind::Sftp, ConnKind::Smb, ConnKind::Everything];
+    pub(super) const ALL: [ConnKind; 6] = [ConnKind::Sftp, ConnKind::Smb, ConnKind::WebDav, ConnKind::Ftp, ConnKind::S3, ConnKind::Everything];
 
     pub(super) fn key(self) -> &'static str {
         match self {
             ConnKind::Sftp => "sftp",
             ConnKind::Smb => "smb",
+            ConnKind::WebDav => "webdav",
+            ConnKind::Ftp => "ftp",
+            ConnKind::S3 => "s3",
             ConnKind::Everything => "everything",
         }
     }
@@ -32,6 +39,9 @@ impl ConnKind {
         match self {
             ConnKind::Sftp => "SFTP",
             ConnKind::Smb => "SMB",
+            ConnKind::WebDav => "WebDAV",
+            ConnKind::Ftp => "FTP",
+            ConnKind::S3 => "S3",
             ConnKind::Everything => "Everything",
         }
     }
@@ -62,9 +72,15 @@ pub(super) struct Conn {
     pub port: Option<u16>,
     #[serde(default)]
     pub user: String,
-    /// SMB: the shared folder.
+    /// SMB: the shared folder. WebDAV: the folder's path on the server. S3: the bucket.
     #[serde(default)]
     pub share: String,
+    /// WebDAV and S3: https rather than http. FTP: FTPS (TLS) rather than plain FTP.
+    #[serde(default)]
+    pub tls: bool,
+    /// S3: the region ("us-east-1"; "auto" for Cloudflare R2).
+    #[serde(default)]
+    pub region: String,
     /// SMB: the Windows domain or workgroup, when the server wants one.
     #[serde(default)]
     pub domain: String,
@@ -80,14 +96,54 @@ pub(super) struct Conn {
 
 impl Conn {
     pub(super) fn new(kind: ConnKind) -> Conn {
-        let id = format!("c{}", js_sys::Date::now() as u64);
-        Conn { id, kind, host: String::new(), port: None, user: String::new(), share: String::new(), domain: String::new(), auth: Auth::System, key_file: String::new(), saved: false }
+        Conn::with_id(kind, format!("c{}", js_sys::Date::now() as u64))
     }
 
-    /// The address the backend knows it by: "http://pc:8080", "me@box:2222", "smb://nas/Photos".
+    fn with_id(kind: ConnKind, id: String) -> Conn {
+        let mut c = Conn {
+            id,
+            kind,
+            host: String::new(),
+            port: None,
+            user: String::new(),
+            share: String::new(),
+            tls: false,
+            region: String::new(),
+            domain: String::new(),
+            auth: Auth::System,
+            key_file: String::new(),
+            saved: false,
+        };
+        c.set_kind(kind);
+        c
+    }
+
+    /// Changes its type, and what goes with it: how it logs in, and https for WebDAV and S3.
+    pub(super) fn set_kind(&mut self, kind: ConnKind) {
+        self.kind = kind;
+        self.tls = matches!(kind, ConnKind::WebDav | ConnKind::S3);
+        if kind == ConnKind::S3 {
+            self.auth = Auth::Password;
+        } else if self.auth == Auth::Key && kind != ConnKind::Sftp {
+            self.auth = Auth::System;
+        }
+    }
+
+    /// "https://host:port", for WebDAV and S3.
+    fn web_base(&self) -> String {
+        let port = self.port.map(|p| format!(":{p}")).unwrap_or_default();
+        format!("{}://{}{port}", if self.tls { "https" } else { "http" }, self.host)
+    }
+
+    /// The address the backend knows it by: "http://pc:8080", "me@box:2222", "smb://nas/Photos",
+    /// "https://cloud/remote.php/dav", "me@ftp.host:2121", "https://s3.host/bucket".
     pub(super) fn addr(&self) -> String {
         let port = self.port.map(|p| format!(":{p}")).unwrap_or_default();
         match self.kind {
+            ConnKind::WebDav if self.share.is_empty() => self.web_base(),
+            ConnKind::WebDav | ConnKind::S3 => format!("{}/{}", self.web_base(), self.share),
+            ConnKind::Ftp if self.auth == Auth::Password && !self.user.is_empty() => format!("{}@{}{port}", self.user, self.host),
+            ConnKind::Ftp => format!("{}{port}", self.host),
             ConnKind::Everything => format!("http://{}{port}", self.host),
             ConnKind::Sftp if self.user.is_empty() => format!("{}{port}", self.host),
             ConnKind::Sftp => format!("{}@{}{port}", self.user, self.host),
@@ -103,6 +159,9 @@ impl Conn {
         let user = if self.user.is_empty() { String::new() } else { format!("{}@", self.user) };
         match self.kind {
             ConnKind::Smb => format!("{user}{}{port}/{}", self.host, self.share),
+            ConnKind::WebDav if !self.share.is_empty() => format!("{user}{}{port}/{}", self.host, self.share),
+            // The user here is the access key: not shown.
+            ConnKind::S3 => format!("{}{port}/{}", self.host, self.share),
             _ => format!("{user}{}{port}", self.host),
         }
     }
@@ -128,6 +187,15 @@ impl Conn {
                 ("sftp_connect", json!({ "server": self.addr(), "key_file": key, "secret": self.secret() }))
             }
             ConnKind::Smb => ("smb_mount", json!({ "share": self.addr(), "user": user, "domain": self.domain, "secret": self.secret() })),
+            ConnKind::WebDav => ("webdav_connect", json!({ "server": self.addr(), "user": user, "secret": self.secret() })),
+            ConnKind::Ftp => {
+                let port = self.port.map(|p| format!(":{p}")).unwrap_or_default();
+                ("ftp_connect", json!({ "server": format!("{}{port}", self.host), "tls": self.tls, "user": user, "secret": self.secret() }))
+            }
+            ConnKind::S3 => (
+                "s3_connect",
+                json!({ "endpoint": self.web_base(), "region": self.region.trim(), "bucket": self.share, "access_key": self.user, "secret": self.secret() }),
+            ),
         }
     }
 
@@ -138,6 +206,12 @@ impl Conn {
         }
         if self.kind == ConnKind::Smb && self.share.trim().is_empty() {
             return Some("Enter the shared folder's name.");
+        }
+        if self.kind == ConnKind::S3 && (self.share.trim().is_empty() || self.share.contains('/')) {
+            return Some("Enter the bucket's name.");
+        }
+        if self.kind == ConnKind::S3 && self.user.trim().is_empty() {
+            return Some("Enter the access key ID.");
         }
         if self.auth == Auth::Password && self.user.trim().is_empty() && self.kind != ConnKind::Sftp {
             return Some("Enter the user name to log in with.");
@@ -168,6 +242,8 @@ impl Conn {
             port,
             user: user.into(),
             share: share.split('/').next().unwrap_or_default().into(),
+            tls: false,
+            region: String::new(),
             domain: String::new(),
             auth: Auth::System,
             key_file: String::new(),
@@ -192,16 +268,34 @@ pub(super) fn split_address(text: &str) -> (String, String, Option<u16>, String)
     (user.to_string(), host.to_string(), port, share.split('/').next().unwrap_or_default().to_string())
 }
 
-/// The type an address typed in the box at the top of the list suggests.
-pub(super) fn kind_hint(text: &str) -> ConnKind {
+/// The path after the server in a typed address ("https://cloud/remote.php/dav" → "remote.php/dav").
+pub(super) fn split_path(text: &str) -> String {
+    let t = text.trim().replace('\\', "/");
+    let t = t.split_once("://").map_or(t.as_str(), |(_, rest)| rest).trim_start_matches('/');
+    t.split_once('/').map(|(_, path)| path.trim_matches('/').to_string()).unwrap_or_default()
+}
+
+/// The type an address typed in the box at the top of the list suggests, and whether it says
+/// https or FTPS.
+pub(super) fn kind_and_tls(text: &str) -> (ConnKind, bool) {
     let t = text.trim().to_lowercase();
-    if t.starts_with("smb:") || t.starts_with("\\\\") || (t.contains('/') && !t.starts_with("sftp:") && !t.starts_with("ssh:") && !t.starts_with("http")) {
+    let scheme = t.split_once("://").map_or("", |(s, _)| s);
+    match scheme {
+        "webdav" | "dav" => return (ConnKind::WebDav, false),
+        "webdavs" | "davs" | "https" => return (ConnKind::WebDav, true),
+        "ftp" => return (ConnKind::Ftp, false),
+        "ftps" | "ftpes" => return (ConnKind::Ftp, true),
+        "s3" => return (ConnKind::S3, true),
+        _ => {}
+    }
+    let kind = if t.starts_with("smb:") || t.starts_with("\\\\") || (t.contains('/') && !t.starts_with("sftp:") && !t.starts_with("ssh:") && !t.starts_with("http")) {
         ConnKind::Smb
     } else if t.starts_with("http") {
         ConnKind::Everything
     } else {
         ConnKind::Sftp
-    }
+    };
+    (kind, false)
 }
 
 /// The connections kept, or those an older version kept (as three lists of addresses).
@@ -228,7 +322,8 @@ pub(super) fn stored_conns() -> Vec<Conn> {
 /// The connection's address in what the backend says a device is ("sftp:me@box").
 fn usb_addr(info: &Info) -> Option<&str> {
     let usb = info.usb.as_deref()?;
-    usb.strip_prefix("sftp:").or_else(|| usb.strip_prefix("everything:"))
+    let (_, addr) = usb.split_once(':')?;
+    Some(addr)
 }
 
 impl Ctx {
@@ -443,7 +538,9 @@ mod tests {
     use super::*;
 
     fn conn(kind: ConnKind, host: &str, user: &str, port: Option<u16>, share: &str) -> Conn {
-        Conn { id: "c1".into(), kind, host: host.into(), port, user: user.into(), share: share.into(), domain: String::new(), auth: Auth::System, key_file: String::new(), saved: false }
+        let mut c = Conn::with_id(kind, "c1".into());
+        (c.id, c.host, c.port, c.user, c.share) = ("c1".into(), host.into(), port, user.into(), share.into());
+        c
     }
 
     #[test]
@@ -459,6 +556,16 @@ mod tests {
         assert!(c.matches("NAS") && c.matches("me") && c.matches("photo") && !c.matches("box"));
         assert!(conn(ConnKind::Sftp, "me@box", "", None, "").problem().is_some());
         assert!(conn(ConnKind::Smb, "nas", "", None, "").problem().is_some());
+        assert_eq!(conn(ConnKind::WebDav, "cloud", "me", None, "remote.php/dav/files/me").addr(), "https://cloud/remote.php/dav/files/me");
+        assert_eq!(conn(ConnKind::WebDav, "nas", "", Some(5005), "").addr(), "https://nas:5005");
+        let mut f = conn(ConnKind::Ftp, "ftp.host", "me", Some(2121), "");
+        assert_eq!(f.addr(), "ftp.host:2121");
+        f.auth = Auth::Password;
+        assert_eq!(f.addr(), "me@ftp.host:2121");
+        let s3 = conn(ConnKind::S3, "s3.us-east-1.amazonaws.com", "AKIA", None, "photos");
+        assert_eq!((s3.auth, s3.addr(), s3.name()), (Auth::Password, "https://s3.us-east-1.amazonaws.com/photos".to_string(), "s3.us-east-1.amazonaws.com/photos".to_string()));
+        assert!(conn(ConnKind::S3, "s3", "AKIA", None, "").problem().is_some());
+        assert!(conn(ConnKind::S3, "s3", "", None, "b").problem().is_some());
     }
 
     #[test]
@@ -466,9 +573,13 @@ mod tests {
         assert_eq!(split_address("me@box:2222"), ("me".into(), "box".into(), Some(2222), String::new()));
         assert_eq!(split_address(r"\\nas\Photos"), (String::new(), "nas".into(), None, "Photos".into()));
         assert_eq!(split_address("smb://me@nas/Photos/x"), ("me".into(), "nas".into(), None, "Photos".into()));
-        assert_eq!(kind_hint(r"\\nas\Photos"), ConnKind::Smb);
-        assert_eq!(kind_hint("http://pc:8080"), ConnKind::Everything);
-        assert_eq!(kind_hint("me@box"), ConnKind::Sftp);
+        assert_eq!(kind_and_tls(r"\\nas\Photos").0, ConnKind::Smb);
+        assert_eq!(kind_and_tls("http://pc:8080").0, ConnKind::Everything);
+        assert_eq!(kind_and_tls("me@box").0, ConnKind::Sftp);
+        assert_eq!(kind_and_tls("ftps://me@host"), (ConnKind::Ftp, true));
+        assert_eq!(kind_and_tls("https://cloud/remote.php/dav/"), (ConnKind::WebDav, true));
+        assert_eq!(split_path("https://cloud/remote.php/dav/"), "remote.php/dav");
+        assert_eq!(split_path("nas"), "");
         let old = Conn::from_old(ConnKind::Sftp, "me@box:2222", "c1".into()).unwrap();
         assert_eq!((old.user.as_str(), old.host.as_str(), old.port), ("me", "box", Some(2222)));
         let old = Conn::from_old(ConnKind::Smb, "smb://nas/Photos", "c2".into()).unwrap();

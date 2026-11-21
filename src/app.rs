@@ -302,6 +302,8 @@ enum Act {
     NewTab,
     /// Shows or hides the sidebar.
     Sidebar,
+    /// Shows or hides hidden files.
+    Hidden,
     /// Undoes the newest action that can be.
     Undo,
     /// Marks how each item differs from the other pane's.
@@ -1421,6 +1423,10 @@ pub fn App() -> impl IntoView {
                 }
                 "split" => {
                     ctx.set_split(!ctx.split.get_untracked());
+                    true
+                }
+                "hidden" => {
+                    ctx.set_show_hidden(!ctx.show_hidden.get_untracked());
                     true
                 }
                 "terminal" => {

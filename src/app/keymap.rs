@@ -47,6 +47,7 @@ pub(super) const COMMANDS: &[Command] = &[
     c("other_pane", "The other pane", &["Tab"], false),
     c("split", "Show or hide the second pane", &["cmd+Backslash"], false),
     c("terminal", "Show or hide the terminal (this computer, adb phones, SFTP servers)", &["ctrl+Backquote"], true),
+    c("hidden", "Show or hide hidden files (names starting with a dot)", &["cmd+Period"], true),
     c("sidebar", "Show or hide the sidebar", &["alt+cmd+KeyS"], true),
     c("new_tab", "New tab", &["cmd+KeyT"], true),
     c("close_tab", "Close tab", &["cmd+KeyW"], true),

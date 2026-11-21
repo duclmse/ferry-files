@@ -244,7 +244,7 @@ pub(super) fn Sidebar() -> impl IntoView {
                     }
                 })}
                 {match (i.transport.as_str(), i.usb.clone().unwrap_or_default()) {
-                    ("sftp", _) => view! {
+                    ("sftp" | "webdav" | "ftp" | "s3", _) => view! {
                         <button class="eject" title=format!("Remove {} from the connections", i.label) aria-label="Remove"
                             on:click=move |_| ctx.remove_conn_of(src)>{ico(Icon::Close)}</button>
                     }.into_any(),
@@ -408,6 +408,10 @@ pub(super) fn Sidebar() -> impl IntoView {
                 Some(i) => device(i).into_any(),
                 None => off_row(c).into_any(),
             }).collect_view()}
+            {move || [servers::ConnKind::WebDav, servers::ConnKind::Ftp, servers::ConnKind::S3].into_iter().flat_map(|k| ctx.conns_of(k)).map(|c| match ctx.conn_src(&c).and_then(|s| ctx.src_info(s)) {
+                Some(i) => device(i).into_any(),
+                None => off_row(c).into_any(),
+            }).collect_view()}
             {move || ctx.conns_of(servers::ConnKind::Smb).into_iter().map(|c| match ctx.smb_path(&c) {
                 // Mounted: a folder on the computer.
                 Some(path) => mounted(c.name(), path).into_any(),
@@ -420,7 +424,7 @@ pub(super) fn Sidebar() -> impl IntoView {
             // Shares mounted outside the app (or before the list had them).
             {move || ctx.other_mounts().into_iter().map(|m| mounted(m.share.trim_start_matches("smb://").to_string(), m.path).into_any()).collect_view()}
             {move || (ctx.conns.with(Vec::is_empty) && ctx.smb_mounts.with(Vec::is_empty))
-                .then(|| add_row("Add an SFTP server, an SMB share (Windows sharing, NAS) or a Windows computer running Everything"))}
+                .then(|| add_row("Add an SFTP, WebDAV or FTP server, an SMB share (Windows sharing, NAS), an S3 bucket or a Windows computer running Everything"))}
         })}
     });
     let sec_mac = move || shown("mac").then(|| view! {
