@@ -182,8 +182,8 @@ fn PdfView(pane: Pane, src: Src, entry: Entry, url: String, #[prop(optional)] in
             }
         });
     };
-    // Zoom widens the viewer, so it draws the pages bigger; a turn turns the whole viewer. Both
-    // need the stage's size, as the viewer can't be reached inside.
+    // Zoom scales the whole viewer up (pages, text and all), and the stage scrolls around it; a
+    // turn turns it. Both need the stage's size, as the viewer can't be reached inside.
     let zoom = RwSignal::new(1.0f64);
     let turns = RwSignal::new(0u8);
     let stage = NodeRef::<html::Div>::new();
@@ -225,18 +225,20 @@ fn PdfView(pane: Pane, src: Src, entry: Entry, url: String, #[prop(optional)] in
         let Some((w, h)) = room.get() else { return (String::new(), "width: 100%; height: 100%".to_string()) };
         let z = zoom.get();
         let t = turns.get();
-        // The viewer's own width is the side it fits the pages to.
-        let (own_w, own_h) = if t % 2 == 1 { (h * z, w) } else { (w * z, h) };
-        let (box_w, box_h) = if t % 2 == 1 { (own_h, own_w) } else { (own_w, own_h) };
+        // The viewer keeps the stage's size (its sides swapped when turned on its side), so it lays
+        // the pages out as at 100%, and is then scaled: a real zoom, not a wider page column.
+        let (own_w, own_h) = if t % 2 == 1 { (h, w) } else { (w, h) };
+        let (big_w, big_h) = (own_w * z, own_h * z);
+        let (box_w, box_h) = if t % 2 == 1 { (big_h, big_w) } else { (big_w, big_h) };
         let turn = match t {
-            1 => format!("translateX({own_h}px) rotate(90deg)"),
-            2 => format!("translate({own_w}px, {own_h}px) rotate(180deg)"),
-            3 => format!("translateY({own_w}px) rotate(-90deg)"),
-            _ => "none".to_string(),
+            1 => format!("translateX({big_h}px) rotate(90deg) "),
+            2 => format!("translate({big_w}px, {big_h}px) rotate(180deg) "),
+            3 => format!("translateY({big_w}px) rotate(-90deg) "),
+            _ => String::new(),
         };
         (
             format!("width: {box_w}px; height: {box_h}px"),
-            format!("width: {own_w}px; height: {own_h}px; transform: {turn}"),
+            format!("width: {own_w}px; height: {own_h}px; transform: {turn}scale({z})"),
         )
     };
     let heading_list = move || match outline.get() {
