@@ -1,0 +1,194 @@
+# fs - example configuration for macOS
+# Copy to ~/.config/fs/config.toml, replace <you> with your user name, and run
+#   fsd --config ~/.config/fs/config.toml validate-config
+#   fsd --config ~/.config/fs/config.toml daemon
+#
+# Paths must be absolute: "~" is not expanded.
+#
+# macOS hides Desktop, Documents, Downloads and parts of ~/Library from
+# processes it has not been told to trust, and a daemon started by launchd
+# cannot show the prompt, so those folders come back empty or missing. Give
+# the fsd binary Full Disk Access (System Settings > Privacy & Security).
+#
+# Stop the daemon with Ctrl+C or SIGTERM (launchctl bootout), not kill -9: the
+# memory store writes index.bin on a clean shutdown, and without it the next
+# start crawls everything again. A launchd agent should set ExitTimeOut to a
+# minute or so for the same reason.
+
+# ── Paths ─────────────────────────────────────────────────────────────────────
+
+# Directories to watch and index. At least one required, and each must exist.
+watch_paths = [
+    "/Users/<you>/Documents",
+    "/Users/<you>/projects",
+]
+
+# Memory store snapshot (index.bin) and Tantivy full-text index.
+# Created automatically on first run. Must be writable.
+data_dir = "/Users/<you>/Library/Application Support/fs"
+
+# Directory for rolling daily log files.
+log_dir = "/Users/<you>/Library/Logs/fs"
+
+# Folder of extension executables; unset disables extensions. It and its
+# parents must be writable only by root or you, and none may be a symlink.
+# extensions_dir = "/Users/<you>/Library/Application Support/fs/extensions"
+
+# ── Store ─────────────────────────────────────────────────────────────────────
+
+[store]
+# "auto" (default), "memory" or "sqlite". auto is the memory store, unless
+# data_dir holds only an index.db from before it was the default. The memory
+# store answers substring, parent: and dupe: searches several times faster
+# and is a fraction of the size on disk; SQLite keeps less in process memory.
+# See docs/plans/performance-assessment.md.
+mode = "auto"
+# Optional SQLite indexes (sqlite mode only). Each one makes queries on its
+# column fast and slows every write.
+indexes = ["name", "extension", "mtime", "size", "attrib"]
+# Memory mode: seconds between index.bin saves while files change, so a crash
+# does not cost a full crawl. 0 saves only on clean shutdown.
+snapshot_interval_secs = 300
+
+# ── Exclusions ────────────────────────────────────────────────────────────────
+
+[exclusions]
+# Glob patterns applied to full paths. Matched files/directories are skipped.
+path_patterns = [
+    "**/.git/**",
+    "**/node_modules/**",
+    "**/__pycache__/**",
+    "**/*.pyc",
+    "**/target/**",           # Rust build artefacts
+    "**/.DS_Store",           # Finder metadata, one per folder
+    "**/Library/Caches/**",   # rewritten constantly; noise in results and events
+    "**/.Trash/**",
+]
+
+# Skip dot-files and dot-directories (e.g. .ssh, .config).
+exclude_hidden = false
+
+# Do not extract content from files on network-mounted filesystems
+# (SMB/NFS shares under /Volumes).
+skip_network_content = true
+
+# ── Content indexing ──────────────────────────────────────────────────────────
+
+[content]
+# Per-extension byte limit for full-text content extraction.
+# Use "*" as a fallback for extensions not listed here. 0 = skip.
+[content.extension_limits]
+rs    = 524288   # 512 KB
+py    = 524288
+js    = 262144   # 256 KB
+ts    = 262144
+go    = 524288
+swift = 524288
+md    = 131072   # 128 KB
+txt   = 131072
+toml  = 65536    # 64 KB
+yaml  = 65536
+json  = 65536
+plist = 0        # mostly binary property lists
+"*"   = 32768    # 32 KB default for anything else
+
+# ── Archive inner-file indexing ───────────────────────────────────────────────
+
+[archive_index]
+# Index files inside ZIP archives as virtual entries.
+enabled = true
+
+# Supported archive formats (only "zip" is currently supported).
+formats = ["zip"]
+
+# Stop indexing an archive after this many inner entries.
+max_entries_per_archive = 10000
+
+# How deep to recurse into nested ZIPs (0 = no nesting, 1 = one level, etc.).
+max_nesting_depth = 0
+
+# Passwords to try for encrypted ZIPs. Leave empty if not needed.
+passwords = []
+
+# Per-extension byte limit for inner-entry content extraction.
+[archive_index.inner_extension_limits]
+rs = 262144
+py = 262144
+"*" = 32768
+
+# ── API ───────────────────────────────────────────────────────────────────────
+
+[api]
+# HTTP REST API port.
+rest_port = 7700
+
+# Address REST listens on. Default is loopback; 0.0.0.0 exposes it to the network.
+# rest_bind = "127.0.0.1"
+
+# Which calls need the bearer token: "writes" (default) covers /fs/write, copy,
+# move, delete and mkdir; "all" covers every REST route except /health and all
+# gRPC calls. Use "all" when binding to anything but loopback.
+# auth_mode = "writes"
+
+# BLAKE3 digest of the bearer token. Without it the file-changing routes are
+# refused, and "all" will not start. Create one with `fsd generate-token`.
+# auth_token_hash = "<64 hex characters>"
+
+# Address gRPC listens on. Default is loopback.
+# grpc_bind = "127.0.0.1"
+
+# gRPC port (Tonic + reflection).
+grpc_port = 7701
+
+# Unix socket the `fs` CLI and TUI connect to. Default /tmp/fs.sock; macOS
+# limits socket paths to 103 bytes.
+# ipc_path = "/tmp/fs.sock"
+
+# Browser origins allowed to read REST responses. Empty by default. Avoid ["*"]:
+# /fs/read needs no token, so it would let any website read local files.
+rest_cors_origins = []
+
+# ── Search ────────────────────────────────────────────────────────────────────
+
+[search]
+# Default number of results returned when no limit is specified.
+default_limit = 100
+
+# Hard upper bound on the limit parameter.
+max_limit = 10000
+
+# Minimum nucleo similarity score for fuzzy: queries (0.0–1.0).
+fuzzy_threshold = 0.7
+
+# Max candidate rows loaded before scoring with nucleo.
+# Lower this if fuzzy searches are slow on very large indices.
+max_fuzzy_candidates = 50000
+
+# ── Indexer ───────────────────────────────────────────────────────────────────
+
+[indexer]
+# Number of threads for the initial full crawl.
+# Default: half the available CPU cores.
+crawl_threads = 4
+
+# The NTFS file table crawl (use_mft) is Windows-only; on macOS every crawl
+# walks directories. Changes while fsd runs come from FSEvents, and changes
+# made while it was stopped are found on the next start by comparing
+# timestamps.
+
+# Number of threads for parallel content extraction during crawl.
+content_threads = 4
+
+# How often to commit the Tantivy index to disk (seconds).
+# Lower values give more up-to-date full-text results at the cost of more I/O.
+commit_interval_secs = 5
+
+# Maximum filesystem events processed in one batch.
+event_batch_size = 100
+
+# ── User macros ───────────────────────────────────────────────────────────────
+# Define shorthand query expansions.
+# Example: "q:work" expands to "dir:projects size:>1kb"
+[macros]
+# work = "dir:projects size:>1kb"
+# src  = "ext:rs OR ext:py OR ext:go OR ext:ts"

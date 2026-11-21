@@ -1021,4 +1021,22 @@ log_dir     = "{dir}/logs"
         let cfg: StoreConfig = toml::from_str("").unwrap();
         assert_eq!(cfg.mode, StoreMode::Auto);
     }
+
+    #[test]
+    fn the_example_configs_parse_and_validate() {
+        let root = Path::new(env!("CARGO_MANIFEST_DIR"));
+        let watch = tempfile::TempDir::new().unwrap();
+        for file in [
+            root.join("config.toml"),
+            root.join("../../config.windows.toml"),
+            root.join("../../config.macos.toml"),
+        ] {
+            let text = std::fs::read_to_string(&file).unwrap();
+            let mut cfg: Config = toml::from_str(&text)
+                .unwrap_or_else(|e| panic!("{}: {e}", file.display()));
+            // Their watch paths are placeholders.
+            cfg.watch_paths = vec![watch.path().to_path_buf()];
+            assert_eq!(validate(&cfg), Vec::<String>::new(), "{}", file.display());
+        }
+    }
 }

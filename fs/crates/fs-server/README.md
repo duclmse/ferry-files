@@ -55,8 +55,10 @@ The binary is placed at `target/release/fsd` (Linux/macOS) or
 
 ## 3. Configuration
 
-Create `config.toml` (see `crates/fs-server/config.toml` for a fully-annotated
-example):
+Create `config.toml`. Fully annotated examples: `crates/fs-server/config.toml`
+(Linux), `config.windows.toml` and `config.macos.toml` at the repository root.
+The macOS one covers Full Disk Access and stopping cleanly under launchd.
+A minimal one:
 
 ```toml
 watch_paths = ["/home/user/documents", "/home/user/projects"]
