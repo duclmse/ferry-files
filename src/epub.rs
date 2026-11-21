@@ -411,7 +411,34 @@ pub fn EditBar() -> impl IntoView {
         format!("Save{to}{state} ({})", crate::os::keys("⌘S"))
     };
     let copy_title = format!("Save a copy on {}…", crate::os::the_computer());
+    // Previous and next go through the chapters; from Book info or Find, next is the first chapter.
+    let at = move |v: &View, b: &Option<Book>| match v {
+        View::Chapter(p) => b.as_ref().and_then(|b| b.chapters.iter().position(|c| c.path == *p)),
+        _ => None,
+    };
+    let count = move || ep.book.with(|b| b.as_ref().map_or(0, |b| b.chapters.len()));
+    let here = move || ep.view.with(|v| ep.book.with(|b| at(v, b)));
+    let step = move |d: isize| {
+        let to = match ep.view.with_untracked(|v| ep.book.with_untracked(|b| at(v, b))) {
+            Some(k) => k as isize + d,
+            None if d > 0 => 0,
+            None => return,
+        };
+        let path = ep.book.with_untracked(|b| {
+            b.as_ref().and_then(|b| usize::try_from(to).ok().and_then(|k| b.chapters.get(k))).map(|c| c.path.clone())
+        });
+        if let Some(p) = path {
+            ep.go(View::Chapter(p));
+        }
+    };
     view! {
+        <span class="gap"></span>
+        <span class="btn-group" role="group">
+            <button class="btn" title="Previous chapter" aria-label="Previous chapter"
+                disabled=move || here().is_none_or(|k| k == 0) || ep.busy.get() on:click=move |_| step(-1)>{ico(Icon::Prev)}</button>
+            <button class="btn" title="Next chapter" aria-label="Next chapter"
+                disabled=move || here().map_or(count() == 0, |k| k + 1 >= count()) || ep.busy.get() on:click=move |_| step(1)>{ico(Icon::Next)}</button>
+        </span>
         <select class="epub-chapters" aria-label="Part of the book" prop:value=shown
             on:keydown=|ev| ev.stop_propagation() on:change=pick>
             <option value="info">"Book info"</option>
@@ -422,6 +449,7 @@ pub fn EditBar() -> impl IntoView {
                 }).collect_view()}
             </optgroup>
         </select>
+        <span class="epub-of">{move || match (here(), count()) { (Some(k), n) => format!("{} of {n}", k + 1), _ => String::new() }}</span>
         {move || ep.busy.get().then(|| view! { <span class="spin"></span> })}
         <span class="spacer"></span>
         <button class="btn" title=copy_title.clone() aria-label=copy_title disabled=move || ep.busy.get()

@@ -1,5 +1,6 @@
-/* EPUB editor */
-.scroll {
+/* The EPUB editor, in the preview (epub.rs). Every rule is under .epub-edit, so the general rules
+   for .field (books.css), .found (sidebar.css) and .sub (views.css) don't reach it. */
+.epub-edit .scroll {
   flex: 1;
   overflow: auto;
   padding: 16px;
@@ -8,7 +9,7 @@
   gap: 16px;
 }
 
-.card {
+.epub-edit .card {
   background: var(--panel);
   border: 1px solid var(--line);
   border-radius: 10px;
@@ -17,54 +18,59 @@
   width: 100%;
 }
 
-.card h2 {
+.epub-edit .card h2 {
   font-size: 14px;
   margin: 0 0 4px;
 }
 
 /* <p> only: the preview and tiles use .sub too, in their own way. */
-p.sub {
+.epub-edit p.sub {
   color: var(--muted);
+  font-size: 12px;
   margin: 0 0 10px;
   -webkit-user-select: text;
   user-select: text;
 }
 
-p.sub.error {
+.epub-edit p.sub.error {
   color: var(--danger);
 }
 
-p.sub.found {
+.epub-edit p.sub.found {
+  display: block;
+  padding: 0;
   margin-top: 12px;
   color: var(--ink);
   font-weight: 600;
 }
 
-.grid {
+.epub-edit .grid {
   display: grid;
   grid-template-columns: 1fr 1fr;
   gap: 10px 14px;
 }
 
-.field {
+.epub-edit .field {
   display: flex;
+  align-items: stretch;
+  font-size: inherit;
   flex-direction: column;
   gap: 4px;
   min-width: 0;
 }
 
-.field.wide {
+.epub-edit .field.wide {
   grid-column: 1 / -1;
 }
 
-.field span {
+.epub-edit .field span {
   font-size: 11px;
   color: var(--muted);
   font-weight: 600;
 }
 
-.field input,
-.field textarea {
+.epub-edit .field input,
+.epub-edit .field textarea {
   padding: 6px 8px;
   border: 1px solid var(--line);
   border-radius: 7px;
@@ -74,13 +80,13 @@ p.sub.found {
   resize: vertical;
 }
 
-.field input:focus,
-.field textarea:focus {
+.epub-edit .field input:focus,
+.epub-edit .field textarea:focus {
   outline: 2px solid var(--accent);
   outline-offset: -1px;
 }
 
-.actions {
+.epub-edit .actions {
   display: flex;
   align-items: center;
   gap: 10px;
@@ -88,14 +94,14 @@ p.sub.found {
   flex-wrap: wrap;
 }
 
-.check {
+.epub-edit .check {
   display: inline-flex;
   align-items: center;
   gap: 6px;
   cursor: pointer;
 }
 
-.confirm {
+.epub-edit .confirm {
   display: flex;
   align-items: center;
   gap: 8px;
@@ -106,18 +112,18 @@ p.sub.found {
   flex-wrap: wrap;
 }
 
-.confirm .text {
+.epub-edit .confirm .text {
   flex: 1;
   min-width: 200px;
 }
 
-.cover-row {
+.epub-edit .cover-row {
   display: flex;
   gap: 16px;
   align-items: flex-start;
 }
 
-.cover {
+.epub-edit .cover {
   width: 120px;
   max-height: 180px;
   object-fit: contain;
@@ -126,7 +132,7 @@ p.sub.found {
   background: var(--bg);
 }
 
-.cover.none {
+.epub-edit .cover.none {
   height: 160px;
   display: flex;
   align-items: center;
@@ -136,29 +142,29 @@ p.sub.found {
   font-size: 12px;
 }
 
-.stats {
+.epub-edit .stats {
   display: grid;
   grid-template-columns: max-content 1fr;
   gap: 4px 16px;
   margin: 6px 0 0;
 }
 
-.stats dt {
+.epub-edit .stats dt {
   color: var(--muted);
 }
 
-.stats dd {
+.epub-edit .stats dd {
   margin: 0;
   font-variant-numeric: tabular-nums;
 }
 
-.stats .path {
+.epub-edit .stats .path {
   word-break: break-all;
   -webkit-user-select: text;
   user-select: text;
 }
 
-.results {
+.epub-edit .results {
   list-style: none;
   margin: 8px 0 0;
   padding: 0;
@@ -167,7 +173,7 @@ p.sub.found {
   gap: 6px;
 }
 
-.results button {
+.epub-edit .results button {
   width: 100%;
   text-align: left;
   border: 1px solid var(--line);
@@ -180,60 +186,60 @@ p.sub.found {
   gap: 3px;
 }
 
-.results button:hover {
+.epub-edit .results button:hover {
   background: var(--hover);
 }
 
-.results .kind {
+.epub-edit .results .kind {
   margin-left: 0;
   align-self: flex-start;
 }
 
-.snip {
+.epub-edit .snip {
   color: var(--muted);
   font-size: 12px;
 }
 
-mark {
+.epub-edit mark {
   background: #ffe58a;
   color: #1b1f27;
   border-radius: 2px;
 }
 
-.tools {
+.epub-edit .tools {
   flex-wrap: wrap;
 }
 
-.seg {
+.epub-edit .seg {
   display: inline-flex;
   border: 1px solid var(--line);
   border-radius: 7px;
   overflow: hidden;
 }
 
-.seg button {
+.epub-edit .seg button {
   border: 0;
   background: var(--panel);
   padding: 4px 12px;
   cursor: pointer;
 }
 
-.seg button + button {
+.epub-edit .seg button + button {
   border-left: 1px solid var(--line);
 }
 
-.seg button.active {
+.epub-edit .seg button.active {
   background: var(--sel);
   font-weight: 600;
 }
 
-.fmt {
+.epub-edit .fmt {
   display: inline-flex;
   gap: 2px;
   flex-wrap: wrap;
 }
 
-.fmt button {
+.epub-edit .fmt button {
   min-width: 28px;
   height: 28px;
   border: 1px solid transparent;
@@ -243,21 +249,21 @@ mark {
   padding: 0 6px;
 }
 
-.fmt button:hover {
+.epub-edit .fmt button:hover {
   background: var(--hover);
   border-color: var(--line);
 }
 
-.fmt button:nth-child(1) {
+.epub-edit .fmt button:nth-child(1) {
   font-weight: 700;
 }
 
-.fmt button:nth-child(2) {
+.epub-edit .fmt button:nth-child(2) {
   font-style: italic;
 }
 
 /* The book's own styles decide its colours, so the page is always light, like a printed page. */
-iframe.page {
+.epub-edit iframe.page {
   flex: 1;
   width: 100%;
   border: 0;
