@@ -184,6 +184,12 @@ fn zipped_at(app: &AppHandle, path: &str, src: &str, size: u64, name: &str, rang
         Ok(d) => d,
         Err(e) => return respond(StatusCode::NOT_FOUND, "text/plain", e.into_bytes()),
     };
+    // Stored as it is (videos usually are): read the range from the ZIP itself.
+    match crate::files::stored_span(&dev, path, size, name) {
+        Ok(Some((at, len))) => return ranged(len, media_type(name), range, |start, n| dev.read_range(path, at + start, n)),
+        Ok(None) => {}
+        Err(e) => return respond(StatusCode::INTERNAL_SERVER_ERROR, "text/plain", e.into_bytes()),
+    }
     let data = match crate::files::unpacked(&dev, path, size, name) {
         Ok(d) => d,
         Err(e) => return respond(StatusCode::INTERNAL_SERVER_ERROR, "text/plain", e.into_bytes()),
@@ -294,7 +300,12 @@ fn file(app: &AppHandle, q: &str, range: Option<&str>) -> Response<Vec<u8>> {
         Ok(d) => d,
         Err(e) => return respond(StatusCode::NOT_FOUND, "text/plain", e.into_bytes()),
     };
-    let ctype = media_type(&path);
+    ranged(size, media_type(&path), range, |start, n| dev.read_range(&path, start, n))
+}
+
+/// A file of `size` bytes, read through `read(start, len)`: the range asked for (at most CHUNK), or
+/// the whole file when no range is asked for and it's small enough.
+fn ranged(size: u64, ctype: &str, range: Option<&str>, read: impl Fn(u64, u64) -> crate::device::Result<Vec<u8>>) -> Response<Vec<u8>> {
     let fail = |e: crate::device::DevError| respond(StatusCode::INTERNAL_SERVER_ERROR, "text/plain", e.to_string().into_bytes());
     let base = || {
         Response::builder()
@@ -310,7 +321,7 @@ fn file(app: &AppHandle, q: &str, range: Option<&str>) -> Response<Vec<u8>> {
             .header("Content-Range", format!("bytes */{size}"))
             .body(vec![])
             .unwrap_or_else(|_| Response::new(Vec::new())),
-        Some(Ok((start, end))) => match dev.read_range(&path, start, end - start + 1) {
+        Some(Ok((start, end))) => match read(start, end - start + 1) {
             // The file may have shrunk since it was listed; say what was really read.
             Ok(data) if !data.is_empty() => {
                 let end = start + data.len() as u64 - 1;
@@ -328,7 +339,7 @@ fn file(app: &AppHandle, q: &str, range: Option<&str>) -> Response<Vec<u8>> {
             Err(e) => fail(e),
         },
         None if size > WHOLE_MAX => respond(StatusCode::PAYLOAD_TOO_LARGE, "text/plain", b"Too big to show whole.".to_vec()),
-        None => match dev.read_range(&path, 0, size) {
+        None => match read(0, size) {
             Ok(data) => base().status(StatusCode::OK).body(data).unwrap_or_else(|_| Response::new(Vec::new())),
             Err(e) => fail(e),
         },

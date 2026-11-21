@@ -10,6 +10,8 @@ pub struct Packed {
     /// Unpacked.
     pub size: u64,
     pub dir: bool,
+    /// Packed without compression or encryption: it can be read in place, a range at a time.
+    pub stored: bool,
 }
 
 #[derive(Serialize, Debug, PartialEq)]
@@ -64,6 +66,7 @@ pub fn list(size: u64, read: &mut Read) -> Result<Listing, String> {
     let mut items = Vec::new();
     let mut at = 0usize;
     while items.len() < LIST_MAX && dir.get(at..at + 4) == Some(&[0x50, 0x4B, 0x01, 0x02]) {
+        let stored = u16_at(&dir, at + 10) == Some(0) && u16_at(&dir, at + 8).is_some_and(|f| f & 1 == 0);
         let (Some(mut size), Some(name_len), Some(extra_len), Some(note_len)) = (u32_at(&dir, at + 24), u16_at(&dir, at + 28), u16_at(&dir, at + 30), u16_at(&dir, at + 32)) else { break };
         let name_at = at + 46;
         let Some(name) = dir.get(name_at..name_at + name_len as usize) else { break };
@@ -81,7 +84,7 @@ pub fn list(size: u64, read: &mut Read) -> Result<Listing, String> {
                 e += 4 + len as usize;
             }
         }
-        items.push(Packed { dir: name.ends_with('/'), name, size });
+        items.push(Packed { dir: name.ends_with('/'), name, size, stored });
         at = name_at + (name_len + extra_len + note_len) as usize;
     }
     Ok(Listing { items, total })
@@ -134,6 +137,16 @@ impl std::io::Seek for Ranged<'_, '_> {
         self.at = at as u64;
         Ok(self.at)
     }
+}
+
+/// Where the file `name` lies in the ZIP, as (offset, length), when it's packed without
+/// compression or encryption: it can then be read in place. Only the directory is read.
+pub fn stored_span(size: u64, read: &mut Read, name: &str) -> Result<Option<(u64, u64)>, String> {
+    let r = Ranged { read, size, at: 0, block: (0, Vec::new()) };
+    let mut zip = zip::ZipArchive::new(r).map_err(|e| format!("Not a ZIP file, or a damaged one ({e})."))?;
+    let i = zip.index_for_name(name).ok_or_else(|| format!("{name}: not in the ZIP."))?;
+    let f = zip.by_index_raw(i).map_err(|e| format!("{name}: {e}"))?;
+    Ok((f.compression() == zip::CompressionMethod::Stored && !f.encrypted()).then(|| (f.data_start(), f.size())))
 }
 
 /// One file packed in the ZIP, unpacked; only its part of the ZIP (and the directory) is read.
@@ -231,5 +244,32 @@ mod tests {
         let l = super::list(file.len() as u64, &mut read).unwrap();
         let got: Vec<_> = l.items.iter().map(|p| p.name.as_str()).collect();
         assert_eq!(got, ["a/b.txt"]);
+    }
+
+    #[test]
+    fn finds_stored_files_in_place() {
+        let mut buf = Cursor::new(Vec::new());
+        {
+            let mut z = zip::ZipWriter::new(&mut buf);
+            let stored = zip::write::SimpleFileOptions::default().compression_method(zip::CompressionMethod::Stored);
+            let packed = zip::write::SimpleFileOptions::default().compression_method(zip::CompressionMethod::Deflated);
+            z.start_file("small.txt", packed).unwrap();
+            z.write_all(&[b'a'; 5000]).unwrap();
+            z.start_file("clip.mp4", stored).unwrap();
+            z.write_all(&(0..300_000u32).map(|i| (i % 251) as u8).collect::<Vec<_>>()).unwrap();
+            z.finish().unwrap();
+        }
+        // With something before the ZIP, the offset is still where the bytes are in the file.
+        let mut file = vec![b'#'; 700];
+        file.extend(buf.into_inner());
+        let mut read = |at: u64, len: u64| Ok(file.iter().skip(at as usize).take(len as usize).copied().collect());
+        let l = super::list(file.len() as u64, &mut read).unwrap();
+        let got: Vec<_> = l.items.iter().map(|p| (p.name.as_str(), p.stored)).collect();
+        assert_eq!(got, [("small.txt", false), ("clip.mp4", true)]);
+        assert_eq!(super::stored_span(file.len() as u64, &mut read, "small.txt").unwrap(), None);
+        let (at, len) = super::stored_span(file.len() as u64, &mut read, "clip.mp4").unwrap().unwrap();
+        assert_eq!(len, 300_000);
+        assert_eq!(&file[at as usize + 1000..at as usize + 1004], &[1000 % 251, 1001 % 251, 1002 % 251, 1003 % 251].map(|v| v as u8));
+        assert!(super::stored_span(file.len() as u64, &mut read, "nope").is_err());
     }
 }

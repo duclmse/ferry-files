@@ -506,7 +506,7 @@ pub(super) fn Preview(
             let inner = p.zip_pick.with(|z| {
                 z.as_ref()
                     .filter(|z| z.0 == src && z.1 == e.path)
-                    .map(|z| (z.2.clone(), z.3))
+                    .map(|z| (z.2.clone(), z.3, z.4))
             });
             (e, forced, inner)
         })
@@ -521,7 +521,7 @@ pub(super) fn Preview(
                     0 | 1 => "Pick an item to see it here.".to_string(),
                     n => format!("{n} items picked."),
                 }}</span> }.into_any(),
-                Some((zip, None, Some((name, size)))) => view! { <Zipped pane=p src=p.src.get_untracked() zip name size/> }.into_any(),
+                Some((zip, None, Some((name, size, stored)))) => view! { <Zipped pane=p src=p.src.get_untracked() zip name size stored/> }.into_any(),
                 Some((e, forced, _)) => {
                     let what = match kind(&e) {
                         Kind::Folder => "Folder", Kind::Epub => "EPUB book", Kind::Text => "Text file", Kind::Other => "File",
@@ -1363,9 +1363,9 @@ struct Inner {
 const UNPACK_MAX: u64 = 64 * 1024 * 1024;
 
 /// A file picked in a ZIP's columns, `size` bytes unpacked: shown like any other file, from the
-/// ZIP unpacked.
+/// ZIP unpacked, or read in place when it's `stored` without compression.
 #[component]
-fn Zipped(pane: Pane, src: Src, zip: Entry, name: String, size: u64) -> impl IntoView {
+fn Zipped(pane: Pane, src: Src, zip: Entry, name: String, size: u64, stored: bool) -> impl IntoView {
     let p = pane;
     let short = name.rsplit('/').next().unwrap_or(&name).to_string();
     let e = Entry {
@@ -1402,7 +1402,7 @@ fn Zipped(pane: Pane, src: Src, zip: Entry, name: String, size: u64) -> impl Int
     let forced = RwSignal::new(None::<PeekAs>);
     let body = move || {
         let (e, url, inner, cover) = (e.clone(), url.clone(), inner.clone(), cover.clone());
-        if size > UNPACK_MAX {
+        if size > UNPACK_MAX && !stored {
             return view! { <span class="hint">"Too big to show from inside the ZIP."</span> }
                 .into_any();
         }
@@ -1830,6 +1830,7 @@ mod tests {
             name: name.into(),
             size,
             dir: name.ends_with('/'),
+            stored: false,
         }
     }
 

@@ -422,6 +422,9 @@ pub struct Packed {
     pub name: String,
     pub size: u64,
     pub dir: bool,
+    /// Packed without compression: read in place, so size doesn't matter.
+    #[serde(default)]
+    pub stored: bool,
 }
 
 /// A PDF's page count and outline (empty when it has none).

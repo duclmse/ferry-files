@@ -567,12 +567,30 @@ pub(super) fn unpacked(dev: &Device, path: &str, size: u64, name: &str) -> Resul
     Ok(data)
 }
 
+/// Where the file `name` packed in the ZIP at `path` (`size` bytes) lies in it, when it's stored
+/// as it is (see `archive::stored_span`). The last answer is kept, as media asks a piece at a time.
+pub(super) fn stored_span(dev: &Device, path: &str, size: u64, name: &str) -> Result<Option<(u64, u64)>, String> {
+    static LAST: Mutex<Option<(String, Option<(u64, u64)>)>> = Mutex::new(None);
+    let key = format!("{}:{}\n{path}\n{size}\n{name}", dev.kind(), dev.label());
+    if let Some((k, span)) = LAST.lock().unwrap_or_else(|e| e.into_inner()).as_ref() {
+        if *k == key {
+            return Ok(*span);
+        }
+    }
+    let span = crate::archive::stored_span(size, &mut |at, len| dev.read_range(path, at, len).map_err(msg), name)?;
+    *LAST.lock().unwrap_or_else(|e| e.into_inner()) = Some((key, span));
+    Ok(span)
+}
+
 /// `len` bytes from `start` of the file, or of the file `inner` packed in it.
 fn read_part(dev: &Device, path: &str, inner: Option<&str>, zip_size: Option<u64>, start: u64, len: u64) -> Result<Vec<u8>, String> {
     match inner {
         None => dev.read_range(path, start, len).map_err(msg),
         Some(name) => {
             let size = zip_size.ok_or("The ZIP's size is missing.")?;
+            if let Some((at, n)) = stored_span(dev, path, size, name)? {
+                return if start >= n { Ok(vec![]) } else { dev.read_range(path, at + start, len.min(n - start)).map_err(msg) };
+            }
             let data = unpacked(dev, path, size, name)?;
             let from = (start as usize).min(data.len());
             let to = (start.saturating_add(len) as usize).min(data.len());

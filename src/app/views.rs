@@ -403,13 +403,14 @@ pub(super) fn ColumnView(pane: Pane) -> impl IntoView {
 }
 
 /// An item in a folder of a ZIP file: its full name in the ZIP (folders end in /), its name, and
-/// its unpacked size.
+/// its unpacked size, and whether it's stored without compression.
 #[derive(Clone)]
 struct ZipItem {
     path: String,
     name: String,
     dir: bool,
     size: u64,
+    stored: bool,
 }
 
 /// What's in folder `prefix` ("" or "a/b/") of a ZIP: folders first, then by name. Folders are
@@ -419,8 +420,8 @@ fn zip_items(items: &[Packed], prefix: &str) -> Vec<ZipItem> {
     for i in items {
         let Some(rest) = i.name.strip_prefix(prefix).filter(|r| !r.is_empty()) else { continue };
         let item = match rest.find('/') {
-            Some(at) => ZipItem { path: format!("{prefix}{}/", &rest[..at]), name: rest[..at].to_string(), dir: true, size: 0 },
-            None => ZipItem { path: i.name.clone(), name: rest.to_string(), dir: false, size: i.size },
+            Some(at) => ZipItem { path: format!("{prefix}{}/", &rest[..at]), name: rest[..at].to_string(), dir: true, size: 0, stored: false },
+            None => ZipItem { path: i.name.clone(), name: rest.to_string(), dir: false, size: i.size, stored: i.stored },
         };
         if !out.iter().any(|o| o.path == item.path) {
             out.push(item);
@@ -471,7 +472,7 @@ fn ZipColumns(pane: Pane, src: Src, entry: Entry, open: RwSignal<Vec<String>>) -
                                                 ev.stop_propagation();
                                                 picked.set(Some(c.clone()));
                                                 // A file shows in the preview; a folder leaves the ZIP there.
-                                                pane.zip_pick.set((!i.dir).then(|| (src, zip_path.get_value(), c.clone(), i.size)));
+                                                pane.zip_pick.set((!i.dir).then(|| (src, zip_path.get_value(), c.clone(), i.size, i.stored)));
                                                 open.update(|o| {
                                                     o.truncate(n);
                                                     if i.dir {

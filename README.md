@@ -21,7 +21,9 @@ own files and disks, with tools for EPUB books in particular.
     (and its pictures) is read from the book. Edit opens the whole book in the
     EPUB editor, there in the preview;
   - ZIP, APK and JAR contents as a tree, read from the file's end without
-    unpacking. A file picked in it shows in the preview.
+    unpacking. A file picked in it shows in the preview: read in place when
+    it's stored without compression (as videos usually are), otherwise
+    unpacked, up to 64 MB.
 - **Files**: copy, move, rename, delete, new file or folder, upload and
   download. Use the right-click menu, F5/F6, ⌘C/⌘X/⌘V (shared with Finder) or
   drag and drop. Copies merge folders and never replace a file, with progress

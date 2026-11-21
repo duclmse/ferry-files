@@ -479,7 +479,7 @@ struct Pane {
     peek_as: RwSignal<Option<(String, PeekAs)>>,
     /// A file picked in a ZIP's columns, which the preview shows instead of the ZIP: the side
     /// and the ZIP's path, and the file's name in the ZIP and unpacked size.
-    zip_pick: RwSignal<Option<(Src, String, String, u64)>>,
+    zip_pick: RwSignal<Option<(Src, String, String, u64, bool)>>,
     /// Whether the path above the files is being typed in.
     editing_path: RwSignal<bool>,
     /// Counts folder listings asked for; a listing that comes back after a newer one was asked
