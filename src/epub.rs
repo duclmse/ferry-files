@@ -4,6 +4,7 @@
 //! backend copy is always complete when the book is saved.
 
 use crate::api::*;
+use crate::app::{ico, Icon};
 use leptos::html;
 use leptos::prelude::*;
 use leptos::task::spawn_local;
@@ -424,9 +425,9 @@ pub fn EditBar() -> impl IntoView {
         {move || ep.busy.get().then(|| view! { <span class="spin"></span> })}
         <span class="spacer"></span>
         <button class="btn" title=copy_title.clone() aria-label=copy_title disabled=move || ep.busy.get()
-            on:click=move |_| ep.export()>{crate::app::ico(crate::app::Icon::Copy)}</button>
-        <button class="btn primary" class:unsaved=move || dirty.get() title=save_title aria-label=save_title
-            disabled=move || !dirty.get() || ep.busy.get() on:click=move |_| ep.save()>{crate::app::ico(crate::app::Icon::Save)}</button>
+            on:click=move |_| ep.export()>{ico(Icon::Copy)}</button>
+        <button class="btn primary" title=save_title aria-label=save_title
+            disabled=move || !dirty.get() || ep.busy.get() on:click=move |_| ep.save()>{ico(Icon::Save)}</button>
     }
 }
 
@@ -450,7 +451,7 @@ pub fn EditBody() -> impl IntoView {
                 (!msg.is_empty()).then(|| view! {
                     <div class=format!("notice {kind}")>
                         <span class="text">{msg}</span>
-                        <button class="btn" title="Dismiss" aria-label="Dismiss" on:click=move |_| ep.say("", "")>{crate::app::ico(crate::app::Icon::Close)}</button>
+                        <button class="btn" title="Dismiss" aria-label="Dismiss" on:click=move |_| ep.say("", "")>{ico(Icon::Close)}</button>
                     </div>
                 })
             }}
@@ -519,8 +520,9 @@ fn InfoView() -> impl IntoView {
                 </div>
                 <div class="actions">
                     <span class="spacer"></span>
-                    <button type="button" class="btn" disabled=move || !changed() on:click=move |_| form.set(saved())>"Discard changes"</button>
-                    <button type="submit" class="btn primary" disabled=move || !changed() || ep.busy.get()>"Apply"</button>
+                    <button type="button" class="btn" title="Discard changes" aria-label="Discard changes" disabled=move || !changed()
+                        on:click=move |_| form.set(saved())>{ico(Icon::Restore)}</button>
+                    <button type="submit" class="btn primary" title="Apply" aria-label="Apply" disabled=move || !changed() || ep.busy.get()>{ico(Icon::Check)}</button>
                 </div>
             </form>
             <div class="card">
@@ -588,9 +590,9 @@ fn FindView() -> impl IntoView {
                     {check("Match case", |x| x.match_case, |x, v| x.match_case = v)}
                     {check("Whole word", |x| x.whole_word, |x, v| x.whole_word = v)}
                     <span class="spacer"></span>
-                    <button type="submit" class="btn" disabled=move || q.with(|x| x.find.is_empty()) || ep.busy.get()>"Find"</button>
-                    <button type="button" class="btn primary" disabled=move || q.with(|x| x.find.is_empty()) || ep.busy.get()
-                        on:click=move |_| confirm.set(true)>"Replace all…"</button>
+                    <button type="submit" class="btn" title="Find" aria-label="Find" disabled=move || q.with(|x| x.find.is_empty()) || ep.busy.get()>{ico(Icon::Search)}</button>
+                    <button type="button" class="btn primary" title="Replace all…" aria-label="Replace all…" disabled=move || q.with(|x| x.find.is_empty()) || ep.busy.get()
+                        on:click=move |_| confirm.set(true)>{ico(Icon::ReplaceAll)}</button>
                 </div>
                 {move || confirm.get().then(|| {
                     let x = q.get();
@@ -673,7 +675,7 @@ fn ChapterView(path: String) -> impl IntoView {
                         let on = !ep.colours.get_untracked();
                         ep.colours.set(on);
                         crate::app::store(COLOURS_KEY, if on { "1" } else { "0" });
-                    }>{crate::app::ico(crate::app::Icon::Highlight)}</button>
+                    }>{ico(Icon::Highlight)}</button>
             })}
             {move || (ep.mode.get() == Mode::Visual && visual_ok()).then(|| view! {
                 <div class="fmt">

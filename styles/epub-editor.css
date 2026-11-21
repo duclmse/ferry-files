@@ -309,3 +309,31 @@ iframe.page {
   border-radius: 6px;
   overflow: hidden;
 }
+
+/* Notices are boxes here, and their text may be narrower than a pane's. */
+.epub-edit .notice {
+  padding: 6px 10px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+}
+
+.epub-edit .notice .text,
+.epub-edit .confirm .text {
+  flex: 1 1 140px;
+  min-width: 0;
+}
+
+.epub-edit .actions {
+  gap: 6px;
+}
+
+/* The chapter's tools are as tall as the bar's buttons. */
+.epub-edit .viewer-bar.tools .seg button {
+  height: 24px;
+  padding: 0 10px;
+}
+
+.epub-edit .fmt button {
+  height: 26px;
+  min-width: 26px;
+}
