@@ -8,14 +8,14 @@
 use crate::device::{basename, dirname, err, join, DevError, Entry, Result, Space, Transport};
 use std::collections::HashMap;
 use std::sync::atomic::{AtomicBool, Ordering};
-use std::sync::Mutex;
+use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
 use windows::core::{GUID, HSTRING, PWSTR};
 use windows::Win32::Devices::PortableDevices::*;
 use windows::Win32::Foundation::PROPERTYKEY;
 use windows::Win32::System::Com::StructuredStorage::{PropVariantClear, PROPVARIANT};
 use windows::Win32::System::Com::{
-    CoCreateInstance, CoInitializeEx, CoTaskMemFree, IStream, CLSCTX_INPROC_SERVER, COINIT_MULTITHREADED, STGC_DEFAULT,
+    CoCreateInstance, CoInitializeEx, CoTaskMemFree, IStream, CLSCTX_INPROC_SERVER, COINIT_MULTITHREADED, STGC_DEFAULT, STREAM_SEEK_SET,
     STGM_READ,
 };
 use windows::Win32::System::Variant::VT_DATE;
@@ -248,12 +248,15 @@ impl Link {
         stream.ok_or_else(|| DevError::Msg("The device sent no data.".into()))
     }
 
-    /// Reads a stream to the end, into `out`.
-    fn drain(stream: &IStream, out: &mut impl std::io::Write) -> Result<()> {
+    /// Reads a stream to the end, into `out`; stops when any of `stops` is set.
+    fn drain(stream: &IStream, out: &mut impl std::io::Write, stops: &[&AtomicBool]) -> Result<()> {
         let mut buf = vec![0u8; 256 * 1024];
         loop {
             if QUITTING.load(Ordering::Relaxed) {
                 return err("Stopped: the app is quitting.");
+            }
+            if stops.iter().any(|f| f.load(Ordering::Relaxed)) {
+                return err("Stopped.");
             }
             let mut n = 0u32;
             let hr = unsafe { stream.Read(buf.as_mut_ptr().cast(), buf.len() as u32, Some(&mut n)) };
@@ -269,13 +272,40 @@ impl Link {
 
     fn download(&self, id: &str) -> Result<Vec<u8>> {
         let mut out = vec![];
-        Self::drain(&self.stream(id)?, &mut out)?;
+        Self::drain(&self.stream(id)?, &mut out, &[])?;
         Ok(out)
     }
 
-    fn download_to(&self, id: &str, to: &std::path::Path) -> Result<()> {
+    /// Copies the file to `to`, stopping when any of `stops` is set.
+    fn download_until(&self, id: &str, to: &std::path::Path, stops: &[&AtomicBool]) -> Result<()> {
         let mut f = std::fs::File::create(to).map_err(|e| DevError::Msg(e.to_string()))?;
-        Self::drain(&self.stream(id)?, &mut f)
+        Self::drain(&self.stream(id)?, &mut f, stops)
+    }
+
+    /// `len` bytes from `start` of the file, or None when the device's stream can't seek.
+    fn read_at(&self, id: &str, start: u64, len: u64) -> Result<Option<Vec<u8>>> {
+        let stream = self.stream(id)?;
+        let mut at = 0u64;
+        let sought = unsafe { stream.Seek(start as i64, STREAM_SEEK_SET, Some(&mut at)) };
+        if sought.is_err() || at != start {
+            return Ok(None);
+        }
+        let mut out = vec![0u8; len as usize];
+        let mut got = 0usize;
+        while got < out.len() {
+            let mut n = 0u32;
+            let want = (out.len() - got).min(1 << 20) as u32;
+            let hr = unsafe { stream.Read(out[got..].as_mut_ptr().cast(), want, Some(&mut n)) };
+            if hr.is_err() {
+                return Err(werr("Couldn't read the file", hr.into()));
+            }
+            if n == 0 {
+                break;
+            }
+            got += n as usize;
+        }
+        out.truncate(got);
+        Ok(Some(out))
     }
 
     fn upload(&self, data: &[u8], name: &str, parent: &str) -> Result<String> {
@@ -381,6 +411,26 @@ fn temp_name(name: &str) -> String {
 struct Inner {
     link: Link,
     cache: HashMap<String, (Instant, Listing)>,
+    /// False once the device's stream has refused to seek; ranges then come from a whole copy.
+    seek: bool,
+}
+
+/// `inner`, locked, on a thread set up for COM.
+fn lock(inner: &Mutex<Inner>) -> std::sync::MutexGuard<'_, Inner> {
+    com();
+    inner.lock().unwrap_or_else(|e| e.into_inner())
+}
+
+/// A file copied whole to be played (see `crate::stream`), as the device can't send part
+/// of a file: its parts are read from the copy without waiting for the device, which the copy
+/// holds.
+#[derive(Clone)]
+struct Streamed {
+    path: String,
+    key: String,
+    ext: String,
+    size: u64,
+    id: String,
 }
 
 impl Inner {
@@ -426,10 +476,21 @@ impl Inner {
 }
 
 pub struct Wpd {
-    inner: Mutex<Inner>,
+    inner: Arc<Mutex<Inner>>,
+    /// The last few files copied to be played (see `crate::stream`).
+    streamed: Mutex<Vec<Streamed>>,
+    /// Set when the device is let go of: stops a copy being played.
+    stop: Arc<AtomicBool>,
     /// (name in paths, object ID)
     storages: Vec<(String, String)>,
     model: String,
+}
+
+// A copy being played holds the device: stop it, so the device is let go of.
+impl Drop for Wpd {
+    fn drop(&mut self) {
+        self.stop.store(true, Ordering::Relaxed);
+    }
 }
 
 /// The name the rest of the app knows the MTP transport by.
@@ -473,12 +534,23 @@ impl Wpd {
         if storages.is_empty() {
             return err("The device shows no storage. Unlock the phone and choose \"File transfer\".");
         }
-        Ok(Wpd { inner: Mutex::new(Inner { link, cache: HashMap::new() }), storages, model: dev.name })
+        Ok(Wpd { inner: Arc::new(Mutex::new(Inner { link, cache: HashMap::new(), seek: true })), streamed: Mutex::new(Vec::new()), stop: Arc::default(), storages, model: dev.name })
     }
 
     fn inner(&self) -> std::sync::MutexGuard<'_, Inner> {
-        com();
-        self.inner.lock().unwrap_or_else(|e| e.into_inner())
+        lock(&self.inner)
+    }
+
+    /// Part of the file `s`, from its copy (started if need be).
+    fn read_streamed(&self, s: Streamed, start: u64, len: u64) -> Result<Vec<u8>> {
+        let (inner, stop, id) = (self.inner.clone(), self.stop.clone(), s.id.clone());
+        let fill = move |to: &std::path::Path, cancel: &AtomicBool| lock(&inner).link.download_until(&id, to, &[&stop, cancel]).map_err(|e| e.to_string());
+        crate::stream::read(&s.key, &s.ext, s.size, start, len, fill).map_err(DevError::Msg)
+    }
+
+    /// Writes change what's on the device: a copy being played is let go of.
+    fn forget_streamed(&self) {
+        self.streamed.lock().unwrap_or_else(|e| e.into_inner()).clear();
     }
 
     /// The object at `path`: None if it isn't there, an error if a folder on the way can't be
@@ -522,21 +594,6 @@ impl Wpd {
 
     /// A whole copy of the file in the app's "opened" folder, for reading parts of it. Only the
     /// latest one is kept.
-    fn stream_copy(&self, inner: &mut Inner, node: &Node) -> Result<std::path::PathBuf> {
-        let dir = crate::files::opened_dir().join("stream");
-        let key = format!("{}|{}|{}", self.model, node.path, Self::version_of(node));
-        let ext = node.name.rsplit_once('.').map_or(String::new(), |(_, x)| format!(".{x}"));
-        let file = dir.join(format!("{:x}{ext}", md5::compute(key)));
-        if !file.exists() {
-            let _ = std::fs::remove_dir_all(&dir);
-            std::fs::create_dir_all(&dir).map_err(|e| DevError::Msg(e.to_string()))?;
-            let tmp = dir.join(".partial");
-            inner.link.download_to(&node.id, &tmp)?;
-            std::fs::rename(&tmp, &file).map_err(|e| DevError::Msg(e.to_string()))?;
-        }
-        Ok(file)
-    }
-
     fn public(n: &Node) -> Entry {
         Entry { name: n.name.clone(), path: n.path.clone(), dir: n.dir, size: n.size, mtime: n.mtime }
     }
@@ -588,7 +645,16 @@ impl Transport for Wpd {
         Ok(self.resolve(&mut inner, path)?.filter(|n| !n.dir).map(|n| Self::version_of(&n)))
     }
 
+    fn stop(&self) {
+        self.stop.store(true, Ordering::Relaxed);
+    }
+
     fn read_range(&self, path: &str, start: u64, len: u64) -> Result<Vec<u8>> {
+        // Being copied: read from the copy, without waiting for the device the copy holds.
+        let streamed = self.streamed.lock().unwrap_or_else(|e| e.into_inner()).iter().find(|s| s.path == path).cloned();
+        if let Some(s) = streamed {
+            return self.read_streamed(s, start, len);
+        }
         let mut inner = self.inner();
         let Some(node) = self.resolve(&mut inner, path)?.filter(|n| !n.dir) else {
             return err(format!("No such file: {path}"));
@@ -596,8 +662,31 @@ impl Transport for Wpd {
         if start >= node.size || len == 0 {
             return Ok(vec![]);
         }
-        let copy = self.stream_copy(&mut inner, &node)?;
-        crate::local::Local.read_range(&crate::platform::app_path(&copy), start, len)
+        let len = len.min(node.size - start);
+        if inner.seek {
+            match inner.link.read_at(&node.id, start, len)? {
+                Some(data) => return Ok(data),
+                None => inner.seek = false,
+            }
+        }
+        // The device can't send part of a file: copy it whole, and read from the copy as it comes.
+        drop(inner);
+        let s = Streamed {
+            path: path.to_string(),
+            key: format!("wpd|{}|{}|{}", self.model, node.path, Self::version_of(&node)),
+            ext: node.name.rsplit_once('.').map_or(String::new(), |(_, x)| format!(".{x}")),
+            size: node.size,
+            id: node.id.clone(),
+        };
+        {
+            let mut all = self.streamed.lock().unwrap_or_else(|e| e.into_inner());
+            all.retain(|o| o.path != path);
+            all.push(s.clone());
+            // As many as `crate::stream` keeps copies of.
+            let extra = all.len().saturating_sub(3);
+            all.drain(..extra);
+        }
+        self.read_streamed(s, start, len)
     }
 
     fn read(&self, path: &str) -> Result<(Vec<u8>, String)> {
@@ -618,6 +707,7 @@ impl Transport for Wpd {
     /// MTP can't overwrite: upload under a temporary name, delete the old file, rename. The new
     /// data stays on the device at every step: a copy is only deleted once another one is there.
     fn replace(&self, path: &str, data: &[u8], exists: bool) -> Result<String> {
+        self.forget_streamed();
         let mut inner = self.inner();
         let name = basename(path).to_string();
         let parent = self.parent_of(&mut inner, path)?;
@@ -658,6 +748,7 @@ impl Transport for Wpd {
     }
 
     fn delete(&self, path: &str, _is_dir: bool) -> Result<()> {
+        self.forget_streamed();
         let mut inner = self.inner();
         let Some(node) = self.resolve(&mut inner, path)? else {
             return err(format!("No such file or folder: {path}"));
@@ -680,6 +771,7 @@ impl Transport for Wpd {
     }
 
     fn rename(&self, path: &str, new_name: &str) -> Result<()> {
+        self.forget_streamed();
         let mut inner = self.inner();
         let node = match self.resolve(&mut inner, path)? {
             Some(n) if n.storage.as_deref().is_some_and(|s| s != n.id) => n,

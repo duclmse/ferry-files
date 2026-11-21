@@ -69,7 +69,9 @@ Every write or delete, on a phone or the computer:
 3. writes the new version and checks it.
 
 Previews read only what they show: media and hex by range, and phone thumbnails
-one at a time, only for folders on screen.
+one at a time, only for folders on screen. A phone or server that can't send part of a
+file is copied to the computer in the background, and plays while it's copied.
+The copy is deleted after two minutes unused.
 
 ## Platforms
 

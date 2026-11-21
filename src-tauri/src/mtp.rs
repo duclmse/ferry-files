@@ -143,6 +143,12 @@ extern "C" fn progress(_sent: u64, _total: u64, data: *const c_void) -> c_int {
     (stopped || QUITTING.load(Ordering::Relaxed)) as c_int
 }
 
+/// `data` is a `[&AtomicBool; 2]`: the device's stop flag and the copy's own.
+extern "C" fn progress_either(_sent: u64, _total: u64, data: *const c_void) -> c_int {
+    let flags = unsafe { &*data.cast::<[&AtomicBool; 2]>() };
+    (flags.iter().any(|f| f.load(Ordering::Relaxed)) || QUITTING.load(Ordering::Relaxed)) as c_int
+}
+
 extern "C" {
     /// libmtp hands back buffers from malloc.
     fn free(p: *mut c_void);
@@ -354,6 +360,15 @@ impl Link {
         if rc == 0 { Ok(()) } else { Err(self.error("Reading the file")) }
     }
 
+    /// As `download_to`, also stopping when `cancel` is set.
+    fn download_until(&self, id: u32, to: &std::path::Path, cancel: &AtomicBool) -> Result<()> {
+        let c = CString::new(to.to_string_lossy().as_bytes()).unwrap();
+        let flags: [&AtomicBool; 2] = [&self.stop, cancel];
+        let data: *const [&AtomicBool; 2] = &flags;
+        let rc = unsafe { (self.lib.get_file_to_file)(self.dev, id, c.as_ptr(), Some(progress_either), data.cast()) };
+        if rc == 0 { Ok(()) } else { Err(self.error("Reading the file")) }
+    }
+
     /// Part of a file straight from the device, or None when it (or libmtp) can't do that.
     fn read_partial(&mut self, id: u32, start: u64, len: u32) -> Option<Vec<u8>> {
         let f = self.lib.get_partial.filter(|_| self.partial)?;
@@ -545,6 +560,19 @@ struct Node {
 }
 
 /// A device in use. Field order matters: the device's lock is released before the libmtp lock.
+// A copy being played holds the link: stop it, so the device is let go of.
+impl Drop for Mtp {
+    fn drop(&mut self) {
+        self.stop.store(true, Ordering::Relaxed);
+    }
+}
+
+/// `inner`, locked; also holds the libmtp lock while in use.
+fn lock(inner: &Mutex<Inner>) -> Locked<'_> {
+    let lib = lib_lock();
+    Locked { inner: inner.lock().unwrap_or_else(|e| e.into_inner()), _lib: lib }
+}
+
 struct Locked<'a> {
     inner: std::sync::MutexGuard<'a, Inner>,
     _lib: LibLock,
@@ -585,8 +613,22 @@ impl Inner {
     }
 }
 
+/// A file copied whole to be played (see `crate::stream`), as the device can't send part
+/// of a file: its parts are read from the copy without waiting for the device, which the copy
+/// holds.
+#[derive(Clone)]
+struct Streamed {
+    path: String,
+    key: String,
+    ext: String,
+    size: u64,
+    id: u32,
+}
+
 pub struct Mtp {
-    inner: Mutex<Inner>,
+    inner: Arc<Mutex<Inner>>,
+    /// The last few files copied to be played (see `crate::stream`).
+    streamed: Mutex<Vec<Streamed>>,
     storages: Vec<(String, u32)>,
     model: String,
     /// The link's stop flag, reachable while a copy holds `inner`.
@@ -655,13 +697,25 @@ impl Mtp {
             .map(|f| cstr(unsafe { f(dev) }))
             .find(|s| !s.is_empty())
             .unwrap_or_else(|| "MTP device".into());
-        Ok(Mtp { inner: Mutex::new(Inner { link, cache: HashMap::new() }), storages, model, stop })
+        Ok(Mtp { inner: Arc::new(Mutex::new(Inner { link, cache: HashMap::new() })), streamed: Mutex::new(Vec::new()), storages, model, stop })
     }
 
     /// The device, locked; also holds the libmtp lock while in use.
     fn inner(&self) -> Locked<'_> {
-        let lib = lib_lock();
-        Locked { inner: self.inner.lock().unwrap_or_else(|e| e.into_inner()), _lib: lib }
+        lock(&self.inner)
+    }
+
+    /// Part of the file `s`, from its copy (started if need be).
+    fn read_streamed(&self, s: Streamed, start: u64, len: u64) -> Result<Vec<u8>> {
+        let inner = self.inner.clone();
+        let fill = move |to: &std::path::Path, cancel: &AtomicBool| lock(&inner).link.download_until(s.id, to, cancel).map_err(|e| e.to_string());
+        let (key, ext, size) = (s.key.clone(), s.ext.clone(), s.size);
+        crate::stream::read(&key, &ext, size, start, len, fill).map_err(DevError::Msg)
+    }
+
+    /// Writes change what's on the device: a copy being played is let go of.
+    fn forget_streamed(&self) {
+        self.streamed.lock().unwrap_or_else(|e| e.into_inner()).clear();
     }
 
     fn storage_id(&self, name: &str) -> Option<u32> {
@@ -700,21 +754,6 @@ impl Mtp {
 
     /// A whole copy of the file in the app's "opened" folder, for devices that can't send part of a
     /// file. Only the latest one is kept.
-    fn stream_copy(&self, inner: &mut Inner, node: &Node) -> Result<std::path::PathBuf> {
-        let dir = crate::files::opened_dir().join("stream");
-        let key = format!("{}|{}|{}", self.model, node.path, Self::version_of(node));
-        let ext = node.name.rsplit_once('.').map_or(String::new(), |(_, x)| format!(".{x}"));
-        let file = dir.join(format!("{:x}{ext}", md5::compute(key)));
-        if !file.exists() {
-            let _ = std::fs::remove_dir_all(&dir);
-            std::fs::create_dir_all(&dir).map_err(|e| DevError::Msg(e.to_string()))?;
-            let tmp = dir.join(".partial");
-            inner.link.download_to(node.id, &tmp)?;
-            std::fs::rename(&tmp, &file).map_err(|e| DevError::Msg(e.to_string()))?;
-        }
-        Ok(file)
-    }
-
     fn version_of(n: &Node) -> String {
         format!("{}:{}:{}", n.id, n.size, n.mtime)
     }
@@ -781,6 +820,11 @@ impl Transport for Mtp {
     }
 
     fn read_range(&self, path: &str, start: u64, len: u64) -> Result<Vec<u8>> {
+        // Being copied: read from the copy, without waiting for the device the copy holds.
+        let streamed = self.streamed.lock().unwrap_or_else(|e| e.into_inner()).iter().find(|s| s.path == path).cloned();
+        if let Some(s) = streamed {
+            return self.read_streamed(s, start, len);
+        }
         let mut inner = self.inner();
         let Some(node) = self.resolve(&mut inner, path).filter(|n| !n.dir) else {
             return err(format!("No such file: {path}"));
@@ -792,9 +836,24 @@ impl Transport for Mtp {
         if let Some(data) = inner.link.read_partial(node.id, start, len as u32) {
             return Ok(data);
         }
-        // The device can't send part of a file: copy it whole once, and read from the copy.
-        let copy = self.stream_copy(&mut inner, &node)?;
-        crate::local::Local.read_range(&crate::platform::app_path(&copy), start, len)
+        // The device can't send part of a file: copy it whole, and read from the copy as it comes.
+        drop(inner);
+        let s = Streamed {
+            path: path.to_string(),
+            key: format!("mtp|{}|{}|{}", self.model, node.path, Self::version_of(&node)),
+            ext: node.name.rsplit_once('.').map_or(String::new(), |(_, x)| format!(".{x}")),
+            size: node.size,
+            id: node.id,
+        };
+        {
+            let mut all = self.streamed.lock().unwrap_or_else(|e| e.into_inner());
+            all.retain(|o| o.path != path);
+            all.push(s.clone());
+            // As many as `crate::stream` keeps copies of.
+            let extra = all.len().saturating_sub(3);
+            all.drain(..extra);
+        }
+        self.read_streamed(s, start, len)
     }
 
     fn read(&self, path: &str) -> Result<(Vec<u8>, String)> {
@@ -812,6 +871,7 @@ impl Transport for Mtp {
 
     /// MTP can't overwrite: upload under a temporary name, delete the old file, rename.
     fn replace(&self, path: &str, data: &[u8], exists: bool) -> Result<String> {
+        self.forget_streamed();
         let mut inner = self.inner();
         let name = basename(path).to_string();
         let (sid, pid) = self.parent_of(&mut inner, path)?;
@@ -842,6 +902,7 @@ impl Transport for Mtp {
     }
 
     fn delete(&self, path: &str, _is_dir: bool) -> Result<()> {
+        self.forget_streamed();
         let mut inner = self.inner();
         let Some(node) = self.resolve(&mut inner, path) else {
             return err(format!("No such file or folder: {path}"));
@@ -864,6 +925,7 @@ impl Transport for Mtp {
     }
 
     fn rename(&self, path: &str, new_name: &str) -> Result<()> {
+        self.forget_streamed();
         let mut inner = self.inner();
         let node = match self.resolve(&mut inner, path) {
             Some(n) if n.storage.is_some() && n.id != ROOT_ID => n,

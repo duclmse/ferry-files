@@ -348,7 +348,16 @@ impl Transport for Everything {
 
     fn read_range(&self, path: &str, start: u64, len: u64) -> Result<Vec<u8>> {
         let res = self.get(&file_url(&self.srv.base, path), Some((start, len)))?;
-        // A server that ignores the range sends the whole file: skip to `start`.
+        // A server that ignores the range sends the whole file: copy it to the computer in the
+        // background, and read from the copy as it comes (or, not knowing its size, skip to `start`).
+        let whole = (res.status() != 206).then(|| res.header("Content-Length").and_then(|n| n.parse::<u64>().ok())).flatten();
+        if let Some(size) = whole {
+            let key = format!("everything|{}|{path}|{size}", self.srv.base);
+            let ext = path.rsplit_once('.').filter(|(_, x)| !x.contains('/')).map_or(String::new(), |(_, x)| format!(".{x}"));
+            let mut body = res.into_reader();
+            let fill = move |to: &std::path::Path, stop: &std::sync::atomic::AtomicBool| crate::stream::copy_until(&mut body, to, stop);
+            return crate::stream::read(&key, &ext, size, start, len, fill).map_err(DevError::Msg);
+        }
         let skip = if res.status() == 206 { 0 } else { start };
         let mut reader = res.into_reader();
         std::io::copy(&mut (&mut reader).take(skip), &mut std::io::sink()).map_err(|e| DevError::Msg(e.to_string()))?;

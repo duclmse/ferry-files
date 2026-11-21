@@ -22,6 +22,7 @@ pub mod xml;
 mod connect;
 mod dupes;
 mod everything;
+mod stream;
 mod sftp;
 mod smb;
 mod terminal;
