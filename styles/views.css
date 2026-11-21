@@ -287,6 +287,22 @@
   text-align: left;
 }
 
+/* The name and, kept beside it, the size and width × height; the name gives way first. */
+.preview .meta .head {
+  display: flex;
+  align-items: baseline;
+  gap: 8px;
+  min-width: 0;
+  max-width: 100%;
+}
+
+.preview .meta .measures {
+  flex: none;
+  white-space: nowrap;
+  color: var(--muted);
+  font-variant-numeric: tabular-nums;
+}
+
 .preview .meta .name {
   min-width: 0;
   max-width: 100%;

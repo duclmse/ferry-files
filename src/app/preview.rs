@@ -441,6 +441,16 @@ fn EpubView(pane: Pane, src: Src, entry: Entry) -> impl IntoView {
     }
 }
 
+/// A file's size, then its width × height and length once known, for beside its name.
+fn measures(size: Option<String>, info: RwSignal<MediaInfo>) -> String {
+    let mut v: Vec<String> = size.into_iter().collect();
+    info.with(|i| {
+        v.extend(i.width.zip(i.height).map(|(w, h)| format!("{w} × {h}")));
+        v.extend(i.duration.map(length));
+    });
+    v.join(" · ")
+}
+
 /// The backend serves a whole file (a PDF, a font) up to this size.
 const WHOLE_MAX: u64 = 64 * 1024 * 1024;
 
@@ -546,18 +556,14 @@ pub(super) fn Preview(
                             }.into_any()
                         }
                     };
-                    // Name, then kind, size, the width × height and length once known, date and
-                    // folder, on one line above.
+                    // Name with its size, width × height and length beside it, then kind, date
+                    // and folder, on one line above.
                     let size = (!e.dir).then(|| human_size(e.size));
                     let modified = (e.mtime > 0).then(|| when(e.mtime));
                     let folder = parent(&e.path);
+                    let measures = Signal::derive(move || measures(size.clone(), info));
                     let facts = move || {
                         let mut v = vec![what.to_string()];
-                        v.extend(size.clone());
-                        info.with(|i| {
-                            v.extend(i.width.zip(i.height).map(|(w, h)| format!("{w} × {h}")));
-                            v.extend(i.duration.map(length));
-                        });
                         v.extend(modified.clone());
                         v.push(folder.clone());
                         v.join(" · ")
@@ -565,7 +571,10 @@ pub(super) fn Preview(
                     let facts = Signal::derive(facts);
                     view! {
                         <div class="meta">
-                            <b class="name" title=e.path.clone()>{e.name.clone()}</b>
+                            <span class="head">
+                                <b class="name" title=e.path.clone()>{e.name.clone()}</b>
+                                <span class="measures">{move || measures.get()}</span>
+                            </span>
                             <span class="sub" title=move || facts.get()>{move || facts.get()}</span>
                             {forced.map(|now| {
                                 let path = e.path.clone();
@@ -1412,19 +1421,14 @@ fn Zipped(pane: Pane, src: Src, zip: Entry, name: String, size: u64) -> impl Int
         Some(at) => format!("{}/{}", zip.name, &name[..at]),
         None => zip.name.clone(),
     };
-    let facts = move || {
-        let mut v = vec!["In a ZIP".to_string(), human_size(size)];
-        info.with(|i| {
-            v.extend(i.width.zip(i.height).map(|(w, h)| format!("{w} × {h}")));
-            v.extend(i.duration.map(length));
-        });
-        v.push(folder.clone());
-        v.join(" · ")
-    };
-    let facts = Signal::derive(facts);
+    let measures = Signal::derive(move || measures(Some(human_size(size)), info));
+    let facts = Signal::derive(move || format!("In a ZIP · {folder}"));
     view! {
         <div class="meta">
-            <b class="name" title=format!("{}/{name}", zip.path)>{short.clone()}</b>
+            <span class="head">
+                <b class="name" title=format!("{}/{name}", zip.path)>{short.clone()}</b>
+                <span class="measures">{move || measures.get()}</span>
+            </span>
             <span class="sub" title=move || facts.get()>{move || facts.get()}</span>
             {move || forced.get().map(|now| peek_as_buttons(now, false, move |how| forced.set(how)))}
         </div>
