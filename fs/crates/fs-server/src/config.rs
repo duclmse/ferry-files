@@ -49,6 +49,35 @@ pub struct Config {
 
     #[serde(default)]
     pub store: StoreConfig,
+
+    #[serde(default)]
+    pub file_lists: FileListsConfig,
+}
+
+/// Everything file lists (`.efu`) whose entries are searchable alongside
+/// the crawled ones: catalogues of offline drives, other machines, discs.
+#[derive(Debug, Clone, Deserialize)]
+pub struct FileListsConfig {
+    /// Absolute paths of `.efu` files. Rows under a watch path are left out,
+    /// since the crawl knows those files first-hand.
+    #[serde(default)]
+    pub paths: Vec<PathBuf>,
+    /// Seconds between checks for a changed, added or removed list.
+    #[serde(default = "default_file_list_poll")]
+    pub poll_secs: u64,
+}
+
+fn default_file_list_poll() -> u64 {
+    30
+}
+
+impl Default for FileListsConfig {
+    fn default() -> Self {
+        Self {
+            paths: Vec::new(),
+            poll_secs: default_file_list_poll(),
+        }
+    }
 }
 
 /// Which backend persists the file-metadata index.
@@ -593,6 +622,20 @@ pub fn validate(cfg: &Config) -> Vec<String> {
         } else if !p.is_dir() {
             errors.push(format!("watch_path is not a directory: {}", p.display()));
         }
+    }
+
+    // A missing list is not an error: it may sit on a drive that is not
+    // mounted yet, and its entries stay until it comes back.
+    for p in &cfg.file_lists.paths {
+        if !p.is_absolute() {
+            errors.push(format!(
+                "file_lists.paths must be absolute: {}",
+                p.display()
+            ));
+        }
+    }
+    if cfg.file_lists.poll_secs == 0 {
+        errors.push("file_lists.poll_secs must be at least 1".into());
     }
 
     if cfg.api.rest_enabled && cfg.api.grpc_enabled && cfg.api.rest_port == cfg.api.grpc_port {

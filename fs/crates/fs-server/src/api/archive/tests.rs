@@ -112,6 +112,7 @@ fn make_test_app_state(dir: &TempDir, registry: Arc<ArchiveRegistry>) -> AppStat
         macros: MacroConfig::default(),
         archive_service: ArchiveServiceConfig::default(),
         store: StoreConfig::default(),
+        file_lists: Default::default(),
     };
 
     AppState {

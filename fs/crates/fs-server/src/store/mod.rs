@@ -11,18 +11,13 @@ pub mod tantivy_store;
 // Attrib bitmask constants (Windows FILE_ATTRIBUTE_* mapped to bits)
 // ---------------------------------------------------------------------------
 
-pub const ATTRIB_ARCHIVE: u32 = 1;
-pub const ATTRIB_COMPRESSED: u32 = 2;
-pub const ATTRIB_DIRECTORY: u32 = 4;
-pub const ATTRIB_ENCRYPTED: u32 = 8;
-pub const ATTRIB_HIDDEN: u32 = 16;
-pub const ATTRIB_REPARSE_POINT: u32 = 32;
-pub const ATTRIB_NORMAL: u32 = 64;
-pub const ATTRIB_OFFLINE: u32 = 128;
-pub const ATTRIB_SPARSE: u32 = 256;
-pub const ATTRIB_READONLY: u32 = 512;
-pub const ATTRIB_SYSTEM: u32 = 1024;
-pub const ATTRIB_TEMPORARY: u32 = 2048;
+// Defined in fs-protocol, which the client shares to write `.efu` lists.
+pub use fs_protocol::attrib::{
+    ARCHIVE as ATTRIB_ARCHIVE, COMPRESSED as ATTRIB_COMPRESSED, DIRECTORY as ATTRIB_DIRECTORY,
+    ENCRYPTED as ATTRIB_ENCRYPTED, HIDDEN as ATTRIB_HIDDEN, NORMAL as ATTRIB_NORMAL,
+    OFFLINE as ATTRIB_OFFLINE, READONLY as ATTRIB_READONLY, REPARSE_POINT as ATTRIB_REPARSE_POINT,
+    SPARSE as ATTRIB_SPARSE, SYSTEM as ATTRIB_SYSTEM, TEMPORARY as ATTRIB_TEMPORARY,
+};
 
 // ---------------------------------------------------------------------------
 // Core types

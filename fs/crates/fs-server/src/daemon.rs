@@ -263,6 +263,14 @@ pub async fn run_with_shutdown(
         tokio::spawn(keep_snapshot_fresh(store_c, cfg_c, crawl_c, shutdown_c));
     }
 
+    // ── 11c. Everything file lists ─────────────────────────────────────────
+    tokio::spawn(keep_file_lists(
+        Arc::clone(&sqlite),
+        Arc::clone(&shared_cfg),
+        Arc::clone(&crawl_active),
+        shutdown.clone(),
+    ));
+
     // ── 12. Config hot-reload watcher ──────────────────────────────────────
     {
         let shutdown_c = shutdown.clone();
@@ -717,6 +725,85 @@ async fn keep_snapshot_fresh(
             Ok(Err(e)) => tracing::warn!("periodic store save: {e}"),
             Err(e) => tracing::warn!("periodic store save: {e}"),
             Ok(Ok(_)) => {}
+        }
+    }
+}
+
+/// Loads `[file_lists]` and keeps them current, following hot reloads. It
+/// waits for the first crawl: with the store still empty, SQLite crawls
+/// with its indexes dropped, and rows from a list would make it keep them.
+async fn keep_file_lists(
+    store: Arc<FileStore>,
+    cfg: Arc<RwLock<crate::config::Config>>,
+    crawl_active: Arc<AtomicBool>,
+    shutdown: CancellationToken,
+) {
+    // Logged once per problem, not on every poll.
+    let mut unreadable: std::collections::HashMap<PathBuf, String> = Default::default();
+    loop {
+        let (lists, roots, data_dir, poll) = {
+            let c = cfg.read().await;
+            (
+                c.file_lists.paths.clone(),
+                c.watch_paths.clone(),
+                c.data_dir.clone(),
+                c.file_lists.poll_secs.max(1),
+            )
+        };
+        let crawled = store.get_meta("last_crawl_time").ok().flatten().is_some();
+        let ready = crawled && !crawl_active.load(Ordering::Acquire);
+        if ready {
+            let store = Arc::clone(&store);
+            let configured = lists;
+            let report = tokio::task::spawn_blocking(move || {
+                crate::indexer::file_lists::sync(&store, &configured, &roots, &data_dir)
+            })
+            .await;
+            match report {
+                Ok(Ok(report)) => {
+                    for l in &report.loaded {
+                        tracing::info!(
+                            "file list {}: {} entries ({} removed, {} under watch paths left out)",
+                            l.list.display(),
+                            l.entries,
+                            l.removed,
+                            l.under_watch_paths,
+                        );
+                        if l.skipped > 0 {
+                            tracing::warn!(
+                                "file list {}: skipped {} unreadable rows; first: {}",
+                                l.list.display(),
+                                l.skipped,
+                                l.first_problem.as_deref().unwrap_or("?"),
+                            );
+                        }
+                    }
+                    for (list, removed) in &report.dropped {
+                        tracing::info!(
+                            "file list {} left the config: removed {removed} entries",
+                            list.display()
+                        );
+                    }
+                    let now_unreadable: std::collections::HashMap<_, _> =
+                        report.unreadable.into_iter().collect();
+                    for (list, why) in &now_unreadable {
+                        if unreadable.get(list) != Some(why) {
+                            tracing::warn!(
+                                "file list {}: {why}; its entries are kept",
+                                list.display()
+                            );
+                        }
+                    }
+                    unreadable = now_unreadable;
+                }
+                Ok(Err(e)) => tracing::warn!("file lists: {e}"),
+                Err(e) => tracing::warn!("file lists: {e}"),
+            }
+        }
+        let wait = if ready { poll } else { 2 };
+        tokio::select! {
+            _ = shutdown.cancelled() => return,
+            _ = tokio::time::sleep(Duration::from_secs(wait)) => {}
         }
     }
 }

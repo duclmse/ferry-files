@@ -23,28 +23,7 @@ pub fn is_hidden_name(path: &Path) -> bool {
 
 /// Maps Windows `FILE_ATTRIBUTE_*` bits onto the store's own bitmask.
 pub(super) fn attrib_from_windows_flags(a: u32) -> u32 {
-    use crate::store::{
-        ATTRIB_ARCHIVE, ATTRIB_COMPRESSED, ATTRIB_DIRECTORY, ATTRIB_ENCRYPTED, ATTRIB_HIDDEN,
-        ATTRIB_NORMAL, ATTRIB_OFFLINE, ATTRIB_READONLY, ATTRIB_REPARSE_POINT, ATTRIB_SPARSE,
-        ATTRIB_SYSTEM, ATTRIB_TEMPORARY,
-    };
-    const MAP: [(u32, u32); 12] = [
-        (0x0020, ATTRIB_ARCHIVE),
-        (0x0800, ATTRIB_COMPRESSED),
-        (0x0010, ATTRIB_DIRECTORY),
-        (0x4000, ATTRIB_ENCRYPTED),
-        (0x0002, ATTRIB_HIDDEN),
-        (0x0400, ATTRIB_REPARSE_POINT),
-        (0x0080, ATTRIB_NORMAL),
-        (0x1000, ATTRIB_OFFLINE),
-        (0x0200, ATTRIB_SPARSE),
-        (0x0001, ATTRIB_READONLY),
-        (0x0004, ATTRIB_SYSTEM),
-        (0x0100, ATTRIB_TEMPORARY),
-    ];
-    MAP.iter()
-        .filter(|(windows, _)| a & windows != 0)
-        .fold(0, |mask, (_, ours)| mask | ours)
+    fs_protocol::attrib::from_windows(a)
 }
 
 /// Build platform-specific attribute bitmask from filesystem metadata.

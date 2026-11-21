@@ -2,6 +2,7 @@ pub mod archive;
 pub mod content;
 pub mod crawler;
 pub mod exclusions;
+pub mod file_lists;
 pub mod mft;
 
 /// The walk settings every crawl and scan shares: hidden entries included,

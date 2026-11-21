@@ -379,7 +379,9 @@ fn file_record_to_dto(r: &FileRecord) -> SearchHitDto {
         extension: r.extension.clone(),
         size_bytes: r.size_bytes,
         mtime: r.mtime,
+        ctime: r.ctime,
         is_dir: r.is_dir,
+        attrib_bitmask: r.attrib_bitmask,
         archive_path: r.archive_path.clone(),
         snippet: None,
     }

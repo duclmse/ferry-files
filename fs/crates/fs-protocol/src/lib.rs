@@ -2,6 +2,8 @@
 
 use std::path::PathBuf;
 
+pub mod attrib;
+pub mod efu;
 pub mod ipc_client;
 pub mod ipc_protocol;
 

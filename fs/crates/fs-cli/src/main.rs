@@ -2,7 +2,8 @@ mod config;
 mod tui;
 
 use fs_protocol::ipc_client::IpcClient;
-use fs_protocol::ipc_protocol::{IpcRequest, IpcResponse};
+use fs_protocol::ipc_protocol::{IpcRequest, IpcResponse, SearchHitDto, SearchResponse};
+use fs_protocol::{attrib, efu};
 
 use clap::{Parser, Subcommand};
 
@@ -67,6 +68,10 @@ enum Command {
         /// Return only inner archive entries
         #[arg(long)]
         archive_only: bool,
+        /// Write the results to this file as an Everything file list (.efu)
+        /// instead of printing them; --limit and --offset still apply
+        #[arg(long, value_name = "FILE")]
+        efu: Option<std::path::PathBuf>,
     },
 
     /// Show index statistics
@@ -115,6 +120,7 @@ async fn main() {
             files_only,
             dirs_only,
             archive_only,
+            efu,
         } => {
             let opts = SearchOpts {
                 ext,
@@ -130,7 +136,12 @@ async fn main() {
                 dirs_only,
                 archive_only,
             };
-            if let Err(e) = run_search(cli.config, query, limit, offset, json, opts).await {
+            let output = match efu {
+                Some(file) => Output::Efu(file),
+                None if json => Output::Json,
+                None => Output::Paths,
+            };
+            if let Err(e) = run_search(cli.config, query, limit, offset, output, opts).await {
                 eprintln!("search error: {e}");
                 std::process::exit(1);
             }
@@ -179,6 +190,12 @@ async fn ipc_client_for(config_path: std::path::PathBuf) -> anyhow::Result<IpcCl
         .map_err(|e| anyhow::anyhow!("ipc connect: {e}"))
 }
 
+enum Output {
+    Paths,
+    Json,
+    Efu(std::path::PathBuf),
+}
+
 struct SearchOpts {
     ext: Vec<String>,
     path: Option<String>,
@@ -199,7 +216,7 @@ async fn run_search(
     query: String,
     limit: u32,
     offset: u32,
-    json: bool,
+    output: Output,
     opts: SearchOpts,
 ) -> anyhow::Result<()> {
     let mut clauses: Vec<String> = Vec::new();
@@ -250,26 +267,91 @@ async fn run_search(
     };
 
     let mut client = ipc_client_for(config_path).await?;
+    if let Output::Efu(file) = output {
+        let written = export_efu(&mut client, &query, limit, offset, &file).await?;
+        eprintln!("wrote {written} entries to {}", file.display());
+        return Ok(());
+    }
+    let sr = search_page(&mut client, &query, limit, offset).await?;
+    if let Output::Json = output {
+        println!("{}", serde_json::to_string_pretty(&sr)?);
+    } else {
+        for hit in &sr.hits {
+            println!("{}", hit.path);
+        }
+        eprintln!("{} hit(s) (total: {})", sr.hits.len(), sr.total_hits);
+    }
+    Ok(())
+}
+
+async fn search_page(
+    client: &mut IpcClient,
+    query: &str,
+    limit: u32,
+    offset: u32,
+) -> anyhow::Result<SearchResponse> {
     let resp = client
         .request(IpcRequest::Search {
-            query,
+            query: query.to_owned(),
             limit,
             offset,
         })
         .await
         .map_err(|e| anyhow::anyhow!("{e}"))?;
+    match resp {
+        IpcResponse::Search(sr) => Ok(sr),
+        IpcResponse::Error { message, .. } => anyhow::bail!("{message}"),
+        other => anyhow::bail!("unexpected response: {other:?}"),
+    }
+}
 
-    if let IpcResponse::Search(sr) = resp {
-        if json {
-            println!("{}", serde_json::to_string_pretty(&sr)?);
-        } else {
-            for hit in &sr.hits {
-                println!("{}", hit.path);
-            }
-            eprintln!("{} hit(s) (total: {})", sr.hits.len(), sr.total_hits);
+/// Pages through the results, since the daemon caps one response at
+/// `search.max_limit`, and writes them as one list.
+async fn export_efu(
+    client: &mut IpcClient,
+    query: &str,
+    limit: u32,
+    offset: u32,
+    file: &std::path::Path,
+) -> anyhow::Result<u32> {
+    const PAGE: u32 = 1000;
+    let mut text = efu::HEADER.to_owned();
+    let mut written = 0;
+    loop {
+        let want = (limit - written).min(PAGE);
+        if want == 0 {
+            break;
+        }
+        let sr = search_page(client, query, want, offset + written).await?;
+        for hit in &sr.hits {
+            efu::write_entry(&mut text, &efu_entry(hit));
+        }
+        let got = sr.hits.len() as u32;
+        written += got;
+        if got < want || u64::from(offset + written) >= sr.total_hits {
+            break;
         }
     }
-    Ok(())
+    std::fs::write(file, text)
+        .map_err(|e| anyhow::anyhow!("cannot write {}: {e}", file.display()))?;
+    Ok(written)
+}
+
+fn efu_entry(hit: &SearchHitDto) -> efu::Entry {
+    let folder = if hit.is_dir {
+        attrib::WINDOWS_DIRECTORY
+    } else {
+        0
+    };
+    efu::Entry {
+        path: hit.path.clone(),
+        // Folders have no size of their own in the index.
+        size: (!hit.is_dir).then_some(hit.size_bytes),
+        // 0 is the index's "unknown".
+        mtime: (hit.mtime > 0).then_some(hit.mtime),
+        ctime: (hit.ctime > 0).then_some(hit.ctime),
+        attributes: Some(attrib::to_windows(hit.attrib_bitmask) | folder),
+    }
 }
 
 async fn run_stats(config_path: std::path::PathBuf) -> anyhow::Result<()> {
@@ -354,4 +436,36 @@ async fn run_extension(
         println!("{output}");
     }
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn hit(path: &str, is_dir: bool) -> SearchHitDto {
+        SearchHitDto {
+            path: path.into(),
+            name: String::new(),
+            extension: None,
+            size_bytes: 7,
+            mtime: 1_704_067_200,
+            ctime: 0,
+            is_dir,
+            attrib_bitmask: attrib::HIDDEN | attrib::ARCHIVE,
+            archive_path: None,
+            snippet: None,
+        }
+    }
+
+    #[test]
+    fn hits_become_everything_rows() {
+        let file = efu_entry(&hit("/a/b.txt", false));
+        assert_eq!(file.size, Some(7));
+        assert_eq!(file.mtime, Some(1_704_067_200));
+        assert_eq!(file.ctime, None, "0 is unknown, written empty");
+        assert_eq!(file.attributes, Some(0x22));
+        let folder = efu_entry(&hit("/a", true));
+        assert_eq!(folder.size, None);
+        assert!(folder.is_dir());
+    }
 }

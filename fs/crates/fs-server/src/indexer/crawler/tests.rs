@@ -32,6 +32,7 @@ fn make_config(watch: &Path) -> Arc<RwLock<Config>> {
         macros: MacroConfig::default(),
         archive_service: ArchiveServiceConfig::default(),
         store: StoreConfig::default(),
+        file_lists: Default::default(),
     }))
 }
 
@@ -85,6 +86,7 @@ async fn excluded_pattern_not_indexed() {
         macros: MacroConfig::default(),
         archive_service: ArchiveServiceConfig::default(),
         store: StoreConfig::default(),
+        file_lists: Default::default(),
     }));
 
     let tmpdir2 = TempDir::new().unwrap();

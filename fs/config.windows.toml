@@ -169,6 +169,18 @@ commit_interval_secs = 5
 # Maximum filesystem events processed in one batch.
 event_batch_size = 100
 
+# ── Everything file lists ─────────────────────────────────────────────────────
+
+[file_lists]
+# .efu files (Everything's CSV file lists) whose entries are searchable next to
+# the crawled ones: catalogues of offline drives, discs, other machines. Write
+# one with `fs search <query> --limit 1000000 --efu out.efu`. Absolute paths.
+# Rows under a watch path are left out; a list that cannot be read keeps its
+# entries, and one removed from here takes them with it.
+paths = []
+# Seconds between checks for a changed, added or removed list.
+poll_secs = 30
+
 # ── User macros ───────────────────────────────────────────────────────────────
 # Define shorthand query expansions.
 # Example: "q:work" expands to "dir:projects size:>1kb"

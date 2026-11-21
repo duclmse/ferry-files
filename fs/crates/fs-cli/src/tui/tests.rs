@@ -12,7 +12,9 @@ fn make_hit(path: &str, archive_path: Option<&str>) -> SearchHitDto {
         extension: Some("rs".into()),
         size_bytes: 1024,
         mtime: 0,
+        ctime: 0,
         is_dir: false,
+        attrib_bitmask: 0,
         archive_path: archive_path.map(str::to_string),
         snippet: None,
     }

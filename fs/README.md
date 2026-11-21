@@ -28,6 +28,8 @@ A Rust workspace for file search, with optional archive-transfer and SFTP server
 4. Exposes search over three APIs: REST (Axum), gRPC (Tonic), and IPC (Unix
    socket / Named Pipe).
 5. Provides a CLI and a ratatui TUI for interactive use.
+6. Reads and writes Everything file lists (`.efu`), so catalogues of offline
+   drives and other machines are searchable next to local files.
 
 ### Query language
 
@@ -99,6 +101,36 @@ fs reindex
 # Interactive TUI
 fs tui
 ```
+
+### Everything file lists (.efu)
+
+An `.efu` file is the CSV file list voidtools Everything exports: full paths,
+sizes, FILETIME dates and Windows attributes. List them in the config and
+their entries are searched like crawled files, under the paths they name:
+
+```toml
+[file_lists]
+paths     = ["D:/catalogues/backup-disk.efu", "D:/catalogues/laptop.efu"]
+poll_secs = 30    # how often to look for a changed, added or removed list
+```
+
+- A list is read again when its size or modification time changes; rows it
+  no longer has are removed. A list taken out of the config takes its entries
+  with it. A list that cannot be read (say, on a drive that is not mounted)
+  keeps its entries.
+- Rows under a watch path are left out: the crawl knows those files first-hand.
+- Entries are not on this machine, so opening or reading them fails like any
+  missing file, and they have no content index.
+
+To write one, add `--efu` to a search. It pages through every result up to
+`--limit`, so raise that for a whole tree:
+
+```sh
+fs search "path:D:/Photos" --limit 1000000 --efu photos.efu
+```
+
+Everything opens the result (File > Open File List) or includes it in its
+index (Tools > Options > Indexes > File Lists).
 
 ### REST API
 

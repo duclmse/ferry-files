@@ -11,7 +11,7 @@ use serde::{Deserialize, Serialize};
 // ---------------------------------------------------------------------------
 
 pub const MAGIC: [u8; 4] = *b"ZFS1";
-pub const PROTOCOL_VERSION: u16 = 2;
+pub const PROTOCOL_VERSION: u16 = 3;
 pub const MAX_FRAME_BYTES: u32 = 16 * 1024 * 1024; // 16 MiB
 
 // ---------------------------------------------------------------------------
@@ -99,7 +99,10 @@ pub struct SearchHitDto {
     pub extension: Option<String>,
     pub size_bytes: u64,
     pub mtime: i64,
+    pub ctime: i64,
     pub is_dir: bool,
+    /// [`crate::attrib`] bits.
+    pub attrib_bitmask: u32,
     pub archive_path: Option<String>,
     pub snippet: Option<String>,
 }
@@ -225,7 +228,9 @@ mod tests {
                 extension: Some("rs".into()),
                 size_bytes: 1024,
                 mtime: 0,
+                ctime: 0,
                 is_dir: false,
+                attrib_bitmask: 0,
                 archive_path: None,
                 snippet: Some("fn main".into()),
             }],
@@ -298,7 +303,9 @@ mod tests {
                 extension: Some("rs".into()),
                 size_bytes: i * 1024,
                 mtime: 1_700_000_000 + i as i64,
+                ctime: 1_600_000_000,
                 is_dir: false,
+                attrib_bitmask: crate::attrib::ARCHIVE,
                 archive_path: None,
                 snippet: None,
             })

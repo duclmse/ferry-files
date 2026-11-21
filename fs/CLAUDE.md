@@ -189,5 +189,11 @@ disk. The commit loop in `daemon.rs` runs every `commit_interval_secs`.
   an eighth (`state::growth`), not by doubling.
 - The file table crawl streams rows to the writer; do not collect a whole
   volume's rows before sending them.
+- Entries from `[file_lists]` (`indexer/file_lists.rs`) carry no marker in
+  the store; `data_dir/file_lists/` records which paths each list added.
+  Code that removes rows outside a watch path must not assume the crawl
+  owns them.
+- `fs_protocol::attrib` is the one definition of the attribute bitmask and
+  its Windows mapping; the store's `ATTRIB_*` names re-export it.
 - Tantivy's `IndexWriter` holds a lock file. Only one writer per index
   directory. The daemon enforces a PID file check before acquiring the writer.

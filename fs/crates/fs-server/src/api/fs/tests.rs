@@ -767,6 +767,7 @@ fn make_test_state() -> AppState {
         macros: MacroConfig::default(),
         archive_service: ArchiveServiceConfig::default(),
         store: StoreConfig::default(),
+        file_lists: Default::default(),
     };
 
     AppState {
