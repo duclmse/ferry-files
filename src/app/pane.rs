@@ -292,7 +292,7 @@ pub(super) fn Notices(pane: Pane) -> impl IntoView {
 /// The name of `e`, or a field to rename it when it's being renamed. Enter or clicking elsewhere
 /// renames; Escape leaves it as it was.
 /// A file's name as its stem and its extension, the stem cut short (…) to fit and the extension
-/// always shown (the column view). A folder's, or one with no short extension, as it is.
+/// always shown. A folder's, or one with no short extension, as it is.
 pub(super) fn split_name(name: &str, dir: bool) -> AnyView {
     match name.rsplit_once('.') {
         Some((stem, ext)) if !dir && !stem.is_empty() && !ext.is_empty() && ext.chars().count() <= 10 => view! {

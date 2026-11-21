@@ -1440,3 +1440,42 @@ td.name input.rename {
 .vplayer.full.idle video.play {
   cursor: none;
 }
+
+/* List and thumbnails: a file's extension stays in view too. */
+td.name .split {
+  display: inline-flex;
+  max-width: calc(100% - 20px);
+  vertical-align: bottom;
+}
+
+td.name .stem {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+td.name .ext {
+  flex: none;
+}
+
+.tile .label:has(.split) {
+  display: block;
+}
+
+.tile .label .split {
+  display: flex;
+  justify-content: center;
+  align-items: flex-end;
+}
+
+.tile .label .stem {
+  min-width: 0;
+  display: -webkit-box;
+  -webkit-line-clamp: 2;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
+}
+
+.tile .label .ext {
+  flex: none;
+}

@@ -133,7 +133,7 @@ pub(super) fn ListView(pane: Pane) -> impl IntoView {
                                     on:dragstart=drag_start(ctx, p, e.path.clone()) on:dragend=drag_end(ctx)
                                     on:dragover=move |ev| if e.dir { over(ev) } on:drop=move |ev| if e.dir { drop(ev) }
                                     on:click=click on:dblclick=dbl on:contextmenu=menu>
-                                    <td class="name" title=e.path.clone()><span class="icon">{icon(k)}</span><Name pane=p entry=e.clone()/>
+                                    <td class="name" title=e.path.clone()><span class="icon">{icon(k)}</span><Name pane=p entry=e.clone() split=true/>
                                         {where_.map(|w| view! { <span class="where">{w}</span> })}</td>
                                     {move || p.list_cols.get().into_iter().map(|c| {
                                         view! { <td class=if c == 0 { "kindcol" } else { "num" }>{cells[c].clone()}</td> }
@@ -315,7 +315,7 @@ pub(super) fn ThumbView(pane: Pane) -> impl IntoView {
                                 on:dragover=move |ev| if is_dir { over(ev) } on:drop=move |ev| if is_dir { drop(ev) }
                                 on:click=click on:dblclick=dbl on:contextmenu=menu>
                                 <div class="pic"><Thumbnail src=p.src.get_untracked() entry=e.clone()/></div>
-                                <div class="label"><Name pane=p entry=e.clone()/></div>
+                                <div class="label"><Name pane=p entry=e.clone() split=true/></div>
                                 <div class="sub">{sub}</div>
                             </div>
                         }
