@@ -385,7 +385,6 @@ impl Ctx {
                 danger: false,
                 enabled: !p.cwd.get_untracked().is_empty(),
             });
-            v.push(item("Books on all devices…", "", Act::AllBooks));
             v.push(MenuItem::Do {
                 label: "Find and replace in names…".into(),
                 key: "replace_names",
@@ -538,7 +537,6 @@ impl Ctx {
             (Act::Sync, _) => self.compare(p),
             (Act::Compare, _) => self.compare_marks(p),
             (Act::Import, _) => self.ask_import(p),
-            (Act::AllBooks, _) => self.panel.set(Some(Panel::AllBooks)),
             (Act::ReplaceNames, _) => self.replace_names(p),
             (Act::Dupes, _) => {
                 let mut folders: Vec<(Src, String)> = vec![(p.src.get_untracked(), p.cwd.get_untracked())];

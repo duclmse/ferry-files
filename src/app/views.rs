@@ -256,7 +256,7 @@ pub(super) fn Thumbnail(src: Src, entry: Entry) -> impl IntoView {
     let ctx = expect_context::<Ctx>();
     let state = RwSignal::new(0u8); // 0 loading, 1 loaded, 2 failed
     let shown = RwSignal::new(false);
-    let glyph = icon(kind(&entry));
+    let glyph = StoredValue::new(entry.clone());
     let url = thumb_url(src, &entry);
     // Phone thumbnails can be turned off in the settings.
     let allowed = move || src == Src::Mac || ctx.phone_thumbs.get();
@@ -295,7 +295,7 @@ pub(super) fn Thumbnail(src: Src, entry: Entry) -> impl IntoView {
     });
     on_cleanup(stop);
     view! {
-        {move || (state.get() != 1 || !allowed()).then(|| view! { <span class="glyph">{glyph}</span> })}
+        {move || (state.get() != 1 || !allowed()).then(|| view! { <span class="glyph">{glyph.with_value(type_icon)}</span> })}
         {move || url.clone().filter(|_| allowed()).map(|url| view! {
             // Kept in the layout (just invisible) while loading, so it's seen coming into view.
             <img node_ref=img src=move || shown.get().then(|| url.clone()) decoding="async" draggable="false" alt=""
@@ -326,7 +326,7 @@ pub(super) fn ThumbView(pane: Pane) -> impl IntoView {
                         let path = e.path.clone();
                         let editing = renaming(p, &e);
                         let (click, dbl, menu) = row_events(ctx, p, &e);
-                        let sub = if e.dir { "Folder".to_string() } else { human_size(e.size) };
+                        let sub = if e.dir { "Folder".to_string() } else { format!("{} · {}", kind_label(&e), human_size(e.size)) };
                         let (dir, key) = (e.dir.then(|| e.path.clone()), format!("{}:{}", p.id, e.path));
                         let (over, drop) = drop_events(ctx, p, dir.clone());
                         let is_dir = e.dir;
@@ -338,8 +338,10 @@ pub(super) fn ThumbView(pane: Pane) -> impl IntoView {
                                 on:dragover=move |ev| if is_dir { over(ev) } on:drop=move |ev| if is_dir { drop(ev) }
                                 on:click=click on:dblclick=dbl on:contextmenu=menu>
                                 <div class="pic"><Thumbnail src=p.src.get_untracked() entry=e.clone()/></div>
-                                <div class="label"><Name pane=p entry=e.clone() fit=true/></div>
-                                <div class="sub">{sub}</div>
+                                <div class="text">
+                                    <div class="label"><Name pane=p entry=e.clone() fit=true/></div>
+                                    <div class="sub">{sub}</div>
+                                </div>
                             </div>
                         }
                     }

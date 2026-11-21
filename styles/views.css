@@ -156,13 +156,22 @@
 }
 
 .pic .glyph {
+  display: flex;
   font-size: 52px;
   line-height: 1;
 }
 
-/* Two lines even for a short name: every tile the same height (rows.rs counts on it). */
+/* The name and, right under it, the type: room for two lines of name whatever its length, so
+   every tile is the same height (rows.rs counts on it). */
+.tile .text {
+  width: 100%;
+  min-height: calc(2.6 * 12px + 15px);
+  display: flex;
+  flex-direction: column;
+  gap: 1px;
+}
+
 .tile .label {
-  min-height: 2.6em;
   font-size: 12px;
   line-height: 1.3;
   word-break: break-word;
@@ -1520,3 +1529,58 @@ td.name .ext {
   background: var(--sel);
   color: var(--accent);
 }
+
+.tile .sub {
+  line-height: 14px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+/* File type icons (filetype.rs): a page with a mark in the type's colour. */
+.ft {
+  width: 1.25em;
+  height: 1.25em;
+  --ft: var(--muted);
+  color: var(--ft);
+}
+
+.ft .page {
+  fill: var(--panel);
+  stroke: var(--muted);
+  stroke-width: 1.5;
+  stroke-linejoin: round;
+}
+
+.ft .mark {
+  fill: none;
+  stroke: var(--ft);
+  stroke-width: 2.5;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+}
+
+.ft .solid {
+  fill: var(--ft);
+}
+
+.ft .fill {
+  fill: color-mix(in srgb, var(--ft) 18%, var(--panel));
+  stroke: var(--ft);
+  stroke-width: 1.5;
+  stroke-linejoin: round;
+}
+
+.ft text {
+  font: 700 9px system-ui, sans-serif;
+  fill: var(--muted);
+  text-anchor: middle;
+}
+
+.ft-folder { --ft: var(--accent); }
+.ft-book { --ft: var(--ansi-6); }
+.ft-doc { --ft: var(--ansi-4); }
+.ft-code { --ft: var(--ansi-5); }
+.ft-image { --ft: var(--ansi-2); }
+.ft-video { --ft: var(--ansi-1); }
+.ft-music { --ft: var(--ansi-3); }

@@ -10,7 +10,6 @@ use serde_json::json;
 use std::collections::{HashMap, HashSet};
 use wasm_bindgen::JsCast;
 
-mod allbooks;
 mod batch;
 mod books;
 mod compare;
@@ -21,6 +20,7 @@ mod dupes;
 mod editor;
 mod code;
 mod files;
+mod filetype;
 mod find;
 mod import;
 mod icons;
@@ -47,7 +47,6 @@ mod views;
 mod wifi;
 mod workspace;
 
-use allbooks::*;
 use batch::*;
 use books::*;
 use compare::*;
@@ -56,6 +55,7 @@ use import::*;
 use devices::*;
 use editor::*;
 use code::*;
+use filetype::*;
 pub(crate) use icons::{ico, Icon};
 /// For the EPUB editor's Source view.
 pub(crate) use editor::{code_html, shift_runs, LAYER_MAX};
@@ -310,8 +310,6 @@ enum Act {
     Dupes,
     /// Imports the photos in this folder into dated folders.
     Import,
-    /// The books on every place, side by side.
-    AllBooks,
     /// Find and replace in the names of what's picked, or of everything shown.
     ReplaceNames,
     /// Shows or hides one of the sidebar's sections (an index into `SECTIONS`).
@@ -792,8 +790,6 @@ enum Panel {
     History,
     /// The books under a folder.
     Library(Src, String),
-    /// The books in every place's book folder.
-    AllBooks,
     /// The command palette.
     Palette,
     /// Reading a book; the folder is the library to go back to.
@@ -1646,7 +1642,6 @@ pub fn App() -> impl IntoView {
             Panel::Dupes(folders) => view! { <Duplicates folders=folders/> }.into_any(),
             Panel::Import(pane, from, targets) => view! { <ImportPhotos pane from targets/> }.into_any(),
             Panel::Library(src, dir) => view! { <Library src=src dir=dir/> }.into_any(),
-            Panel::AllBooks => view! { <AllBooks/> }.into_any(),
             Panel::Palette => view! { <Palette/> }.into_any(),
             Panel::Reader(src, path, back) => view! { <Reader src=src path=path back=back/> }.into_any(),
         })}

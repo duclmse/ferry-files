@@ -468,7 +468,7 @@ pub(super) fn Sidebar() -> impl IntoView {
     }
 }
 
-/// The bar down the window's left edge, as in VS Code: the sidebar, books and commands at the top;
+/// The bar down the window's left edge, as in VS Code: the sidebar and commands at the top;
 /// backups, history and settings at the bottom.
 #[component]
 pub(super) fn ActivityBar() -> impl IntoView {
@@ -479,8 +479,6 @@ pub(super) fn ActivityBar() -> impl IntoView {
             <button class="act" class:on=move || ctx.side.get() title=side_title aria-label="Sidebar"
                 aria-pressed=move || ctx.side.get().to_string()
                 on:click=move |_| ctx.set_side(!ctx.side.get_untracked())>{ico(Icon::Sidebar)}</button>
-            <button class="act" title="Books on all devices" aria-label="Books on all devices"
-                on:click=move |_| ctx.panel.set(Some(Panel::AllBooks))>{ico(Icon::Book)}</button>
             <button class="act" title=move || ctx.with_key("Commands", "palette") aria-label="Commands"
                 on:click=move |_| ctx.panel.set(Some(Panel::Palette))>{ico(Icon::Search)}</button>
             <span class="grow"></span>

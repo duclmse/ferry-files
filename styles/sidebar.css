@@ -80,6 +80,17 @@
   margin-top: 0;
 }
 
+/* A line between sections (hidden ones render nothing and don't count). */
+.side-scroll > .sec:not(:empty) ~ .sec:not(:empty) {
+  border-top: 1px solid var(--line);
+  margin-top: 8px;
+  padding-top: 6px;
+}
+
+.side-scroll > .sec:not(:empty) ~ .sec:not(:empty) h2 {
+  margin-top: 0;
+}
+
 .side h2 .fold {
   flex: 1;
   min-width: 0;

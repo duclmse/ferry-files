@@ -228,36 +228,3 @@
   }
 
 }
-
-/* Books on all devices */
-.all-books .book .where {
-  display: flex;
-  flex-wrap: wrap;
-  gap: 4px;
-  margin-top: 3px;
-}
-
-.all-books .chip {
-  font: inherit;
-  font-size: 11.5px;
-  padding: 1px 7px;
-  border-radius: 10px;
-  border: 1px solid var(--line);
-  background: transparent;
-  color: var(--muted);
-}
-
-.all-books .chip.here {
-  color: var(--ok);
-  border-color: color-mix(in srgb, var(--ok) 40%, transparent);
-}
-
-.all-books button.chip.missing {
-  cursor: pointer;
-  border-style: dashed;
-}
-
-.all-books button.chip.missing:hover {
-  color: var(--accent);
-  border-color: var(--accent);
-}

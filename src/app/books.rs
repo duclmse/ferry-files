@@ -60,7 +60,6 @@ pub(super) enum BookForm {
 #[component]
 pub(super) fn Library(src: Src, dir: String) -> impl IntoView {
     let ctx = expect_context::<Ctx>();
-    ctx.remember_book_dir(src, &dir);
     let dir = StoredValue::new(dir);
     let list = RwSignal::new(None::<Result<(Vec<Entry>, bool), String>>);
     let infos = RwSignal::new(HashMap::<String, BookInfo>::new());
@@ -264,9 +263,7 @@ pub(super) fn Library(src: Src, dir: String) -> impl IntoView {
     view! {
         <div class="overlay" on:click=move |_| close()>
             <div class="dialog library" on:click=|e| e.stop_propagation()>
-                <h2>"Books in " {base(&dir.get_value())} <span class="about">{format!(" on {place}, with its subfolders")}</span>
-                    <button class="btn small" title="The books here and on your other devices, side by side"
-                        on:click=move |_| ctx.panel.set(Some(Panel::AllBooks))>"All devices…"</button></h2>
+                <h2>"Books in " {base(&dir.get_value())} <span class="about">{format!(" on {place}, with its subfolders")}</span></h2>
                 <div class="lib-bar">
                     <input class="filter-wide" type="search" placeholder="Filter by title, author or file name"
                         prop:value=move || filter.get() on:input=move |ev| filter.set(event_target_value(&ev))/>
