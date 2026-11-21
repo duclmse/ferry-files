@@ -1479,3 +1479,31 @@ td.name .ext {
 .tile .label .ext {
   flex: none;
 }
+
+/* The list as a tree: a folder's arrow before its icon, its items indented under it. */
+.list.tree {
+  --twisty: 18px;
+}
+
+.list.tree td.name .twisty {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: var(--twisty);
+  height: var(--twisty);
+  margin-right: 2px;
+  vertical-align: middle;
+  border: 0;
+  background: none;
+  padding: 0;
+  border-radius: 4px;
+  cursor: pointer;
+}
+
+.list.tree td.name .twisty:hover .chev {
+  stroke: var(--ink);
+}
+
+.list.tree td.name .split {
+  max-width: calc(100% - 40px);
+}

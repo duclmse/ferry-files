@@ -74,13 +74,15 @@ pub(super) fn ListView(pane: Pane) -> impl IntoView {
     };
     // Only the rows in view (and a little either side) are rendered.
     let scroller = NodeRef::<html::Div>::new();
-    let len = Signal::derive(move || p.entries.with(Vec::len));
+    // As a tree: the rows with open folders' items under them, and their depth.
+    let tree = Memo::new(move |_| p.tree_on().then(|| p.tree_rows()));
+    let len = Signal::derive(move || tree.with(|t| t.as_ref().map(Vec::len)).unwrap_or_else(|| p.entries.with(Vec::len)));
     let win = rows::Window::new(scroller, len, rows::Rows { h: 29.0, per: 1, top: 30.0 }, rows::list_rows, Signal::derive(move || Some(p.id)));
     let gap = move |h: f64| (h > 0.0).then(|| view! {
         <tr class="gap" aria-hidden="true"><td colspan=move || (1 + p.list_cols.with(Vec::len)).to_string() style=format!("height: {h}px")></td></tr>
     });
     view! {
-        <div class="list" node_ref=scroller data-rows="" class:drop=move || ctx.drop_at.get().as_deref() == Some(here.as_str())
+        <div class="list" node_ref=scroller data-rows="" class:tree=move || tree.with(Option::is_some) class:drop=move || ctx.drop_at.get().as_deref() == Some(here.as_str())
             on:click=move |_| p.select_only(None) on:contextmenu=move |ev| ctx.show_menu(p, &ev, None)
             on:scroll=move |_| { win.update(); more_near_end(ctx, p, scroller) } on:dragover=over on:drop=drop>
             // At least the other columns and NAME_MIN for the name: narrower, the fixed layout would
@@ -117,9 +119,30 @@ pub(super) fn ListView(pane: Pane) -> impl IntoView {
                 </tr></thead>
                 <tbody>
                     {move || gap(win.gaps().0)}
-                    <For each=move || p.entries.with(|es| win.slice(es)) key=|e| (e.path.clone(), e.size, e.mtime) let(e)>
+                    <For each=move || tree.with(|t| match t {
+                            Some(rows) => win.slice(rows),
+                            None => p.entries.with(|es| win.slice(es)).into_iter().map(|e| (e, 0)).collect(),
+                        }) key=|(e, _)| (e.path.clone(), e.size, e.mtime) let((e, depth))>
                         {
                             let k = kind(&e);
+                            // In the tree: a folder's arrow (or room for one), indented by depth.
+                            let twisty = {
+                                let path = StoredValue::new(e.path.clone());
+                                let is_dir = e.dir;
+                                move || tree.with(Option::is_some).then(|| if is_dir {
+                                    let open = Signal::derive(move || path.with_value(|x| p.is_open(x)));
+                                    view! {
+                                        <button class="twisty" tabindex="-1" title=move || if open.get() { "Close" } else { "Open here" }
+                                            aria-label=move || if open.get() { "Close" } else { "Open here" }
+                                            on:click=move |ev| { ev.stop_propagation(); ctx.toggle_kids(p, path.get_value()) }
+                                            on:dblclick=|ev| ev.stop_propagation()>
+                                            {chev(open)}
+                                        </button>
+                                    }.into_any()
+                                } else {
+                                    view! { <span class="twisty"></span> }.into_any()
+                                })
+                            };
                             let path = e.path.clone();
                             let editing = renaming(p, &e);
                             let (click, dbl, menu) = row_events(ctx, p, &e);
@@ -133,7 +156,7 @@ pub(super) fn ListView(pane: Pane) -> impl IntoView {
                                     on:dragstart=drag_start(ctx, p, e.path.clone()) on:dragend=drag_end(ctx)
                                     on:dragover=move |ev| if e.dir { over(ev) } on:drop=move |ev| if e.dir { drop(ev) }
                                     on:click=click on:dblclick=dbl on:contextmenu=menu>
-                                    <td class="name" title=e.path.clone()><span class="icon">{icon(k)}</span><Name pane=p entry=e.clone() split=true/>
+                                    <td class="name" title=e.path.clone() style=(depth > 0).then(|| format!("padding-left: {}px", 12 + depth * 16))>{twisty}<span class="icon">{icon(k)}</span><Name pane=p entry=e.clone() split=true/>
                                         {where_.map(|w| view! { <span class="where">{w}</span> })}</td>
                                     {move || p.list_cols.get().into_iter().map(|c| {
                                         view! { <td class=if c == 0 { "kindcol" } else { "num" }>{cells[c].clone()}</td> }

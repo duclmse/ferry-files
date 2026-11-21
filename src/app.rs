@@ -26,6 +26,7 @@ mod import;
 mod icons;
 mod keymap;
 mod layout;
+mod listtree;
 mod menu;
 mod nav;
 mod near;
@@ -293,6 +294,8 @@ enum Act {
     /// Shows or hides one of the list's columns (an index into `LIST_COLS`).
     Column(usize),
     ResetColumns,
+    /// Shows the list as a tree, or flat.
+    ListTree,
     /// Goes to one of the menu's `folders`.
     Go(usize),
     /// Opens the folder (or the pane's folder) in a new tab.
@@ -475,6 +478,10 @@ struct Pane {
     /// The list's columns after the name, in order (indexes into `LIST_COLS`); missing ones are
     /// hidden.
     list_cols: RwSignal<Vec<usize>>,
+    /// Whether the list shows as a tree (listtree.rs), and its open folders' items by path: None
+    /// while they're listed.
+    list_tree: RwSignal<bool>,
+    kids: RwSignal<HashMap<String, Option<Vec<Entry>>>>,
     /// A file the preview shows as text or bytes, whatever its type, from the context menu.
     peek_as: RwSignal<Option<(String, PeekAs)>>,
     /// A file picked in a ZIP's columns, which the preview shows instead of the ZIP: the side
@@ -617,6 +624,8 @@ impl Pane {
             col_ws: StoredValue::new(HashMap::new()),
             list_w: [0, 1, 2].map(|n| stored_px(&format!("ferry-files.list-w.{id}.{n}"))),
             list_cols: RwSignal::new(stored_cols(id)),
+            list_tree: RwSignal::new(stored_flag(&format!("ferry-files.list-tree.{id}"), false)),
+            kids: RwSignal::new(HashMap::new()),
             peek_as: RwSignal::new(None),
             zip_pick: RwSignal::new(None),
             editing_path: RwSignal::new(false),
@@ -658,7 +667,9 @@ impl Pane {
 
     fn selected_entry(self) -> Option<Entry> {
         let sel = self.selected.get()?;
-        self.entries.with(|es| es.iter().find(|e| e.path == sel).cloned())
+        self.entries
+            .with(|es| es.iter().find(|e| e.path == sel).cloned())
+            .or_else(|| self.kids.with(|k| k.values().flatten().flat_map(|v| v.iter()).find(|e| e.path == sel).cloned()))
     }
 
     /// Sorts and filters `all` into `entries`, dropping marks on items no longer shown.
@@ -700,7 +711,9 @@ impl Pane {
         });
         self.sort.get_untracked().apply(&mut es);
         if !self.marked.with_untracked(HashSet::is_empty) {
-            let shown: HashSet<&str> = es.iter().map(|e| e.path.as_str()).collect();
+            // Items in folders open in the tree stay marked too.
+            let kids = self.kids.get_untracked();
+            let shown: HashSet<&str> = es.iter().chain(kids.values().flatten().flatten()).map(|e| e.path.as_str()).collect();
             self.marked.update(|m| m.retain(|x| shown.contains(x.as_str())));
         }
         self.entries.set(es);
@@ -713,6 +726,7 @@ impl Pane {
         self.sort.set(s);
         store(&Sort::storage_key(self.id), &format!("{}:{}", s.0.key(), if s.1 { 1 } else { 0 }));
         self.cols.update(|c| c.values_mut().for_each(|es| s.apply(es)));
+        self.kids.update(|k| k.values_mut().flatten().for_each(|es| s.apply(es)));
         self.arrange();
     }
 
@@ -726,12 +740,10 @@ impl Pane {
     fn picked(self) -> Vec<Entry> {
         let marked = self.marked.get_untracked();
         let sel = self.selected.get_untracked();
-        self.entries.with_untracked(|es| {
-            es.iter()
-                .filter(|e| if marked.is_empty() { sel.as_deref() == Some(e.path.as_str()) } else { marked.contains(&e.path) })
-                .cloned()
-                .collect()
-        })
+        self.shown_rows()
+            .into_iter()
+            .filter(|e| if marked.is_empty() { sel.as_deref() == Some(e.path.as_str()) } else { marked.contains(&e.path) })
+            .collect()
     }
 
     /// Selects one item, unmarking the rest.
@@ -755,13 +767,12 @@ impl Pane {
             self.selected.set(Some(path.to_string()));
         } else if ev.shift_key() && self.selected.get_untracked().is_some() {
             let anchor = self.selected.get_untracked().unwrap_or_default();
-            let range = self.entries.with_untracked(|es| {
-                let at = |p: &str| es.iter().position(|e| e.path == p);
-                match (at(&anchor), at(path)) {
-                    (Some(a), Some(b)) => es[a.min(b)..=a.max(b)].iter().map(|e| e.path.clone()).collect(),
-                    _ => HashSet::from([path.to_string()]),
-                }
-            });
+            let es = self.shown_rows();
+            let at = |p: &str| es.iter().position(|e| e.path == p);
+            let range = match (at(&anchor), at(path)) {
+                (Some(a), Some(b)) => es[a.min(b)..=a.max(b)].iter().map(|e| e.path.clone()).collect(),
+                _ => HashSet::from([path.to_string()]),
+            };
             self.marked.set(range);
         } else {
             self.select_only(Some(path.to_string()));
@@ -1361,7 +1372,7 @@ pub fn App() -> impl IntoView {
         if typing && !bound.is_some_and(|b| b.anywhere && chord.as_deref().is_some_and(held)) {
             return;
         }
-        let entries = p.entries.get_untracked();
+        let entries = p.shown_rows();
         let idx = p.selected.get_untracked().and_then(|s| entries.iter().position(|x| x.path == s));
         let current = idx.and_then(|i| entries.get(i)).cloned();
         let view = p.view.get_untracked();
@@ -1500,9 +1511,12 @@ pub fn App() -> impl IntoView {
             ("Escape", false) => p.marked.set(HashSet::new()),
             // In the list, ← and → go to the previous and next picture, video or sound.
             ("ArrowRight", false) | ("ArrowLeft", false) if view == ViewMode::List => {
-                if let Some(x) = current.filter(|x| media(x).is_some()) {
+                if let Some(x) = current.clone().filter(|x| media(x).is_some()) {
                     e.prevent_default();
                     step_media(p, &x, if e.key() == "ArrowRight" { 1 } else { -1 });
+                } else if let Some(x) = current.clone().filter(|_| untrack(|| p.tree_on())) {
+                    e.prevent_default();
+                    ctx.tree_key(p, &x, e.key() == "ArrowRight", &entries);
                 }
             }
             ("ArrowDown", false) => {
@@ -1609,7 +1623,7 @@ pub fn App() -> impl IntoView {
                     el.scroll_into_view_with_scroll_into_view_options(&opts);
                 } else if let Some(sc) = document().query_selector(&format!(".pane[data-pane=\"{i}\"] [data-rows]")).ok().flatten() {
                     // Not rendered, being out of view in a long list: scroll to where it would be.
-                    if let Some(idx) = ctx.panes[i].entries.with_untracked(|es| es.iter().position(|e| e.path == path)) {
+                    if let Some(idx) = ctx.panes[i].shown_rows().iter().position(|e| e.path == path) {
                         rows::reveal(i, &sc, idx);
                     }
                 }

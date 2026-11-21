@@ -135,6 +135,9 @@ impl Ctx {
                     if moved {
                         p.marked.set(HashSet::new());
                         p.filter.set(String::new());
+                        p.kids.set(HashMap::new());
+                    } else {
+                        self.reload_kids(p);
                     }
                     // Marks from comparing hold for these two folders only; the same folder again
                     // (after a copy, say) is compared again.
@@ -339,6 +342,7 @@ impl Ctx {
                 self.reload(p);
             }
         }
+        self.kids_changed(src, dir);
     }
 
     pub(super) fn reload_all(self) {

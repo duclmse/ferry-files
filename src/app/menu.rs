@@ -111,7 +111,12 @@ impl Ctx {
         v.extend(LIST_ORDER.iter().map(|&c| {
             item(format!("{} {}", if shown.contains(&c) { "✓" } else { "\u{2003}" }, LIST_COLS[c].label()), "", Act::Column(c))
         }));
-        v.extend([MenuItem::Sep, item("Default columns", "", Act::ResetColumns)]);
+        v.extend([
+            MenuItem::Sep,
+            item(format!("{} Show as a tree", if p.list_tree.get_untracked() { "✓" } else { "\u{2003}" }), "", Act::ListTree),
+            MenuItem::Sep,
+            item("Default columns", "", Act::ResetColumns),
+        ]);
         v
     }
 
@@ -577,6 +582,7 @@ impl Ctx {
                 p.set_list_cols(v);
             }
             (Act::ResetColumns, _) => p.set_list_cols(LIST_ORDER.to_vec()),
+            (Act::ListTree, _) => p.set_list_tree(!p.list_tree.get_untracked()),
             (Act::Section(i), _) => self.toggle_section(i),
             (Act::AllSections, _) => self.set_hidden_sections(vec![]),
             (Act::ShowAs(how), Some(e)) => {
