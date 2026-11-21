@@ -16,6 +16,11 @@ pub(super) struct Popped {
     playing: bool,
     width: f64,
     height: f64,
+    /// The subtitles loaded, and which one shows.
+    #[serde(default, skip_serializing_if = "serde_json::Value::is_null")]
+    tracks: serde_json::Value,
+    #[serde(default)]
+    shown: Option<usize>,
 }
 
 static NEXT: AtomicU32 = AtomicU32::new(1);

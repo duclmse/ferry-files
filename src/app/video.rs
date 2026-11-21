@@ -218,10 +218,7 @@ thread_local! {
 
 /// Makes `f` take the media keys while a pane shows this player.
 fn take_keys(pane: usize, f: impl Fn(MediaKey) + 'static) {
-    let id = NEXT_PLAYER.with(|n| {
-        n.set(n.get() + 1);
-        n.get()
-    });
+    let id = next_player();
     KEYS.with(|k| k.borrow_mut().push((pane, id, Rc::new(f))));
     on_cleanup(move || KEYS.with(|k| k.borrow_mut().retain(|(_, i, _)| *i != id)));
 }
@@ -326,12 +323,83 @@ pub struct Popped {
     playing: bool,
     width: f64,
     height: f64,
+    #[serde(default)]
+    tracks: Vec<Track>,
+    #[serde(default)]
+    shown: Option<usize>,
+}
+
+// ---- Subtitles ----
+
+/// A subtitle file loaded for a video: its name, and its cues as WebVTT (the backend turns
+/// .srt and .sub files into that).
+#[derive(Clone, PartialEq, Serialize, Deserialize)]
+pub struct Track {
+    name: String,
+    vtt: String,
+}
+
+/// The extensions of subtitle files.
+const SUB_EXTS: &[&str] = &["srt", "sub", "vtt"];
+
+fn is_subtitle(path: &str) -> bool {
+    path.rsplit_once('.').is_some_and(|(_, ext)| SUB_EXTS.iter().any(|e| ext.eq_ignore_ascii_case(e)))
+}
+
+#[derive(Deserialize)]
+struct SubFile {
+    path: String,
+}
+
+/// Reads the subtitle file at `path` on `src`.
+async fn fetch_track(src: Src, path: String) -> Result<Track, String> {
+    let vtt = call::<String>("subtitle", json!({ "src": src.key(), "path": path })).await?;
+    let name = path.rsplit('/').next().unwrap_or(&path).to_string();
+    Ok(Track { name, vtt })
+}
+
+type DropHandler = Rc<dyn Fn(Src, Vec<String>)>;
+
+thread_local! {
+    /// What each player does with subtitle files dropped on it: (player, handler).
+    static DROPS: RefCell<Vec<(u64, DropHandler)>> = const { RefCell::new(Vec::new()) };
+}
+
+/// Hands the subtitle files among `paths` (on `src`) to the player `el` is in. False when it
+/// isn't in one, or none of them are subtitles.
+pub(super) fn drop_on_player(el: &web_sys::Element, src: Src, paths: Vec<String>) -> bool {
+    let Some(id) = el.closest(".vplayer[data-player]").ok().flatten().and_then(|p| p.get_attribute("data-player")?.parse::<u64>().ok()) else {
+        return false;
+    };
+    let subs: Vec<String> = paths.into_iter().filter(|p| is_subtitle(p)).collect();
+    let Some(f) = DROPS.with(|d| d.borrow().iter().find(|(i, _)| *i == id).map(|(_, f)| f.clone())) else { return false };
+    if subs.is_empty() {
+        return false;
+    }
+    f(src, subs);
+    true
+}
+
+fn next_player() -> u64 {
+    NEXT_PLAYER.with(|n| {
+        n.set(n.get() + 1);
+        n.get()
+    })
+}
+
+/// Shows `t`'s cues on `track` ("showing"), or hides them ("disabled").
+fn track_mode(track: &web_sys::Element, mode: &str) {
+    if let Ok(t) = js_sys::Reflect::get(track, &"track".into()) {
+        let _ = js_sys::Reflect::set(&t, &"mode".into(), &mode.into());
+    }
 }
 
 /// The video, turned and scaled to fill its room, with its controls under it.
 ///
 /// `pane`: takes that pane's media keys. `pop`: shows the pop-out button. `start` and `autoplay`:
-/// where it starts, and playing (a popped-out one).
+/// where it starts, and playing (a popped-out one). `near`: the device and path of the video, to
+/// load the subtitle files beside it with a name like it. `tracks` and `shown`: subtitles loaded
+/// already (a popped-out one's), and which one shows.
 #[component]
 pub(super) fn VideoPlayer(
     url: String,
@@ -343,6 +411,9 @@ pub(super) fn VideoPlayer(
     #[prop(optional)] pop: Option<Callback<Popped>>,
     #[prop(optional)] start: Option<f64>,
     #[prop(optional)] autoplay: bool,
+    #[prop(default = None)] near: Option<(Src, String)>,
+    #[prop(optional)] tracks: Vec<Track>,
+    #[prop(default = None)] shown: Option<usize>,
 ) -> impl IntoView {
     let prefs = use_context::<VideoPrefs>().unwrap_or_else(VideoPrefs::load);
     let el = StoredValue::new_local(None::<web_sys::HtmlMediaElement>);
@@ -385,6 +456,139 @@ pub(super) fn VideoPlayer(
             flash(format!("+{FORWARD_S}s"));
         }
     };
+
+    // Subtitles: the files loaded, the one shown, and the menu to pick one.
+    let subs = RwSignal::new(tracks);
+    let shown = RwSignal::new(shown.filter(|i| *i < subs.with_untracked(Vec::len)));
+    let subs_menu = RwSignal::new(false);
+    // Adds a track (or replaces one of the same name); `show`: shows it, else only when none is.
+    let add_track = move |t: Track, show: bool| {
+        let Some(i) = subs.try_update(|s| match s.iter().position(|o| o.name == t.name) {
+            Some(i) => {
+                s[i] = t;
+                i
+            }
+            None => {
+                s.push(t);
+                s.len() - 1
+            }
+        }) else {
+            return;
+        };
+        if show || shown.get_untracked().is_none() {
+            shown.set(Some(i));
+        }
+    };
+    if let Some((src, path)) = near {
+        spawn_local(async move {
+            let Ok(found) = call::<Vec<SubFile>>("subtitles", json!({ "src": src.key(), "path": path })).await else { return };
+            for f in found {
+                if let Ok(t) = fetch_track(src, f.path).await {
+                    add_track(t, false);
+                }
+            }
+        });
+    }
+    // Dropped files: each subtitle file is loaded and shown.
+    let take_drop = move |src: Src, paths: Vec<String>| {
+        for path in paths {
+            spawn_local(async move {
+                match fetch_track(src, path).await {
+                    Ok(t) => {
+                        let name = t.name.clone();
+                        add_track(t, true);
+                        if subs.try_get_untracked().is_some() {
+                            flash(format!("Subtitles: {name}"));
+                        }
+                    }
+                    Err(e) => {
+                        if subs.try_get_untracked().is_some() {
+                            flash(e);
+                        }
+                    }
+                }
+            });
+        }
+    };
+    let player_id = next_player();
+    DROPS.with(|d| d.borrow_mut().push((player_id, Rc::new(take_drop))));
+    on_cleanup(move || DROPS.with(|d| d.borrow_mut().retain(|(i, _)| *i != player_id)));
+    // Subtitle files dragged from a pane.
+    let ctx = use_context::<Ctx>();
+    let dragged_subs = move || {
+        let (src, paths) = ctx?.drag.try_get_value().flatten()?;
+        let subs: Vec<String> = paths.into_iter().filter(|p| is_subtitle(p)).collect();
+        (!subs.is_empty()).then_some((src, subs))
+    };
+    let drag_over = move |ev: web_sys::DragEvent| {
+        if dragged_subs().is_some() {
+            ev.prevent_default();
+            ev.stop_propagation();
+            if let Some(dt) = ev.data_transfer() {
+                dt.set_drop_effect("copy");
+            }
+        }
+    };
+    let drop = move |ev: web_sys::DragEvent| {
+        let Some((src, paths)) = dragged_subs() else { return };
+        ev.prevent_default();
+        ev.stop_propagation();
+        if let Some(c) = ctx {
+            c.drag.set_value(None);
+            c.drop_at.set(None);
+        }
+        take_drop(src, paths);
+    };
+    // C: subtitles off, or back on (the one shown last).
+    let last_shown = StoredValue::new(None::<usize>);
+    let toggle_subs = move || match shown.get_untracked() {
+        Some(i) => {
+            last_shown.set_value(Some(i));
+            shown.set(None);
+            flash("Subtitles off".into());
+        }
+        None => {
+            let n = subs.with_untracked(Vec::len);
+            if n == 0 {
+                flash(if ctx.is_some() { "No subtitles. Drop a .srt or .sub file on the video." } else { "No subtitles" }.into());
+                return;
+            }
+            let i = last_shown.get_value().filter(|i| *i < n).unwrap_or(0);
+            shown.set(Some(i));
+            flash(format!("Subtitles: {}", subs.with_untracked(|s| s[i].name.clone())));
+        }
+    };
+    // The shown track, as a <track> in the video, its WebVTT in a blob: URL (the page's own
+    // origin, unlike the video's ferry: one). Each is let go of when another replaces it.
+    let track_el = StoredValue::new_local(None::<(web_sys::Element, String)>);
+    let free_track = move || {
+        if let Some((t, url)) = track_el.try_update_value(Option::take).flatten() {
+            track_mode(&t, "disabled");
+            t.remove();
+            let _ = web_sys::Url::revoke_object_url(&url);
+        }
+    };
+    Effect::new(move |_| {
+        let Some(v) = video_ref.get() else { return };
+        let vtt = shown.get().and_then(|i| subs.with(|s| s.get(i).map(|t| (t.name.clone(), t.vtt.clone()))));
+        free_track();
+        let Some((name, vtt)) = vtt else { return };
+        let opts = web_sys::BlobPropertyBag::new();
+        opts.set_type("text/vtt");
+        let Ok(blob) = web_sys::Blob::new_with_str_sequence_and_options(&js_sys::Array::of1(&vtt.into()), &opts) else { return };
+        let Ok(url) = web_sys::Url::create_object_url_with_blob(&blob) else { return };
+        let Ok(t) = document().create_element("track") else {
+            let _ = web_sys::Url::revoke_object_url(&url);
+            return;
+        };
+        for (k, val) in [("kind", "subtitles"), ("label", name.as_str()), ("default", ""), ("src", url.as_str())] {
+            let _ = t.set_attribute(k, val);
+        }
+        let _ = v.append_child(&t);
+        track_mode(&t, "showing");
+        track_el.set_value(Some((t, url)));
+    });
+    on_cleanup(free_track);
 
     // 2× while the video (or a forward key) is held: Some(whether it was paused) while it is.
     let fast = StoredValue::new_local(None::<bool>);
@@ -477,6 +681,7 @@ pub(super) fn VideoPlayer(
         }
     };
     let click = move |_| {
+        subs_menu.set(false);
         if !swallow.try_update_value(std::mem::take).unwrap_or(false) {
             play();
         }
@@ -546,7 +751,15 @@ pub(super) fn VideoPlayer(
                 full_screen();
                 true
             }
-            "Space" | "KeyK" | "ArrowLeft" | "KeyJ" | "KeyM" | "KeyF" => true,
+            "KeyC" if !repeat => {
+                toggle_subs();
+                true
+            }
+            "Escape" if subs_menu.get_untracked() => {
+                subs_menu.set(false);
+                true
+            }
+            "Space" | "KeyK" | "ArrowLeft" | "KeyJ" | "KeyM" | "KeyF" | "KeyC" => true,
             _ => false,
         };
         if done {
@@ -719,13 +932,16 @@ pub(super) fn VideoPlayer(
             playing,
             width: (vw * scale).round() + cw,
             height: (vh * scale).round() + ch,
+            tracks: subs.get_untracked(),
+            shown: shown.get_untracked(),
         });
     };
     let has_pop = pop.is_some();
     let quiet = |ev: web_sys::MouseEvent| ev.prevent_default();
 
     view! {
-        <div class="vplayer" tabindex="0" node_ref=player_ref on:keydown=keydown on:keyup=keyup>
+        <div class="vplayer" tabindex="0" node_ref=player_ref data-player=player_id.to_string() on:keydown=keydown on:keyup=keyup
+            on:dragover=drag_over on:drop=drop>
             <div class="vbox" class:turned=move || prefs.turn_controls.get() && turn.get() != 0 style=box_style
                 on:transitionend=move |ev| if ev.target() == ev.current_target() { turn.settle() }>
             <div class="vstage" node_ref=stage>
@@ -784,6 +1000,29 @@ pub(super) fn VideoPlayer(
                     </button>
                     <span class="vtime">{move || format!("{} / {}", clock(time.get()), clock(length.get()))}</span>
                     <span class="grow"></span>
+                    <span class="vsubs">
+                        <button class="btn icon-only" class:on=move || shown.get().is_some() on:mousedown=quiet
+                            on:click=move |_| subs_menu.update(|o| *o = !*o)
+                            title="Subtitles (C)" aria-label="Subtitles">{ico(Icon::Subtitles)}</button>
+                        {move || subs_menu.get().then(|| view! {
+                            <div class="menu vsubs-menu" role="menu" on:mousedown=quiet>
+                                <button role="menuitemradio" aria-checked=move || shown.get().is_none().to_string()
+                                    on:click=move |_| { shown.set(None); subs_menu.set(false); }>
+                                    <span>"Off"</span>{move || shown.get().is_none().then(|| ico(Icon::Check))}
+                                </button>
+                                {move || subs.with(|s| s.iter().enumerate().map(|(i, t)| view! {
+                                    <button role="menuitemradio" aria-checked=move || (shown.get() == Some(i)).to_string()
+                                        on:click=move |_| { shown.set(Some(i)); subs_menu.set(false); }>
+                                        <span>{t.name.clone()}</span>{move || (shown.get() == Some(i)).then(|| ico(Icon::Check))}
+                                    </button>
+                                }).collect_view())}
+                                {ctx.is_some().then(|| view! {
+                                    <div class="sep"></div>
+                                    <p class="vsubs-hint">"Drop a .srt or .sub file on the video to add it."</p>
+                                })}
+                            </div>
+                        })}
+                    </span>
                     <button class="btn icon-only" on:mousedown=quiet on:click=move |_| mute()
                         title=move || if muted.get() { "Sound on (M)" } else { "Sound off (M)" }
                         aria-label=move || if muted.get() { "Sound on" } else { "Sound off" }>
@@ -838,9 +1077,23 @@ pub fn PopOut(video: Popped) -> impl IntoView {
     view! {
         <div class="popout">
             {match start {
-                Some(start) => view! { <VideoPlayer url=video.url key=video.key title=video.title info turn start autoplay=video.playing/> }.into_any(),
-                None => view! { <VideoPlayer url=video.url key=video.key title=video.title info turn autoplay=video.playing/> }.into_any(),
+                Some(start) => view! { <VideoPlayer url=video.url key=video.key title=video.title info turn start autoplay=video.playing tracks=video.tracks shown=video.shown/> }.into_any(),
+                None => view! { <VideoPlayer url=video.url key=video.key title=video.title info turn autoplay=video.playing tracks=video.tracks shown=video.shown/> }.into_any(),
             }}
         </div>
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn knows_subtitle_files() {
+        assert!(is_subtitle("/a/Movie.en.SRT"));
+        assert!(is_subtitle("b.sub"));
+        assert!(is_subtitle("c.vtt"));
+        assert!(!is_subtitle("d.mp4"));
+        assert!(!is_subtitle("srt"));
     }
 }

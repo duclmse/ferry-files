@@ -22,6 +22,8 @@
     "allow-peek-text",
     "allow-media-info",
     "allow-peek-bytes",
+    "allow-subtitles",
+    "allow-subtitle",
     "allow-zip-list",
     "allow-pdf-outline",
     "allow-epub-contents",

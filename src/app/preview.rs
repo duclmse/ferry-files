@@ -920,7 +920,8 @@ fn Player(
                 }
             });
         });
-        view! { <VideoPlayer url key title=entry.name.clone() info turn pane=pane.id pop/> }
+        let near = (!alone).then(|| (pane.src.get_untracked(), entry.path.clone()));
+        view! { <VideoPlayer url key title=entry.name.clone() info turn pane=pane.id pop near/> }
             .into_any()
     } else {
         view! { <SoundPlayer url key info pane=pane.id/> }.into_any()

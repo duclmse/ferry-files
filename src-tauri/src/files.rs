@@ -541,6 +541,51 @@ pub(super) async fn peek_bytes(
     .await
 }
 
+/// A subtitle file found beside a video.
+#[derive(Serialize)]
+pub(super) struct Subtitle {
+    name: String,
+    path: String,
+}
+
+/// The subtitle files in the folder of the video at `path` with a name like it (`subs::goes_with`).
+#[tauri::command(rename_all = "snake_case")]
+pub(super) async fn subtitles(state: State<'_, AppState>, src: Option<String>, path: String) -> Result<Vec<Subtitle>, String> {
+    let dev = state.source(src.as_deref())?;
+    blocking(move || {
+        let (dir, video) = match path.rsplit_once('/') {
+            Some(("", v)) => ("/", v),
+            Some((d, v)) => (d, v),
+            None => return Ok(vec![]),
+        };
+        let mut found: Vec<Subtitle> = dev
+            .listdir(dir)
+            .map_err(msg)?
+            .into_iter()
+            .filter(|e| !e.dir && e.size <= crate::subs::MAX && crate::subs::goes_with(video, &e.name))
+            .map(|e| Subtitle { name: e.name, path: e.path })
+            .collect();
+        found.sort_by_key(|s| s.name.to_lowercase());
+        Ok(found)
+    })
+    .await
+}
+
+/// The subtitle file at `path` (.srt, .sub or .vtt) as WebVTT, for the video player.
+#[tauri::command(rename_all = "snake_case")]
+pub(super) async fn subtitle(state: State<'_, AppState>, src: Option<String>, path: String) -> Result<String, String> {
+    let dev = state.source(src.as_deref())?;
+    blocking(move || {
+        let st = dev.stat(&path).map_err(msg)?.ok_or_else(|| format!("No such file: {path}"))?;
+        if st.dir || st.size > crate::subs::MAX {
+            return Err(format!("{path} isn't a subtitle file."));
+        }
+        let data = dev.read_range(&path, 0, st.size).map_err(msg)?;
+        crate::subs::to_vtt(&data, &path)
+    })
+    .await
+}
+
 /// Files packed in a ZIP are unpacked whole for the preview, up to this size.
 pub(super) const UNPACK_MAX: u64 = 64 * 1024 * 1024;
 

@@ -42,6 +42,8 @@ pub(crate) enum Icon {
     SoundOff,
     PopOut,
     FullScreen,
+    /// A screen with lines of text along its bottom.
+    Subtitles,
     /// A line running on and turning back.
     Wrap,
     LineNumbers,
@@ -100,6 +102,7 @@ impl Icon {
             Icon::SoundOff => r#"<path d="M2.5 6v4h2.5l3.5 3V3L5 6z"/><path d="M10.5 6.5l3 3M13.5 6.5l-3 3"/>"#,
             Icon::PopOut => r#"<rect x="1.5" y="3" width="13" height="10" rx="1"/><rect x="8" y="8" width="5" height="3.5"/>"#,
             Icon::FullScreen => r#"<path d="M2.5 6V2.5H6M10 2.5h3.5V6M13.5 10v3.5H10M6 13.5H2.5V10"/>"#,
+            Icon::Subtitles => r#"<rect x="1.5" y="3" width="13" height="10" rx="1.5"/><path d="M4 8.5h3M8.5 8.5h3.5M4 10.5h5.5M11 10.5h1"/>"#,
             Icon::Terminal => r#"<rect x="1.5" y="2.5" width="13" height="11" rx="1.5"/><path d="M4.5 6l2 2-2 2M8 10.5h3.5"/>"#,
             Icon::Search => r#"<circle cx="7" cy="7" r="4.5"/><path d="M10.5 10.5 14 14"/>"#,
             Icon::Wrap => r#"<path d="M2 4h12M2 8h9.5a2.25 2.25 0 0 1 0 4.5H8"/><path d="M9.5 11 8 12.5 9.5 14M2 12.5h3"/>"#,

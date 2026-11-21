@@ -45,6 +45,9 @@ web-sys = { version = "0.3", features = [
     "ClipboardEvent",
     "WheelEvent",
     "PointerEvent",
+    "Blob",
+    "BlobPropertyBag",
+    "Url",
 ] }
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"

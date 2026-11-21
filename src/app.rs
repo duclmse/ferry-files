@@ -1569,10 +1569,15 @@ pub fn App() -> impl IntoView {
             }
         });
     });
-    // Files dragged in from the file manager are copied to the folder (or pane) they're dropped on.
+    // Files dragged in from the file manager are copied to the folder (or pane) they're dropped on,
+    // except subtitles dropped on a video.
     crate::api::listen("tauri://drag-drop", move |d: FileDrop| {
         let dpr = window().device_pixel_ratio().max(1.0);
         let Some(el) = document().element_from_point((d.position.x / dpr) as f32, (d.position.y / dpr) as f32) else { return };
+        // Subtitle files dropped on a video are shown with it.
+        if video::drop_on_player(&el, Src::Mac, d.paths.iter().map(|f| crate::os::app_path(f)).collect()) {
+            return;
+        }
         let Some(pane_el) = el.closest("[data-pane]").ok().flatten() else { return };
         let Some(p) = pane_el.get_attribute("data-pane").and_then(|i| i.parse::<usize>().ok()).and_then(|i| ctx.panes.get(i).copied()) else { return };
         let dir = el.closest("[data-dir]").ok().flatten().and_then(|f| f.get_attribute("data-dir")).unwrap_or_else(|| p.cwd.get_untracked());

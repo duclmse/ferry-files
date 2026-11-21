@@ -19,6 +19,8 @@ fn main() {
             "peek_text",
             "media_info",
             "peek_bytes",
+            "subtitles",
+            "subtitle",
             "zip_list",
             "pdf_outline",
             "epub_contents",

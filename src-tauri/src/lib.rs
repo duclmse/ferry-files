@@ -23,6 +23,7 @@ mod connect;
 mod dupes;
 mod everything;
 mod stream;
+mod subs;
 mod sftp;
 mod smb;
 mod terminal;
@@ -202,6 +203,8 @@ pub fn run() {
             files::peek_text,
             files::media_info,
             files::peek_bytes,
+            files::subtitles,
+            files::subtitle,
             files::zip_list,
             files::pdf_outline,
             files::epub_contents,

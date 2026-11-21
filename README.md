@@ -12,7 +12,9 @@ own files and disks, with tools for EPUB books in particular.
 - **Preview** beside the files:
   - pictures that zoom and turn;
   - video and audio streamed from the device, with their own controls, full
-    screen and a pop-out window;
+    screen and a pop-out window. Subtitles (.srt, .sub, .vtt) named like the
+    video in its folder are shown, and more can be dropped on the video, from
+    a pane or Finder. C turns them on and off;
   - text and code in colour (about 50 languages), read as you scroll;
   - hex, read by range, with go-to-offset;
   - PDFs, with an outline, go to page, zoom, turn, Open and Show in Finder;
