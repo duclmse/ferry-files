@@ -91,7 +91,7 @@ pub(super) fn find_dupes(
             }
             let Ok(items) = dev.listdir(&d) else { continue };
             for e in items {
-                if !hidden && e.name.starts_with('.') {
+                if !hidden && e.is_hidden() {
                     continue;
                 }
                 if e.dir {

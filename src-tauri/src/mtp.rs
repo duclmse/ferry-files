@@ -806,7 +806,7 @@ impl Mtp {
     }
 
     fn public(n: &Node) -> Entry {
-        Entry { name: n.name.clone(), path: n.path.clone(), dir: n.dir, size: n.size, mtime: n.mtime }
+        Entry { name: n.name.clone(), path: n.path.clone(), dir: n.dir, size: n.size, mtime: n.mtime, hidden: false }
     }
 }
 
@@ -837,13 +837,13 @@ impl Transport for Mtp {
             return Ok(self
                 .storages
                 .iter()
-                .map(|(n, _)| Entry { name: n.clone(), path: format!("/{n}"), dir: true, size: 0, mtime: 0 })
+                .map(|(n, _)| Entry { name: n.clone(), path: format!("/{n}"), dir: true, size: 0, mtime: 0, hidden: false })
                 .collect());
         };
         Ok(inner
             .children(sid, node.id)
             .into_iter()
-            .map(|k| Entry { path: join(&node.path, &k.name), name: k.name, dir: k.dir, size: k.size, mtime: k.mtime })
+            .map(|k| Entry { path: join(&node.path, &k.name), name: k.name, dir: k.dir, size: k.size, mtime: k.mtime, hidden: false })
             .collect())
     }
 

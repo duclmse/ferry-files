@@ -44,6 +44,28 @@ fn swap_in(path: &str, size: u64, write: impl FnOnce(&Path) -> std::io::Result<(
     Ok(version_of(&m))
 }
 
+/// Whether the system marks it hidden: UF_HIDDEN on macOS (`~/Library`, `/usr`), the hidden
+/// attribute on Windows.
+fn flagged_hidden(m: &fs::Metadata) -> bool {
+    #[cfg(target_os = "macos")]
+    {
+        use std::os::macos::fs::MetadataExt;
+        const UF_HIDDEN: u32 = 0x8000;
+        m.st_flags() & UF_HIDDEN != 0
+    }
+    #[cfg(windows)]
+    {
+        use std::os::windows::fs::MetadataExt;
+        const FILE_ATTRIBUTE_HIDDEN: u32 = 0x2;
+        m.file_attributes() & FILE_ATTRIBUTE_HIDDEN != 0
+    }
+    #[cfg(not(any(target_os = "macos", windows)))]
+    {
+        let _ = m;
+        false
+    }
+}
+
 fn entry(path: &str, m: &fs::Metadata) -> Entry {
     Entry {
         name: basename(path).to_string(),
@@ -51,6 +73,7 @@ fn entry(path: &str, m: &fs::Metadata) -> Entry {
         dir: m.is_dir(),
         size: if m.is_dir() { 0 } else { m.len() },
         mtime: secs(m),
+        hidden: flagged_hidden(m),
     }
 }
 
@@ -209,12 +232,27 @@ fn drive_letters() -> Vec<String> {
 /// "/" on Windows, which holds the drives, or one of the drives in it.
 fn top(name: &str) -> Entry {
     let path = if name == "/" { "/".to_string() } else { format!("/{name}") };
-    Entry { name: name.to_string(), path, dir: true, size: 0, mtime: 0 }
+    Entry { name: name.to_string(), path, dir: true, size: 0, mtime: 0, hidden: false }
 }
 
 #[cfg(test)]
 mod tests {
     use crate::device::Device;
+
+    #[cfg(target_os = "macos")]
+    #[test]
+    fn files_macos_marks_hidden_are_hidden() {
+        let dir = std::env::temp_dir().join(format!("ferry-hidden-test-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        std::fs::write(dir.join("shown"), b"").unwrap();
+        std::fs::write(dir.join("flagged"), b"").unwrap();
+        assert!(std::process::Command::new("chflags").arg("hidden").arg(dir.join("flagged")).status().unwrap().success());
+        let dev = Device::new(Box::new(super::Local));
+        let mut got: Vec<_> = dev.listdir(&crate::platform::app_path(&dir)).unwrap().into_iter().map(|e| (e.name.clone(), e.is_hidden())).collect();
+        got.sort();
+        std::fs::remove_dir_all(&dir).unwrap();
+        assert_eq!(got, [("flagged".to_string(), true), ("shown".to_string(), false)]);
+    }
 
     #[test]
     fn mac_files_follow_the_device_rules() {

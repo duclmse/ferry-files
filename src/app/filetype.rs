@@ -79,7 +79,7 @@ mod tests {
     use super::*;
 
     fn file(name: &str) -> Entry {
-        Entry { name: name.into(), path: format!("/{name}"), dir: false, size: 10, mtime: 0 }
+        Entry { name: name.into(), path: format!("/{name}"), dir: false, size: 10, mtime: 0, hidden: false }
     }
 
     #[test]

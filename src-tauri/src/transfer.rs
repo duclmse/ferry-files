@@ -386,7 +386,7 @@ pub(super) struct Comparison {
 }
 
 pub(super) fn compare_dirs(a: &Device, a_dir: &str, b: &Device, b_dir: &str, rel: &str, hidden: bool, out: &mut Comparison) -> Result<(), String> {
-    let shown = |e: &device::Entry| hidden || !e.name.starts_with('.');
+    let shown = |e: &device::Entry| hidden || !e.is_hidden();
     let mine: Vec<_> = a.listdir(a_dir).map_err(msg)?.into_iter().filter(shown).collect();
     let theirs: HashMap<String, device::Entry> = b.listdir(b_dir).map_err(msg)?.into_iter().filter(shown).map(|e| (e.name.clone(), e)).collect();
     let r = |name: &str| if rel.is_empty() { name.to_string() } else { format!("{rel}/{name}") };
@@ -448,7 +448,7 @@ fn same_bytes(a: &Device, a_path: &str, b: &Device, b_path: &str, size: u64) -> 
 }
 
 pub(super) fn mark_dirs(a: &Device, a_dir: &str, b: &Device, b_dir: &str, hidden: bool, content: bool) -> Result<Marks, String> {
-    let shown = |e: &device::Entry| hidden || !e.name.starts_with('.');
+    let shown = |e: &device::Entry| hidden || !e.is_hidden();
     let mine: Vec<_> = a.listdir(a_dir).map_err(msg)?.into_iter().filter(shown).collect();
     let theirs: HashMap<String, device::Entry> = b.listdir(b_dir).map_err(msg)?.into_iter().filter(shown).map(|e| (e.name.clone(), e)).collect();
     let mut m = Marks::default();

@@ -1377,6 +1377,7 @@ fn Zipped(pane: Pane, src: Src, zip: Entry, name: String, size: u64, stored: boo
         dir: false,
         size,
         mtime: 0,
+        hidden: false,
     };
     let url = crate::os::served(&format!(
         "zipped?src={}&p={}&s={}&m={}&e={}",

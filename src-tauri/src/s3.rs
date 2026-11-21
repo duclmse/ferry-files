@@ -346,7 +346,7 @@ impl S3 {
             Ok(res) => {
                 let mtime = res.header("Last-Modified").and_then(|d| chrono::DateTime::parse_from_rfc2822(d).ok()).map_or(0, |d| d.timestamp());
                 let size = res.header("Content-Length").and_then(|n| n.parse().ok()).unwrap_or(0);
-                Ok(Some(Entry { name: basename(key).to_string(), path: format!("/{key}"), dir: false, size, mtime }))
+                Ok(Some(Entry { name: basename(key).to_string(), path: format!("/{key}"), dir: false, size, mtime, hidden: false }))
             }
             Err(f) if f.status == 404 => Ok(None),
             Err(f) => Err(f),
@@ -488,7 +488,7 @@ impl Transport for S3 {
         let mut out = vec![];
         for p in all.prefixes {
             let name = p[prefix.len()..].trim_end_matches('/').to_string();
-            out.push(Entry { path: format!("/{prefix}{name}"), name, dir: true, size: 0, mtime: 0 });
+            out.push(Entry { path: format!("/{prefix}{name}"), name, dir: true, size: 0, mtime: 0, hidden: false });
         }
         for o in all.files {
             // The folder's own marker.
@@ -496,7 +496,7 @@ impl Transport for S3 {
                 continue;
             }
             let name = o.key[prefix.len()..].to_string();
-            out.push(Entry { path: format!("/{}", o.key), name, dir: false, size: o.size, mtime: o.mtime });
+            out.push(Entry { path: format!("/{}", o.key), name, dir: false, size: o.size, mtime: o.mtime, hidden: false });
         }
         Ok(out)
     }
@@ -504,12 +504,12 @@ impl Transport for S3 {
     fn stat(&self, path: &str) -> Result<Option<Entry>> {
         let key = key_of(path);
         if key.is_empty() {
-            return Ok(Some(Entry { name: String::new(), path: "/".into(), dir: true, size: 0, mtime: 0 }));
+            return Ok(Some(Entry { name: String::new(), path: "/".into(), dir: true, size: 0, mtime: 0, hidden: false }));
         }
         if let Some(e) = self.head(key)? {
             return Ok(Some(e));
         }
-        Ok(self.is_dir(key)?.then(|| Entry { name: basename(key).to_string(), path: format!("/{key}"), dir: true, size: 0, mtime: 0 }))
+        Ok(self.is_dir(key)?.then(|| Entry { name: basename(key).to_string(), path: format!("/{key}"), dir: true, size: 0, mtime: 0, hidden: false }))
     }
 
     fn read(&self, path: &str) -> Result<(Vec<u8>, String)> {

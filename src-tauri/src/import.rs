@@ -67,7 +67,7 @@ pub(super) fn run_import(
         }
         let items = a.listdir(&d).map_err(msg)?;
         for e in items {
-            if !hidden && e.name.starts_with('.') {
+            if !hidden && e.is_hidden() {
                 continue;
             }
             if e.dir {

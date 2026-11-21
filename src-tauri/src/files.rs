@@ -478,7 +478,7 @@ pub(super) fn find_in(dev: &Device, dir: &str, query: &Query, hidden: bool, filt
         let Ok(mut items) = dev.listdir(&d) else { continue };
         items.sort_by(|a, b| a.name.to_lowercase().cmp(&b.name.to_lowercase()));
         for e in items {
-            if !hidden && e.name.starts_with('.') {
+            if !hidden && e.is_hidden() {
                 continue;
             }
             if e.dir {

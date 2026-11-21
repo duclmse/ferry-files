@@ -201,7 +201,7 @@ pub(super) fn Duplicates(folders: Vec<(Src, String)>) -> impl IntoView {
                                             let (src, place) = folders.with_value(|f| (f[x.at].0, ctx.place(f[x.at].0)));
                                             let key = (x.at, x.path.clone());
                                             let k2 = key.clone();
-                                            let entry = Entry { name: x.name.clone(), path: x.path.clone(), dir: false, size: x.size, mtime: x.mtime };
+                                            let entry = Entry { name: x.name.clone(), path: x.path.clone(), dir: false, size: x.size, mtime: x.mtime, hidden: false };
                                             let path = x.path.clone();
                                             view! {
                                                 <label class="dupe">

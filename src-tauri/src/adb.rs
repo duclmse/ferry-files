@@ -150,6 +150,7 @@ impl Adb {
             dir: kind == "directory",
             size: size.parse().unwrap_or(0),
             mtime: mtime.parse().unwrap_or(0),
+            hidden: false,
         })
     }
 }

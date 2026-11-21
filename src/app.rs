@@ -1083,7 +1083,7 @@ impl Ctx {
         if self.show_hidden.get_untracked() {
             entries
         } else {
-            entries.into_iter().filter(|e| !e.name.starts_with('.')).collect()
+            entries.into_iter().filter(|e| !e.is_hidden()).collect()
         }
     }
 

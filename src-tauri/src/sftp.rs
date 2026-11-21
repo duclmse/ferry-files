@@ -596,7 +596,7 @@ impl Sftp {
     }
 
     fn entry(path: &str, a: &Attrs) -> Entry {
-        Entry { name: basename(path).to_string(), path: path.to_string(), dir: a.is_dir(), size: if a.is_dir() { 0 } else { a.size }, mtime: a.mtime }
+        Entry { name: basename(path).to_string(), path: path.to_string(), dir: a.is_dir(), size: if a.is_dir() { 0 } else { a.size }, mtime: a.mtime, hidden: false }
     }
 
     fn version_of(a: &Attrs) -> String {

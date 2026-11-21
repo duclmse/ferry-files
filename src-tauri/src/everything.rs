@@ -26,7 +26,7 @@ struct Hit {
 
 impl From<Hit> for Entry {
     fn from(h: Hit) -> Entry {
-        Entry { name: h.name, path: h.path, dir: h.dir, size: h.size, mtime: h.mtime }
+        Entry { name: h.name, path: h.path, dir: h.dir, size: h.size, mtime: h.mtime, hidden: false }
     }
 }
 
@@ -239,7 +239,7 @@ impl Everything {
             let all = self.drives();
             let total = all.len() as u64;
             let drives = all.into_iter().skip(offset as usize).take(count as usize);
-            return Ok((drives.map(|(name, path)| Entry { name, path, dir: true, size: 0, mtime: 0 }).collect(), total));
+            return Ok((drives.map(|(name, path)| Entry { name, path, dir: true, size: 0, mtime: 0, hidden: false }).collect(), total));
         }
         let win = windows_path(path);
         let mut found = ask(&self.srv, &format!("parent:\"{win}\""), offset, count, order).map_err(DevError::Msg)?;
@@ -318,7 +318,7 @@ impl Transport for Everything {
 
     fn stat(&self, path: &str) -> Result<Option<Entry>> {
         if path == "/" {
-            return Ok(Some(Entry { name: String::new(), path: "/".into(), dir: true, size: 0, mtime: 0 }));
+            return Ok(Some(Entry { name: String::new(), path: "/".into(), dir: true, size: 0, mtime: 0, hidden: false }));
         }
         let parent = dirname(path);
         let kept = self

@@ -164,6 +164,7 @@ fn item(dir: &str, f: &File) -> Item {
             dir: dir_like,
             size: if dir_like { 0 } else { f.size() as u64 },
             mtime: secs(f.modified()),
+            hidden: false,
         },
         link: f.is_symlink(),
     }
@@ -465,7 +466,7 @@ impl<T: TlsStream + Send + 'static> Ftp<T> {
 
     fn stat_of(s: &mut Session<T>, path: &str) -> std::result::Result<Option<Entry>, Fail> {
         if path == "/" {
-            return Ok(Some(Entry { name: "/".into(), path: "/".into(), dir: true, size: 0, mtime: 0 }));
+            return Ok(Some(Entry { name: "/".into(), path: "/".into(), dir: true, size: 0, mtime: 0, hidden: false }));
         }
         let mut found = None;
         if s.mlsx {

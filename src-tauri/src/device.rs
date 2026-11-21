@@ -15,6 +15,17 @@ pub struct Entry {
     pub dir: bool,
     pub size: u64,
     pub mtime: i64,
+    /// Marked hidden by the system (macOS UF_HIDDEN, the Windows hidden attribute), apart from a
+    /// leading dot.
+    #[serde(skip_serializing_if = "std::ops::Not::not")]
+    pub hidden: bool,
+}
+
+impl Entry {
+    /// Whether it's hidden: a dot name, or marked hidden by the system.
+    pub fn is_hidden(&self) -> bool {
+        self.hidden || self.name.starts_with('.')
+    }
 }
 
 #[derive(Debug)]

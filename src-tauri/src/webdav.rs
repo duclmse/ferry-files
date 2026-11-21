@@ -67,7 +67,7 @@ struct Item {
 
 impl Item {
     fn entry(&self) -> Entry {
-        Entry { name: basename(&self.path).to_string(), path: self.path.clone(), dir: self.dir, size: self.size, mtime: self.mtime }
+        Entry { name: basename(&self.path).to_string(), path: self.path.clone(), dir: self.dir, size: self.size, mtime: self.mtime, hidden: false }
     }
 
     /// Changes whenever the file does: its ETag, or its size and time when there's none.

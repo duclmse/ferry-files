@@ -504,7 +504,7 @@ fn ZipColumns(pane: Pane, src: Src, entry: Entry, open: RwSignal<Vec<String>>) -
                                                     }
                                                 });
                                             }>
-                                            <span class="icon">{type_icon(&Entry { name: i.name.clone(), path: c.clone(), dir: i.dir, size: i.size, mtime: 0 })}</span>
+                                            <span class="icon">{type_icon(&Entry { name: i.name.clone(), path: c.clone(), dir: i.dir, size: i.size, mtime: 0, hidden: false })}</span>
                                             <span class="name">{split_name(&i.name, i.dir)}</span>
                                             {(!i.dir).then(|| view! { <span class="size">{human_size(i.size)}</span> })}
                                             {i.dir.then(|| view! { <span class="chev">"›"</span> })}
