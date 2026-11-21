@@ -156,7 +156,9 @@ pub(super) fn Backups() -> impl IntoView {
                     }}
                 </div>
                 <div class="actions">
-                    <button class="btn" on:click=move |_| spawn_local(async move { let _ = call::<()>("open_folder", json!({ "which": "backups" })).await; })>{ico(Icon::Folder)}{format!("Open in {}", crate::os::file_manager())}</button>
+                    <button class="btn" on:click=move |_| spawn_local(async move { let _ = call::<()>("open_folder", json!({ "which": "backups" })).await; })>
+                        {ico(Icon::Folder)}{format!("Open in {}", crate::os::file_manager())}
+                    </button>
                     {move || if confirming.get() {
                         let n = count();
                         view! {

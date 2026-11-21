@@ -495,7 +495,7 @@ pub(super) fn Reader(src: Src, path: String, back: Option<String>) -> impl IntoV
                             _ => ().into_any(),
                         })}
                     </select>
-                    <button class="btn" title="Next chapter (→)" aria-label="Next chapter" disabled=move || at.get() + 1 >= count() on:click=move |_| go(1)>{ico(Icon::Next)}</button>
+                    <button class="btn" title="Next chapter (→)" aria-label="Next chapter" disabled=move || {at.get() + 1 >= count()} on:click=move |_| go(1)>{ico(Icon::Next)}</button>
                     <button class="btn" title="Smaller text" on:click=move |_| size.update(|s| *s = (*s).saturating_sub(1).max(12))>"A−"</button>
                     <button class="btn" title="Bigger text" on:click=move |_| size.update(|s| *s = (*s + 1).min(32))>"A+"</button>
                     <span class="grow"></span>

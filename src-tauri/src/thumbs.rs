@@ -312,9 +312,15 @@ pub fn cover(dev: &Device, path: &str, size: u64) -> Result<Option<(Vec<u8>, Str
         return Ok(None);
     }
     let (data, _) = dev.read(path).map_err(|e| e.to_string())?;
-    let Ok(book) = Book::open(&data, path.to_string(), String::new()) else { return Ok(None) };
-    let Some(at) = book.cover_path() else { return Ok(None) };
-    Ok(book.file(&at).map(|d| (d.to_vec(), book.media_type(&at))))
+    Ok(cover_in(&data, path))
+}
+
+/// The cover of the EPUB whose bytes are `data`, and its type. `name` is the book's name, for
+/// messages.
+pub fn cover_in(data: &[u8], name: &str) -> Option<(Vec<u8>, String)> {
+    let book = Book::open(data, name.to_string(), String::new()).ok()?;
+    let at = book.cover_path()?;
+    book.file(&at).map(|d| (d.to_vec(), book.media_type(&at)))
 }
 
 /// Reads the file (from `dev`, the phone or the Mac), makes the thumbnail and caches it.

@@ -408,8 +408,8 @@ fn EpubView(pane: Pane, src: Src, entry: Entry) -> impl IntoView {
             {move || (reading.get() && !editing.get()).then(|| view! {
                 <span class="gap"></span>
                 <span class="btn-group" role="group">
-                    <button class="btn" title="Previous chapter" aria-label="Previous chapter" disabled=move || at.get() == 0 on:click=move |_| go(-1)>{ico(Icon::Prev)}</button>
-                    <button class="btn" title="Next chapter" aria-label="Next chapter" disabled=move || at.get() + 1 >= count() on:click=move |_| go(1)>{ico(Icon::Next)}</button>
+                    <button class="btn" title="Previous chapter" aria-label="Previous chapter" disabled=move || {at.get() == 0} on:click=move |_| go(-1)>{ico(Icon::Prev)}</button>
+                    <button class="btn" title="Next chapter" aria-label="Next chapter" disabled=move || {at.get() + 1 >= count()} on:click=move |_| go(1)>{ico(Icon::Next)}</button>
                 </span>
                 <select class="epub-chapters" aria-label="Chapter" prop:value=move || at.get().to_string()
                     on:keydown=|ev| ev.stop_propagation()
@@ -449,6 +449,23 @@ fn measures(size: Option<String>, info: RwSignal<MediaInfo>) -> String {
         v.extend(i.duration.map(length));
     });
     v.join(" · ")
+}
+
+/// The cover of an EPUB packed in a ZIP, from `url`; the book is unpacked for it.
+#[component]
+fn ZippedCover(url: String) -> impl IntoView {
+    let state = RwSignal::new(None::<bool>);
+    view! {
+        <div class="pic" class:whole=move || state.get() == Some(true)>
+            {move || match state.get() {
+                None => view! { <span class="spin"></span> }.into_any(),
+                Some(false) => view! { <span class="hint">"This book has no cover."</span> }.into_any(),
+                Some(true) => ().into_any(),
+            }}
+            <img class="full" src=url alt="Book cover" draggable="false" class:pending=move || state.get() != Some(true)
+                on:load=move |_| state.set(Some(true)) on:error=move |_| state.set(Some(false))/>
+        </div>
+    }
 }
 
 /// The backend serves a whole file (a PDF, a font) up to this size.
@@ -1366,6 +1383,15 @@ fn Zipped(pane: Pane, src: Src, zip: Entry, name: String, size: u64) -> impl Int
         zip.mtime,
         uri_part(&name),
     ));
+    // An EPUB in the ZIP shows its cover.
+    let cover = crate::os::served(&format!(
+        "cover?src={}&p={}&s={}&m={}&e={}",
+        src.key(),
+        uri_part(&zip.path),
+        zip.size,
+        zip.mtime,
+        uri_part(&name),
+    ));
     let inner = Inner {
         name: name.clone(),
         zip_path: zip.path.clone(),
@@ -1375,7 +1401,7 @@ fn Zipped(pane: Pane, src: Src, zip: Entry, name: String, size: u64) -> impl Int
     let info = RwSignal::new(MediaInfo::default());
     let forced = RwSignal::new(None::<PeekAs>);
     let body = move || {
-        let (e, url, inner) = (e.clone(), url.clone(), inner.clone());
+        let (e, url, inner, cover) = (e.clone(), url.clone(), inner.clone(), cover.clone());
         if size > UNPACK_MAX {
             return view! { <span class="hint">"Too big to show from inside the ZIP."</span> }
                 .into_any();
@@ -1408,6 +1434,7 @@ fn Zipped(pane: Pane, src: Src, zip: Entry, name: String, size: u64) -> impl Int
             _ if has_ext(&e, PDF_EXTS) => {
                 view! { <PdfView pane=p src entry=e url inner/> }.into_any()
             }
+            _ if has_ext(&e, &["epub"]) => view! { <ZippedCover url=cover/> }.into_any(),
             _ if is_text(&e) => view! { <TextPeek src entry=e inner/> }.into_any(),
             _ => view! {
                 <div class="viewer-bar">

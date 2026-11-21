@@ -207,7 +207,8 @@ fn zipped_at(app: &AppHandle, path: &str, src: &str, size: u64, name: &str, rang
     body.unwrap_or_else(|_| Response::new(Vec::new()))
 }
 
-/// An EPUB's cover at its own size (the preview's, when it's bigger than the thumbnail).
+/// An EPUB's cover at its own size (the preview's, when it's bigger than the thumbnail). With `e`,
+/// the book is that file packed in the ZIP at `p`, unpacked whole first.
 fn cover(app: &AppHandle, q: &str) -> Response<Vec<u8>> {
     let (Some(path), Some(src)) = (query_param(q, "p"), query_param(q, "src")) else {
         return respond(StatusCode::BAD_REQUEST, "text/plain", b"Bad cover request.".to_vec());
@@ -217,7 +218,11 @@ fn cover(app: &AppHandle, q: &str) -> Response<Vec<u8>> {
         Ok(d) => d,
         Err(e) => return respond(StatusCode::NOT_FOUND, "text/plain", e.into_bytes()),
     };
-    match thumbs::cover(&dev, &path, size) {
+    let found = match query_param(q, "e") {
+        Some(name) => crate::files::unpacked(&dev, &path, size, &name).map(|d| thumbs::cover_in(&d, &name)),
+        None => thumbs::cover(&dev, &path, size),
+    };
+    match found {
         // Size and mtime are in the URL, so it changes when the book does.
         Ok(Some((data, mime))) => respond_with(StatusCode::OK, &mime, "max-age=86400", data),
         Ok(None) => respond(StatusCode::NOT_FOUND, "text/plain", b"No cover.".to_vec()),
