@@ -1386,13 +1386,15 @@ pub fn App() -> impl IntoView {
                 p.select_only(Some(x.path.clone()));
             }
         };
-        // Tiles per row in the thumbnail view, from the grid's width (tiles are 128px plus an 8px gap).
+        // Tiles per row in the thumbnail view: the grid's columns.
         let per_row = || {
             document()
                 .query_selector(".pane.active .thumbs")
                 .ok()
                 .flatten()
-                .map_or(1, |g| ((g.client_width() - 24 + 8) / 136).max(1) as isize)
+                .and_then(|g| window().get_computed_style(&g).ok().flatten())
+                .and_then(|s| s.get_property_value("grid-template-columns").ok())
+                .map_or(1, |v| v.split_whitespace().count().max(1) as isize)
         };
         if let Some(b) = bound {
             let done = match b.id {

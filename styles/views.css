@@ -114,17 +114,17 @@
 /* Thumbnail view: 128px tiles, 8px gap, 12px padding (the ↑/↓ keys assume these sizes). */
 .thumbs {
   display: grid;
-  grid-template-columns: repeat(auto-fill, 128px);
-  gap: 8px;
-  padding: 12px;
+  grid-template-columns: repeat(auto-fill, 112px);
+  gap: 2px;
+  padding: 8px;
 }
 
 .tile {
   display: flex;
   flex-direction: column;
   align-items: center;
-  gap: 3px;
-  padding: 8px 6px;
+  gap: 2px;
+  padding: 5px 4px;
   border-radius: 8px;
   cursor: pointer;
   text-align: center;
@@ -1506,4 +1506,17 @@ td.name .ext {
 
 .list.tree td.name .split {
   max-width: calc(100% - 40px);
+}
+
+/* The view buttons, joined into one; the view shown is lit. */
+.view-seg .btn {
+  justify-content: center;
+  min-width: 26px;
+  padding: 0 6px;
+  font-size: 12px;
+}
+
+.view-seg .btn.active {
+  background: var(--sel);
+  color: var(--accent);
 }

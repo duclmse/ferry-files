@@ -303,9 +303,26 @@ pub(super) fn split_name(name: &str, dir: bool) -> AnyView {
     }
 }
 
-/// `split`: as `split_name`.
+/// A name shown whole while it fits its box (a tile's two lines), else as `split_name`.
+fn fit_name(name: &str, dir: bool) -> AnyView {
+    let cut = RwSignal::new(false);
+    let el = NodeRef::<html::Span>::new();
+    el.on_load(move |s| {
+        request_animation_frame(move || {
+            if let Some(b) = s.parent_element() {
+                if b.scroll_height() > b.client_height() + 1 {
+                    cut.set(true);
+                }
+            }
+        })
+    });
+    let name = name.to_string();
+    view! { <span class="fit" node_ref=el>{move || if cut.get() { split_name(&name, dir) } else { name.clone().into_any() }}</span> }.into_any()
+}
+
+/// `split`: as `split_name`; `fit`: as `fit_name`.
 #[component]
-pub(super) fn Name(pane: Pane, entry: Entry, #[prop(optional)] split: bool) -> impl IntoView {
+pub(super) fn Name(pane: Pane, entry: Entry, #[prop(optional)] split: bool, #[prop(optional)] fit: bool) -> impl IntoView {
     let p = pane;
     let path = entry.path.clone();
     let e = StoredValue::new(entry);
@@ -322,6 +339,8 @@ pub(super) fn Name(pane: Pane, entry: Entry, #[prop(optional)] split: bool) -> i
                 <s>{e.with_value(|e| e.name.clone())}</s>" → "<b class:bad=bad>{name}</b>
             </span>
         }.into_any()
+    } else if fit {
+        e.with_value(|e| fit_name(&e.name, e.dir))
     } else if split {
         e.with_value(|e| split_name(&e.name, e.dir))
     } else {
@@ -619,9 +638,9 @@ pub(super) fn ViewSeg(pane: Pane) -> impl IntoView {
     let ctx = expect_context::<Ctx>();
     let p = pane;
     view! {
-        <div class="seg" role="group" aria-label="View">
+        <span class="btn-group view-seg" role="group" aria-label="View">
             {ViewMode::ALL.map(|m| view! {
-                <button title=match m {
+                <button class="btn small" title=match m {
                         ViewMode::List => "View as list (right-click to choose its columns)".to_string(),
                         ViewMode::Code => "Editor: a folder tree and text files in tabs".to_string(),
                         m => format!("View as {}", m.label()),
@@ -629,7 +648,7 @@ pub(super) fn ViewSeg(pane: Pane) -> impl IntoView {
                     aria-label=m.label() class:active=move || p.view.get() == m on:click=move |_| ctx.set_view(p, m)
                     on:contextmenu=move |ev| if m == ViewMode::List { ctx.show_columns_menu(p, &ev) }>{m.glyph()}</button>
             })}
-        </div>
+        </span>
     }
 }
 

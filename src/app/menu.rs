@@ -107,16 +107,15 @@ impl Ctx {
     /// ✓ beside each of the list's columns that's shown; Name is always shown.
     pub(super) fn column_items(self, p: Pane) -> Vec<MenuItem> {
         let shown = p.list_cols.get_untracked();
-        let mut v = vec![MenuItem::Do { label: "✓ Name".into(), key: "", act: Act::Column(usize::MAX), danger: false, enabled: false }];
+        let mut v = vec![
+            item(format!("{} Show as a tree", if p.list_tree.get_untracked() { "✓" } else { "\u{2003}" }), "", Act::ListTree),
+            MenuItem::Sep,
+            MenuItem::Do { label: "✓ Name".into(), key: "", act: Act::Column(usize::MAX), danger: false, enabled: false },
+        ];
         v.extend(LIST_ORDER.iter().map(|&c| {
             item(format!("{} {}", if shown.contains(&c) { "✓" } else { "\u{2003}" }, LIST_COLS[c].label()), "", Act::Column(c))
         }));
-        v.extend([
-            MenuItem::Sep,
-            item(format!("{} Show as a tree", if p.list_tree.get_untracked() { "✓" } else { "\u{2003}" }), "", Act::ListTree),
-            MenuItem::Sep,
-            item("Default columns", "", Act::ResetColumns),
-        ]);
+        v.extend([MenuItem::Sep, item("Default columns", "", Act::ResetColumns)]);
         v
     }
 

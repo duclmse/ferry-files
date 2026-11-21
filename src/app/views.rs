@@ -338,7 +338,7 @@ pub(super) fn ThumbView(pane: Pane) -> impl IntoView {
                                 on:dragover=move |ev| if is_dir { over(ev) } on:drop=move |ev| if is_dir { drop(ev) }
                                 on:click=click on:dblclick=dbl on:contextmenu=menu>
                                 <div class="pic"><Thumbnail src=p.src.get_untracked() entry=e.clone()/></div>
-                                <div class="label"><Name pane=p entry=e.clone() split=true/></div>
+                                <div class="label"><Name pane=p entry=e.clone() fit=true/></div>
                                 <div class="sub">{sub}</div>
                             </div>
                         }
