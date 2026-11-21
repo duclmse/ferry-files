@@ -1032,8 +1032,8 @@ log_dir     = "{dir}/logs"
             root.join("../../config.macos.toml"),
         ] {
             let text = std::fs::read_to_string(&file).unwrap();
-            let mut cfg: Config = toml::from_str(&text)
-                .unwrap_or_else(|e| panic!("{}: {e}", file.display()));
+            let mut cfg: Config =
+                toml::from_str(&text).unwrap_or_else(|e| panic!("{}: {e}", file.display()));
             // Their watch paths are placeholders.
             cfg.watch_paths = vec![watch.path().to_path_buf()];
             assert_eq!(validate(&cfg), Vec::<String>::new(), "{}", file.display());
