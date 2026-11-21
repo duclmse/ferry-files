@@ -26,6 +26,9 @@ mod stream;
 mod subs;
 mod sftp;
 mod smb;
+mod webdav;
+mod ftp;
+mod s3;
 mod terminal;
 mod secrets;
 pub use secrets::askpass;
@@ -246,6 +249,9 @@ pub fn run() {
             settings::clear_cache,
             everything::everything_connect,
             sftp::sftp_connect,
+            webdav::webdav_connect,
+            ftp::ftp_connect,
+            s3::s3_connect,
             smb::smb_mount,
             smb::smb_mounts,
             smb::smb_unmount,

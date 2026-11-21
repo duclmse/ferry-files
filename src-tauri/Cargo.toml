@@ -41,8 +41,12 @@ regex = { version = "1", default-features = false, features = [
 ] }
 # Colours for code in the preview. Pure-Rust regexes (fancy-regex), so no C library to build.
 syntect = { version = "5", default-features = false, features = ["parsing", "default-syntaxes", "regex-fancy"] }
-# Searching with Everything over its HTTP server (plain http, so no TLS).
-ureq = { version = "2", default-features = false }
+# HTTP: Everything (plain http), WebDAV and S3 (https too, with rustls and its root certificates).
+ureq = { version = "2", default-features = false, features = ["tls"] }
+# S3's request signatures (AWS Signature Version 4).
+hmac = "0.12"
+sha2 = "0.10"
+hex = "0.4"
 # Terminals: a real pseudo-terminal (ConPTY on Windows), so programs can ask for input.
 portable-pty = "0.9"
 base64 = "0.22"
