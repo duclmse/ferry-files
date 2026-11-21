@@ -614,8 +614,8 @@ pub(super) fn Settings() -> impl IntoView {
                         Some(Ok(f)) => f.get(which).map(|f| format!("{} · {} files, {}", f.path, f.files, human_size(f.bytes))).unwrap_or_default(),
                     }}</span>
                 </div>
-                <button class="btn" on:click=move |_| open(which)>{ico(Icon::Folder)}"Open"</button>
-                {(which != "backups").then(|| view! { <button class="btn" on:click=move |_| clear(which)>{ico(Icon::Trash)}"Clear"</button> })}
+                <button class="btn icon-only" title=format!("Open in {}", crate::os::file_manager()) aria-label=format!("Open in {}", crate::os::file_manager()) on:click=move |_| open(which)>{ico(Icon::Folder)}</button>
+                {(which != "backups").then(|| view! { <button class="btn icon-only" title="Clear" aria-label="Clear" on:click=move |_| clear(which)>{ico(Icon::Trash)}</button> })}
             </div>
         }
     };
@@ -729,7 +729,7 @@ pub(super) fn Settings() -> impl IntoView {
                 </div>
                 <div class="actions">
                     <span class="grow"></span>
-                    <button class="btn primary" on:click=move |_| ctx.settings.set(false)>"Done"</button>
+                    <button class="btn primary icon-only" title="Done" aria-label="Done" on:click=move |_| ctx.settings.set(false)>{ico(Icon::Check)}</button>
                 </div>
             </div>
         </div>

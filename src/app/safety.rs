@@ -133,6 +133,7 @@ pub(super) fn Backups() -> impl IntoView {
                                 let back_tip = if back.is_some() { "Put it back where it was".to_string() } else if b.note.is_some() { "Connect that device to put it back where it was".into() } else { "Where it came from isn't known".into() };
                                 let (b1, b2, b3) = (b.clone(), b.clone(), b.clone());
                                 let here_tip = "Restore into the folder open in the active pane";
+                                let preview_tip = if crate::os::is_mac() { "Show it in Quick Look" } else { "Open it in its app" };
                                 view! {
                                     <div class="backup">
                                         <div class="what">
@@ -140,15 +141,15 @@ pub(super) fn Backups() -> impl IntoView {
                                             <span class="about">{format!("{} · {}", when(b.mtime), human_size(b.size))}</span>
                                             <span class="path">{origin}</span>
                                         </div>
-                                        <button class="btn" title=if crate::os::is_mac() { "Show it in Quick Look" } else { "Open it in its app" } on:click=move |_| preview(b3.clone())>{ico(Icon::Eye)}"Preview"</button>
-                                        <button class="btn" title=back_tip disabled=back.is_none()
-                                            on:click=move |_| if let Some((s, path)) = back.clone() { restore(b1.clone(), s, path) }>{ico(Icon::Restore)}"Restore"</button>
-                                        <button class="btn" title=here_tip on:click=move |_| {
+                                        <button class="btn icon-only" title=preview_tip aria-label=preview_tip on:click=move |_| preview(b3.clone())>{ico(Icon::Eye)}</button>
+                                        <button class="btn icon-only" title=back_tip.clone() aria-label=back_tip disabled=back.is_none()
+                                            on:click=move |_| if let Some((s, path)) = back.clone() { restore(b1.clone(), s, path) }>{ico(Icon::Restore)}</button>
+                                        <button class="btn icon-only" title=here_tip aria-label=here_tip on:click=move |_| {
                                             let p = ctx.act();
                                             let dir = p.cwd.get_untracked();
                                             if dir.is_empty() { return }
                                             restore(b2.clone(), p.src.get_untracked(), join(&dir, &b2.name));
-                                        }>{ico(Icon::Restore)}"Restore here"</button>
+                                        }>{ico(Icon::RestoreHere)}</button>
                                     </div>
                                 }
                             }).collect_view().into_any()
@@ -156,24 +157,26 @@ pub(super) fn Backups() -> impl IntoView {
                     }}
                 </div>
                 <div class="actions">
-                    <button class="btn" on:click=move |_| spawn_local(async move { let _ = call::<()>("open_folder", json!({ "which": "backups" })).await; })>
-                        {ico(Icon::Folder)}{format!("Open in {}", crate::os::file_manager())}
+                    <button class="btn icon-only" title=format!("Open the backups folder in {}", crate::os::file_manager())
+                        aria-label=format!("Open the backups folder in {}", crate::os::file_manager())
+                        on:click=move |_| spawn_local(async move { let _ = call::<()>("open_folder", json!({ "which": "backups" })).await; })>
+                        {ico(Icon::Folder)}
                     </button>
                     {move || if confirming.get() {
                         let n = count();
                         view! {
                             <span class="hint">{format!("Move {n} backup{} to the Trash?", if n == 1 { "" } else { "s" })}</span>
-                            <button class="btn" on:click=move |_| confirming.set(false)>"Cancel"</button>
-                            <button class="btn danger solid" on:click=move |_| clear()>{ico(Icon::Trash)}"Move to Trash"</button>
+                            <button class="btn icon-only" title="Cancel" aria-label="Cancel" on:click=move |_| confirming.set(false)>{ico(Icon::Close)}</button>
+                            <button class="btn danger solid icon-only" title="Move to Trash" aria-label="Move to Trash" on:click=move |_| clear()>{ico(Icon::Trash)}</button>
                         }.into_any()
                     } else {
                         view! {
-                            <button class="btn danger" title="Move every backup to the Trash" disabled=move || count() == 0
-                                on:click=move |_| confirming.set(true)>{ico(Icon::Trash)}"Clear…"</button>
+                            <button class="btn danger icon-only" title="Move every backup to the Trash" aria-label="Move every backup to the Trash" disabled=move || count() == 0
+                                on:click=move |_| confirming.set(true)>{ico(Icon::Trash)}</button>
                         }.into_any()
                     }}
                     <span class="grow"></span>
-                    <button class="btn primary" on:click=move |_| close()>"Done"</button>
+                    <button class="btn primary icon-only" title="Done" aria-label="Done" on:click=move |_| close()>{ico(Icon::Check)}</button>
                 </div>
             </div>
         </div>
@@ -198,7 +201,7 @@ pub(super) fn History() -> impl IntoView {
                         }
                         h.into_iter().enumerate().rev().map(|(i, op)| {
                             let undo = (op.undo.is_some() && !op.undone).then(|| view! {
-                                <button class="btn small icon-only" title="Undo: do the opposite, if nothing has changed since" aria-label="Undo"
+                                <button class="btn icon-only" title="Undo: do the opposite, if nothing has changed since" aria-label="Undo"
                                     on:click=move |_| ctx.undo(i, ctx.act())>{ico(Icon::Restore)}</button>
                             });
                             view! {
@@ -210,9 +213,9 @@ pub(super) fn History() -> impl IntoView {
                     }}
                 </div>
                 <div class="actions">
-                    <button class="btn" on:click=move |_| ctx.panel.set(Some(Panel::Backups))>{ico(Icon::Backups)}"Backups…"</button>
+                    <button class="btn icon-only" title="Backups" aria-label="Backups" on:click=move |_| ctx.panel.set(Some(Panel::Backups))>{ico(Icon::Backups)}</button>
                     <span class="grow"></span>
-                    <button class="btn primary" on:click=move |_| close()>"Done"</button>
+                    <button class="btn primary icon-only" title="Done" aria-label="Done" on:click=move |_| close()>{ico(Icon::Check)}</button>
                 </div>
             </div>
         </div>

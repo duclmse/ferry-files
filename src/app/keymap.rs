@@ -376,7 +376,7 @@ pub(super) fn ShortcutsEditor() -> impl IntoView {
                 }).collect_view()}
             </dl>
             {move || (!any_command() && !any_fixed()).then(|| view! { <p class="hint">"No command or key matches."</p> })}
-            <button class="btn reset-all" disabled=move || !changed() on:click=move |_| ctx.reset_keys(None)>"Reset all shortcuts"</button>
+            <button class="btn reset-all icon-only" title="Reset all shortcuts" aria-label="Reset all shortcuts" disabled=move || !changed() on:click=move |_| ctx.reset_keys(None)>{ico(Icon::Restore)}</button>
         </div>
     }
 }

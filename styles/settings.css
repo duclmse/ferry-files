@@ -541,3 +541,15 @@
 .order-row.dragging .grip {
   color: var(--accent);
 }
+
+/* A dialog's buttons, in one row and centred on it. */
+.dialog .actions {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+
+.dialog .actions .hint {
+  margin: 0;
+}

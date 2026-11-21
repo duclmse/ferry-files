@@ -221,3 +221,12 @@
   flex: 1;
   min-width: 0;
 }
+
+/* Icon buttons in Backups, History and Settings: square, the icon in the middle. */
+:is(.backup, .event, .dialog .actions, .dialog .folder) .btn.icon-only,
+.dialog .btn.reset-all.icon-only {
+  flex: none;
+  justify-content: center;
+  width: 28px;
+  padding: 0;
+}
