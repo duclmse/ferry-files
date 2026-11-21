@@ -78,6 +78,10 @@ pub(super) struct Conn {
     /// WebDAV and S3: https rather than http. FTP: FTPS (TLS) rather than plain FTP.
     #[serde(default)]
     pub tls: bool,
+    /// FTP with `tls`: accept a certificate that isn't signed by a known authority, the first
+    /// time, and remember it.
+    #[serde(default)]
+    pub trust: bool,
     /// S3: the region ("us-east-1"; "auto" for Cloudflare R2).
     #[serde(default)]
     pub region: String,
@@ -108,6 +112,7 @@ impl Conn {
             user: String::new(),
             share: String::new(),
             tls: false,
+            trust: false,
             region: String::new(),
             domain: String::new(),
             auth: Auth::System,
@@ -190,7 +195,7 @@ impl Conn {
             ConnKind::WebDav => ("webdav_connect", json!({ "server": self.addr(), "user": user, "secret": self.secret() })),
             ConnKind::Ftp => {
                 let port = self.port.map(|p| format!(":{p}")).unwrap_or_default();
-                ("ftp_connect", json!({ "server": format!("{}{port}", self.host), "tls": self.tls, "user": user, "secret": self.secret() }))
+                ("ftp_connect", json!({ "server": format!("{}{port}", self.host), "tls": self.tls, "trust": self.tls && self.trust, "user": user, "secret": self.secret() }))
             }
             ConnKind::S3 => (
                 "s3_connect",
@@ -243,6 +248,7 @@ impl Conn {
             user: user.into(),
             share: share.split('/').next().unwrap_or_default().into(),
             tls: false,
+            trust: false,
             region: String::new(),
             domain: String::new(),
             auth: Auth::System,

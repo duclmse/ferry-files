@@ -9,7 +9,10 @@ use std::net::{TcpStream, ToSocketAddrs};
 use std::sync::Arc;
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 use suppaftp::list::{File, ListParser};
-use suppaftp::rustls::{self, ClientConfig, RootCertStore};
+use suppaftp::rustls::client::danger::{HandshakeSignatureValid, ServerCertVerified, ServerCertVerifier};
+use suppaftp::rustls::client::WebPkiServerVerifier;
+use suppaftp::rustls::pki_types::{CertificateDer, ServerName, UnixTime};
+use suppaftp::rustls::{self, ClientConfig, DigitallySignedStruct, RootCertStore, SignatureScheme};
 use suppaftp::types::FileType;
 use suppaftp::{FtpError, FtpStream, ImplFtpStream, RustlsConnector, RustlsFtpStream, Status, TlsStream};
 
@@ -222,14 +225,125 @@ fn tcp(host: &str, port: u16) -> std::result::Result<TcpStream, String> {
     Err(cant())
 }
 
-fn tls_config() -> std::result::Result<Arc<ClientConfig>, String> {
-    let roots = RootCertStore { roots: webpki_roots::TLS_SERVER_ROOTS.to_vec() };
-    let cfg = ClientConfig::builder_with_provider(Arc::new(rustls::crypto::ring::default_provider()))
+/// SHA-256 of a certificate as "AB:CD:…".
+fn fingerprint(der: &[u8]) -> String {
+    use sha2::Digest as _;
+    sha2::Sha256::digest(der).iter().map(|b| format!("{b:02X}")).collect::<Vec<_>>().join(":")
+}
+
+/// Where the fingerprints of trusted certificates are kept.
+fn pin_file() -> Option<std::path::PathBuf> {
+    Some(dirs::config_dir()?.join("ferry-files").join("ftp_certs.json"))
+}
+
+/// The one writing the file at a time.
+static PINS: Mutex<()> = Mutex::new(());
+
+/// The fingerprint trusted for "host:port", if any.
+fn pin_get(file: &std::path::Path, key: &str) -> Option<String> {
+    let _g = PINS.lock().unwrap_or_else(|e| e.into_inner());
+    let map: std::collections::BTreeMap<String, String> = serde_json::from_slice(&std::fs::read(file).ok()?).ok()?;
+    map.get(key).cloned()
+}
+
+/// Trusts the fingerprint for "host:port".
+fn pin_set(file: &std::path::Path, key: &str, fp: &str) -> std::io::Result<()> {
+    let _g = PINS.lock().unwrap_or_else(|e| e.into_inner());
+    let mut map: std::collections::BTreeMap<String, String> = std::fs::read(file).ok().and_then(|b| serde_json::from_slice(&b).ok()).unwrap_or_default();
+    map.insert(key.to_string(), fp.to_string());
+    if let Some(dir) = file.parent() {
+        std::fs::create_dir_all(dir)?;
+    }
+    let tmp = file.with_extension("json.tmp");
+    std::fs::write(&tmp, serde_json::to_vec_pretty(&map).map_err(std::io::Error::other)?)?;
+    std::fs::rename(&tmp, file)
+}
+
+/// Checks a server's certificate as usual. One that fails, and that the user chose to trust, is
+/// accepted the first time and its fingerprint kept; from then on only that one is accepted.
+#[derive(Debug)]
+struct Pinning {
+    normal: Arc<WebPkiServerVerifier>,
+    trust: bool,
+    /// "host:port".
+    key: String,
+    file: Option<std::path::PathBuf>,
+    /// Why the last certificate was refused, in words for the user (rustls's error is lost on the
+    /// way out of the TLS stream).
+    why: Arc<Mutex<Option<String>>>,
+}
+
+impl Pinning {
+    fn refuse<T>(&self, message: String) -> std::result::Result<T, rustls::Error> {
+        *self.why.lock().unwrap_or_else(|e| e.into_inner()) = Some(message.clone());
+        Err(rustls::Error::General(message))
+    }
+}
+
+impl ServerCertVerifier for Pinning {
+    fn verify_server_cert(
+        &self,
+        end_entity: &CertificateDer<'_>,
+        intermediates: &[CertificateDer<'_>],
+        server_name: &ServerName<'_>,
+        ocsp_response: &[u8],
+        now: UnixTime,
+    ) -> std::result::Result<ServerCertVerified, rustls::Error> {
+        let problem = match self.normal.verify_server_cert(end_entity, intermediates, server_name, ocsp_response, now) {
+            Ok(ok) => return Ok(ok),
+            Err(e) => e,
+        };
+        let fp = fingerprint(end_entity.as_ref());
+        if !self.trust {
+            return self.refuse(format!(
+                "The server's certificate isn't trusted ({problem}). If you know this server, tick \"Trust this server's certificate\" in Settings > Connections. Its fingerprint is {fp}."
+            ));
+        }
+        let Some(file) = &self.file else { return self.refuse("There's no place to keep the server's certificate, so it can't be trusted.".into()) };
+        match pin_get(file, &self.key) {
+            Some(p) if p == fp => Ok(ServerCertVerified::assertion()),
+            Some(p) => self.refuse(format!(
+                "The certificate of {} changed since you trusted it. Trusted: {p}. Now: {fp}. If the server was changed on purpose, remove {} from {} to trust the new one.",
+                self.key,
+                self.key,
+                file.display()
+            )),
+            None => match pin_set(file, &self.key, &fp) {
+                Ok(()) => Ok(ServerCertVerified::assertion()),
+                Err(e) => self.refuse(format!("Couldn't keep the server's certificate in {}: {e}", file.display())),
+            },
+        }
+    }
+
+    fn verify_tls12_signature(&self, message: &[u8], cert: &CertificateDer<'_>, dss: &DigitallySignedStruct) -> std::result::Result<HandshakeSignatureValid, rustls::Error> {
+        self.normal.verify_tls12_signature(message, cert, dss)
+    }
+
+    fn verify_tls13_signature(&self, message: &[u8], cert: &CertificateDer<'_>, dss: &DigitallySignedStruct) -> std::result::Result<HandshakeSignatureValid, rustls::Error> {
+        self.normal.verify_tls13_signature(message, cert, dss)
+    }
+
+    fn supported_verify_schemes(&self) -> Vec<SignatureScheme> {
+        self.normal.supported_verify_schemes()
+    }
+}
+
+/// Where a refused certificate's explanation is left.
+type Why = Arc<Mutex<Option<String>>>;
+
+fn tls_config(trust: bool, host: &str, port: u16, file: Option<std::path::PathBuf>) -> std::result::Result<(Arc<ClientConfig>, Why), String> {
+    let roots = Arc::new(RootCertStore { roots: webpki_roots::TLS_SERVER_ROOTS.to_vec() });
+    let provider = Arc::new(rustls::crypto::ring::default_provider());
+    let normal = WebPkiServerVerifier::builder_with_provider(roots, provider.clone()).build().map_err(|e| e.to_string())?;
+    let why = Why::default();
+    let verifier = Pinning { normal, trust, key: format!("{host}:{port}"), file, why: why.clone() };
+    let cfg = ClientConfig::builder_with_provider(provider)
         .with_safe_default_protocol_versions()
         .map_err(|e| e.to_string())?
-        .with_root_certificates(roots)
+        .dangerous()
+        .with_custom_certificate_verifier(Arc::new(verifier))
         .with_no_client_auth();
-    Ok(Arc::new(cfg))
+    Ok((Arc::new(cfg), why))
 }
 
 /// Logs in and sets up the session: binary type, UTF-8 names, what the server offers.
@@ -263,13 +377,20 @@ fn dial_plain(host: &str, port: u16, user: &str, password: &str) -> std::result:
     start(ftp.passive_stream_builder(data_stream), user, password)
 }
 
-fn dial_tls(host: &str, port: u16, user: &str, password: &str, cfg: Arc<ClientConfig>) -> std::result::Result<(Session<RustlsStream>, String), String> {
+fn dial_tls(host: &str, port: u16, user: &str, password: &str, (cfg, why): (Arc<ClientConfig>, Why)) -> std::result::Result<(Session<RustlsStream>, String), String> {
     let ftp = RustlsFtpStream::connect_with_stream(tcp(host, port)?).map_err(|e| say(&e, ""))?;
+    *why.lock().unwrap_or_else(|e| e.into_inner()) = None;
     // The password goes only after the control connection is secured; no fall back to plain.
-    let ftp = ftp.into_secure(RustlsConnector::from(cfg), host).map_err(|e| match e {
-        FtpError::UnexpectedResponse(_) => "The server doesn't offer FTPS.".to_string(),
-        FtpError::SecureError(m) => format!("Couldn't set up TLS with the server: {m}"),
-        e => say(&e, ""),
+    let ftp = ftp.into_secure(RustlsConnector::from(cfg), host).map_err(|e| {
+        // A certificate that was refused says why in its own words.
+        if let Some(m) = why.lock().unwrap_or_else(|e| e.into_inner()).take() {
+            return m;
+        }
+        match e {
+            FtpError::UnexpectedResponse(_) => "The server doesn't offer FTPS.".to_string(),
+            FtpError::SecureError(m) => format!("Couldn't set up TLS with the server: {m}"),
+            e => say(&e, ""),
+        }
     })?;
     start(ftp.passive_stream_builder(data_stream), user, password)
 }
@@ -460,16 +581,29 @@ impl<T: TlsStream + Send + 'static> Transport for Ftp<T> {
 
     fn replace(&self, path: &str, data: &[u8], exists: bool) -> Result<String> {
         let tmp = join(&dirname(path), &format!(".{}.ferry-tmp", basename(path)));
+        let backup = join(&dirname(path), &format!(".{}.ferry-old", basename(path)));
         self.with(path, |s| {
             s.ftp.put_file(&tmp, &mut Cursor::new(data))?;
-            // Many servers refuse to rename over a file, so the old one goes first if that fails.
-            let mut renamed = s.ftp.rename(tmp.as_str(), path);
-            if renamed.is_err() && exists && s.ftp.rm(path).is_ok() {
-                renamed = s.ftp.rename(tmp.as_str(), path);
-            }
-            if let Err(e) = renamed {
-                let _ = s.ftp.rm(&tmp);
-                return Err(e.into());
+            // The new file goes in place by renaming over the old one: the old one is never gone
+            // unless the server can't do that.
+            if let Err(e) = s.ftp.rename(tmp.as_str(), path) {
+                if !exists {
+                    let _ = s.ftp.rm(&tmp);
+                    return Err(e.into());
+                }
+                // Many servers refuse to rename over a file. The old one waits under another
+                // name, and comes back if the new one can't be put in place.
+                let _ = s.ftp.rm(&backup);
+                if let Err(e) = s.ftp.rename(path, backup.as_str()) {
+                    let _ = s.ftp.rm(&tmp);
+                    return Err(e.into());
+                }
+                if let Err(e) = s.ftp.rename(tmp.as_str(), path) {
+                    let _ = s.ftp.rename(backup.as_str(), path);
+                    let _ = s.ftp.rm(&tmp);
+                    return Err(e.into());
+                }
+                let _ = s.ftp.rm(&backup);
             }
             let e = Self::stat_of(s, path)?.ok_or_else(|| Fail::Msg(format!("{path}: gone after writing it.")))?;
             if e.size != data.len() as u64 {
@@ -504,6 +638,7 @@ pub(super) async fn ftp_connect(
     state: State<'_, AppState>,
     server: String,
     tls: bool,
+    trust: Option<bool>,
     user: Option<String>,
     secret: Option<String>,
 ) -> std::result::Result<connect::Info, String> {
@@ -521,9 +656,9 @@ pub(super) async fn ftp_connect(
         };
         let user = user.unwrap_or_else(|| "anonymous".into());
         let t: Box<dyn Transport> = if tls {
-            let cfg = tls_config()?;
+            let tc = tls_config(trust.unwrap_or(false), &host, port, pin_file())?;
             let h = host.clone();
-            Box::new(Ftp::new(host.clone(), Box::new(move || dial_tls(&h, port, &user, &password, cfg.clone())))?)
+            Box::new(Ftp::new(host.clone(), Box::new(move || dial_tls(&h, port, &user, &password, tc.clone())))?)
         } else {
             let h = host.clone();
             Box::new(Ftp::new(host.clone(), Box::new(move || dial_plain(&h, port, &user, &password)))?)
@@ -630,6 +765,18 @@ mod tests {
         /// The next command is answered by closing the connection.
         drop_next: Arc<AtomicBool>,
         logins: Arc<AtomicUsize>,
+        knobs: Arc<Knobs>,
+    }
+
+    /// What the fake does when renaming.
+    #[derive(Default)]
+    struct Knobs {
+        /// RNTO may replace a file that's there.
+        over: AtomicBool,
+        /// The RNTO that counts down to zero from this number is refused (0: none).
+        fail_rnto: AtomicUsize,
+        /// Every RNTO as "from -> to".
+        renames: Mutex<Vec<String>>,
     }
 
     const STAMP: &str = "20240102030405";
@@ -643,12 +790,13 @@ mod tests {
                 dirs: Arc::new(Mutex::new(vec!["/".into()])),
                 drop_next: Arc::default(),
                 logins: Arc::default(),
+                knobs: Arc::default(),
             };
-            let (files, dirs, drop_next, logins) = (f.files.clone(), f.dirs.clone(), f.drop_next.clone(), f.logins.clone());
+            let (files, dirs, drop_next, logins, knobs) = (f.files.clone(), f.dirs.clone(), f.drop_next.clone(), f.logins.clone(), f.knobs.clone());
             std::thread::spawn(move || {
                 for c in l.incoming().flatten() {
-                    let (files, dirs, drop_next, logins) = (files.clone(), dirs.clone(), drop_next.clone(), logins.clone());
-                    std::thread::spawn(move || serve(c, files, dirs, drop_next, logins, mlsd));
+                    let (files, dirs, drop_next, logins, knobs) = (files.clone(), dirs.clone(), drop_next.clone(), logins.clone(), knobs.clone());
+                    std::thread::spawn(move || serve(c, files, dirs, drop_next, logins, knobs, mlsd));
                 }
             });
             f
@@ -696,7 +844,7 @@ mod tests {
         out
     }
 
-    fn serve(c: TcpStream, files: Arc<Mutex<BTreeMap<String, Vec<u8>>>>, dirs: Arc<Mutex<Vec<String>>>, drop_next: Arc<AtomicBool>, logins: Arc<AtomicUsize>, mlsd: bool) {
+    fn serve(c: TcpStream, files: Arc<Mutex<BTreeMap<String, Vec<u8>>>>, dirs: Arc<Mutex<Vec<String>>>, drop_next: Arc<AtomicBool>, logins: Arc<AtomicUsize>, knobs: Arc<Knobs>, mlsd: bool) {
         let w = Arc::new(Mutex::new(c.try_clone().unwrap()));
         let mut r = BufReader::new(c);
         let mut data: Option<TcpListener> = None;
@@ -799,7 +947,14 @@ mod tests {
                 }
                 "RNTO" => {
                     let mut f = files.lock().unwrap();
-                    if f.contains_key(arg) {
+                    knobs.renames.lock().unwrap().push(format!("{from} -> {arg}"));
+                    let left = knobs.fail_rnto.load(std::sync::atomic::Ordering::SeqCst);
+                    if left > 0 {
+                        knobs.fail_rnto.store(left - 1, std::sync::atomic::Ordering::SeqCst);
+                    }
+                    if left == 1 {
+                        say_to(&w, "550 refused");
+                    } else if f.contains_key(arg) && !knobs.over.load(std::sync::atomic::Ordering::SeqCst) {
                         say_to(&w, "550 exists");
                     } else if let Some(b) = f.remove(&from) {
                         f.insert(arg.into(), b);
@@ -904,6 +1059,96 @@ mod tests {
     }
 
     #[test]
+    fn replaces_by_renaming_over_when_the_server_allows() {
+        let f = Fake::start(true);
+        f.knobs.over.store(true, std::sync::atomic::Ordering::SeqCst);
+        f.put("/a.txt", b"old");
+        let t = connect(&f);
+        let v = t.replace("/a.txt", b"new!", true).unwrap();
+        assert_eq!(t.read("/a.txt").unwrap(), (b"new!".to_vec(), v));
+        // One rename, and the old file was never taken away first.
+        assert_eq!(*f.knobs.renames.lock().unwrap(), ["/.a.txt.ferry-tmp -> /a.txt"]);
+        assert_eq!(f.files.lock().unwrap().keys().collect::<Vec<_>>(), ["/a.txt"]);
+    }
+
+    #[test]
+    fn replaces_through_a_backup_when_rename_over_is_refused() {
+        let f = Fake::start(true);
+        f.put("/a.txt", b"old");
+        let t = connect(&f);
+        t.replace("/a.txt", b"new!", true).unwrap();
+        assert_eq!(
+            *f.knobs.renames.lock().unwrap(),
+            ["/.a.txt.ferry-tmp -> /a.txt", "/a.txt -> /.a.txt.ferry-old", "/.a.txt.ferry-tmp -> /a.txt"]
+        );
+        // The backup and the temporary file are gone.
+        assert_eq!(f.files.lock().unwrap().iter().map(|(k, v)| (k.as_str(), v.as_slice())).collect::<Vec<_>>(), [("/a.txt", &b"new!"[..])]);
+    }
+
+    #[test]
+    fn puts_the_old_file_back_when_the_new_one_cant_go_in_place() {
+        let f = Fake::start(true);
+        f.put("/a.txt", b"old");
+        // Renames: 1 refused (exists), 2 old to backup, 3 new into place: refused.
+        f.knobs.fail_rnto.store(3, std::sync::atomic::Ordering::SeqCst);
+        let t = connect(&f);
+        assert!(t.replace("/a.txt", b"new!", true).is_err());
+        assert_eq!(f.files.lock().unwrap().iter().map(|(k, v)| (k.as_str(), v.as_slice())).collect::<Vec<_>>(), [("/a.txt", &b"old"[..])]);
+        assert_eq!(f.knobs.renames.lock().unwrap().last().unwrap(), "/.a.txt.ferry-old -> /a.txt");
+    }
+
+    /// What a verifier keeping its fingerprints in `file` says about a certificate (here just
+    /// some bytes: it never passes the normal check).
+    fn check(trust: bool, file: &std::path::Path, cert: &[u8]) -> std::result::Result<(), String> {
+        let why = Why::default();
+        let v = Pinning {
+            normal: WebPkiServerVerifier::builder_with_provider(
+                Arc::new(RootCertStore { roots: webpki_roots::TLS_SERVER_ROOTS.to_vec() }),
+                Arc::new(rustls::crypto::ring::default_provider()),
+            )
+            .build()
+            .unwrap(),
+            trust,
+            key: "ftp.test:990".into(),
+            file: Some(file.to_path_buf()),
+            why: why.clone(),
+        };
+        let name = ServerName::try_from("ftp.test").unwrap();
+        let r = v.verify_server_cert(&CertificateDer::from(cert.to_vec()), &[], &name, &[], UnixTime::now());
+        r.map(|_| ()).map_err(|_| why.lock().unwrap().clone().unwrap())
+    }
+
+    #[test]
+    fn trusts_a_certificate_on_first_use_and_then_only_that_one() {
+        let dir = std::env::temp_dir().join(format!("ferry-pin-test-{}", std::process::id()));
+        let file = dir.join("sub").join("ftp_certs.json");
+        let _ = std::fs::remove_dir_all(&dir);
+        let (first, second) = (b"first certificate".as_slice(), b"another certificate".as_slice());
+        // Not asked to trust: refused, and the message says what to tick.
+        let e = check(false, &file, first).unwrap_err();
+        assert!(e.contains("isn't trusted") && e.contains("Trust this server's certificate") && e.contains(&fingerprint(first)), "{e}");
+        assert!(!file.exists());
+        // First use: accepted and kept.
+        check(true, &file, first).unwrap();
+        assert_eq!(pin_get(&file, "ftp.test:990"), Some(fingerprint(first)));
+        // Again: fine. Another one: refused, with both fingerprints.
+        check(true, &file, first).unwrap();
+        let e = check(true, &file, second).unwrap_err();
+        assert!(e.contains(&fingerprint(first)) && e.contains(&fingerprint(second)) && e.contains("changed"), "{e}");
+        // Another port is another server.
+        assert_eq!(pin_get(&file, "ftp.test:21"), None);
+        // Without the tick a kept one doesn't count.
+        assert!(check(false, &file, first).is_err());
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn fingerprints_look_like_a_sha256() {
+        // SHA-256 of nothing.
+        assert_eq!(fingerprint(b""), "E3:B0:C4:42:98:FC:1C:14:9A:FB:F4:C8:99:6F:B9:24:27:AE:41:E4:64:9B:93:4C:A4:95:99:1B:78:52:B8:55");
+    }
+
+    #[test]
     fn reconnects_when_dropped() {
         let f = Fake::start(true);
         f.put("/a.txt", b"x");
@@ -923,7 +1168,7 @@ mod tests {
         assert!(e.starts_with("Couldn't connect to 127.0.0.1"), "{e}");
         // A plain server doesn't offer AUTH TLS.
         let f = Fake::start(true);
-        let cfg = tls_config().unwrap();
+        let cfg = tls_config(false, "127.0.0.1", f.port, None).unwrap();
         let e = dial_tls("127.0.0.1", f.port, "a", "b", cfg).err().unwrap();
         assert_eq!(e, "The server doesn't offer FTPS.");
         assert_eq!(f.logins.load(std::sync::atomic::Ordering::SeqCst), 0);

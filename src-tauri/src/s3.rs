@@ -15,6 +15,12 @@ use std::time::Duration;
 /// Most keys a folder rename copies.
 const RENAME_MAX: usize = 1000;
 
+/// The biggest object one PUT or one CopyObject takes: 5 GiB. Bigger goes in parts.
+const SINGLE_MAX: u64 = 5 * 1024 * 1024 * 1024;
+
+/// How big the parts are: 512 MiB (S3 allows 5 MiB to 5 GiB, and 10,000 parts).
+const PART_SIZE: u64 = 512 * 1024 * 1024;
+
 /// What stays as it is in an encoded name: letters, digits and - _ . ~
 const UNRESERVED: &AsciiSet = &NON_ALPHANUMERIC.remove(b'-').remove(b'_').remove(b'.').remove(b'~');
 /// The same, and "/", for a path.
@@ -211,6 +217,17 @@ pub struct S3 {
     bucket: String,
     access: String,
     secret: String,
+    /// Objects over this many bytes are written and copied in parts.
+    single_max: u64,
+    /// The size of those parts.
+    part_size: u64,
+}
+
+/// What the Host header holds for an address ("https://host:9000" gives "host:9000"): the port
+/// only when it isn't the scheme's own. It's what's signed, and what's sent.
+fn host_header(base: &str) -> String {
+    let host = base.split_once("://").map_or("", |(_, h)| h);
+    if base.starts_with("https://") { host.strip_suffix(":443").unwrap_or(host) } else { host.strip_suffix(":80").unwrap_or(host) }.to_string()
 }
 
 /// An answer's ETag without its quotes.
@@ -239,9 +256,17 @@ impl S3 {
         if host.is_empty() || host.contains('/') {
             return Err("Use an address like https://s3.us-east-1.amazonaws.com, without a folder.".into());
         }
-        // The Host header leaves out the port when it's the scheme's own.
-        let host = if base.starts_with("https://") { host.trim_end_matches(":443") } else { host.trim_end_matches(":80") }.to_string();
-        let s3 = S3 { base, host, region: region.into(), bucket: bucket.into(), access: access.trim().into(), secret: secret.into() };
+        let host = host_header(&base);
+        let s3 = S3 {
+            base,
+            host,
+            region: region.into(),
+            bucket: bucket.into(),
+            access: access.trim().into(),
+            secret: secret.into(),
+            single_max: SINGLE_MAX,
+            part_size: PART_SIZE,
+        };
         s3.list_page("", None, 1, None).map_err(|f| f.msg)?;
         Ok(s3)
     }
@@ -263,8 +288,9 @@ impl S3 {
         let auth = authorization(method, &uri, &query, &signed, &hash, &keys, &amz_date);
         let url = if query.is_empty() { format!("{}{uri}", self.base) } else { format!("{}{uri}?{query}", self.base) };
         let mut req = agent().request(method, &url);
-        // ureq sets Host itself, from the address.
-        for (k, v) in signed.iter().filter(|(k, _)| k != "host") {
+        // The Host header is set here, exactly as signed: ureq would write the address's host in
+        // lowercase, which a signature made with the host as typed wouldn't match.
+        for (k, v) in &signed {
             req = req.set(k, v);
         }
         req = req.set("Authorization", &auth);
@@ -328,17 +354,83 @@ impl S3 {
     }
 
     fn put(&self, key: &str, data: &[u8]) -> Res<String> {
+        if data.len() as u64 > self.single_max {
+            return self.put_in_parts(key, data);
+        }
         // One PUT is atomic in S3: readers get the old object or the new one, never half of one.
         // So there's no temporary name to swap in.
         Ok(etag_of(&self.call("PUT", key, &[], &[], data)?))
+    }
+
+    /// Starts a multipart upload and gives its id.
+    fn start_parts(&self, key: &str) -> Res<String> {
+        let body = self.text(self.call("POST", key, &[("uploads", String::new())], &[], &[])?)?;
+        let fields = leaves(&body).unwrap_or_default();
+        match fields.into_iter().find(|(p, _)| p == "InitiateMultipartUploadResult/UploadId") {
+            Some((_, id)) if !id.is_empty() => Ok(id),
+            _ => Err(Fail { status: 200, msg: explain(200, &body, &self.bucket) }),
+        }
+    }
+
+    /// Puts the parts together (each is its number's ETag, in order). The version is the new ETag.
+    fn finish_parts(&self, key: &str, id: &str, etags: &[String]) -> Res<String> {
+        let mut xml = String::from("<CompleteMultipartUpload>");
+        for (i, e) in etags.iter().enumerate() {
+            xml.push_str(&format!("<Part><PartNumber>{}</PartNumber><ETag>\"{e}\"</ETag></Part>", i + 1));
+        }
+        xml.push_str("</CompleteMultipartUpload>");
+        let res = self.call("POST", key, &[("uploadId", id.to_string())], &[], xml.as_bytes())?;
+        // Like a copy, this can answer 200 and say in the body that it failed.
+        let body = self.text(res)?;
+        if body.contains("<Error>") {
+            return Err(Fail { status: 200, msg: explain(200, &body, &self.bucket) });
+        }
+        let fields = leaves(&body).unwrap_or_default();
+        Ok(fields.into_iter().find(|(p, _)| p == "CompleteMultipartUploadResult/ETag").map(|(_, e)| e.trim_matches('"').to_string()).unwrap_or_default())
+    }
+
+    /// Gives up a multipart upload, so the parts sent so far aren't kept (and paid for).
+    fn abort_parts(&self, key: &str, id: &str) {
+        let _ = self.call("DELETE", key, &[("uploadId", id.to_string())], &[], &[]);
+    }
+
+    /// Runs `send` for each part of `size` bytes in a multipart upload of `key`; it gets the
+    /// part's query, number and byte range and gives its ETag. Aborts the upload on an error.
+    fn in_parts(&self, key: &str, size: u64, mut send: impl FnMut(&[(&str, String)], u64, std::ops::Range<u64>) -> Res<String>) -> Res<String> {
+        let id = self.start_parts(key)?;
+        let done = (|| {
+            let mut etags = vec![];
+            let mut start = 0;
+            while start < size {
+                let end = (start + self.part_size).min(size);
+                let n = etags.len() as u64 + 1;
+                let q = [("partNumber", n.to_string()), ("uploadId", id.clone())];
+                etags.push(send(&q, n, start..end)?);
+                start = end;
+            }
+            self.finish_parts(key, &id, &etags)
+        })();
+        if done.is_err() {
+            self.abort_parts(key, &id);
+        }
+        done
+    }
+
+    /// Uploads `data` as a multipart upload.
+    fn put_in_parts(&self, key: &str, data: &[u8]) -> Res<String> {
+        self.in_parts(key, data.len() as u64, |q, _, r| Ok(etag_of(&self.call("PUT", key, q, &[], &data[r.start as usize..r.end as usize])?)))
     }
 
     fn delete_key(&self, key: &str) -> Res<()> {
         self.call("DELETE", key, &[], &[], &[]).map(|_| ())
     }
 
-    fn copy(&self, from: &str, to: &str) -> Res<()> {
+    /// Copies `from` (`size` bytes) to `to`, in parts when it's too big for one CopyObject.
+    fn copy(&self, from: &str, to: &str, size: u64) -> Res<()> {
         let source = format!("/{}/{}", encode(&self.bucket), encode_path(from));
+        if size > self.single_max {
+            return self.copy_in_parts(&source, to, size);
+        }
         let res = self.call("PUT", to, &[], &[("x-amz-copy-source", source)], &[])?;
         // S3 can answer 200 and still say in the body that the copy failed.
         let body = self.text(res)?;
@@ -346,6 +438,19 @@ impl S3 {
             return Err(Fail { status: 200, msg: explain(200, &body, &self.bucket) });
         }
         Ok(())
+    }
+
+    fn copy_in_parts(&self, source: &str, to: &str, size: u64) -> Res<()> {
+        self.in_parts(to, size, |q, _, r| {
+            let headers = [("x-amz-copy-source", source.to_string()), ("x-amz-copy-source-range", format!("bytes={}-{}", r.start, r.end - 1))];
+            let body = self.text(self.call("PUT", to, q, &headers, &[])?)?;
+            let fields = leaves(&body).unwrap_or_default();
+            match fields.into_iter().find(|(p, _)| p == "CopyPartResult/ETag") {
+                Some((_, e)) => Ok(e.trim_matches('"').to_string()),
+                None => Err(Fail { status: 200, msg: explain(200, &body, &self.bucket) }),
+            }
+        })
+        .map(|_| ())
     }
 
     fn is_dir(&self, key: &str) -> Res<bool> {
@@ -484,16 +589,16 @@ impl Transport for S3 {
             return err(format!("{path} doesn't exist."));
         };
         if !entry.dir {
-            self.copy(from, &to)?;
+            self.copy(from, &to, entry.size)?;
             return Ok(self.delete_key(from)?);
         }
         let (from_prefix, to_prefix) = (format!("{from}/"), format!("{to}/"));
-        let keys: Vec<String> = self.list_all(&from_prefix, None, RENAME_MAX)?.files.into_iter().map(|o| o.key).collect();
-        for k in &keys {
-            self.copy(k, &format!("{to_prefix}{}", &k[from_prefix.len()..]))?;
+        let objects = self.list_all(&from_prefix, None, RENAME_MAX)?.files;
+        for o in &objects {
+            self.copy(&o.key, &format!("{to_prefix}{}", &o.key[from_prefix.len()..]), o.size)?;
         }
-        for k in &keys {
-            self.delete_key(k)?;
+        for o in &objects {
+            self.delete_key(&o.key)?;
         }
         Ok(())
     }
@@ -777,6 +882,137 @@ mod tests {
         let reqs = asked.join().unwrap();
         assert!(reqs[1].first().starts_with("PUT /bkt/a/b/ "), "{}", reqs[1].first());
         assert!(reqs[1].body.is_empty());
+    }
+
+    const STARTED: &str = "<InitiateMultipartUploadResult><Bucket>bkt</Bucket><Key>k</Key><UploadId>up+1/x</UploadId></InitiateMultipartUploadResult>";
+    const COMPLETED: &str = "<CompleteMultipartUploadResult><Location>x</Location><ETag>&quot;whole-3&quot;</ETag></CompleteMultipartUploadResult>";
+
+    /// A bucket whose objects over 5 bytes go in parts of 4.
+    fn small_parts(at: &str) -> S3 {
+        let mut s3 = S3::open(at, "", "bkt", "AK", "SK").unwrap();
+        (s3.single_max, s3.part_size) = (5, 4);
+        s3
+    }
+
+    #[test]
+    fn uploads_big_objects_in_parts() {
+        let (asked, at) = serve(vec![
+            ("200 OK", "", EMPTY_LIST),
+            ("200 OK", "", STARTED),
+            ("200 OK", "ETag: \"p1\"\r\n", ""),
+            ("200 OK", "ETag: \"p2\"\r\n", ""),
+            ("200 OK", "ETag: \"p3\"\r\n", ""),
+            ("200 OK", "", COMPLETED),
+            // Small ones stay one PUT.
+            ("200 OK", "ETag: \"one\"\r\n", ""),
+        ]);
+        let s3 = small_parts(&at);
+        assert_eq!(s3.replace("/d/big.bin", b"0123456789", true).unwrap(), "whole-3");
+        assert_eq!(s3.replace("/small", b"abc", false).unwrap(), "one");
+        let reqs = asked.join().unwrap();
+        assert!(reqs[1].first().starts_with("POST /bkt/d/big.bin?uploads= "), "{}", reqs[1].first());
+        let (id, lens) = ("uploadId=up%2B1%2Fx", [4, 4, 2]);
+        for n in 0..3 {
+            assert!(reqs[2 + n].first().starts_with(&format!("PUT /bkt/d/big.bin?partNumber={}&{id} ", n + 1)), "{}", reqs[2 + n].first());
+            assert_eq!(reqs[2 + n].body, b"0123456789"[n * 4..n * 4 + lens[n]]);
+        }
+        assert!(reqs[5].first().starts_with(&format!("POST /bkt/d/big.bin?{id} ")), "{}", reqs[5].first());
+        let xml = String::from_utf8_lossy(&reqs[5].body).to_string();
+        assert_eq!(
+            xml,
+            "<CompleteMultipartUpload><Part><PartNumber>1</PartNumber><ETag>\"p1\"</ETag></Part><Part><PartNumber>2</PartNumber><ETag>\"p2\"</ETag></Part>\
+             <Part><PartNumber>3</PartNumber><ETag>\"p3\"</ETag></Part></CompleteMultipartUpload>"
+        );
+        assert!(reqs[6].first().starts_with("PUT /bkt/small "), "{}", reqs[6].first());
+    }
+
+    #[test]
+    fn gives_up_a_failed_multipart_upload() {
+        let (asked, at) = serve(vec![
+            ("200 OK", "", EMPTY_LIST),
+            ("200 OK", "", STARTED),
+            ("200 OK", "ETag: \"p1\"\r\n", ""),
+            ("500 Internal Server Error", "", "<Error><Code>InternalError</Code><Message>Part broke</Message></Error>"),
+            ("204 No Content", "", ""),
+        ]);
+        let s3 = small_parts(&at);
+        let e = s3.replace("/big.bin", b"0123456789", true).unwrap_err();
+        assert!(e.to_string().contains("Part broke"), "{e}");
+        let reqs = asked.join().unwrap();
+        assert!(reqs[4].first().starts_with("DELETE /bkt/big.bin?uploadId=up%2B1%2Fx "), "{}", reqs[4].first());
+    }
+
+    #[test]
+    fn copies_big_objects_in_parts() {
+        let part = |e: &'static str| -> (&'static str, &'static str, &'static str) {
+            ("200 OK", "", Box::leak(format!("<CopyPartResult><ETag>&quot;{e}&quot;</ETag></CopyPartResult>").into_boxed_str()))
+        };
+        let (asked, at) = serve(vec![
+            ("200 OK", "", EMPTY_LIST),
+            // rename: HEAD says 10 bytes.
+            ("200 OK", "Content-Length: 10\r\n", ""),
+            ("200 OK", "", STARTED),
+            part("c1"),
+            part("c2"),
+            part("c3"),
+            ("200 OK", "", COMPLETED),
+            ("204 No Content", "", ""),
+        ]);
+        let s3 = small_parts(&at);
+        s3.rename("/a/old.bin", "new.bin").unwrap();
+        let reqs = asked.join().unwrap();
+        assert!(reqs[2].first().starts_with("POST /bkt/a/new.bin?uploads= "), "{}", reqs[2].first());
+        for (n, range) in ["bytes=0-3", "bytes=4-7", "bytes=8-9"].iter().enumerate() {
+            let r = &reqs[3 + n];
+            assert!(r.first().starts_with(&format!("PUT /bkt/a/new.bin?partNumber={}&uploadId=up%2B1%2Fx ", n + 1)), "{}", r.first());
+            assert!(r.has(&format!("x-amz-copy-source-range: {range}")) && r.has("x-amz-copy-source: /bkt/a/old.bin"), "{}", r.head);
+            assert!(r.has("SignedHeaders=host;x-amz-content-sha256;x-amz-copy-source;x-amz-copy-source-range;x-amz-date,"), "{}", r.head);
+        }
+        assert!(String::from_utf8_lossy(&reqs[6].body).contains("<ETag>\"c3\"</ETag>"));
+        // The old one goes only after the copy is complete.
+        assert!(reqs[7].first().starts_with("DELETE /bkt/a/old.bin "), "{}", reqs[7].first());
+    }
+
+    #[test]
+    fn host_header_has_the_port_only_when_its_not_the_default() {
+        assert_eq!(host_header("https://s3.amazonaws.com"), "s3.amazonaws.com");
+        assert_eq!(host_header("https://s3.amazonaws.com:443"), "s3.amazonaws.com");
+        assert_eq!(host_header("https://minio.lan:9000"), "minio.lan:9000");
+        assert_eq!(host_header("https://minio.lan:1443"), "minio.lan:1443");
+        assert_eq!(host_header("http://nas:80"), "nas");
+        assert_eq!(host_header("http://nas:9000"), "nas:9000");
+        assert_eq!(host_header("http://nas:443"), "nas:443");
+    }
+
+    /// Signs the request again from what the server received, to see that the host it was signed
+    /// with is the Host header that arrived.
+    fn signed_host_matches(r: &Req, want_host: &str) {
+        let header = |name: &str| r.head.lines().find_map(|l| l.split_once(": ").filter(|(k, _)| k.eq_ignore_ascii_case(name)).map(|(_, v)| v)).unwrap().to_string();
+        let host = header("Host");
+        assert_eq!(host, want_host);
+        let auth = header("Authorization");
+        assert!(auth.contains("SignedHeaders=host;"), "{auth}");
+        let (target, _) = r.first().strip_prefix("GET ").unwrap().rsplit_once(" HTTP").unwrap();
+        let (uri, query) = target.split_once('?').unwrap_or((target, ""));
+        let (date, hash) = (header("x-amz-date"), header("x-amz-content-sha256"));
+        let headers: Vec<(String, String)> = vec![("host".into(), host), ("x-amz-content-sha256".into(), hash.clone()), ("x-amz-date".into(), date.clone())];
+        let keys = Keys { access: "AK", secret: "SK", region: "us-east-1" };
+        assert_eq!(authorization("GET", uri, query, &headers, &hash, &keys, &date), auth);
+    }
+
+    #[test]
+    fn signs_the_host_it_sends_with_a_port() {
+        // A port that isn't the default, like MinIO on :9000, and a host as typed (capitals).
+        let (asked, at) = serve(vec![("200 OK", "", EMPTY_LIST)]);
+        let port = at.rsplit(':').next().unwrap().to_string();
+        let s3 = S3::open(&format!("http://LOCALHOST:{port}"), "", "bkt", "AK", "SK").unwrap();
+        assert_eq!(s3.host, format!("LOCALHOST:{port}"));
+        let reqs = asked.join().unwrap();
+        signed_host_matches(&reqs[0], &format!("LOCALHOST:{port}"));
+        let (asked, at) = serve(vec![("200 OK", "", EMPTY_LIST)]);
+        let _ = S3::open(&at, "", "bkt", "AK", "SK").unwrap();
+        let reqs = asked.join().unwrap();
+        signed_host_matches(&reqs[0], at.strip_prefix("http://").unwrap());
     }
 
     #[test]

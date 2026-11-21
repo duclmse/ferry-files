@@ -195,27 +195,211 @@ impl From<ureq::Error> for Pf {
     }
 }
 
+/// What a server's `WWW-Authenticate: Digest` challenge asks for (RFC 7616).
+#[derive(Debug, Clone, PartialEq)]
+struct Digest {
+    realm: String,
+    nonce: String,
+    opaque: Option<String>,
+    /// SHA-256 (else MD5).
+    sha256: bool,
+    /// The "-sess" variant of the algorithm.
+    sess: bool,
+    /// The server wants a counter and client nonce (qop=auth). Old servers don't.
+    qop: bool,
+    /// The challenge said the nonce is out of date, not that the password is wrong.
+    stale: bool,
+    /// Requests sent with this nonce.
+    count: u32,
+}
+
+/// Splits `key=value, key="quoted, value"` pairs.
+fn params(s: &str) -> Vec<(String, String)> {
+    let mut out = vec![];
+    let mut rest = s.trim_start();
+    while let Some(eq) = rest.find('=') {
+        let key = rest[..eq].trim().trim_start_matches(',').trim().to_lowercase();
+        let after = rest[eq + 1..].trim_start();
+        let (value, tail) = if let Some(q) = after.strip_prefix('"') {
+            let mut v = String::new();
+            let mut chars = q.char_indices();
+            let mut end = q.len();
+            while let Some((i, c)) = chars.next() {
+                match c {
+                    '\\' => {
+                        if let Some((_, n)) = chars.next() {
+                            v.push(n);
+                        }
+                    }
+                    '"' => {
+                        end = i + 1;
+                        break;
+                    }
+                    c => v.push(c),
+                }
+            }
+            (v, &q[end.min(q.len())..])
+        } else {
+            let e = after.find(',').unwrap_or(after.len());
+            (after[..e].trim().to_string(), &after[e..])
+        };
+        out.push((key, value));
+        rest = tail.trim_start().trim_start_matches(',').trim_start();
+    }
+    out
+}
+
+/// The Digest challenge among the `WWW-Authenticate` values, the SHA-256 one when there are two.
+fn digest_challenge(values: &[&str]) -> Option<Digest> {
+    let mut best: Option<Digest> = None;
+    for v in values {
+        let v = v.trim();
+        let Some(args) = v.get(..7).filter(|p| p.eq_ignore_ascii_case("digest ")).map(|_| &v[7..]) else { continue };
+        let p = params(args);
+        let get = |k: &str| p.iter().find(|(n, _)| n == k).map(|(_, v)| v.clone());
+        let algo = get("algorithm").unwrap_or_else(|| "MD5".into()).to_uppercase();
+        let (sha256, sess) = match algo.as_str() {
+            "MD5" => (false, false),
+            "MD5-SESS" => (false, true),
+            "SHA-256" => (true, false),
+            "SHA-256-SESS" => (true, true),
+            _ => continue,
+        };
+        let qop = get("qop").is_some_and(|q| q.split(',').any(|x| x.trim().eq_ignore_ascii_case("auth")));
+        if get("qop").is_some() && !qop {
+            continue;
+        }
+        let Some(nonce) = get("nonce") else { continue };
+        let d = Digest {
+            realm: get("realm").unwrap_or_default(),
+            nonce,
+            opaque: get("opaque"),
+            sha256,
+            sess,
+            qop,
+            stale: get("stale").is_some_and(|s| s.eq_ignore_ascii_case("true")),
+            count: 0,
+        };
+        if best.as_ref().is_none_or(|b| !b.sha256 && d.sha256) {
+            best = Some(d);
+        }
+    }
+    best
+}
+
+impl Digest {
+    fn hash(&self, s: &str) -> String {
+        if self.sha256 {
+            use sha2::Digest as _;
+            hex::encode(sha2::Sha256::digest(s.as_bytes()))
+        } else {
+            format!("{:x}", md5::compute(s.as_bytes()))
+        }
+    }
+
+    /// The Authorization header for a request, with `nc` and `cnonce` given (for tests).
+    fn header_with(&self, user: &str, pass: &str, method: &str, uri: &str, nc: u32, cnonce: &str) -> String {
+        let mut a1 = self.hash(&format!("{user}:{}:{pass}", self.realm));
+        if self.sess {
+            a1 = self.hash(&format!("{a1}:{}:{cnonce}", self.nonce));
+        }
+        let ha2 = self.hash(&format!("{method}:{uri}"));
+        let nc_hex = format!("{nc:08x}");
+        let response = if self.qop {
+            self.hash(&format!("{a1}:{}:{nc_hex}:{cnonce}:auth:{ha2}", self.nonce))
+        } else {
+            self.hash(&format!("{a1}:{}:{ha2}", self.nonce))
+        };
+        let q = |s: &str| s.replace('\\', "\\\\").replace('"', "\\\"");
+        let mut h = format!(
+            "Digest username=\"{}\", realm=\"{}\", nonce=\"{}\", uri=\"{}\", algorithm={}{}, response=\"{response}\"",
+            q(user),
+            q(&self.realm),
+            q(&self.nonce),
+            q(uri),
+            if self.sha256 { "SHA-256" } else { "MD5" },
+            if self.sess { "-sess" } else { "" },
+        );
+        if self.qop {
+            h.push_str(&format!(", qop=auth, nc={nc_hex}, cnonce=\"{cnonce}\""));
+        }
+        if let Some(o) = &self.opaque {
+            h.push_str(&format!(", opaque=\"{}\"", q(o)));
+        }
+        h
+    }
+}
+
+/// The scheme, host and port of an address, and the rest from the path on.
+fn split_url(url: &str) -> Option<(&str, &str, u16, &str)> {
+    let (scheme, rest) = url.split_once("://")?;
+    let (auth, path) = rest.find('/').map_or((rest, ""), |i| (&rest[..i], &rest[i..]));
+    let default = if scheme.eq_ignore_ascii_case("https") { 443 } else { 80 };
+    let (host, port) = match auth.rsplit_once(':').filter(|(_, p)| p.chars().all(|c| c.is_ascii_digit()) && !p.is_empty()) {
+        Some((h, p)) => (h, p.parse().ok()?),
+        None => (auth, default),
+    };
+    Some((scheme, host, port, path))
+}
+
+/// The address a `Location` header means, from the address that was asked.
+fn resolve(from: &str, location: &str) -> Option<String> {
+    let location = location.trim();
+    if location.contains("://") {
+        return Some(location.to_string());
+    }
+    let (scheme, _, _, path) = split_url(from)?;
+    let origin = &from[..from.len() - path.len()];
+    if let Some(rest) = location.strip_prefix("//") {
+        return Some(format!("{scheme}://{rest}"));
+    }
+    if location.starts_with('/') {
+        return Some(format!("{origin}{location}"));
+    }
+    let path = path.split(['?', '#']).next().unwrap_or("");
+    let dir = &path[..path.rfind('/').map_or(0, |i| i + 1)];
+    Some(format!("{origin}{}/{location}", dir.trim_end_matches('/')))
+}
+
+/// Whether a redirect from `from` to `to` may be followed: the same server, or the same host
+/// upgraded to https. Anything else could send the user name and password elsewhere.
+fn may_follow(from: &str, to: &str) -> bool {
+    let (Some((fs, fh, fp, _)), Some((ts, th, tp, _))) = (split_url(from), split_url(to)) else { return false };
+    let (fs, ts) = (fs.to_lowercase(), ts.to_lowercase());
+    if !fh.eq_ignore_ascii_case(th) {
+        return false;
+    }
+    (fs == ts && fp == tp) || (fs == "http" && ts == "https")
+}
+
+/// Most redirects followed for one request.
+const HOPS: usize = 5;
+
 pub struct Dav {
     place: Place,
-    auth: Option<String>,
+    /// User name and password.
+    login: Option<(String, String)>,
+    /// The Digest challenge in use; with none, Basic goes out.
+    digest: std::sync::Mutex<Option<Digest>>,
     agent: ureq::Agent,
 }
 
 impl Dav {
     /// Connects to the folder at `server`: it must answer a PROPFIND.
-    /// With `login` (user name, password), logs in with HTTP Basic authentication.
+    /// With `login` (user name, password), logs in with HTTP Basic authentication, or Digest
+    /// when the server asks for that.
     pub fn open(server: &str, login: Option<(&str, &str)>) -> std::result::Result<Self, String> {
-        use base64::Engine;
         let place = parse_server(server)?;
-        let auth = login.map(|(u, p)| format!("Basic {}", base64::engine::general_purpose::STANDARD.encode(format!("{u}:{p}"))));
-        // Redirects off: ureq would turn a redirected PROPFIND or MOVE into a GET.
+        let login = login.map(|(u, p)| (u.to_string(), p.to_string()));
+        // Redirects off in ureq, which would turn a redirected PROPFIND or MOVE into a GET:
+        // `send` follows them itself.
         let agent = ureq::AgentBuilder::new()
             .redirects(0)
             .timeout_connect(Duration::from_secs(10))
             .timeout_read(Duration::from_secs(60))
             .timeout_write(Duration::from_secs(60))
             .build();
-        let dav = Dav { place, auth, agent };
+        let dav = Dav { place, login, digest: Default::default(), agent };
         match dav.propfind("/", "0") {
             Ok(_) => Ok(dav),
             Err(Pf::Http(ureq::Error::Status(404 | 405, _))) | Err(Pf::Bad(_)) => Err(format!("{} isn't a WebDAV folder.", dav.place.label)),
@@ -224,7 +408,7 @@ impl Dav {
     }
 
     fn fail(&self, e: ureq::Error) -> String {
-        failed(e, &self.place.label, self.auth.is_some())
+        failed(e, &self.place.label, self.login.is_some())
     }
 
     fn dev(&self, e: ureq::Error) -> DevError {
@@ -253,30 +437,91 @@ impl Dav {
         u
     }
 
-    /// Sends a request. An answer of 3xx counts as an error, so nothing is taken as done.
+    /// The Authorization header for a request, None without a login.
+    fn authorization(&self, method: &str, url: &str) -> Option<String> {
+        use base64::Engine;
+        let (user, pass) = self.login.as_ref()?;
+        let mut state = self.digest.lock().unwrap_or_else(|e| e.into_inner());
+        let Some(d) = state.as_mut() else {
+            return Some(format!("Basic {}", base64::engine::general_purpose::STANDARD.encode(format!("{user}:{pass}"))));
+        };
+        d.count += 1;
+        let uri = split_url(url).map_or("/", |(_, _, _, p)| if p.is_empty() { "/" } else { p });
+        let nanos = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map_or(0, |t| t.as_nanos());
+        let cnonce = d.hash(&format!("{nanos}:{}:{}", d.nonce, d.count))[..16].to_string();
+        Some(d.header_with(user, pass, method, uri, d.count, &cnonce))
+    }
+
+    /// One request to one address, with the login. On a 401 that asks for Digest, the challenge is
+    /// kept and the request sent again, once.
+    fn attempt(&self, method: &str, url: &str, headers: &[(String, String)], body: &[u8]) -> std::result::Result<ureq::Response, ureq::Error> {
+        let mut retried = false;
+        loop {
+            let mut req = self.agent.request(method, url);
+            if let Some(a) = self.authorization(method, url) {
+                req = req.set("Authorization", &a);
+            }
+            for (k, v) in headers {
+                req = req.set(k, v);
+            }
+            let res = if method == "GET" { req.call() } else { req.send_bytes(body) };
+            let Err(ureq::Error::Status(401, r)) = res else { return res };
+            if !retried && self.login.is_some() {
+                if let Some(new) = digest_challenge(&r.all("www-authenticate")) {
+                    let mut state = self.digest.lock().unwrap_or_else(|e| e.into_inner());
+                    // A new nonce, or the same Digest again after a stale one: worth another try.
+                    let worth = match state.as_ref() {
+                        None => true,
+                        Some(old) => new.stale || old.nonce != new.nonce,
+                    };
+                    if worth {
+                        *state = Some(new);
+                        retried = true;
+                        continue;
+                    }
+                }
+            }
+            return Err(ureq::Error::Status(401, r));
+        }
+    }
+
+    /// Sends a request, following redirects (301, 302, 307, 308) with the same method and body, up
+    /// to `HOPS` times, to the same server or the same host over https. Any other 3xx counts as an
+    /// error, so nothing is taken as done. The login only goes where the request first went.
     fn send(&self, method: &str, url: &str, headers: &[(&str, &str)], body: &[u8]) -> std::result::Result<ureq::Response, ureq::Error> {
-        let mut req = self.agent.request(method, url);
-        if let Some(a) = &self.auth {
-            req = req.set("Authorization", a);
+        let mut url = url.to_string();
+        let mut headers: Vec<(String, String)> = headers.iter().map(|(k, v)| (k.to_string(), v.to_string())).collect();
+        let mut hops = 0;
+        loop {
+            let res = self.attempt(method, &url, &headers, body)?;
+            let code = res.status();
+            if !(300..400).contains(&code) {
+                return Ok(res);
+            }
+            let next = res.header("location").and_then(|l| resolve(&url, l));
+            match next {
+                Some(next) if matches!(code, 301 | 302 | 307 | 308) && hops < HOPS && may_follow(&url, &next) => {
+                    // MOVE says where to in a header: the same server as the request's.
+                    let old = url.len() - split_url(&url).map_or(0, |(_, _, _, p)| p.len());
+                    let new = next.len() - split_url(&next).map_or(0, |(_, _, _, p)| p.len());
+                    for (k, v) in headers.iter_mut() {
+                        if k.eq_ignore_ascii_case("destination") && v.starts_with(&url[..old]) {
+                            *v = format!("{}{}", &next[..new], &v[old..]);
+                        }
+                    }
+                    url = next;
+                    hops += 1;
+                }
+                _ => return Err(ureq::Error::Status(code, res)),
+            }
         }
-        for (k, v) in headers {
-            req = req.set(k, v);
-        }
-        let res = if method == "GET" { req.call()? } else { req.send_bytes(body)? };
-        if (300..400).contains(&res.status()) {
-            return Err(ureq::Error::Status(res.status(), res));
-        }
-        Ok(res)
     }
 
     /// The things PROPFIND tells about `path` (with `depth` "0" or "1").
     fn propfind(&self, path: &str, depth: &str) -> std::result::Result<Vec<Item>, Pf> {
         let headers = [("Depth", depth), ("Content-Type", "application/xml; charset=utf-8")];
-        let mut res = self.send("PROPFIND", &self.url(path, depth == "1"), &headers, PROPS.as_bytes());
-        // Some servers want a folder's address with a slash at the end.
-        if depth == "0" && path != "/" && matches!(res, Err(ureq::Error::Status(301 | 302 | 307 | 308, _))) {
-            res = self.send("PROPFIND", &self.url(path, true), &headers, PROPS.as_bytes());
-        }
+        // A server that wants a folder's address with a slash at the end redirects to it.
+        let res = self.send("PROPFIND", &self.url(path, depth == "1"), &headers, PROPS.as_bytes());
         let mut body = String::new();
         res?.into_reader().take(LIST_MAX).read_to_string(&mut body).map_err(|e| Pf::Bad(format!("Couldn't read the server's answer: {e}")))?;
         parse(&body, &self.place.prefix).map_err(Pf::Bad)
@@ -633,6 +878,120 @@ mod tests {
         assert!(first(&reqs[4]).starts_with("MOVE /dav/a/b.txt "), "{}", reqs[4]);
         assert!(has_header(&reqs[4], "Overwrite: F"), "{}", reqs[4]);
         assert!(reqs[4].contains(&format!("Destination: {at}/dav/a/c%20d.txt")), "{}", reqs[4]);
+    }
+
+    const NONCE: &str = "7ypf/xlj9XXwfDPEoM4URrv/xwf94BcCAzFZH4GiTo0v";
+    const CNONCE: &str = "f2/wE4q74E6zIJEtWaHKaf5wv/H5QzzpXusqGemxURZJ";
+
+    fn challenge(algo: &str) -> Digest {
+        let line = format!("Digest realm=\"http-auth@example.org\", qop=\"auth, auth-int\", algorithm={algo}, nonce=\"{NONCE}\", opaque=\"FQhe/qaU925kfnzjCev0ciny7QMkPqMAFRtzCUYo5tdS\"");
+        digest_challenge(&[&line]).unwrap()
+    }
+
+    #[test]
+    fn digest_matches_the_rfc_examples() {
+        // RFC 7616, section 3.9.
+        let h = challenge("SHA-256").header_with("Mufasa", "Circle of Life", "GET", "/dir/index.html", 1, CNONCE);
+        assert!(h.contains("response=\"753927fa0e85d155564e2e272a28d1802ca10daf4496794697cf8db5856cb6c1\""), "{h}");
+        assert!(h.contains("algorithm=SHA-256, ") && h.contains("qop=auth, nc=00000001") && h.contains("opaque=\"FQhe/"), "{h}");
+        let h = challenge("MD5").header_with("Mufasa", "Circle of Life", "GET", "/dir/index.html", 1, CNONCE);
+        assert!(h.contains("response=\"8ca523f5e9506fed4657c9700eebdbec\""), "{h}");
+    }
+
+    #[test]
+    fn reads_digest_challenges() {
+        let both = ["Basic realm=\"x\"", "Digest realm=\"a, b\", nonce=\"n1\", algorithm=MD5", "Digest realm=\"a, b\", nonce=\"n2\", algorithm=SHA-256, stale=TRUE"];
+        let d = digest_challenge(&both).unwrap();
+        assert_eq!((d.realm.as_str(), d.nonce.as_str(), d.sha256, d.stale, d.qop), ("a, b", "n2", true, true, false));
+        assert!(digest_challenge(&["Basic realm=\"x\""]).is_none());
+        assert!(digest_challenge(&["Digest realm=\"x\", nonce=\"n\", algorithm=SHA-512-256"]).is_none());
+    }
+
+    /// The `key="value"` parts of an Authorization header the client sent.
+    fn sent_params(req: &str) -> Vec<(String, String)> {
+        let line = req.lines().find(|l| l.starts_with("Authorization: Digest ")).unwrap_or_else(|| panic!("no Digest in {req}"));
+        params(&line["Authorization: Digest ".len()..])
+    }
+
+    #[test]
+    fn logs_in_with_digest_and_retries_when_stale() {
+        let (asked, at) = serve(vec![
+            ("401 Unauthorized", "WWW-Authenticate: Digest realm=\"nas\", nonce=\"n1\", qop=\"auth\", algorithm=SHA-256\r\n", ""),
+            ("207 Multi-Status", "", NEXTCLOUD),
+            ("401 Unauthorized", "WWW-Authenticate: Digest realm=\"nas\", nonce=\"n2\", qop=\"auth\", algorithm=SHA-256, stale=true\r\n", ""),
+            ("207 Multi-Status", "", NEXTCLOUD),
+        ]);
+        let dav = Dav::open(&format!("{at}/remote.php/dav/files/me"), Some(("me", "pw"))).unwrap();
+        dav.listdir("/").unwrap();
+        let reqs = asked.join().unwrap();
+        // Basic first, then Digest.
+        assert!(has_header(&reqs[0], "Authorization: Basic bWU6cHc="), "{}", reqs[0]);
+        for (i, nonce) in [(1, "n1"), (3, "n2")] {
+            let p = sent_params(&reqs[i]);
+            let get = |k: &str| p.iter().find(|(n, _)| n == k).map(|(_, v)| v.clone()).unwrap();
+            assert_eq!((get("username"), get("realm"), get("nonce"), get("qop")), ("me".into(), "nas".into(), nonce.into(), "auth".into()));
+            assert_eq!(get("algorithm"), "SHA-256");
+            // The server could work out the same answer from what was sent.
+            let d = Digest { realm: "nas".into(), nonce: nonce.into(), opaque: None, sha256: true, sess: false, qop: true, stale: false, count: 0 };
+            let want = d.header_with("me", "pw", reqs[i].split(' ').next().unwrap(), &get("uri"), u32::from_str_radix(&get("nc"), 16).unwrap(), &get("cnonce"));
+            assert_eq!(sent_params(&reqs[i]), params(want.strip_prefix("Digest ").unwrap()), "{}", reqs[i]);
+            assert!(get("uri").starts_with("/remote.php/dav/files/me/"));
+        }
+        // The first Digest request used nc 1, the next 2 (the retry after the stale nonce, 1 again).
+        assert!(sent_params(&reqs[1]).contains(&("nc".to_string(), "00000001".to_string())));
+        assert!(sent_params(&reqs[2]).contains(&("nc".to_string(), "00000002".to_string())));
+        assert!(sent_params(&reqs[3]).contains(&("nc".to_string(), "00000001".to_string())));
+    }
+
+    #[test]
+    fn a_wrong_digest_password_fails_once() {
+        let ch = "WWW-Authenticate: Digest realm=\"nas\", nonce=\"n1\", qop=\"auth\"\r\n";
+        let (asked, at) = serve(vec![("401 Unauthorized", ch, ""), ("401 Unauthorized", ch, "")]);
+        let e = Dav::open(&at, Some(("me", "bad"))).err().unwrap();
+        assert!(e.contains("user name and password"), "{e}");
+        assert_eq!(asked.join().unwrap().len(), 2);
+    }
+
+    #[test]
+    fn follows_redirects_keeping_method_and_body() {
+        let (asked, at) = serve(vec![
+            ("207 Multi-Status", "", NEXTCLOUD),
+            ("307 Temporary Redirect", "Location: /moved/a.txt\r\n", ""),
+            ("308 Permanent Redirect", "Location: b.txt\r\n", ""),
+            ("201 Created", "", ""),
+            ("307 Temporary Redirect", "Location: /moved/new\r\n", ""),
+            ("201 Created", "", ""),
+        ]);
+        let dav = Dav::open(&format!("{at}/dav"), Some(("me", "pw"))).unwrap();
+        // Two hops for the PUT, and the MOVE's Destination stays on the same server.
+        dav.send("PUT", &format!("{at}/dav/a.txt"), &[], b"body").unwrap();
+        dav.move_to("/x", "/y", true).unwrap();
+        let reqs = asked.join().unwrap();
+        assert!(first(&reqs[2]).starts_with("PUT /moved/a.txt "), "{}", reqs[2]);
+        assert!(first(&reqs[3]).starts_with("PUT /moved/b.txt "), "{}", reqs[3]);
+        assert!(reqs[3].ends_with("body") && has_header(&reqs[3], "Authorization: Basic bWU6cHc="), "{}", reqs[3]);
+        assert!(first(&reqs[5]).starts_with("MOVE /moved/new "), "{}", reqs[5]);
+    }
+
+    #[test]
+    fn redirects_stay_on_the_server() {
+        assert!(may_follow("http://h/a", "http://h/b"));
+        assert!(may_follow("http://h/a", "https://H/b"));
+        assert!(may_follow("https://h:8443/a", "https://h:8443/b"));
+        assert!(!may_follow("https://h/a", "http://h/b"));
+        assert!(!may_follow("http://h/a", "http://other/b"));
+        assert!(!may_follow("http://h:1/a", "http://h:2/b"));
+        assert_eq!(resolve("http://h:1/dav/x/y", "z").unwrap(), "http://h:1/dav/x/z");
+        assert_eq!(resolve("http://h:1/dav/x/y?q", "/root").unwrap(), "http://h:1/root");
+        assert_eq!(resolve("http://h/a", "https://o/b").unwrap(), "https://o/b");
+    }
+
+    #[test]
+    fn gives_up_on_loops_and_other_servers() {
+        let (asked, at) = serve(vec![("307 Temporary Redirect", "Location: /again\r\n", ""); 6]);
+        let e = Dav::open(&at, None).err().unwrap();
+        assert!(e.contains("sent us to"), "{e}");
+        assert_eq!(asked.join().unwrap().len(), 6);
     }
 
     #[test]

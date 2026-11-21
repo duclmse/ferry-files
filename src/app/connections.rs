@@ -85,6 +85,7 @@ fn conn_form(ctx: Ctx, editing: RwSignal<Option<Conn>>, is_new: bool) -> impl In
     let kind = Memo::new(move |_| get().kind);
     let auth = Memo::new(move |_| get().auth);
     let tls = Memo::new(move |_| get().tls);
+    let trust = Memo::new(move |_| get().trust);
     let save = move || {
         let Some(c) = editing.get_untracked() else { return };
         if trying.get_untracked() {
@@ -162,6 +163,12 @@ fn conn_form(ctx: Ctx, editing: RwSignal<Option<Conn>>, is_new: bool) -> impl In
                 <label class="check">
                     <input type="checkbox" prop:checked=move || tls.get() on:change=move |e| { let on = event_target_checked(&e); set(&|c| c.tls = on) }/>
                     {move || if kind.get() == ConnKind::Ftp { "Encrypted (FTPS)" } else { "Encrypted (https)" }}
+                </label>
+            })}
+            {move || (kind.get() == ConnKind::Ftp && tls.get()).then(|| view! {
+                <label class="check">
+                    <input type="checkbox" prop:checked=move || trust.get() on:change=move |e| { let on = event_target_checked(&e); set(&|c| c.trust = on) }/>
+                    "Trust this server's certificate"
                 </label>
             })}
             <label class="field" class:hidden=move || auth_choices(kind.get()).len() < 2>
