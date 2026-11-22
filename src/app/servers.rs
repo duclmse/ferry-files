@@ -1,10 +1,10 @@
 //! The connections added in Settings > Connections: SFTP, WebDAV, FTP and Everything servers, S3
-//! buckets and SMB shares, in one list. Each has a type, an address and how it logs in; a password is kept in
+//! buckets, SMB shares and NFS exports, in one list. Each has a type, an address and how it logs in; a password is kept in
 //! the system's keychain under the connection's id, never here.
 //!
-//! All but SMB shares are connected like phones, again at launch and every so often
-//! while they're offline. An SMB share is mounted by the system; mounted, it's a folder on the
-//! computer.
+//! All but SMB shares and NFS exports are connected like phones, again at launch and every so
+//! often while they're offline. A share or export is mounted by the system; mounted, it's a
+//! folder on the computer.
 
 use super::*;
 use serde::{Deserialize, Serialize};
@@ -14,6 +14,7 @@ use serde::{Deserialize, Serialize};
 pub(super) enum ConnKind {
     Sftp,
     Smb,
+    Nfs,
     #[serde(rename = "webdav")]
     WebDav,
     Ftp,
@@ -22,12 +23,13 @@ pub(super) enum ConnKind {
 }
 
 impl ConnKind {
-    pub(super) const ALL: [ConnKind; 6] = [ConnKind::Sftp, ConnKind::Smb, ConnKind::WebDav, ConnKind::Ftp, ConnKind::S3, ConnKind::Everything];
+    pub(super) const ALL: [ConnKind; 7] = [ConnKind::Sftp, ConnKind::Smb, ConnKind::Nfs, ConnKind::WebDav, ConnKind::Ftp, ConnKind::S3, ConnKind::Everything];
 
     pub(super) fn key(self) -> &'static str {
         match self {
             ConnKind::Sftp => "sftp",
             ConnKind::Smb => "smb",
+            ConnKind::Nfs => "nfs",
             ConnKind::WebDav => "webdav",
             ConnKind::Ftp => "ftp",
             ConnKind::S3 => "s3",
@@ -39,11 +41,17 @@ impl ConnKind {
         match self {
             ConnKind::Sftp => "SFTP",
             ConnKind::Smb => "SMB",
+            ConnKind::Nfs => "NFS",
             ConnKind::WebDav => "WebDAV",
             ConnKind::Ftp => "FTP",
             ConnKind::S3 => "S3",
             ConnKind::Everything => "Everything",
         }
+    }
+
+    /// Mounted by the system (a folder on the computer) rather than connected by the app.
+    pub(super) fn mounted(self) -> bool {
+        matches!(self, ConnKind::Smb | ConnKind::Nfs)
     }
 }
 
@@ -72,7 +80,8 @@ pub(super) struct Conn {
     pub port: Option<u16>,
     #[serde(default)]
     pub user: String,
-    /// SMB: the shared folder. WebDAV: the folder's path on the server. S3: the bucket.
+    /// SMB: the shared folder. NFS: the exported folder ("export/photos"). WebDAV: the folder's
+    /// path on the server. S3: the bucket.
     #[serde(default)]
     pub share: String,
     /// WebDAV and S3: https rather than http. FTP: FTPS (TLS) rather than plain FTP.
@@ -155,6 +164,7 @@ impl Conn {
             // A user without a saved password goes in the address, so the system asks for theirs.
             ConnKind::Smb if !self.user.is_empty() && self.auth == Auth::System => format!("smb://{}@{}{port}/{}", self.user, self.host, self.share),
             ConnKind::Smb => format!("smb://{}{port}/{}", self.host, self.share),
+            ConnKind::Nfs => format!("nfs://{}/{}", self.host, self.share),
         }
     }
 
@@ -164,6 +174,7 @@ impl Conn {
         let user = if self.user.is_empty() { String::new() } else { format!("{}@", self.user) };
         match self.kind {
             ConnKind::Smb => format!("{user}{}{port}/{}", self.host, self.share),
+            ConnKind::Nfs => format!("{}:/{}", self.host, self.share),
             ConnKind::WebDav if !self.share.is_empty() => format!("{user}{}{port}/{}", self.host, self.share),
             // The user here is the access key: not shown.
             ConnKind::S3 => format!("{}{port}/{}", self.host, self.share),
@@ -192,6 +203,7 @@ impl Conn {
                 ("sftp_connect", json!({ "server": self.addr(), "key_file": key, "secret": self.secret() }))
             }
             ConnKind::Smb => ("smb_mount", json!({ "share": self.addr(), "user": user, "domain": self.domain, "secret": self.secret() })),
+            ConnKind::Nfs => ("smb_mount", json!({ "share": self.addr() })),
             ConnKind::WebDav => ("webdav_connect", json!({ "server": self.addr(), "user": user, "secret": self.secret() })),
             ConnKind::Ftp => {
                 let port = self.port.map(|p| format!(":{p}")).unwrap_or_default();
@@ -211,6 +223,9 @@ impl Conn {
         }
         if self.kind == ConnKind::Smb && self.share.trim().is_empty() {
             return Some("Enter the shared folder's name.");
+        }
+        if self.kind == ConnKind::Nfs && self.share.trim().trim_matches('/').is_empty() {
+            return Some("Enter the exported folder, like /export/photos.");
         }
         if self.kind == ConnKind::S3 && (self.share.trim().is_empty() || self.share.contains('/')) {
             return Some("Enter the bucket's name.");
@@ -292,7 +307,12 @@ pub(super) fn kind_and_tls(text: &str) -> (ConnKind, bool) {
         "ftp" => return (ConnKind::Ftp, false),
         "ftps" | "ftpes" => return (ConnKind::Ftp, true),
         "s3" => return (ConnKind::S3, true),
+        "nfs" => return (ConnKind::Nfs, false),
         _ => {}
+    }
+    // "nas:/export/photos", as NFS writes it.
+    if scheme.is_empty() && t.contains(":/") {
+        return (ConnKind::Nfs, false);
     }
     let kind = if t.starts_with("smb:") || t.starts_with("\\\\") || (t.contains('/') && !t.starts_with("sftp:") && !t.starts_with("ssh:") && !t.starts_with("http")) {
         ConnKind::Smb
@@ -343,7 +363,7 @@ impl Ctx {
         self.phones.with(|ps| ps.iter().find(|i| i.transport == kind && usb_addr(i) == Some(addr.as_str())).map(|i| Src::of(&i.id)))
     }
 
-    /// Where an SMB share is mounted, when it is.
+    /// Where an SMB share or NFS export is mounted, when it is.
     pub(super) fn smb_path(self, c: &Conn) -> Option<String> {
         let addr = c.addr();
         self.smb_mounts.with(|m| m.iter().find(|m| m.share == addr).map(|m| m.path.clone()))
@@ -352,15 +372,20 @@ impl Ctx {
     /// Whether it's connected (or mounted).
     pub(super) fn conn_on(self, c: &Conn) -> bool {
         match c.kind {
-            ConnKind::Smb => self.smb_path(c).is_some(),
+            ConnKind::Smb | ConnKind::Nfs => self.smb_path(c).is_some(),
             _ => self.conn_src(c).is_some(),
         }
     }
 
-    /// The SMB shares mounted, in the app or not, that aren't in the list.
+    /// The network shares mounted, in the app or not, that aren't in the list.
     pub(super) fn other_mounts(self) -> Vec<SmbMount> {
-        let known: Vec<String> = self.conns_of(ConnKind::Smb).iter().map(Conn::addr).collect();
+        let known: Vec<String> = self.mounted_conns().iter().map(Conn::addr).collect();
         self.smb_mounts.with(|m| m.iter().filter(|m| !known.contains(&m.share)).cloned().collect())
+    }
+
+    /// The SMB shares and NFS exports in the list.
+    pub(super) fn mounted_conns(self) -> Vec<Conn> {
+        self.conns.with(|cs| cs.iter().filter(|c| c.kind.mounted()).cloned().collect())
     }
 
     fn set_conns(self, list: Vec<Conn>) {
@@ -414,7 +439,7 @@ impl Ctx {
     /// Connects `c` (mounts an SMB share); with `show`, opens it in the active pane.
     pub(super) async fn connect_conn(self, c: Conn, show: bool) -> Result<(), String> {
         let (cmd, args) = c.connect_call();
-        let done = if c.kind == ConnKind::Smb {
+        let done = if c.kind.mounted() {
             call::<SmbMount>(cmd, args).await.map(|m| {
                 let path = m.path.clone();
                 self.smb_mounts.update(|ms| {
@@ -500,7 +525,7 @@ impl Ctx {
     pub(super) fn check_conns(self) {
         for c in self.conns.get_untracked() {
             match (c.kind, self.conn_src(&c)) {
-                (ConnKind::Smb, _) => {}
+                (ConnKind::Smb | ConnKind::Nfs, _) => {}
                 (ConnKind::Everything, Some(src)) => self.refresh_drives(src),
                 (_, Some(_)) => {}
                 (_, None) => spawn_local(async move {
@@ -508,7 +533,7 @@ impl Ctx {
                 }),
             }
         }
-        let shares: Vec<String> = self.conns_of(ConnKind::Smb).iter().map(Conn::addr).collect();
+        let shares: Vec<String> = self.mounted_conns().iter().map(Conn::addr).collect();
         spawn_local(async move {
             if let Ok(m) = call::<Vec<SmbMount>>("smb_mounts", json!({ "shares": shares })).await {
                 if self.smb_mounts.with_untracked(|now| *now != m) {
@@ -580,6 +605,12 @@ mod tests {
         assert_eq!(split_address(r"\\nas\Photos"), (String::new(), "nas".into(), None, "Photos".into()));
         assert_eq!(split_address("smb://me@nas/Photos/x"), ("me".into(), "nas".into(), None, "Photos".into()));
         assert_eq!(kind_and_tls(r"\\nas\Photos").0, ConnKind::Smb);
+        assert_eq!(kind_and_tls("nfs://nas/export").0, ConnKind::Nfs);
+        assert_eq!(kind_and_tls("nas:/export/photos").0, ConnKind::Nfs);
+        assert_eq!(kind_and_tls("me@box:2222").0, ConnKind::Sftp);
+        let nfs = conn(ConnKind::Nfs, "nas", "", None, "export/photos");
+        assert_eq!((nfs.addr().as_str(), nfs.name().as_str()), ("nfs://nas/export/photos", "nas:/export/photos"));
+        assert!(conn(ConnKind::Nfs, "nas", "", None, "/").problem().is_some());
         assert_eq!(kind_and_tls("http://pc:8080").0, ConnKind::Everything);
         assert_eq!(kind_and_tls("me@box").0, ConnKind::Sftp);
         assert_eq!(kind_and_tls("ftps://me@host"), (ConnKind::Ftp, true));

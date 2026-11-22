@@ -199,9 +199,11 @@ pub fn quick_look(path: &Path) -> Result<(), String> {
 }
 
 /// Disks other than the one the system is on (USB drives, SD cards, disk images), as
-/// (name, app path).
+/// (name, app path). Network shares aren't disks: they're under Servers, with Unmount.
 pub fn drives() -> Vec<(String, String)> {
     let mut out = drives_here();
+    let net: Vec<String> = net_mounted().into_iter().map(|(_, at)| at).collect();
+    out.retain(|(_, at)| !net.contains(at));
     out.sort();
     out
 }
@@ -241,9 +243,16 @@ fn drives_here() -> Vec<(String, String)> {
         .collect()
 }
 
-/// (device, mount point) of each line of /proc/mounts, whose spaces and such are written `\040`.
+/// (device, mount point) of each line of /proc/mounts.
 #[cfg(all(unix, not(target_os = "macos")))]
 pub(crate) fn mounts(text: &str) -> Vec<(String, String)> {
+    mounts_typed(text).into_iter().map(|(dev, at, _)| (dev, at)).collect()
+}
+
+/// (device, mount point, file system type) of each line of /proc/mounts, whose spaces and such
+/// are written `\040`.
+#[cfg(any(all(unix, not(target_os = "macos")), test))]
+pub(crate) fn mounts_typed(text: &str) -> Vec<(String, String, String)> {
     fn unescape(s: &str) -> String {
         let b = s.as_bytes();
         let mut out = Vec::with_capacity(b.len());
@@ -262,7 +271,7 @@ pub(crate) fn mounts(text: &str) -> Vec<(String, String)> {
     text.lines()
         .filter_map(|l| {
             let mut f = l.split(' ');
-            Some((unescape(f.next()?), unescape(f.next()?)))
+            Some((unescape(f.next()?), unescape(f.next()?), f.next().unwrap_or_default().to_string()))
         })
         .collect()
 }
@@ -384,68 +393,123 @@ pub fn eject(path: &str) -> Result<(), String> {
     }
 }
 
-/// The SMB shares mounted now, as (what `smb_share_mounts` read: "//[user@]host/share", the
-/// app path it's at).
-pub fn smb_mounted() -> Vec<(String, String)> {
+/// The network shares mounted now (SMB, NFS, WebDAV, FTP, AFP; by the app or not), as (address
+/// like "smb://me@nas/Share" or "nfs://nas/export/photos", the app path it's at).
+pub fn net_mounted() -> Vec<(String, String)> {
     #[cfg(target_os = "macos")]
     {
         let out = command("mount").output().map(|o| String::from_utf8_lossy(&o.stdout).into_owned()).unwrap_or_default();
-        smb_in_mount(&out)
+        net_in_mount(&out)
     }
     #[cfg(all(unix, not(target_os = "macos")))]
     {
-        // gvfs (what `gio mount` uses) keeps each share at smb-share:server=host,share=name.
+        let text = std::fs::read_to_string("/proc/self/mounts").unwrap_or_default();
+        let mut out = net_in_proc(&text);
+        // gvfs (what `gio mount` uses) keeps each share in a folder like smb-share:server=host,share=name.
         let run = std::env::var("XDG_RUNTIME_DIR").unwrap_or_default();
         let dir = Path::new(&run).join("gvfs");
-        std::fs::read_dir(&dir)
-            .into_iter()
-            .flatten()
-            .flatten()
-            .filter_map(|e| {
-                let name = e.file_name().to_string_lossy().into_owned();
-                let spec = name.strip_prefix("smb-share:")?;
-                let field = |k: &str| spec.split(',').find_map(|f| f.strip_prefix(k)).map(String::from);
-                let user = field("user=").map(|u| format!("{u}@")).unwrap_or_default();
-                Some((format!("//{user}{}/{}", field("server=")?, field("share=")?), e.path().display().to_string()))
-            })
-            .collect()
+        out.extend(std::fs::read_dir(&dir).into_iter().flatten().flatten().filter_map(|e| {
+            let url = gvfs_url(&e.file_name().to_string_lossy())?;
+            Some((url, e.path().display().to_string()))
+        }));
+        out
     }
     #[cfg(windows)]
     {
         let out = command("net").arg("use").output().map(|o| String::from_utf8_lossy(&o.stdout).into_owned()).unwrap_or_default();
-        smb_in_net_use(&out)
+        net_in_net_use(&out)
     }
 }
 
-/// SMB mounts in `mount`'s output: "//me@nas/Share on /Volumes/Share (smbfs, ...)".
+/// "host:/path" (how NFS names what's mounted) as "nfs://host/path".
+fn nfs_of(what: &str) -> Option<String> {
+    let (host, path) = what.split_once(":/")?;
+    (!host.is_empty() && !host.contains('/')).then(|| format!("nfs://{host}/{}", path.trim_end_matches('/')).trim_end_matches('/').to_string())
+}
+
+/// Network mounts in `mount`'s output: "//me@nas/Share on /Volumes/Share (smbfs, ...)",
+/// "nas:/export on /Volumes/export (nfs, ...)", "https://cloud/dav on /Volumes/dav (webdav, ...)".
 #[cfg(any(target_os = "macos", test))]
-pub(crate) fn smb_in_mount(out: &str) -> Vec<(String, String)> {
+pub(crate) fn net_in_mount(out: &str) -> Vec<(String, String)> {
     out.lines()
-        .filter(|l| l.contains("(smbfs"))
         .filter_map(|l| {
             let (what, rest) = l.split_once(" on ")?;
-            let at = rest.rsplit_once(" (")?.0;
-            Some((what.to_string(), at.to_string()))
+            let (at, kind) = rest.rsplit_once(" (")?;
+            let kind = kind.split([',', ')']).next()?.trim();
+            let url = match kind {
+                "smbfs" => format!("smb:{what}"),
+                "afpfs" => format!("afp:{what}"),
+                "nfs" => nfs_of(what)?,
+                "webdav" | "ftp" => what.to_string(),
+                _ => return None,
+            };
+            Some((url, at.to_string()))
         })
         .collect()
 }
 
-/// Connected shares in `net use`'s output: "OK  Z:  \\nas\Share  Microsoft Windows Network".
+/// Network mounts in /proc/self/mounts, wherever they're mounted: NFS, SMB (cifs), sshfs, davfs.
+#[cfg(any(all(unix, not(target_os = "macos")), test))]
+pub(crate) fn net_in_proc(text: &str) -> Vec<(String, String)> {
+    mounts_typed(text)
+        .into_iter()
+        .filter_map(|(what, at, kind)| {
+            let url = match kind.as_str() {
+                "nfs" | "nfs4" => nfs_of(&what)?,
+                "cifs" | "smb3" | "smbfs" => format!("smb:{}", what.replace('\\', "/")),
+                "fuse.sshfs" => {
+                    let (host, path) = what.split_once(':')?;
+                    format!("sftp://{host}/{}", path.trim_start_matches('/'))
+                }
+                "davfs" | "fuse.davfs2" => what,
+                _ => return None,
+            };
+            Some((url, at))
+        })
+        .collect()
+}
+
+/// The address of a gvfs mount folder: "smb-share:server=nas,share=photos,user=me",
+/// "nfs:host=nas,prefix=%2Fexport", "dav:host=cloud,ssl=true,prefix=%2Fdav", "ftp:host=box".
+#[cfg(any(all(unix, not(target_os = "macos")), test))]
+pub(crate) fn gvfs_url(name: &str) -> Option<String> {
+    let (kind, spec) = name.split_once(':')?;
+    let field = |k: &str| spec.split(',').find_map(|f| f.strip_prefix(k).and_then(|v| v.strip_prefix('='))).map(|v| percent_encoding::percent_decode_str(v).decode_utf8_lossy().into_owned());
+    let user = field("user").map(|u| format!("{u}@")).unwrap_or_default();
+    let port = field("port").map(|p| format!(":{p}")).unwrap_or_default();
+    let prefix = field("prefix").unwrap_or_default();
+    let prefix = prefix.trim_matches('/');
+    let rest = if prefix.is_empty() { String::new() } else { format!("/{prefix}") };
+    Some(match kind {
+        "smb-share" => format!("smb://{user}{}{port}/{}", field("server")?, field("share")?),
+        "nfs" => format!("nfs://{}{port}{rest}", field("host")?),
+        "dav" | "davs" => {
+            let tls = kind == "davs" || field("ssl").as_deref() == Some("true");
+            format!("{}://{user}{}{port}{rest}", if tls { "https" } else { "http" }, field("host")?)
+        }
+        "ftp" | "sftp" | "afp-volume" => {
+            let scheme = if kind == "afp-volume" { "afp" } else { kind };
+            let vol = field("volume").map(|v| format!("/{v}")).unwrap_or_default();
+            format!("{scheme}://{user}{}{port}{vol}{rest}", field("host")?)
+        }
+        _ => return None,
+    })
+}
+
+/// Connected shares in `net use`'s output: "OK  Z:  \\nas\Share  Microsoft Windows Network",
+/// or "... NFS Network" for an NFS export.
 #[cfg(any(windows, test))]
-pub(crate) fn smb_in_net_use(out: &str) -> Vec<(String, String)> {
+pub(crate) fn net_in_net_use(out: &str) -> Vec<(String, String)> {
     out.lines()
         .filter_map(|l| {
             let words: Vec<&str> = l.split_whitespace().collect();
             let unc = words.iter().position(|w| w.starts_with(r"\\"))?;
             let letter = words[..unc].iter().find(|w| w.len() == 2 && w.ends_with(':'))?;
-            Some((unc_to_slashes(words[unc]), format!("/{}", letter.to_uppercase())))
+            let path = words[unc].trim_start_matches('\\').replace('\\', "/");
+            let scheme = if words[unc + 1..].iter().any(|w| w.eq_ignore_ascii_case("NFS")) { "nfs" } else { "smb" };
+            Some((format!("{scheme}://{path}"), format!("/{}", letter.to_uppercase())))
         })
         .collect()
-}
-
-#[cfg(any(windows, test))]
-fn unc_to_slashes(unc: &str) -> String {
-    unc.replace('\\', "/")
 }
 
 /// A login for an SMB share: user name, domain (may be empty) and password.
@@ -479,9 +543,10 @@ fn powershell_text(s: &str) -> String {
     s.replace('\'', "''")
 }
 
-/// Mounts the SMB share at `url` ("smb://[user@]host/share"). Without `login`, the system asks
-/// for the password when the share needs one (and may keep it in its keychain). A login is
-/// given to the system on its input, so it's never in a command line.
+/// Mounts the SMB share at `url` ("smb://[user@]host/share"), or the NFS export at
+/// "nfs://host/export" (always without `login`: NFS goes by this computer's user). Without
+/// `login`, the system asks for the password when the share needs one (and may keep it in its
+/// keychain). A login is given to the system on its input, so it's never in a command line.
 pub fn smb_mount(url: &str, login: Option<&SmbLogin>) -> Result<(), String> {
     #[cfg(target_os = "macos")]
     let out = {
@@ -504,10 +569,12 @@ pub fn smb_mount(url: &str, login: Option<&SmbLogin>) -> Result<(), String> {
     };
     #[cfg(windows)]
     let out = {
-        let unc = url.trim_start_matches("smb:").replace('/', "\\");
-        match login {
-            None => command("net").args(["use", "*", &unc, "/persistent:no"]).stdin(std::process::Stdio::null()).output(),
-            Some(l) => {
+        let unc = url.trim_start_matches("smb:").trim_start_matches("nfs:").replace('/', "\\");
+        // NFS: the NFS client's mount, on the next free letter, without a login.
+        match (url.starts_with("nfs:"), login) {
+            (true, _) => command("mount").args(["-o", "anon", &unc, "*"]).stdin(std::process::Stdio::null()).output(),
+            (false, None) => command("net").args(["use", "*", &unc, "/persistent:no"]).stdin(std::process::Stdio::null()).output(),
+            (false, Some(l)) => {
                 let user = if l.domain.is_empty() { l.user.to_string() } else { format!("{}\\{}", l.domain, l.user) };
                 // The script (password included) goes in on PowerShell's input.
                 let script = format!(
@@ -539,19 +606,48 @@ pub fn smb_mount(url: &str, login: Option<&SmbLogin>) -> Result<(), String> {
     Err(if why.is_empty() { format!("Couldn't mount {url}.") } else { format!("Couldn't mount {url}: {why}") })
 }
 
-/// Unmounts the SMB share mounted at `path` (an app path from `smb_mounted`).
+/// Unmounts the network share mounted at `path` (an app path from `net_mounted`).
 pub fn smb_unmount(path: &str) -> Result<(), String> {
-    #[cfg(target_os = "macos")]
-    let out = command("diskutil").args(["unmount", path]).output();
-    #[cfg(all(unix, not(target_os = "macos")))]
-    let out = command("gio").args(["mount", "-u", path]).output();
-    #[cfg(windows)]
-    let out = command("net").args(["use", path.trim_start_matches('/'), "/delete", "/y"]).output();
-    let out = out.map_err(|e| format!("Couldn't unmount {path}: {e}"))?;
-    if out.status.success() {
-        return Ok(());
+    let tries: Vec<Command> = {
+        #[cfg(target_os = "macos")]
+        {
+            let mut d = command("diskutil");
+            d.args(["unmount", path]);
+            let mut u = command("umount");
+            u.arg(path);
+            vec![d, u]
+        }
+        #[cfg(all(unix, not(target_os = "macos")))]
+        {
+            // gio for what gvfs mounted; umount for NFS or SMB mounted by the system (which
+            // works when /etc/fstab lets users unmount it).
+            let mut g = command("gio");
+            g.args(["mount", "-u", path]);
+            let mut u = command("umount");
+            u.arg(path);
+            vec![g, u]
+        }
+        #[cfg(windows)]
+        {
+            let letter = path.trim_start_matches('/');
+            let mut n = command("net");
+            n.args(["use", letter, "/delete", "/y"]);
+            // NFS drives (Windows' NFS client) are also unmounted with its own umount.
+            let mut u = command("umount");
+            u.args(["-f", letter]);
+            vec![n, u]
+        }
+    };
+    let mut why = String::new();
+    for mut c in tries {
+        match c.output() {
+            Ok(out) if out.status.success() => return Ok(()),
+            Ok(out) if why.is_empty() => why = String::from_utf8_lossy(if out.stderr.is_empty() { &out.stdout } else { &out.stderr }).trim().to_string(),
+            Ok(_) => {}
+            Err(e) if why.is_empty() => why = e.to_string(),
+            Err(_) => {}
+        }
     }
-    let why = String::from_utf8_lossy(if out.stderr.is_empty() { &out.stdout } else { &out.stderr }).trim().to_string();
     Err(format!("Couldn't unmount {path}: {}. Close files open on it and try again.", if why.is_empty() { "it's in use" } else { &why }))
 }
 
@@ -583,11 +679,33 @@ mod tests {
     }
 
     #[test]
-    fn reads_smb_mounts() {
-        let mount = "/dev/disk3s1s1 on / (apfs, sealed, local)\n//me@nas._smb._tcp.local/Photos on /Volumes/Photos 1 (smbfs, nodev, nosuid, mounted by me)\n";
-        assert_eq!(smb_in_mount(mount), vec![("//me@nas._smb._tcp.local/Photos".to_string(), "/Volumes/Photos 1".to_string())]);
-        let net = "Status       Local     Remote                    Network\n-----\nOK           Z:        \\\\nas\\Photos              Microsoft Windows Network\nThe command completed successfully.\n";
-        assert_eq!(smb_in_net_use(net), vec![("//nas/Photos".to_string(), "/Z:".to_string())]);
+    fn reads_network_mounts() {
+        let mount = "/dev/disk3s1s1 on / (apfs, sealed, local)\n//me@nas._smb._tcp.local/Photos on /Volumes/Photos 1 (smbfs, nodev, nosuid, mounted by me)\n\
+                     nas:/export/media/ on /Volumes/media (nfs, nodev, nosuid, mounted by me)\n\
+                     https://cloud.example.com/dav/ on /Volumes/dav (webdav, nodev, noexec, nosuid, mounted by me)\n\
+                     map auto_home on /System/Volumes/Data/home (autofs, automounted, nobrowse)\n";
+        assert_eq!(net_in_mount(mount), vec![
+            ("smb://me@nas._smb._tcp.local/Photos".to_string(), "/Volumes/Photos 1".to_string()),
+            ("nfs://nas/export/media".to_string(), "/Volumes/media".to_string()),
+            ("https://cloud.example.com/dav/".to_string(), "/Volumes/dav".to_string()),
+        ]);
+        let net = "Status       Local     Remote                    Network\n-----\nOK           Z:        \\\\nas\\Photos              Microsoft Windows Network\n\
+                   OK           Y:        \\\\nas\\export\\media        NFS Network\nThe command completed successfully.\n";
+        assert_eq!(net_in_net_use(net), vec![
+            ("smb://nas/Photos".to_string(), "/Z:".to_string()),
+            ("nfs://nas/export/media".to_string(), "/Y:".to_string()),
+        ]);
+        let proc = "/dev/sdb1 /media/me/STICK vfat rw 0 0\nnas:/export /home/me/nas nfs4 rw 0 0\n//nas/Photos /mnt/photos cifs rw 0 0\nme@box:/srv /home/me/box fuse.sshfs rw 0 0\n";
+        assert_eq!(net_in_proc(proc), vec![
+            ("nfs://nas/export".to_string(), "/home/me/nas".to_string()),
+            ("smb://nas/Photos".to_string(), "/mnt/photos".to_string()),
+            ("sftp://me@box/srv".to_string(), "/home/me/box".to_string()),
+        ]);
+        assert_eq!(gvfs_url("smb-share:server=nas,share=photos,user=me").as_deref(), Some("smb://me@nas/photos"));
+        assert_eq!(gvfs_url("nfs:host=nas,prefix=%2Fexport%2Fmedia").as_deref(), Some("nfs://nas/export/media"));
+        assert_eq!(gvfs_url("dav:host=cloud,ssl=true,prefix=%2Fdav").as_deref(), Some("https://cloud/dav"));
+        assert_eq!(gvfs_url("ftp:host=box,port=2121").as_deref(), Some("ftp://box:2121"));
+        assert_eq!(gvfs_url("mtp:host=Phone"), None);
         assert_eq!(applescript_text(r#"a"b\c"#), r#"a\"b\\c"#);
         assert_eq!(powershell_text("it's"), "it''s");
     }

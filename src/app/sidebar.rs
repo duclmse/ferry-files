@@ -368,7 +368,7 @@ pub(super) fn Sidebar() -> impl IntoView {
                 }
             }).collect_view())}
     });
-    // A mounted SMB share: a folder on the computer, with a button to disconnect it.
+    // A mounted network share: a folder on the computer, with a button to disconnect it.
     let mounted = move |name: String, path: String| {
         let (tip, at, n) = (format!("Disconnect {name}"), path.clone(), name.clone());
         let extra = ViewFn::from(move || {
@@ -381,7 +381,7 @@ pub(super) fn Sidebar() -> impl IntoView {
     let off_row = move |c: servers::Conn| {
         let (id, c1) = (c.id.clone(), c.clone());
         let id2 = id.clone();
-        let usual = if c.kind == servers::ConnKind::Smb { "Click to connect." } else { "Connecting… Click to try again." };
+        let usual = if c.kind.mounted() { "Click to connect." } else { "Connecting… Click to try again." };
         let tip = move || ctx.conn_errors.with(|e| e.get(&id).cloned()).map_or_else(|| usual.to_string(), |e| e + " Click to try again.");
         view! {
             <div class="device">
@@ -412,7 +412,7 @@ pub(super) fn Sidebar() -> impl IntoView {
                 Some(i) => device(i).into_any(),
                 None => off_row(c).into_any(),
             }).collect_view()}
-            {move || ctx.conns_of(servers::ConnKind::Smb).into_iter().map(|c| match ctx.smb_path(&c) {
+            {move || ctx.mounted_conns().into_iter().map(|c| match ctx.smb_path(&c) {
                 // Mounted: a folder on the computer.
                 Some(path) => mounted(c.name(), path).into_any(),
                 None => off_row(c).into_any(),
@@ -424,7 +424,7 @@ pub(super) fn Sidebar() -> impl IntoView {
             // Shares mounted outside the app (or before the list had them).
             {move || ctx.other_mounts().into_iter().map(|m| mounted(m.share.trim_start_matches("smb://").to_string(), m.path).into_any()).collect_view()}
             {move || (ctx.conns.with(Vec::is_empty) && ctx.smb_mounts.with(Vec::is_empty))
-                .then(|| add_row("Add an SFTP, WebDAV or FTP server, an SMB share (Windows sharing, NAS), an S3 bucket or a Windows computer running Everything"))}
+                .then(|| add_row("Add an SFTP, WebDAV or FTP server, an SMB share (Windows sharing, NAS), an NFS export, an S3 bucket or a Windows computer running Everything"))}
         })}
     });
     let sec_mac = move || shown("mac").then(|| view! {

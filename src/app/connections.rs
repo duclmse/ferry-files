@@ -9,7 +9,7 @@ use servers::{Auth, Conn, ConnKind};
 /// Whether connection `c` is connected (or mounted), and what to say about it.
 fn status(ctx: Ctx, c: &Conn) -> (bool, String) {
     match c.kind {
-        ConnKind::Smb => match ctx.smb_path(c) {
+        ConnKind::Smb | ConnKind::Nfs => match ctx.smb_path(c) {
             Some(path) => (true, format!("Connected at {path}")),
             None => (false, ctx.conn_errors.with(|e| e.get(&c.id).cloned()).unwrap_or_else(|| "Not connected. Click it in the sidebar to connect.".into())),
         },
@@ -24,6 +24,7 @@ fn auth_label(c: &Conn) -> &'static str {
         (ConnKind::Everything, Auth::System) => "No login",
         (ConnKind::Sftp, Auth::System) => "ssh keys",
         (ConnKind::Smb, Auth::System) => "System asks",
+        (ConnKind::Nfs, _) => "No login",
         (ConnKind::WebDav, Auth::System) => "No login",
         (ConnKind::Ftp, Auth::System) => "Anonymous",
         (ConnKind::S3, _) if c.saved => "Key saved",
@@ -39,6 +40,7 @@ fn auth_choices(kind: ConnKind) -> &'static [(Auth, &'static str)] {
     match kind {
         ConnKind::Sftp => &[(Auth::System, "This computer's ssh keys"), (Auth::Password, "Password"), (Auth::Key, "Key file")],
         ConnKind::Smb => &[(Auth::System, "Ask when connecting"), (Auth::Password, "Password")],
+        ConnKind::Nfs => &[(Auth::System, "No login")],
         ConnKind::Everything | ConnKind::WebDav => &[(Auth::System, "No login"), (Auth::Password, "User name and password")],
         ConnKind::Ftp => &[(Auth::System, "Anonymous"), (Auth::Password, "User name and password")],
         ConnKind::S3 => &[(Auth::Password, "Access key")],
@@ -58,6 +60,7 @@ fn kind_about(kind: ConnKind) -> &'static str {
     match kind {
         ConnKind::Sftp => "A server you can reach with ssh. Its files open like a phone's, and its terminal opens under the pane.",
         ConnKind::Smb => "A shared folder on a Windows computer or NAS box. The system mounts it as a folder on this computer.",
+        ConnKind::Nfs => "A folder a Linux computer or NAS box exports over NFS. The system mounts it as a folder on this computer.",
         ConnKind::Everything => "A Windows computer's disks, through the HTTP server of Everything (voidtools). Read-only.",
         ConnKind::WebDav => "A folder shared over WebDAV: Nextcloud, ownCloud, a NAS box, or a phone app that serves files.",
         ConnKind::Ftp => "An FTP server: a NAS box, a router, or a phone app that serves files over Wi-Fi.",
@@ -71,6 +74,7 @@ fn host_example(kind: ConnKind) -> &'static str {
         ConnKind::WebDav => "cloud.example.com or 10.0.0.2",
         ConnKind::Ftp => "ftp.example.com or 10.0.0.2",
         ConnKind::S3 => "s3.us-east-1.amazonaws.com",
+        ConnKind::Nfs => "nas or 10.0.0.2",
         _ => "nas, 10.0.0.2 or a host from ~/.ssh/config",
     }
 }
@@ -136,7 +140,7 @@ fn conn_form(ctx: Ctx, editing: RwSignal<Option<Conn>>, is_new: bool) -> impl In
             <p class="hint flush">{move || kind_about(kind.get())}</p>
             <div class="row2">
                 {move || text("Server", host_example(kind.get()), Signal::derive(move || get().host), |c, v| c.host = v)}
-                <label class="field port">
+                <label class="field port" class:hidden=move || kind.get() == ConnKind::Nfs>
                     <span>"Port"</span>
                     <input type="text" inputmode="numeric" placeholder=move || match (kind.get(), tls.get()) {
                         (ConnKind::Sftp, _) => "22",
@@ -152,6 +156,7 @@ fn conn_form(ctx: Ctx, editing: RwSignal<Option<Conn>>, is_new: bool) -> impl In
             </div>
             {move || match kind.get() {
                 ConnKind::Smb => Some(text("Shared folder", "Photos", Signal::derive(move || get().share), |c, v| c.share = v).into_any()),
+                ConnKind::Nfs => Some(text("Exported folder", "/export/photos", Signal::derive(move || get().share), |c, v| c.share = v).into_any()),
                 ConnKind::WebDav => Some(text("Folder", "Empty for the top, or like remote.php/dav/files/me", Signal::derive(move || get().share), |c, v| c.share = v).into_any()),
                 ConnKind::S3 => Some(view! {
                     {text("Bucket", "photos", Signal::derive(move || get().share), |c, v| c.share = v)}
