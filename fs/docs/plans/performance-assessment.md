@@ -463,3 +463,53 @@ Median query time at 10M, in ms:
   use would cut it if it matters.
 - The `sort:size readme` maximum (419 ms memory, 146 ms SQLite) is the first
   run of the process; the median is the steady cost.
+
+## Name filters (memory store)
+
+Every 4096 entries have a Bloom filter of their names' 3-byte windows,
+lowercased (`memory_store/name_filter.rs`). A name condition's literal text
+(the term, or a wildcard pattern's literal runs) is tested against each
+block's filter first, and only blocks that may hold all of it are read.
+Filters are built in the background after the index loads and after a full
+crawl (0.45 s at 10M), are dropped per block when a name changes, and are
+rebuilt on next use. 10 bits per window, ~0.8% false positives.
+
+Block size, from `store_scale trigram` over 9.1M real names from this Mac
+(a flat-array scan, so only the ratios carry over):
+
+| entries per filter | filters | `zzqx.txt` | `mian` | `invoice.pdf` |
+|---|---:|---:|---:|---:|
+| 32768 (the scan block) | 4.6 MiB | 22 → 2.3 ms | 35 → 20 ms | 32 → 18 ms |
+| 4096 | 13.8 MiB | 26 → 1.6 ms | 40 → 11 ms | 33 → 7 ms |
+| 1024 | 28 MiB | 38 → 6.9 ms | 58 → 12 ms | 60 → 8.6 ms |
+
+Through the full query path at 10M entries (`store_scale open memory`;
+"real" builds the tree with those 9.1M names, `build ... <names.txt>`),
+median ms without → with filters:
+
+| query | synthetic | real names | hits (real) |
+|---|---:|---:|---:|
+| `zzqx` | 38.5 → 0.4 | 43.5 → 1.3 | 2 |
+| `qwertyuiop` | 46.7 → 0.4 | 52.9 → 0.8 | 0 |
+| `"zzqx.txt"` | 32.7 → 0.3 | 41.0 → 0.5 | 0 |
+| `*.zzq` | 20.8 → 0.6 | 20.6 → 0.5 | 0 |
+| `mian` | 60.3 → 0.5 | 49.4 → 16.3 | 18 |
+| `invoice.pdf` | 49.4 → 0.5 | 53.4 → 13.7 | 14 |
+| `main.rs` | 47.9 → 0.5 | 15.8 → 4.9 | 100 |
+| `readme` | 0.1 → 0.1 | 0.6 → 0.6 | 100 |
+
+- Synthetic names reuse 20 words, so every block holds the same few
+  thousand windows and absent terms skip everything; real names are the
+  numbers to expect.
+- Filters take 16 MB of a 1,031 MB heap at 10M entries.
+- Not helped: `ext:`, `size:` and other non-name conditions (11-22 ms when
+  nothing matches), `fuzzy:`, `regex:`, terms under 3 bytes, and `path:`.
+- `memory_search` (criterion, 2M synthetic) against the commit before:
+  `contains_no_match` 7.0 ms → 0.14, `suffix_no_match` 5.5 → 0.14,
+  `two_wildcards_no_match` 25.5 → 0.16, `whole_filename_no_match` 9.5 →
+  0.13, `sort_date_no_match` 7.2 → 0.16, REST and IPC no-match 7.2 / 6.7 →
+  0.31 / 0.22. Nothing else moved beyond noise; save and load are
+  unchanged, and a 10M crawl-path build writes in 8.6 s (8.5 before).
+- Without the warm-up the first search builds every filter it reaches:
+  300-500 ms once at 10M. Compaction drops all filters, so the first search
+  after one pays that again.

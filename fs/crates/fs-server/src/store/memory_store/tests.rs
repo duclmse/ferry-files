@@ -1078,3 +1078,186 @@ fn a_reserved_store_takes_a_crawl_without_growing() {
     }
     assert_eq!(sizes(&store), before);
 }
+
+// ---------------------------------------------------------------------------
+// Name filters
+// ---------------------------------------------------------------------------
+
+const FIRST: &[u8] = b"abcdABCD_.%x1";
+const LATER: &[u8] = b"qrsQRS_%z9";
+
+struct Rng(u64);
+
+impl Rng {
+    fn next(&mut self) -> u64 {
+        self.0 ^= self.0 << 13;
+        self.0 ^= self.0 >> 7;
+        self.0 ^= self.0 << 17;
+        self.0
+    }
+    fn below(&mut self, n: usize) -> usize {
+        (self.next() % n as u64) as usize
+    }
+    /// Letters from `FIRST`, where the names a test starts with come from,
+    /// or from `LATER`, for names given afterwards: a block's filter then
+    /// lacks the later names' windows unless it was rebuilt.
+    fn word(&mut self, letters: &[u8], max: usize) -> String {
+        let len = 1 + self.below(max);
+        (0..len)
+            .map(|_| letters[self.below(letters.len())] as char)
+            .collect()
+    }
+}
+
+/// Every kind of name condition, from `text`, as the scan sees them.
+fn name_conditions(rng: &mut Rng, text: &str) -> Vec<Vec<SqlCondition>> {
+    let mid = text.len() / 2;
+    let (a, b) = text.split_at(mid);
+    let other = rng.word(LATER, 5);
+    vec![
+        vec![SqlCondition::NameLike(format!("%{text}%"))],
+        vec![SqlCondition::NameLike(format!("{text}%"))],
+        vec![SqlCondition::NameLike(format!("%{a}_{b}%"))],
+        vec![SqlCondition::NameLike(format!("%{}%", text.to_uppercase()))],
+        vec![SqlCondition::NameGlob(format!("*{text}*"))],
+        vec![SqlCondition::NameGlob(format!("{a}*{b}?"))],
+        vec![SqlCondition::NameGlobNoCase(format!(
+            "*{}*",
+            text.to_uppercase()
+        ))],
+        vec![SqlCondition::NameGlobNoCase(format!("*{a}?{b}"))],
+        vec![SqlCondition::Or(vec![
+            vec![SqlCondition::NameLike(format!("%{text}%"))],
+            vec![SqlCondition::NameLike(format!("%{other}%"))],
+        ])],
+        vec![SqlCondition::Or(vec![
+            vec![SqlCondition::NameLike(format!("%{text}%"))],
+            vec![SqlCondition::SizeOp(CmpOp::Gt, 5)],
+        ])],
+        vec![SqlCondition::Not(vec![SqlCondition::NameLike(format!(
+            "%{text}%"
+        ))])],
+    ]
+}
+
+fn check_against_records(store: &MemoryStore, live: &[FileRecord], rng: &mut Rng) {
+    for round in 0..12 {
+        // Half the terms come from indexed names, so most conditions match some.
+        let text = if round % 2 == 0 {
+            let name = &live[rng.below(live.len())].name;
+            let start = rng.below(name.len());
+            let len = 1 + rng.below(name.len() - start);
+            name[start..start + len].to_owned()
+        } else {
+            rng.word(if round % 4 == 1 { FIRST } else { LATER }, 6)
+        };
+        for conds in name_conditions(rng, &text) {
+            let mut want: Vec<&str> = live
+                .iter()
+                .filter(|r| conds.iter().all(|c| c.matches(*r)))
+                .map(|r| r.path.as_str())
+                .collect();
+            want.sort_unstable();
+            let mut got = paths(store.search_conditions(&conds, usize::MAX).unwrap());
+            got.sort_unstable();
+            assert_eq!(got, want, "{conds:?}");
+        }
+    }
+}
+
+#[test]
+fn name_filters_never_drop_a_match_across_changes() {
+    let dir = tempfile::tempdir().unwrap();
+    let store = MemoryStore::new(dir.path()).unwrap();
+    let mut rng = Rng(0x9e37_79b9_7f4a_7c15);
+    let mut live: Vec<FileRecord> = (0..10_000)
+        .map(|i| {
+            let mut r = sample(&format!("/d/{i}{}", rng.word(FIRST, 10)));
+            r.size_bytes = i % 10;
+            r
+        })
+        .collect();
+    for r in &live {
+        store.upsert_file(r);
+    }
+    check_against_records(&store, &live, &mut rng);
+
+    // Into the built last block and past it.
+    for i in 0..3000 {
+        let r = sample(&format!("/e/{i}{}", rng.word(LATER, 10)));
+        store.upsert_file(&r);
+        live.push(r);
+    }
+    check_against_records(&store, &live, &mut rng);
+
+    // New names for existing paths, and removals.
+    for r in live.iter_mut().step_by(97) {
+        r.name = rng.word(LATER, 8);
+        store.upsert_file(r);
+    }
+    let mut removed: Vec<FileRecord> = live.drain(100..200).collect();
+    for r in &removed {
+        assert!(store.remove_file(&r.path));
+    }
+    check_against_records(&store, &live, &mut rng);
+
+    // Revived after its block's filter was rebuilt without it, under the
+    // name its path gives, so only its being dead says the filter is stale.
+    let ghost = sample("/d/jkJwvjk");
+    store.upsert_file(&ghost);
+    live.push(ghost.clone());
+    check_against_records(&store, &live, &mut rng);
+    store.remove_file(&ghost.path);
+    live.pop();
+    let block_mate = live
+        .iter_mut()
+        .rev()
+        .find(|r| r.path.starts_with("/e/"))
+        .unwrap();
+    block_mate.name = rng.word(FIRST, 8);
+    store.upsert_file(block_mate);
+    check_against_records(&store, &live, &mut rng);
+    store.upsert_file(&ghost);
+    live.push(ghost.clone());
+    let found = store
+        .search_conditions(&[SqlCondition::NameLike("%jkJwvjk%".into())], 10)
+        .unwrap();
+    assert_eq!(paths(found), std::slice::from_ref(&ghost.path));
+    removed[1].name = rng.word(LATER, 8);
+    for r in &removed[..2] {
+        store.upsert_file(r);
+        live.push(r.clone());
+    }
+    check_against_records(&store, &live, &mut rng);
+
+    // Compaction renumbers every entry.
+    let gone: Vec<FileRecord> = live.drain(..6000).collect();
+    for r in &gone {
+        store.remove_file(&r.path);
+    }
+    check_against_records(&store, &live, &mut rng);
+
+    store.flush_to_disk(dir.path()).unwrap();
+    let reloaded = MemoryStore::new(dir.path()).unwrap();
+    check_against_records(&reloaded, &live, &mut rng);
+}
+
+#[test]
+fn a_name_search_reads_only_blocks_that_may_hold_the_term() {
+    let store = make_store();
+    for i in 0..40_000 {
+        let word = if i == 33_000 { "zebra" } else { "other" };
+        store.upsert_file(&sample(&format!("/s/{word}{i}.txt")));
+    }
+    let state = store.read_state();
+    let need = name_filter::Need::of(&matching::compile(&[SqlCondition::NameLike(
+        "%ZEBRA%".into(),
+    )]))
+    .unwrap();
+    let blocks = state.slots().div_ceil(name_filter::FILTER_BLOCK);
+    let read: Vec<usize> = (0..blocks)
+        .filter(|&b| state.block_may_match(b, &need))
+        .collect();
+    assert!(read.contains(&(33_000 / name_filter::FILTER_BLOCK)));
+    assert!(read.len() <= 2, "read {read:?} of {blocks}");
+}

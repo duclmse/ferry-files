@@ -21,6 +21,7 @@ use super::{
 
 mod crud;
 mod matching;
+mod name_filter;
 mod search;
 mod snapshot;
 mod sort;

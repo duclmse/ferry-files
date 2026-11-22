@@ -514,6 +514,14 @@ impl FileStore {
         }
     }
 
+    /// Prepares what the first searches would otherwise build themselves.
+    pub fn warm_search(&self) {
+        match self {
+            FileStore::Sqlite(_) => {}
+            FileStore::Memory(m) => m.warm_name_filters(),
+        }
+    }
+
     /// The memory store's heap use by part; `None` for SQLite.
     pub fn heap_summary(&self) -> Option<String> {
         match self {

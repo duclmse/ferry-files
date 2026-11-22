@@ -187,6 +187,10 @@ disk. The commit loop in `daemon.rs` runs every `commit_interval_secs`.
 - The default store is the memory store (`store.mode = "auto"`). Every
   `FileStore` method needs a memory arm, and memory store buffers grow by
   an eighth (`state::growth`), not by doubling.
+- The memory store's name filters (`memory_store/name_filter.rs`) skip
+  blocks during name scans. Anything that gives an entry a name, or revives
+  a dead one, must call `NameFilters::changed` for it, as `upsert` does, or
+  searches silently miss that entry.
 - The file table crawl streams rows to the writer; do not collect a whole
   volume's rows before sending them.
 - Entries from `[file_lists]` (`indexer/file_lists.rs`) carry no marker in

@@ -150,6 +150,10 @@ pub async fn run_with_shutdown(
 
     // ── 4-5. Stores ────────────────────────────────────────────────────────
     let sqlite = Arc::new(FileStore::from_config(&cfg)?);
+    {
+        let store = Arc::clone(&sqlite);
+        tokio::task::spawn_blocking(move || store.warm_search());
+    }
     let t_tantivy = std::time::Instant::now();
     let tantivy = Arc::new(TantivyStore::new(&cfg.data_dir.join("tantivy"))?);
     tracing::info!(
@@ -898,6 +902,10 @@ fn spawn_crawl(
             tracing::error!("full_crawl error: {e}");
         } else {
             tracing::info!("full crawl complete");
+            let warm = Arc::clone(&store);
+            if let Err(e) = tokio::task::spawn_blocking(move || warm.warm_search()).await {
+                tracing::warn!("search warm-up panicked: {e}");
+            }
             if let Some(summary) = store.heap_summary() {
                 tracing::info!("memory store: {summary}");
             }

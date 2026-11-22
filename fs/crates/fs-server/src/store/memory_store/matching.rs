@@ -296,6 +296,14 @@ pub(super) fn glob_nocase_match(text: &str, pattern: &str) -> bool {
     GlobNoCase::new(pattern).matches(text)
 }
 
+/// The literal runs of a wildcard pattern.
+fn split(pattern: &[u8], many: u8, one: u8) -> Vec<&[u8]> {
+    pattern
+        .split(|&b| b == many || b == one)
+        .filter(|run| !run.is_empty())
+        .collect()
+}
+
 /// A query's conditions with their text patterns prepared, for scans that
 /// test every entry. Anything else defers to [`SqlCondition::matches`].
 pub(super) enum Compiled<'a> {
@@ -337,6 +345,29 @@ fn compile_with<'a>(conds: &'a [SqlCondition], slots: &mut usize) -> Vec<Compile
             other => Compiled::Other(other),
         })
         .collect()
+}
+
+impl Compiled<'_> {
+    /// Literal byte runs a name must contain, case folded or not, for this
+    /// condition to match; empty for conditions that do not look at the
+    /// name. Must agree with `matches`: a run listed here that a matching
+    /// name lacks would make the name filters skip that name.
+    pub(super) fn name_literals(&self) -> Vec<&[u8]> {
+        match self {
+            Self::NameLike(Like::Prefix(l) | Like::Contains(l)) => vec![l.as_ref()],
+            Self::NameLike(Like::General { pattern, many, one }) => split(pattern, *many, *one),
+            Self::NameGlob(Glob::Prefix(l) | Glob::Suffix(l)) => vec![*l],
+            Self::NameGlob(Glob::Contains(finder)) => vec![finder.needle()],
+            Self::NameGlob(Glob::General(p)) => split(p, b'*', b'?'),
+            Self::NameGlobNoCase(GlobNoCase(shape)) => match shape {
+                GlobShape::Prefix(l) | GlobShape::Suffix(l) | GlobShape::Contains(l) => {
+                    vec![l.as_bytes()]
+                }
+                GlobShape::General(p) => split(p.as_bytes(), b'*', b'?'),
+            },
+            _ => Vec::new(),
+        }
+    }
 }
 
 impl Compiled<'_> {

@@ -5,6 +5,7 @@ use rayon::prelude::*;
 use super::matching::{
     compile, dupe_number, dupe_text, meta_filter_matches, Compiled, Like, PathMemo,
 };
+use super::name_filter::{Need, FILTER_BLOCK};
 use super::sort::sort_numbers;
 use super::state::{EntryRef, IndexState, NO_PARENT};
 use super::{
@@ -20,6 +21,10 @@ fn all_match(conds: &[Compiled<'_>], e: &EntryRef<'_>, memo: &mut PathMemo) -> b
 /// Entries per scan unit: small enough that a query satisfied early does
 /// little extra work.
 const SCAN_BLOCK: usize = 1 << 15;
+const _: () = assert!(
+    SCAN_BLOCK.is_multiple_of(FILTER_BLOCK),
+    "filter blocks split scan blocks"
+);
 
 /// Scans run on their own pool. A scan holds the store's read lock while it
 /// waits for its blocks, so sharing workers with jobs that take that lock
@@ -67,20 +72,35 @@ fn scan_in_blocks(
     hits
 }
 
-/// The first `limit` matching entry numbers, in entry order.
+/// The first `limit` matching entry numbers, in entry order. `need` is what
+/// `pred` requires of a name, if anything, so blocks that cannot meet it are
+/// not read.
 fn matching_entries(
     state: &IndexState,
     limit: usize,
+    need: Option<&Need>,
     pred: impl Fn(&EntryRef<'_>, &mut PathMemo) -> bool + Sync,
 ) -> Vec<u32> {
     scan_in_blocks(state.slots(), limit, |range| {
         let mut memo = PathMemo::new();
-        state
-            .iter_range(range)
-            .filter(|e| pred(e, &mut memo))
-            .take(limit)
-            .map(|e| e.index())
-            .collect()
+        let mut hits = Vec::new();
+        for start in range.clone().step_by(FILTER_BLOCK) {
+            if need.is_some_and(|n| !state.block_may_match(start / FILTER_BLOCK, n)) {
+                continue;
+            }
+            let end = (start + FILTER_BLOCK).min(range.end);
+            hits.extend(
+                state
+                    .iter_range(start..end)
+                    .filter(|e| pred(e, &mut memo))
+                    .take(limit - hits.len())
+                    .map(|e| e.index()),
+            );
+            if hits.len() >= limit {
+                break;
+            }
+        }
+        hits
     })
 }
 
@@ -97,9 +117,10 @@ fn sorted_entries(
     state: &IndexState,
     sort: Sort,
     limit: usize,
+    need: Option<&Need>,
     pred: impl Fn(&EntryRef<'_>, &mut PathMemo) -> bool + Sync,
 ) -> Vec<u32> {
-    let mut few = matching_entries(state, DIRECT_SORT_MAX + 1, &pred);
+    let mut few = matching_entries(state, DIRECT_SORT_MAX + 1, need, &pred);
     if few.len() <= DIRECT_SORT_MAX {
         sort_numbers(state, sort.key, &mut few);
         if sort.descending {
@@ -127,15 +148,49 @@ fn sorted_entries(
     })
 }
 
+/// Filter blocks built per read lock while warming: ~1M names, tens of ms,
+/// so a writer waits for one round rather than the whole build.
+const WARM_ROUND: usize = 256;
+
 impl MemoryStore {
+    /// Builds the name filters ahead of the first search, which would
+    /// otherwise build them all itself: 0.3-0.5 s at 10M names.
+    pub fn warm_name_filters(&self) {
+        let start = std::time::Instant::now();
+        let mut next = 0;
+        loop {
+            let state = self.read_state();
+            let total = state.filter_blocks();
+            if next >= total {
+                break;
+            }
+            let end = (next + WARM_ROUND).min(total);
+            let build = || {
+                (next..end).into_par_iter().for_each(|b| {
+                    state.name_filter(b);
+                });
+            };
+            match scan_pool() {
+                Some(pool) => pool.install(build),
+                None => build(),
+            }
+            next = end;
+        }
+        tracing::info!(
+            "memory store: name filters ready in {} ms",
+            start.elapsed().as_millis()
+        );
+    }
+
     /// Scan under one read lock; only matching entries become `FileRecord`s.
     fn collect_where(
         &self,
         limit: usize,
+        need: Option<&Need>,
         pred: impl Fn(&EntryRef<'_>, &mut PathMemo) -> bool + Sync,
     ) -> Vec<FileRecord> {
         let state = self.read_state();
-        matching_entries(&state, limit, pred)
+        matching_entries(&state, limit, need, pred)
             .into_iter()
             .map(|i| state.view(i).to_record())
             .collect()
@@ -181,7 +236,7 @@ impl MemoryStore {
     }
 
     pub fn search_meta(&self, filters: &MetaFilters, limit: usize) -> Result<Vec<FileRecord>> {
-        Ok(self.collect_where(limit, |e, _| meta_filter_matches(e, filters)))
+        Ok(self.collect_where(limit, None, |e, _| meta_filter_matches(e, filters)))
     }
 
     /// Mirror of `SqliteStore::search_name`: `name LIKE pattern` + optional meta-filters.
@@ -192,7 +247,8 @@ impl MemoryStore {
         limit: usize,
     ) -> Result<Vec<FileRecord>> {
         let like = Like::new(name);
-        Ok(self.collect_where(limit, |e, _| {
+        let need = Need::of(std::slice::from_ref(&Compiled::NameLike(Like::new(name))));
+        Ok(self.collect_where(limit, need.as_ref(), |e, _| {
             like.matches(e.name_str()) && meta_filter_matches(e, filters)
         }))
     }
@@ -204,7 +260,7 @@ impl MemoryStore {
         filters: &MetaFilters,
         limit: usize,
     ) -> Result<Vec<FileRecord>> {
-        Ok(self.collect_where(limit, |e, _| {
+        Ok(self.collect_where(limit, None, |e, _| {
             e.ext_str() == Some(ext) && meta_filter_matches(e, filters)
         }))
     }
@@ -234,7 +290,10 @@ impl MemoryStore {
         limit: usize,
     ) -> Result<Vec<FileRecord>> {
         let compiled = compile(conds);
-        Ok(self.collect_where(limit, |e, memo| all_match(&compiled, e, memo)))
+        let need = Need::of(&compiled);
+        Ok(self.collect_where(limit, need.as_ref(), |e, memo| {
+            all_match(&compiled, e, memo)
+        }))
     }
 
     pub fn search_sorted(
@@ -244,12 +303,15 @@ impl MemoryStore {
         limit: usize,
     ) -> Result<Vec<FileRecord>> {
         let compiled = compile(conds);
+        let need = Need::of(&compiled);
         let state = self.read_state();
         Ok(
-            sorted_entries(&state, sort, limit, |e, memo| all_match(&compiled, e, memo))
-                .into_iter()
-                .map(|i| state.view(i).to_record())
-                .collect(),
+            sorted_entries(&state, sort, limit, need.as_ref(), |e, memo| {
+                all_match(&compiled, e, memo)
+            })
+            .into_iter()
+            .map(|i| state.view(i).to_record())
+            .collect(),
         )
     }
 
@@ -264,12 +326,14 @@ impl MemoryStore {
     ) -> Result<Vec<FileRecord>> {
         let state = self.read_state();
         let compiled = compile(conds);
-        let candidates: Vec<EntryRef<'_>> = matching_entries(&state, cap, |e, memo| {
-            keep(e.name_str()) && all_match(&compiled, e, memo)
-        })
-        .into_iter()
-        .map(|i| state.view(i))
-        .collect();
+        let need = Need::of(&compiled);
+        let candidates: Vec<EntryRef<'_>> =
+            matching_entries(&state, cap, need.as_ref(), |e, memo| {
+                keep(e.name_str()) && all_match(&compiled, e, memo)
+            })
+            .into_iter()
+            .map(|i| state.view(i))
+            .collect();
         let names: Vec<&str> = candidates.iter().map(|e| e.name_str()).collect();
         Ok(rank(&names)
             .into_iter()

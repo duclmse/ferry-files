@@ -5,6 +5,7 @@ use std::hash::BuildHasher;
 use hashbrown::{DefaultHashBuilder, HashTable};
 use serde::{Deserialize, Serialize};
 
+use super::name_filter::{self, Bloom, NameFilters, Need, FILTER_BLOCK};
 use super::snapshot::{Snapshot, SnapshotRef};
 use super::sort::SortIndexes;
 use super::{FileRecord, RecordView, SortKey};
@@ -137,6 +138,7 @@ pub(super) struct IndexState {
     /// Used for dirty-shutdown recovery: replay events from this position.
     pub(super) usn_checkpoint: u64,
     sorted: SortIndexes,
+    names: NameFilters,
     /// Bumped whenever an entry changes.
     revision: u64,
 }
@@ -316,6 +318,7 @@ impl IndexState {
             crawl_gen: 0,
             usn_checkpoint: 0,
             sorted: SortIndexes::default(),
+            names: NameFilters::default(),
             revision: 0,
         }
     }
@@ -342,10 +345,11 @@ impl IndexState {
         let index = buckets * (std::mem::size_of::<u32>() + 1);
         let sorted = self.sorted.heap_bytes();
         let extra = self.extra.capacity() * (std::mem::size_of::<(u32, Extra)>() + 1);
-        let total = entries + names + index + sorted + extra;
+        let filters = self.names.heap_bytes();
+        let total = entries + names + index + sorted + extra + filters;
         format!(
             "{:.0} MB for {} entries (records {:.0}, names {:.0}, path index {:.0}, \
-             sort orders {:.0}, extras {:.0})",
+             sort orders {:.0}, extras {:.0}, name filters {:.0})",
             total as f64 / MB,
             self.len(),
             entries as f64 / MB,
@@ -353,6 +357,7 @@ impl IndexState {
             index as f64 / MB,
             sorted as f64 / MB,
             extra as f64 / MB,
+            filters as f64 / MB,
         )
     }
 
@@ -447,6 +452,24 @@ impl IndexState {
 
     pub(super) fn slots(&self) -> usize {
         self.entries.len()
+    }
+
+    pub(super) fn filter_blocks(&self) -> usize {
+        self.entries.len().div_ceil(FILTER_BLOCK)
+    }
+
+    /// Filter block `b`'s filter, built now if it has none.
+    pub(super) fn name_filter(&self, b: usize) -> Option<&Bloom> {
+        let start = b * FILTER_BLOCK;
+        let end = (start + FILTER_BLOCK).min(self.entries.len());
+        self.names.get(b, || {
+            name_filter::build(self.iter_range(start..end).map(|e| e.name_str()))
+        })
+    }
+
+    /// Whether filter block `b` may hold a live name meeting `need`.
+    pub(super) fn block_may_match(&self, b: usize, need: &Need) -> bool {
+        self.name_filter(b).is_none_or(|f| need.allows(f))
     }
 
     fn intern_ext(&mut self, ext: Option<&str>) -> u32 {
@@ -565,6 +588,10 @@ impl IndexState {
         if let Some(i) = self.find_any(&r.path) {
             let old = self.entries[i as usize];
             let cut = r.path.len() - old.tail_len as usize;
+            // A filter built while the entry was dead left its name out.
+            if old.dead() || self.view(i).name_str() != r.name {
+                self.names.changed(i);
+            }
             let (mut entry, extra) = self.pack(r, old.tail_off, cut, old.parent);
             if old.dead() {
                 self.dead -= 1;
@@ -591,6 +618,7 @@ impl IndexState {
         }
         self.entries.push(entry);
         self.set_extra(i, extra);
+        self.names.changed(i);
         self.touched(i);
         let h = self.hash(&r.path);
         let (entries, tails, hasher) = (&self.entries, &self.tails, &self.hasher);
@@ -707,6 +735,7 @@ impl IndexState {
         self.dead = self.entries.iter().filter(|e| e.dead()).count();
         self.pinned = self.dead;
         self.sorted.clear();
+        self.names = NameFilters::new(self.entries.len());
     }
 
     pub(super) fn to_snapshot(&self) -> SnapshotRef<'_> {
@@ -768,6 +797,7 @@ impl IndexState {
         st.crawl_gen = s.crawl_gen;
         st.usn_checkpoint = usn_checkpoint;
         st.index = Self::build_index(&st.entries, &st.tails, &st.hasher)?;
+        st.names = NameFilters::new(st.entries.len());
         Ok(st)
     }
 
