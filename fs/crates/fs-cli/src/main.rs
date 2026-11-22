@@ -368,9 +368,27 @@ async fn run_stats(config_path: std::path::PathBuf) -> anyhow::Result<()> {
         println!("archive entries: {}", s.archive_entries_indexed);
         println!("archives:        {}", s.archives_crawled);
         println!("events:          {}", s.events_processed);
-        println!("last crawl:      {}s ago", s.last_crawl_secs);
+        let now = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .map_or(0, |d| d.as_secs());
+        println!("last crawl:      {}", crawl_age(s.last_crawl_secs, now));
     }
     Ok(())
+}
+
+/// `last_crawl` is the Unix time the daemon's last full crawl finished.
+fn crawl_age(last_crawl: u64, now: u64) -> String {
+    if last_crawl == 0 {
+        return "never".into();
+    }
+    let s = now.saturating_sub(last_crawl);
+    let (d, h, m) = (s / 86_400, s / 3_600 % 24, s / 60 % 60);
+    match (d, h, m) {
+        (0, 0, 0) => format!("{s}s ago"),
+        (0, 0, _) => format!("{m}m {}s ago", s % 60),
+        (0, _, _) => format!("{h}h {m}m ago"),
+        _ => format!("{d}d {h}h ago"),
+    }
 }
 
 async fn run_reindex(config_path: std::path::PathBuf, full: bool) -> anyhow::Result<()> {
@@ -455,6 +473,18 @@ mod tests {
             archive_path: None,
             snippet: None,
         }
+    }
+
+    #[test]
+    fn crawl_age_reads_as_time_ago() {
+        let now = 1_800_000_000;
+        assert_eq!(crawl_age(0, now), "never");
+        assert_eq!(crawl_age(now - 42, now), "42s ago");
+        assert_eq!(crawl_age(now - 125, now), "2m 5s ago");
+        assert_eq!(crawl_age(now - 3 * 3_600 - 60, now), "3h 1m ago");
+        assert_eq!(crawl_age(now - 2 * 86_400 - 3_600, now), "2d 1h ago");
+        // A clock set back since the crawl.
+        assert_eq!(crawl_age(now + 10, now), "0s ago");
     }
 
     #[test]

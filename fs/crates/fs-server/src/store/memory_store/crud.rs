@@ -302,6 +302,18 @@ impl MemoryStore {
         state.iter().filter(|e| !e.is_archive()).count() as i64
     }
 
+    /// Real (not archive) files and folders.
+    pub fn entry_counts(&self) -> (u64, u64) {
+        let state = self.read_state();
+        state
+            .iter()
+            .filter(|e| !e.is_archive())
+            .fold(
+                (0, 0),
+                |(f, d), e| if e.is_dir() { (f, d + 1) } else { (f + 1, d) },
+            )
+    }
+
     pub fn total_archive_entries(&self) -> i64 {
         let state = self.read_state();
         state.iter().filter(|e| e.is_archive()).count() as i64

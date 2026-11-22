@@ -75,6 +75,18 @@ impl SqliteStore {
     // Statistics
     // -----------------------------------------------------------------------
 
+    /// Real (not archive) files and folders: one pass over the table.
+    pub fn entry_counts(&self) -> Result<(u64, u64)> {
+        let conn = self.get_conn()?;
+        let (files, dirs): (i64, i64) = conn.query_row(
+            "SELECT COALESCE(SUM(is_dir = 0), 0), COALESCE(SUM(is_dir != 0), 0)
+             FROM files WHERE archive_path IS NULL",
+            [],
+            |row| Ok((row.get(0)?, row.get(1)?)),
+        )?;
+        Ok((files.max(0) as u64, dirs.max(0) as u64))
+    }
+
     pub fn total_files(&self) -> Result<i64> {
         let conn = self.get_conn()?;
         let n: i64 = conn.query_row(

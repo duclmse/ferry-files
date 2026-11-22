@@ -53,6 +53,8 @@ fn total_files_excludes_archive_entries() {
     store.upsert_file(&inner);
     assert_eq!(store.total_files(), 1);
     assert_eq!(store.total_archive_entries(), 1);
+    store.upsert_file(&dir("/d"));
+    assert_eq!(store.entry_counts(), (1, 1));
 }
 
 #[test]

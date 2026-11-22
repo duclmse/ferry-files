@@ -56,14 +56,11 @@ try {
     }
     if (-not $up) { throw "daemon did not come up; see $DataDir\daemon.query-bench.err.log" }
 
-    # total_files/last_crawl_secs in /stats are in-process atomics that reset
-    # to 0 on every daemon start and are only ever written by a live crawl.
-    # Against an already-warm data dir (the normal case here), daemon.rs's
-    # "needs_crawl" check skips the crawl entirely, so those atomics stay 0
-    # forever even though the persisted sqlite/tantivy state is already fully
-    # queryable. The only reliable readiness signal is which branch the
-    # daemon actually logged: either it skipped the crawl (ready as soon as
-    # it logged that), or it ran one (ready once it logs completion).
+    # /stats cannot tell a finished crawl from a kept index: both report a
+    # last crawl time and counts from the start. The only reliable readiness
+    # signal is which branch the daemon actually logged: either it skipped
+    # the crawl (ready as soon as it logged that), or it ran one (ready once
+    # it logs completion).
     Write-Host "==> Waiting for the daemon to be ready to serve queries (timeout 600s)"
     $logPath = "$DataDir\daemon.query-bench.out.log"
     $ready = $false
@@ -72,7 +69,7 @@ try {
             Get-Content "$DataDir\daemon.query-bench.err.log" | Write-Host
             throw "daemon exited unexpectedly"
         }
-        if ((Test-Path $logPath) -and (Select-String -Path $logPath -Pattern "skipping initial crawl|full crawl complete" -Quiet)) {
+        if ((Test-Path $logPath) -and (Select-String -Path $logPath -Pattern "catch-up: |index already built|full crawl complete" -Quiet)) {
             $ready = $true
             break
         }
@@ -85,12 +82,11 @@ try {
 
     $stats = Invoke-RestMethod -Uri "http://127.0.0.1:$restPort/stats" -TimeoutSec 5
 
-    # 0 here just means this process didn't run a crawl (warm-started against
-    # an existing index) - total_files is an in-process counter only ever
-    # written by a live crawl, not read back from the persisted index. A
-    # /search total isn't a substitute: it's capped by config search.max_limit
-    # (10000 by default), so it silently undercounts larger indices.
-    $totalFilesDisplay = if ($stats.total_files -gt 0) { $stats.total_files } else { "unknown (warm-started; see search hits below for scale)" }
+    # total_files is counted from the index shortly after start, so 0 means
+    # that count has not run yet. A /search total isn't a substitute: it's
+    # capped by config search.max_limit (10000 by default), so it silently
+    # undercounts larger indices.
+    $totalFilesDisplay = if ($stats.total_files -gt 0) { $stats.total_files } else { "unknown (not counted yet; see search hits below for scale)" }
 
     $queries = [ordered]@{
         "glob:*.rs"    = "*.rs"

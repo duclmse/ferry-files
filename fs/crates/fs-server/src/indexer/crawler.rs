@@ -266,6 +266,9 @@ pub async fn full_crawl(
     // finishes, rows with an older generation are stale and deleted in SQL -
     // no full path list is materialised in Rust memory.
     let generation = sqlite.begin_crawl_generation()?;
+    // Counted up from zero while the crawl runs, as its progress.
+    metrics.total_files.store(0, Ordering::Relaxed);
+    metrics.total_dirs.store(0, Ordering::Relaxed);
 
     let stores = Stores {
         sqlite: Arc::clone(&sqlite),
@@ -468,7 +471,6 @@ pub async fn full_crawl(
     // Blocking: the commit drains Tantivy's indexing queue and fsyncs, and
     // total_files counts every row.
     let now = unix_now();
-    metrics.last_crawl_secs.store(now as u64, Ordering::Relaxed);
     tokio::task::spawn_blocking(move || {
         if let Err(e) = tantivy.commit() {
             tracing::error!("final tantivy commit: {e}");
@@ -479,6 +481,11 @@ pub async fn full_crawl(
         let _ = sqlite.set_meta("last_crawl_time", &now.to_string());
         let total = sqlite.total_files().unwrap_or(0);
         let _ = sqlite.set_meta("total_files", &total.to_string());
+        // The walk's tally counts entries it saw, not what the index holds
+        // after stale rows went.
+        metrics.recount(&sqlite);
+        // Last, so a client that waits for it reads the final counts.
+        metrics.last_crawl_secs.store(now as u64, Ordering::Relaxed);
     })
     .await
     .map_err(|e| AppError::Index(e.to_string()))?;

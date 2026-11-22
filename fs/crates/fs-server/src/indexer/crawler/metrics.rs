@@ -10,6 +10,7 @@ pub struct IndexMetrics {
     pub total_files: AtomicU64,
     pub total_dirs: AtomicU64,
     pub content_indexed: AtomicU64,
+    /// Unix time the last full crawl finished; 0 before the first.
     pub last_crawl_secs: AtomicU64,
     pub events_processed: AtomicU64,
     pub archive_entries_indexed: AtomicU64,
@@ -27,6 +28,22 @@ impl IndexMetrics {
             archive_entries_indexed: AtomicU64::new(0),
             archives_crawled: AtomicU64::new(0),
         })
+    }
+}
+
+impl IndexMetrics {
+    /// Sets the file and folder counts from the store. A crawl counts up as
+    /// it goes, but nothing else does: a restart, watcher events and file
+    /// lists change the store without touching the counters. Blocking.
+    pub fn recount(&self, store: &crate::store::FileStore) {
+        use std::sync::atomic::Ordering;
+        match store.entry_counts() {
+            Ok((files, dirs)) => {
+                self.total_files.store(files, Ordering::Relaxed);
+                self.total_dirs.store(dirs, Ordering::Relaxed);
+            }
+            Err(e) => tracing::warn!("counting index entries: {e}"),
+        }
     }
 }
 

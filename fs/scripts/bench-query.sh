@@ -72,13 +72,10 @@ for _ in $(seq 1 50); do
     sleep 0.2
 done
 
-# total_files/last_crawl_secs in /stats are in-process atomics that reset to 0
-# on every daemon start and are only ever written by a live crawl. Against an
-# already-warm data dir (the normal case here), daemon.rs's "needs_crawl" check
-# skips the crawl entirely, so those atomics stay 0 forever even though the
-# persisted sqlite/tantivy state is already fully queryable. The only reliable
-# readiness signal is which branch the daemon actually logged: either it skipped
-# the crawl (ready as soon as it logged that), or it ran one (ready once it logs completion).
+# /stats cannot tell a finished crawl from a kept index: both report a last
+# crawl time and counts from the start. The only reliable readiness signal is
+# which branch the daemon actually logged: either it skipped the crawl (ready
+# as soon as it logged that), or it ran one (ready once it logs completion).
 echo "==> Waiting for the daemon to be ready to serve queries (timeout 600s)"
 READY=0
 for _ in $(seq 1 600); do
@@ -87,7 +84,7 @@ for _ in $(seq 1 600); do
         cat "$DATA_DIR/daemon.query-bench.log" >&2
         exit 1
     fi
-    if grep -q "skipping initial crawl" "$DATA_DIR/daemon.query-bench.log" 2>/dev/null; then
+    if grep -q "catch-up: \|index already built" "$DATA_DIR/daemon.query-bench.log" 2>/dev/null; then
         READY=1
         break
     fi
@@ -107,12 +104,11 @@ STATS="$(curl -s "http://127.0.0.1:$REST_PORT/stats")"
 CONTENT_INDEXED="$(printf '%s' "$STATS" | sed -n 's/.*"content_indexed":\([0-9]*\).*/\1/p')"
 TOTAL_FILES="$(printf '%s' "$STATS" | sed -n 's/.*"total_files":\([0-9]*\).*/\1/p')"
 if [ -z "$TOTAL_FILES" ] || [ "$TOTAL_FILES" = "0" ]; then
-    # 0 here just means this process didn't run a crawl (warm-started against
-    # an existing index) - total_files is an in-process counter only ever
-    # written by a live crawl, not read back from the persisted index. A
-    # /search total isn't a substitute: it's capped by config search.max_limit
-    # (10000 by default), so it silently undercounts larger indices.
-    TOTAL_FILES="unknown (warm-started; see search hits below for scale)"
+    # total_files is counted from the index shortly after start, so 0 means
+    # that count has not run yet. A /search total isn't a substitute: it's
+    # capped by config search.max_limit (10000 by default), so it silently
+    # undercounts larger indices.
+    TOTAL_FILES="unknown (not counted yet; see search hits below for scale)"
 fi
 
 QUERIES=(

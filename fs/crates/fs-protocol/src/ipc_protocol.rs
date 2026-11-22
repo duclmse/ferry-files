@@ -124,6 +124,7 @@ pub struct StatsResponse {
     pub archive_entries_indexed: u64,
     pub archives_crawled: u64,
     pub events_processed: u64,
+    /// Unix time the last full crawl finished; 0 before the first.
     pub last_crawl_secs: u64,
 }
 

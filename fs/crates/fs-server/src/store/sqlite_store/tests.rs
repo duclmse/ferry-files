@@ -187,6 +187,10 @@ fn total_files_excludes_archive_entries() {
     inner.archive_path = Some("/z.zip".into());
     store.upsert_file(&inner).unwrap();
     assert_eq!(store.total_files().unwrap(), 1);
+    let mut folder = sample_record("/d");
+    folder.is_dir = true;
+    store.upsert_file(&folder).unwrap();
+    assert_eq!(store.entry_counts().unwrap(), (1, 1));
 }
 
 #[test]

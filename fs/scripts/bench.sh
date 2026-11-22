@@ -124,15 +124,15 @@ done
 # built index (see "needs_crawl" there), which is exactly the --data-dir
 # reuse case this script documents. Detect that from the daemon's own log and
 # force a fresh crawl via the reindex API so there's actually something to
-# time; otherwise last_crawl_secs never gets set and the wait below hangs
-# until timeout.
+# time; otherwise the wait below for a crawl after START_EPOCH hangs until
+# timeout.
 for _ in $(seq 1 20); do
-    if grep -q "skipping initial crawl\|full crawl starting" "$WORKDIR/daemon.log" 2>/dev/null; then
+    if grep -q "catch-up: \|index already built\|full crawl starting" "$WORKDIR/daemon.log" 2>/dev/null; then
         break
     fi
     sleep 0.5
 done
-if grep -q "skipping initial crawl" "$WORKDIR/daemon.log" 2>/dev/null; then
+if grep -q "catch-up: \|index already built" "$WORKDIR/daemon.log" 2>/dev/null; then
     echo "==> Existing index found; forcing a fresh crawl via /reindex to benchmark"
     START_EPOCH=$(date +%s)
     curl -s -X POST -H 'Content-Type: application/json' -d '{"full": true}' \
@@ -150,13 +150,14 @@ for _ in $(seq 1 600); do
     fi
     STATS="$(curl -s "http://127.0.0.1:$REST_PORT/stats")"
     LAST_CRAWL="$(printf '%s' "$STATS" | sed -n 's/.*"last_crawl_secs":\([0-9]*\).*/\1/p')"
-    if [ -n "$LAST_CRAWL" ] && [ "$LAST_CRAWL" != "0" ]; then
+    # A kept index reports its previous crawl's time from the start.
+    if [ -n "$LAST_CRAWL" ] && [ "$LAST_CRAWL" -ge "$START_EPOCH" ]; then
         break
     fi
     sleep 1
 done
 
-if [ -z "$LAST_CRAWL" ] || [ "$LAST_CRAWL" = "0" ]; then
+if [ -z "$LAST_CRAWL" ] || [ "$LAST_CRAWL" -lt "$START_EPOCH" ]; then
     echo "crawl did not finish within timeout" >&2
     exit 1
 fi

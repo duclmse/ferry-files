@@ -670,6 +670,14 @@ impl FileStore {
         }
     }
 
+    /// Real (not archive) `(files, folders)`. A full pass: not per request.
+    pub fn entry_counts(&self) -> Result<(u64, u64)> {
+        match self {
+            FileStore::Sqlite(s) => s.entry_counts(),
+            FileStore::Memory(m) => Ok(m.entry_counts()),
+        }
+    }
+
     pub fn total_archive_entries(&self) -> Result<i64> {
         match self {
             FileStore::Sqlite(s) => s.total_archive_entries(),

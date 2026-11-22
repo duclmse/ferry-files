@@ -115,16 +115,16 @@ try {
     # a built index (see "needs_crawl" there), which is exactly the -DataDir
     # reuse case this script documents. Detect that from the daemon's own log
     # and force a fresh crawl via the reindex API so there's actually
-    # something to time; otherwise last_crawl_secs never gets set and the
-    # wait below hangs until timeout.
+    # something to time; otherwise the wait below for a crawl after
+    # $startEpoch hangs until timeout.
     $logPath = "$workDir\daemon.out.log"
     for ($i = 0; $i -lt 20; $i++) {
-        if ((Test-Path $logPath) -and (Select-String -Path $logPath -Pattern "skipping initial crawl|full crawl starting" -Quiet)) {
+        if ((Test-Path $logPath) -and (Select-String -Path $logPath -Pattern "catch-up: |index already built|full crawl starting" -Quiet)) {
             break
         }
         Start-Sleep -Milliseconds 500
     }
-    if ((Test-Path $logPath) -and (Select-String -Path $logPath -Pattern "skipping initial crawl" -Quiet)) {
+    if ((Test-Path $logPath) -and (Select-String -Path $logPath -Pattern "catch-up: |index already built" -Quiet)) {
         Write-Host "==> Existing index found; forcing a fresh crawl via /reindex to benchmark"
         $startEpoch = [DateTimeOffset]::UtcNow.ToUnixTimeSeconds()
         Invoke-RestMethod -Uri "http://127.0.0.1:$restPort/reindex" -Method Post -ContentType "application/json" -Body '{"full": true}' | Out-Null
@@ -139,11 +139,12 @@ try {
             throw "daemon exited unexpectedly"
         }
         $stats = Invoke-RestMethod -Uri "http://127.0.0.1:$restPort/stats" -TimeoutSec 5
+        # A kept index reports its previous crawl's time from the start.
         $lastCrawl = [int64]$stats.last_crawl_secs
-        if ($lastCrawl -ne 0) { break }
+        if ($lastCrawl -ge $startEpoch) { break }
         Start-Sleep -Seconds 1
     }
-    if ($lastCrawl -eq 0) { throw "crawl did not finish within timeout" }
+    if ($lastCrawl -lt $startEpoch) { throw "crawl did not finish within timeout" }
 
     $elapsed = $lastCrawl - $startEpoch
     if ($elapsed -lt 1) { $elapsed = 1 }

@@ -157,6 +157,15 @@ pub async fn run_with_shutdown(
         t_tantivy.elapsed().as_secs_f64()
     );
     let metrics = IndexMetrics::new();
+    // A warm start does not crawl, so the time comes from the last one.
+    if let Some(t) = sqlite
+        .get_meta("last_crawl_time")
+        .ok()
+        .flatten()
+        .and_then(|v| v.parse::<u64>().ok())
+    {
+        metrics.last_crawl_secs.store(t, Ordering::Relaxed);
+    }
 
     // ── 5b. Archive registry ───────────────────────────────────────────────
     let archive_registry: Arc<ArchiveRegistry> = {
@@ -266,7 +275,16 @@ pub async fn run_with_shutdown(
     // ── 11c. Everything file lists ─────────────────────────────────────────
     tokio::spawn(keep_file_lists(
         Arc::clone(&sqlite),
+        Arc::clone(&metrics),
         Arc::clone(&shared_cfg),
+        Arc::clone(&crawl_active),
+        shutdown.clone(),
+    ));
+
+    // ── 11d. File and folder counts for stats ──────────────────────────────
+    tokio::spawn(keep_counts(
+        Arc::clone(&sqlite),
+        Arc::clone(&metrics),
         Arc::clone(&crawl_active),
         shutdown.clone(),
     ));
@@ -732,8 +750,38 @@ async fn keep_snapshot_fresh(
 /// Loads `[file_lists]` and keeps them current, following hot reloads. It
 /// waits for the first crawl: with the store still empty, SQLite crawls
 /// with its indexes dropped, and rows from a list would make it keep them.
+/// Keeps the stats' file and folder counts true to the store: once at start,
+/// then after watcher events. Counting is a pass over every entry, so it runs
+/// at most every `EVERY` and not while a crawl keeps its own tally.
+async fn keep_counts(
+    store: Arc<FileStore>,
+    metrics: Arc<IndexMetrics>,
+    crawl_active: Arc<AtomicBool>,
+    shutdown: CancellationToken,
+) {
+    const EVERY: Duration = Duration::from_secs(10);
+    let mut counted_at: Option<u64> = None;
+    loop {
+        let events = metrics.events_processed.load(Ordering::Relaxed);
+        if counted_at != Some(events) && !crawl_active.load(Ordering::Acquire) {
+            let (store, m) = (Arc::clone(&store), Arc::clone(&metrics));
+            if tokio::task::spawn_blocking(move || m.recount(&store))
+                .await
+                .is_ok()
+            {
+                counted_at = Some(events);
+            }
+        }
+        tokio::select! {
+            _ = shutdown.cancelled() => break,
+            _ = tokio::time::sleep(EVERY) => {}
+        }
+    }
+}
+
 async fn keep_file_lists(
     store: Arc<FileStore>,
+    metrics: Arc<IndexMetrics>,
     cfg: Arc<RwLock<crate::config::Config>>,
     crawl_active: Arc<AtomicBool>,
     shutdown: CancellationToken,
@@ -753,14 +801,18 @@ async fn keep_file_lists(
         let crawled = store.get_meta("last_crawl_time").ok().flatten().is_some();
         let ready = crawled && !crawl_active.load(Ordering::Acquire);
         if ready {
-            let store = Arc::clone(&store);
+            let syncing = Arc::clone(&store);
             let configured = lists;
             let report = tokio::task::spawn_blocking(move || {
-                crate::indexer::file_lists::sync(&store, &configured, &roots, &data_dir)
+                crate::indexer::file_lists::sync(&syncing, &configured, &roots, &data_dir)
             })
             .await;
             match report {
                 Ok(Ok(report)) => {
+                    if !report.loaded.is_empty() || !report.dropped.is_empty() {
+                        let (store, m) = (Arc::clone(&store), Arc::clone(&metrics));
+                        let _ = tokio::task::spawn_blocking(move || m.recount(&store)).await;
+                    }
                     for l in &report.loaded {
                         tracing::info!(
                             "file list {}: {} entries ({} removed, {} under watch paths left out)",
