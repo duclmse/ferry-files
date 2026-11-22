@@ -309,13 +309,24 @@ impl Link {
     }
 
     fn upload(&self, data: &[u8], name: &str, parent: &str) -> Result<String> {
+        self.upload_from(&mut &data[..], data.len() as u64, name, parent)
+    }
+
+    /// Sends file `from` (`size` bytes) as `name` in folder `parent`, a piece at a time.
+    fn upload_file(&self, from: &std::path::Path, size: u64, name: &str, parent: &str) -> Result<String> {
+        let mut f = std::fs::File::open(from).map_err(|e| DevError::Msg(format!("Can't read {}: {e}", from.display())))?;
+        self.upload_from(&mut f, size, name, parent)
+    }
+
+    /// Sends `size` bytes read from `src` as `name` in folder `parent`.
+    fn upload_from(&self, src: &mut dyn std::io::Read, size: u64, name: &str, parent: &str) -> Result<String> {
         let v = self.values()?;
         let name_w = HSTRING::from(name);
         unsafe {
             v.SetStringValue(&WPD_OBJECT_PARENT_ID, &HSTRING::from(parent)).map_err(|e| werr("Couldn't send the file", e))?;
             v.SetStringValue(&WPD_OBJECT_NAME, &name_w).map_err(|e| werr("Couldn't send the file", e))?;
             v.SetStringValue(&WPD_OBJECT_ORIGINAL_FILE_NAME, &name_w).map_err(|e| werr("Couldn't send the file", e))?;
-            v.SetUnsignedLargeIntegerValue(&WPD_OBJECT_SIZE, data.len() as u64).map_err(|e| werr("Couldn't send the file", e))?;
+            v.SetUnsignedLargeIntegerValue(&WPD_OBJECT_SIZE, size).map_err(|e| werr("Couldn't send the file", e))?;
             v.SetGuidValue(&WPD_OBJECT_FORMAT, &WPD_OBJECT_FORMAT_UNSPECIFIED).map_err(|e| werr("Couldn't send the file", e))?;
             v.SetGuidValue(&WPD_OBJECT_CONTENT_TYPE, &WPD_CONTENT_TYPE_GENERIC_FILE).map_err(|e| werr("Couldn't send the file", e))?;
         }
@@ -324,17 +335,29 @@ impl Link {
         unsafe { self.content.CreateObjectWithPropertiesAndData(&v, &mut stream, &mut chunk, std::ptr::null_mut()) }
             .map_err(|e| werr(&format!("The device didn't take {name}"), e))?;
         let stream = stream.ok_or_else(|| DevError::Msg(format!("The device didn't take {name}.")))?;
-        let chunk = (chunk as usize).clamp(16 * 1024, 1024 * 1024);
-        for piece in data.chunks(chunk) {
+        let mut buf = vec![0u8; (chunk as usize).clamp(16 * 1024, 1024 * 1024)];
+        let mut sent = 0u64;
+        loop {
             // Not committing drops the new file.
             if QUITTING.load(Ordering::Relaxed) {
                 return err("Stopped: the app is quitting.");
             }
+            let got = match src.read(&mut buf) {
+                Ok(0) => break,
+                Ok(n) => n,
+                Err(e) if e.kind() == std::io::ErrorKind::Interrupted => continue,
+                Err(e) => return err(format!("Couldn't read {name} to send it: {e}")),
+            };
+            let piece = &buf[..got];
+            sent += got as u64;
             let mut n = 0u32;
             let hr = unsafe { stream.Write(piece.as_ptr().cast(), piece.len() as u32, Some(&mut n)) };
             if hr.is_err() || n as usize != piece.len() {
                 return Err(werr(&format!("Couldn't send {name}"), hr.into()));
             }
+        }
+        if sent != size {
+            return err(format!("{name} changed while it was being sent."));
         }
         unsafe { stream.Commit(STGC_DEFAULT) }.map_err(|e| werr(&format!("Couldn't send {name}"), e))?;
         use windows::core::Interface;
@@ -584,6 +607,49 @@ impl Wpd {
         format!("{}:{}:{}", n.id, n.size, n.mtime)
     }
 
+    /// MTP can't overwrite: upload under a temporary name, delete the old file, rename. The new
+    /// data stays on the device at every step: a copy is only deleted once another one is there.
+    fn put(&self, path: &str, exists: bool, size: u64, send: &dyn Fn(&Link, &str, &str) -> Result<String>) -> Result<String> {
+        self.forget_streamed();
+        let mut inner = self.inner();
+        let name = basename(path).to_string();
+        let parent = self.parent_of(&mut inner, path)?;
+        // A folder that can't be listed is an error here, not "no old file": uploading anyway
+        // would put a second file of the same name next to the old one.
+        let old = if exists { self.resolve(&mut inner, path)? } else { None };
+        let new_id = match old {
+            None => send(&inner.link, &name, &parent)?,
+            Some(old) => {
+                let tmp_name = temp_name(&name);
+                inner.invalidate(&parent);
+                if let Some(stale) = inner.find(&parent, &tmp_name)? {
+                    inner.link.delete(&stale.id)?;
+                }
+                let tmp_id = send(&inner.link, &tmp_name, &parent)?;
+                Self::check_size(&mut inner, &parent, &tmp_id, size, &tmp_name)?;
+                inner.link.delete(&old.id)?;
+                inner.invalidate(&parent);
+                match inner.link.rename(&tmp_id, &name) {
+                    // Checked below; if that fails the file is kept and the error reported.
+                    Ok(()) => tmp_id,
+                    Err(_) => {
+                        // Some devices can't rename: upload again under the real name, and only
+                        // then drop the temporary copy.
+                        let id = send(&inner.link, &name, &parent).map_err(|e| {
+                            let why = e.to_string();
+                            DevError::Msg(format!("{}. The new version is on the device as {tmp_name}.", why.trim_end_matches(['.', ' ', '\r', '\n'])))
+                        })?;
+                        let _ = inner.link.delete(&tmp_id);
+                        inner.invalidate(&parent);
+                        id
+                    }
+                }
+            }
+        };
+        let k = Self::check_size(&mut inner, &parent, &new_id, size, &name)?;
+        Ok(format!("{}:{}:{}", k.id, k.size, k.mtime))
+    }
+
     fn check_size(inner: &mut Inner, parent: &str, id: &str, size: u64, name: &str) -> Result<Child> {
         inner.invalidate(parent);
         match inner.children(parent)?.into_iter().find(|k| k.id == id) {
@@ -704,47 +770,30 @@ impl Transport for Wpd {
         Ok((data, Self::version_of(&node)))
     }
 
-    /// MTP can't overwrite: upload under a temporary name, delete the old file, rename. The new
-    /// data stays on the device at every step: a copy is only deleted once another one is there.
     fn replace(&self, path: &str, data: &[u8], exists: bool) -> Result<String> {
-        self.forget_streamed();
+        self.put(path, exists, data.len() as u64, &|link, name, parent| link.upload(data, name, parent))
+    }
+
+    fn replace_from(&self, path: &str, from: &std::path::Path, exists: bool) -> Result<String> {
+        let size = std::fs::metadata(from).map_err(|e| DevError::Msg(format!("Can't read {}: {e}", from.display())))?.len();
+        self.put(path, exists, size, &|link, name, parent| link.upload_file(from, size, name, parent))
+    }
+
+    fn read_to(&self, path: &str, to: &std::path::Path, read: &mut dyn FnMut(u64), stop: &AtomicBool) -> Result<String> {
         let mut inner = self.inner();
-        let name = basename(path).to_string();
-        let parent = self.parent_of(&mut inner, path)?;
-        // A folder that can't be listed is an error here, not "no old file": uploading anyway
-        // would put a second file of the same name next to the old one.
-        let old = if exists { self.resolve(&mut inner, path)? } else { None };
-        let new_id = match old {
-            None => inner.link.upload(data, &name, &parent)?,
-            Some(old) => {
-                let tmp_name = temp_name(&name);
-                inner.invalidate(&parent);
-                if let Some(stale) = inner.find(&parent, &tmp_name)? {
-                    inner.link.delete(&stale.id)?;
-                }
-                let tmp_id = inner.link.upload(data, &tmp_name, &parent)?;
-                Self::check_size(&mut inner, &parent, &tmp_id, data.len() as u64, &tmp_name)?;
-                inner.link.delete(&old.id)?;
-                inner.invalidate(&parent);
-                match inner.link.rename(&tmp_id, &name) {
-                    // Checked below; if that fails the file is kept and the error reported.
-                    Ok(()) => tmp_id,
-                    Err(_) => {
-                        // Some devices can't rename: upload again under the real name, and only
-                        // then drop the temporary copy.
-                        let id = inner.link.upload(data, &name, &parent).map_err(|e| {
-                            let why = e.to_string();
-                            DevError::Msg(format!("{}. The new version is on the device as {tmp_name}.", why.trim_end_matches(['.', ' ', '\r', '\n'])))
-                        })?;
-                        let _ = inner.link.delete(&tmp_id);
-                        inner.invalidate(&parent);
-                        id
-                    }
-                }
-            }
+        if let Ok(parent) = self.parent_of(&mut inner, path) {
+            inner.invalidate(&parent);
+        }
+        let Some(node) = self.resolve(&mut inner, path)?.filter(|n| !n.dir) else {
+            return err(format!("No such file: {path}"));
         };
-        let k = Self::check_size(&mut inner, &parent, &new_id, data.len() as u64, &name)?;
-        Ok(format!("{}:{}:{}", k.id, k.size, k.mtime))
+        inner.link.download_until(&node.id, to, &[&*self.stop, stop])?;
+        let got = std::fs::metadata(to).map(|m| m.len()).unwrap_or(0);
+        if got != node.size {
+            return err(format!("Read {got} bytes but the device reports {}.", node.size));
+        }
+        read(got);
+        Ok(Self::version_of(&node))
     }
 
     fn delete(&self, path: &str, _is_dir: bool) -> Result<()> {
