@@ -155,17 +155,39 @@ pub(super) fn fuzzy_rank(names: &[&str], term: &str, threshold: f32, limit: usiz
         .unwrap_or(0)
         .max(1) as f32;
 
+    let term_bytes = term.is_ascii().then_some(term.as_bytes());
     let mut scored: Vec<(f32, usize)> = names
         .par_iter()
         .enumerate()
         .map_init(
-            || (Matcher::new(NucleoConfig::DEFAULT), Vec::new()),
-            |(matcher, hay_buf), (i, name)| {
+            || {
+                (
+                    Matcher::new(NucleoConfig::DEFAULT),
+                    Vec::new(),
+                    Scratch::default(),
+                )
+            },
+            |(matcher, hay_buf, scratch), (i, name)| {
                 let subseq = matcher
                     .fuzzy_match(Utf32Str::new(name, hay_buf), needle)
                     .map_or(0.0, |s| (s as f32 / self_score).min(1.0));
-                let lower: Vec<char> = name.to_lowercase().chars().collect();
-                (subseq.max(typo_similarity(&term_lower, &lower)), i)
+                let typo = match term_bytes {
+                    // Most names are ASCII, where lowercasing is per byte and
+                    // the distance can run on bytes without collecting chars.
+                    Some(t) if name.is_ascii() => {
+                        scratch.bytes.clear();
+                        scratch
+                            .bytes
+                            .extend(name.bytes().map(|b| b.to_ascii_lowercase()));
+                        typo_similarity(t, &scratch.bytes, &mut scratch.cells)
+                    }
+                    _ => {
+                        scratch.chars.clear();
+                        scratch.chars.extend(name.to_lowercase().chars());
+                        typo_similarity(&term_lower, &scratch.chars, &mut scratch.cells)
+                    }
+                };
+                (subseq.max(typo), i)
             },
         )
         .filter(|(s, _)| *s >= threshold)
@@ -198,6 +220,29 @@ pub(super) struct FuzzyPrefilter {
     /// Term letters a name must hold for the typo signal to reach the
     /// threshold; `usize::MAX` when no number of edits can.
     need: usize,
+    /// [`letter_bits`] of the term, and how many of them a name must share.
+    bits: u64,
+    need_bits: u32,
+}
+
+/// A bit per lowercase letter and digit, other bytes sharing the rest.
+const LETTER_BITS: [u64; 256] = {
+    let mut t = [0u64; 256];
+    let mut b = 0;
+    while b < 256 {
+        let lower = (b as u8).to_ascii_lowercase();
+        t[b] = match lower {
+            b'a'..=b'z' => 1 << (lower - b'a'),
+            b'0'..=b'9' => 1 << (26 + lower - b'0'),
+            _ => 1 << (36 + lower % 28),
+        };
+        b += 1;
+    }
+    t
+};
+
+fn letter_bits(text: &[u8]) -> u64 {
+    text.iter().fold(0, |m, &b| m | LETTER_BITS[usize::from(b)])
 }
 
 impl FuzzyPrefilter {
@@ -216,7 +261,21 @@ impl FuzzyPrefilter {
         for &b in term.iter().flatten() {
             counts[usize::from(b)] += 1;
         }
-        Self { term, counts, need }
+        // Each edit removes at most one occurrence of one letter, so a name
+        // within `k` edits lacks at most `k` of the term's letters entirely,
+        // and a subsequence lacks none. Bits shared by several letters
+        // only make this weaker.
+        let bits = term.as_deref().map_or(0, letter_bits);
+        let need_bits = bits
+            .count_ones()
+            .saturating_sub(max_edits.map_or(0, |k| k as u32));
+        Self {
+            term,
+            counts,
+            need,
+            bits,
+            need_bits,
+        }
     }
 
     pub(super) fn could_match(&self, name: &str) -> bool {
@@ -225,6 +284,11 @@ impl FuzzyPrefilter {
             return true;
         }
         let name = name.as_bytes();
+        // Rejects most names for the price of one table lookup a byte; the
+        // window below zeroes a 512-byte table per name.
+        if (letter_bits(name) & self.bits).count_ones() < self.need_bits {
+            return false;
+        }
         let width = term.len() + 1;
         let mut next = 0;
         // Term letters, with repeats, among the last `width` bytes.
@@ -257,9 +321,71 @@ impl FuzzyPrefilter {
     }
 }
 
+/// Per-thread buffers for [`fuzzy_rank`], so scoring a name allocates nothing.
+#[derive(Default)]
+struct Scratch {
+    bytes: Vec<u8>,
+    chars: Vec<char>,
+    cells: Vec<usize>,
+}
+
 /// `1 - d / len(term)` for the closest window of `name` (window lengths
 /// `len(term) ± 1`, so one insertion or deletion is reachable).
-fn typo_similarity(term: &[char], name: &[char]) -> f32 {
+///
+/// One alignment per start position: the last row of the term against the
+/// longest window there holds the distances to the shorter windows too.
+/// Aligning each window on its own, into a fresh matrix, was most of a
+/// `fuzzy:` query's time once candidates reached the tens of thousands.
+fn typo_similarity<T: Copy + PartialEq>(term: &[T], name: &[T], cells: &mut Vec<usize>) -> f32 {
+    let n = term.len();
+    let shortest = n.saturating_sub(1).max(1);
+    let longest = n + 1;
+    let mut best = n;
+    if name.len() >= shortest {
+        for start in 0..=name.len() - shortest {
+            let window = &name[start..name.len().min(start + longest)];
+            let row = osa_last_row(term, window, cells);
+            if let Some(d) = row.get(shortest..).and_then(|r| r.iter().min()) {
+                best = best.min(*d);
+            }
+            if best == 0 {
+                return 1.0;
+            }
+        }
+    }
+    1.0 - best as f32 / n as f32
+}
+
+/// Optimal string alignment distances from `a` to every prefix of `b`.
+fn osa_last_row<'c, T: Copy + PartialEq>(a: &[T], b: &[T], d: &'c mut Vec<usize>) -> &'c [usize] {
+    let cols = b.len() + 1;
+    d.clear();
+    d.resize((a.len() + 1) * cols, 0);
+    for i in 0..=a.len() {
+        d[i * cols] = i;
+    }
+    for (j, cell) in d.iter_mut().enumerate().take(cols) {
+        *cell = j;
+    }
+    for i in 1..=a.len() {
+        for j in 1..=b.len() {
+            let cost = usize::from(a[i - 1] != b[j - 1]);
+            let mut v = (d[(i - 1) * cols + j] + 1)
+                .min(d[i * cols + j - 1] + 1)
+                .min(d[(i - 1) * cols + j - 1] + cost);
+            if i > 1 && j > 1 && a[i - 1] == b[j - 2] && a[i - 2] == b[j - 1] {
+                v = v.min(d[(i - 2) * cols + j - 2] + 1);
+            }
+            d[i * cols + j] = v;
+        }
+    }
+    &d[a.len() * cols..]
+}
+
+/// The previous [`typo_similarity`], one fresh alignment per window, kept
+/// to check the faster one against.
+#[cfg(test)]
+fn typo_similarity_reference(term: &[char], name: &[char]) -> f32 {
     let n = term.len();
     let mut best = n;
     for w in n.saturating_sub(1).max(1)..=n + 1 {
@@ -277,6 +403,7 @@ fn typo_similarity(term: &[char], name: &[char]) -> f32 {
 }
 
 /// Optimal string alignment distance: Levenshtein plus adjacent transposition.
+#[cfg(test)]
 fn osa_distance(a: &[char], b: &[char]) -> usize {
     let cols = b.len() + 1;
     let mut d = vec![0usize; (a.len() + 1) * cols];
@@ -384,25 +511,65 @@ mod fuzzy_tests {
             seed ^= seed << 17;
             seed % n
         };
-        let mut word = |max: u64| -> String {
-            let len = 1 + next(max);
-            (0..len)
-                .map(|_| b"abcdA_."[next(7) as usize] as char)
+        // The second alphabet spreads over the letter, digit and shared bits
+        // of the letter mask.
+        for alphabet in [&b"abcdA_."[..], b"aqZ019_.-~#"] {
+            let mut word = |max: u64| -> String {
+                let len = 1 + next(max);
+                (0..len)
+                    .map(|_| alphabet[next(alphabet.len() as u64) as usize] as char)
+                    .collect()
+            };
+            let names: Vec<String> = (0..400).map(|_| word(12)).collect();
+            let names: Vec<&str> = names.iter().map(String::as_str).collect();
+            for _ in 0..200 {
+                let term = word(6);
+                for threshold in [0.4, 0.6, 0.7, 0.8] {
+                    let filter = FuzzyPrefilter::new(&term, threshold);
+                    for i in fuzzy_rank(&names, &term, threshold, usize::MAX) {
+                        assert!(
+                            filter.could_match(names[i]),
+                            "{term:?} at {threshold} keeps {:?}",
+                            names[i]
+                        );
+                    }
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn typo_similarity_agrees_with_aligning_each_window() {
+        let mut seed: u64 = 0x9e37_79b9_7f4a_7c15;
+        let mut next = move |n: u64| {
+            seed ^= seed << 13;
+            seed ^= seed >> 7;
+            seed ^= seed << 17;
+            seed % n
+        };
+        let letters: Vec<char> = "abcab_é".chars().collect();
+        let mut word = |max: u64| -> Vec<char> {
+            (0..next(max + 1))
+                .map(|_| letters[next(letters.len() as u64) as usize])
                 .collect()
         };
-        let names: Vec<String> = (0..400).map(|_| word(12)).collect();
-        let names: Vec<&str> = names.iter().map(String::as_str).collect();
-        for _ in 0..200 {
-            let term = word(6);
-            for threshold in [0.4, 0.6, 0.7, 0.8] {
-                let filter = FuzzyPrefilter::new(&term, threshold);
-                for i in fuzzy_rank(&names, &term, threshold, usize::MAX) {
-                    assert!(
-                        filter.could_match(names[i]),
-                        "{term:?} at {threshold} keeps {:?}",
-                        names[i]
-                    );
-                }
+        let mut cells = Vec::new();
+        for _ in 0..20_000 {
+            let term = word(7);
+            if term.is_empty() {
+                continue;
+            }
+            let name = word(14);
+            let want = typo_similarity_reference(&term, &name);
+            assert_eq!(
+                typo_similarity(&term, &name, &mut cells),
+                want,
+                "{term:?} {name:?}"
+            );
+            let (t, n): (String, String) = (term.iter().collect(), name.iter().collect());
+            if t.is_ascii() && n.is_ascii() {
+                let got = typo_similarity(t.as_bytes(), n.as_bytes(), &mut cells);
+                assert_eq!(got, want, "{t:?} {n:?} as bytes");
             }
         }
     }

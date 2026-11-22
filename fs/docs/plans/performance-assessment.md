@@ -513,3 +513,36 @@ median ms without → with filters:
 - Without the warm-up the first search builds every filter it reaches:
   300-500 ms once at 10M. Compaction drops all filters, so the first search
   after one pays that again.
+
+## Fuzzy at 10M
+
+`fuzzy:` reads every name through `FuzzyPrefilter` and scores up to
+`max_fuzzy_candidates` (50,000) survivors with nucleo plus the typo
+similarity. Split by stage, real names: `reprot` 75 ms scan + 110 ms
+scoring (cap reached), `zzqx` 160 ms scan (16k candidates) + 24 ms, `mian`
+9 ms scan + 50 ms scoring (cap reached).
+
+- Scan: the prefilter zeroed a 512-byte table per name before looking at
+  it. A 64-bit letter mask now rejects names first: within `k` edits a name
+  lacks at most `k` of the term's letters entirely, and a subsequence lacks
+  none.
+- Scoring: the typo similarity aligned the term against each window of
+  length `n-1`, `n` and `n+1` separately, each in a freshly allocated
+  matrix, after collecting the lowercased name into a `Vec<char>`. It now
+  aligns once per start position (the last row gives all three windows),
+  in per-thread buffers, on bytes for ASCII names.
+
+Median ms, before → after:
+
+| query | memory, real names | memory, synthetic | SQLite, synthetic |
+|---|---:|---:|---:|
+| `fuzzy:reprot` | 174 → 60 | 102 → 40 | 193 → 95 |
+| `fuzzy:zzqx` | 188 → 70 | 130 → 36 | 1215 → 729 |
+| `fuzzy:mian` | 56 → 25 | 48 → 19 | 61 → 39 |
+
+Results are unchanged: `typo_similarity_agrees_with_aligning_each_window`
+compares the new score with the old on random terms and names.
+
+SQLite's no-match case is now its row stream from disk. The name filters
+cannot skip blocks here, since a typo need not share any 3-byte window with
+the term.
