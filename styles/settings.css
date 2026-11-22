@@ -473,37 +473,97 @@
   border: 1px solid var(--line);
   border-radius: 8px;
   background: var(--bg);
+  --label: 130px;
 }
 .conn-form h3 {
   margin: 0;
 }
+.conn-form .hidden {
+  display: none;
+}
+/* The type: one row of joined buttons, wrapping when the dialog is narrow. */
 .conn-form .seg {
+  display: flex;
+  flex-wrap: wrap;
   align-self: flex-start;
+  border: 1px solid var(--line);
+  border-radius: 7px;
+  overflow: hidden;
+  background: var(--panel);
+}
+.conn-form .seg button {
+  height: 26px;
+  padding: 0 10px;
+  border: 0;
+  border-right: 1px solid var(--line);
+  background: transparent;
+  cursor: pointer;
+  font-size: 12.5px;
+}
+.conn-form .seg button:last-child {
+  border-right: 0;
+}
+.conn-form .seg button:hover:not(:disabled) {
+  background: var(--hover);
+}
+.conn-form .seg button.active {
+  background: var(--accent);
+  color: var(--accent-ink);
+  font-weight: 600;
 }
 .conn-form .seg button:disabled:not(.active) {
   color: var(--muted);
   cursor: default;
 }
+.conn-form .field {
+  grid-template-columns: var(--label) 1fr;
+}
+.conn-form .field > span {
+  color: var(--muted);
+}
+.conn-form .field input,
+.conn-form .field select {
+  min-width: 0;
+  height: 28px;
+  box-sizing: border-box;
+}
 .conn-form .row2 {
   display: flex;
+  align-items: center;
   gap: 10px;
 }
 .conn-form .row2 .field {
   flex: 1;
+  min-width: 0;
 }
 .conn-form .row2 .field.port {
   flex: none;
-  grid-template-columns: auto 64px;
-}
-.conn-form .field input {
-  min-width: 0;
+  grid-template-columns: auto 70px;
 }
 .conn-form select {
-  padding: 5px 6px;
+  padding: 0 6px;
   border: 1px solid var(--line);
-  border-radius: 7px;
+  border-radius: 6px;
   background: var(--panel);
   color: var(--ink);
+}
+/* Checkboxes and hints line up with the boxes, not the labels. */
+.conn-form label.check {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  margin-left: calc(var(--label) + 8px);
+  font-size: 13px;
+}
+.conn-form .field + .hint.flush {
+  margin: -4px 0 0 calc(var(--label) + 8px);
+}
+.conn-form > .hint.flush:first-of-type {
+  margin: 0;
+}
+.conn-form .error {
+  margin: 0;
+  color: var(--danger);
 }
 .conn-form .buttons {
   display: flex;

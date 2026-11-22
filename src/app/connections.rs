@@ -241,6 +241,9 @@ pub(super) fn ConnectionsSettings() -> impl IntoView {
         ctx.conns.with(|cs| cs.iter().filter(|c| c.matches(&q)).cloned().collect::<Vec<_>>())
     });
     let open_id = Memo::new(move |_| editing.with(|e| e.as_ref().map(|c| c.id.clone())));
+    // The new connection's id while one is being added. A memo, so typing in the form (which
+    // changes `editing`) doesn't draw the form again and take the focus away.
+    let adding = Memo::new(move |_| if is_new.get() { open_id.get() } else { None });
     view! {
         <div class="conn-filter">
             <input node_ref=filter type="search" spellcheck="false" autocomplete="off"
@@ -258,7 +261,7 @@ pub(super) fn ConnectionsSettings() -> impl IntoView {
                 }/>
             <button class="btn" on:click=move |_| start(query.get_untracked())>{ico(Icon::Plus)}"New"</button>
         </div>
-        {move || (editing.with(Option::is_some) && is_new.get()).then(|| conn_form(ctx, editing, true))}
+        {move || adding.get().map(|_| conn_form(ctx, editing, true))}
         <div class="conn-list">
             {move || shown.get().into_iter().map(|c| {
                 let id = c.id.clone();
