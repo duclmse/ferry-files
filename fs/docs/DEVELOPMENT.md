@@ -88,6 +88,7 @@ Useful settings while developing:
 | `[content.extension_limits]` empty                  | no full-text extraction; crawl measures metadata only    |
 | `[api] grpc_enabled = false`, `ipc_enabled = false` | fewer ports to collide with                              |
 | `[indexer] use_mft = false`                         | Windows: force the directory walk (default `"auto"`)     |
+| `[watcher] backend = "native"`                      | Windows: own ReadDirectoryChangesW watcher (`"usn"`: journal, elevated) |
 
 To try an extension, build it, copy the executable and its `extension.toml` into
 the folder named by `extensions_dir`, and add an `[extensions.<name>]` section.
@@ -190,6 +191,13 @@ empty.
 .\scripts\bench-windows.ps1 -TargetDir C:\Windows\System32 -Store sqlite
 .\scripts\bench-windows.ps1 -TargetDir C:\Windows\System32 -Store memory
 .\scripts\bench-windows.ps1 -TargetDir C:\ -UseMft -NoContent   # elevated
+```
+
+Live changes, per watcher backend (each gets a fresh daemon on a temp folder;
+`usn` needs an elevated prompt, `--es` also polls a running Everything):
+
+```powershell
+python -I scripts\bench-live.py target\release\fsd.exe --backends notify,native,usn
 ```
 
 Results go to `target\bench-windows\<timestamp>\` (`summary.txt`, `samples.csv`,

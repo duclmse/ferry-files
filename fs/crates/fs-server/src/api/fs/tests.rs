@@ -768,6 +768,7 @@ fn make_test_state() -> AppState {
         archive_service: ArchiveServiceConfig::default(),
         store: StoreConfig::default(),
         file_lists: Default::default(),
+        watcher: Default::default(),
     };
 
     AppState {

@@ -75,7 +75,7 @@ crates/
     main.rs       daemon and offline commands (binary `fsd`)
     daemon.rs     startup orchestration, graceful shutdown
     config.rs     TOML config, hot-reload
-    watcher/      notify-debouncer-full wrappers
+    watcher/      notify wrapper; live/ native backends (ReadDirectoryChangesW, USN)
     indexer/      crawler, archive (ZIP), content, exclusions
     store/        sqlite_store, tantivy_store
     query/        parser, evaluator, ast, date, size, glob, dupes, macros
@@ -177,6 +177,9 @@ disk. The commit loop in `daemon.rs` runs every `commit_interval_secs`.
   the directory alone. `process_event` walks or removes the subtree; keep
   that when changing event handling. FSEvents may report a deletion as a
   modification of a vanished path.
+- Live watcher backends (`watcher.backend`, `watcher/live/`) must report
+  lost changes (`Msg::Lost`) rather than drop them; recovery runs the
+  timestamp scan. notify's Windows backend drops overflows silently.
 - Watcher events are applied by one consumer in arrival order
   (`process_events`), in batches of `indexer.event_batch_size`; do not
   reintroduce concurrent per-event tasks, which reorder a path's events.

@@ -306,8 +306,10 @@ pub async fn run_with_shutdown(
     {
         let shutdown_c = shutdown.clone();
         let cfg_c = Arc::clone(&shared_cfg);
+        let index = Arc::clone(&sqlite);
+        let reindex = reindex_tx.clone();
         tokio::spawn(async move {
-            if let Err(e) = watcher::run_watcher(cfg_c, ev_tx, shutdown_c).await {
+            if let Err(e) = watcher::run_watcher(cfg_c, ev_tx, index, reindex, shutdown_c).await {
                 tracing::error!("watcher error: {e}");
             }
         });

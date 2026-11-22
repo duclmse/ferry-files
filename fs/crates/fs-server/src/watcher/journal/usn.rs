@@ -30,7 +30,10 @@ use serde::{Deserialize, Serialize};
 
 use super::{ITEM_IS_DIR, MAX_REPLAY_PATHS, MUST_SCAN_SUBDIRS};
 
-const REASON_RENAME_NEW_NAME: u32 = 0x0000_2000;
+pub(in crate::watcher) const REASON_FILE_CREATE: u32 = 0x0000_0100;
+pub(in crate::watcher) const REASON_FILE_DELETE: u32 = 0x0000_0200;
+pub(in crate::watcher) const REASON_RENAME_OLD_NAME: u32 = 0x0000_1000;
+pub(in crate::watcher) const REASON_RENAME_NEW_NAME: u32 = 0x0000_2000;
 const ATTRIBUTE_DIRECTORY: u32 = 0x0000_0010;
 
 /// A volume's journal position: a different journal ID means the journal
@@ -42,7 +45,8 @@ pub struct UsnPos {
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub(super) struct Record {
+pub(in crate::watcher) struct Record {
+    pub frn: u64,
     pub parent: u64,
     pub reason: u32,
     pub is_dir: bool,
@@ -64,7 +68,7 @@ fn u64_at(b: &[u8], at: usize) -> Option<u64> {
 /// Parses one `FSCTL_READ_USN_JOURNAL` output buffer: the USN to continue
 /// from, then `USN_RECORD_V2`s. Returns that USN, or `None` when the buffer
 /// is malformed or holds a record version this parser does not know.
-pub(super) fn parse(buf: &[u8], out: &mut Vec<Record>) -> Option<i64> {
+pub(in crate::watcher) fn parse(buf: &[u8], out: &mut Vec<Record>) -> Option<i64> {
     let next = i64::from_le_bytes(buf.get(..8)?.try_into().ok()?);
     let mut at = 8;
     while at < buf.len() {
@@ -83,6 +87,7 @@ pub(super) fn parse(buf: &[u8], out: &mut Vec<Record>) -> Option<i64> {
             .map(|c| u16::from_le_bytes(*c))
             .collect();
         out.push(Record {
+            frn: u64_at(rec, 8)?,
             parent: u64_at(rec, 16)?,
             reason: u32_at(rec, 40)?,
             is_dir: u32_at(rec, 52)? & ATTRIBUTE_DIRECTORY != 0,
@@ -97,7 +102,10 @@ pub(super) fn parse(buf: &[u8], out: &mut Vec<Record>) -> Option<i64> {
 /// Maps a resolved path to the configured root it is under. `prefixes` holds
 /// `(resolved root, configured root)`; resolved paths are compared ignoring
 /// ASCII case, as NTFS does for the names Windows users type.
-pub(super) fn map_to_root(path: &str, prefixes: &[(String, PathBuf)]) -> Option<PathBuf> {
+pub(in crate::watcher) fn map_to_root(
+    path: &str,
+    prefixes: &[(String, PathBuf)],
+) -> Option<PathBuf> {
     prefixes.iter().find_map(|(real, root)| {
         let head = path.get(..real.len())?;
         if !head.eq_ignore_ascii_case(real) {
@@ -142,12 +150,12 @@ pub(super) fn fold(
 
 /// Strips the `\\?\` that `GetFinalPathNameByHandleW` and `canonicalize`
 /// add, so resolved paths compare with configured ones.
-pub(super) fn strip_verbatim(p: &str) -> &str {
+pub(in crate::watcher) fn strip_verbatim(p: &str) -> &str {
     p.strip_prefix(r"\\?\").unwrap_or(p)
 }
 
 /// Groups roots by the volume they live on, keeping each root's index.
-fn by_volume(
+pub(in crate::watcher) fn by_volume(
     roots: &[PathBuf],
     volume_of: impl Fn(&Path) -> Option<String>,
 ) -> Option<Vec<(String, Vec<usize>)>> {
@@ -167,6 +175,8 @@ fn by_volume(
 
 #[cfg(windows)]
 pub(super) use imp::{current, replay};
+#[cfg(windows)]
+pub(in crate::watcher) use imp::{open_volume, path_of, query, volume_of, Handle};
 
 #[cfg(windows)]
 mod imp {
@@ -196,7 +206,7 @@ mod imp {
     /// records as fit.
     const READ_BUF: usize = 1 << 20;
 
-    struct Handle(HANDLE);
+    pub(in crate::watcher) struct Handle(pub(in crate::watcher) HANDLE);
 
     impl Drop for Handle {
         fn drop(&mut self) {
@@ -213,7 +223,7 @@ mod imp {
     }
 
     /// `C:\` for any path on drive C (or the mount point's path).
-    fn volume_of(path: &Path) -> Option<String> {
+    pub(in crate::watcher) fn volume_of(path: &Path) -> Option<String> {
         let w = wide(path.as_os_str());
         let mut buf = [0u16; 1024];
         // SAFETY: `w` is NUL-terminated and outlives the call; `buf` is a
@@ -223,7 +233,7 @@ mod imp {
         Some(String::from_utf16_lossy(&buf[..n]))
     }
 
-    fn open_volume(volume: &str) -> Result<Handle, String> {
+    pub(in crate::watcher) fn open_volume(volume: &str) -> Result<Handle, String> {
         // `C:\` -> `\\.\C:`; a volume mounted on a folder is opened by its
         // mount path without the trailing separator in the same way.
         let device = format!(r"\\.\{}", volume.trim_end_matches('\\'));
@@ -244,7 +254,7 @@ mod imp {
         Ok(Handle(h))
     }
 
-    fn query(vol: &Handle) -> Result<USN_JOURNAL_DATA_V0, String> {
+    pub(in crate::watcher) fn query(vol: &Handle) -> Result<USN_JOURNAL_DATA_V0, String> {
         let mut data = USN_JOURNAL_DATA_V0::default();
         let mut got = 0u32;
         // SAFETY: `data` is a valid output buffer of the size passed.
@@ -329,7 +339,7 @@ mod imp {
         Ok(records)
     }
 
-    fn path_of(vol: &Handle, frn: u64) -> Option<String> {
+    pub(in crate::watcher) fn path_of(vol: &Handle, frn: u64) -> Option<String> {
         let id = FILE_ID_DESCRIPTOR {
             dwSize: size_of::<FILE_ID_DESCRIPTOR>() as u32,
             Type: FileIdType,
@@ -466,12 +476,14 @@ mod tests {
             out,
             vec![
                 Record {
+                    frn: 99,
                     parent: 5,
                     reason: 0x100,
                     is_dir: false,
                     name: "a.txt".into()
                 },
                 Record {
+                    frn: 99,
                     parent: 6,
                     reason: REASON_RENAME_NEW_NAME,
                     is_dir: true,
@@ -507,30 +519,35 @@ mod tests {
     fn fold_flags_moved_in_directories_and_skips_unresolvable_parents() {
         let recs = vec![
             Record {
+                frn: 0,
                 parent: 1,
                 reason: 0x100,
                 is_dir: false,
                 name: "f".into(),
             },
             Record {
+                frn: 0,
                 parent: 1,
                 reason: 0x2,
                 is_dir: false,
                 name: "f".into(),
             },
             Record {
+                frn: 0,
                 parent: 1,
                 reason: REASON_RENAME_NEW_NAME,
                 is_dir: true,
                 name: "d".into(),
             },
             Record {
+                frn: 0,
                 parent: 1,
                 reason: 0x200,
                 is_dir: true,
                 name: "gone".into(),
             },
             Record {
+                frn: 0,
                 parent: 2,
                 reason: 0x200,
                 is_dir: false,

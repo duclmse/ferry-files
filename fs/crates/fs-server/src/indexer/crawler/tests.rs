@@ -33,6 +33,7 @@ fn make_config(watch: &Path) -> Arc<RwLock<Config>> {
         archive_service: ArchiveServiceConfig::default(),
         store: StoreConfig::default(),
         file_lists: Default::default(),
+        watcher: Default::default(),
     }))
 }
 
@@ -87,6 +88,7 @@ async fn excluded_pattern_not_indexed() {
         archive_service: ArchiveServiceConfig::default(),
         store: StoreConfig::default(),
         file_lists: Default::default(),
+        watcher: Default::default(),
     }));
 
     let tmpdir2 = TempDir::new().unwrap();

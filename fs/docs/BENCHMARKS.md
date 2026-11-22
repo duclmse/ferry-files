@@ -43,6 +43,31 @@ lookups (`ext:`, `ext:a | ext:b`).
 | Crawl, memory / SQLite           | 4.9 / 6.4 s | 4.9 / 6.0 s | 4.4 / 6.5 s |
 | `index.db`                       | 252.6 MB | 258.6 MB | 260.3 MB |
 
+## Live changes per watcher backend
+
+`python -I scripts/bench-live.py target/release/fsd.exe --backends notify,native`,
+memory store, a fresh temp folder per backend, not elevated. Times are until a
+search returns the expected count; "stale" is what was still indexed after 15 s
+without progress.
+
+| Scenario (40 × 1,000 files)         | `notify`             | `native`        |
+| ----------------------------------- | -------------------: | --------------: |
+| One new file until searchable       | median 577 ms        | median 512 ms   |
+| 40 folders created                  | 0.5 s                | 0.5 s           |
+| Those 40 folders deleted (`rmtree`) | **39,549 stale**     | 0.6 s           |
+| 40,000 files in one folder          | 0.9 s                | 0.5 s           |
+| Those files deleted one by one      | **39,544 stale**     | 0.5 s           |
+| Folder of 1,000 files renamed       | 0.8 s                | 0.5 s           |
+
+`notify` loses nearly every delete in a burst: its Windows backend reads
+into 16 KiB and handles each event before it reads again, and an overflow
+is silently dropped. `native` (`watcher/live/rdcw.rs`) never overflowed here,
+even with a 4 KiB buffer, because it starts the next read before parsing the
+last one. Forced overflow (fsd suspended while `del /q` removed 20,000 files,
+64 KiB buffer): the overflow was reported, the recovery scan took 0.4 s and
+all 20,000 rows were gone 0.7 s after resume. `usn` is not measured yet (it
+needs an elevated console).
+
 ## Release binaries
 
 `cargo build --release`, stripped (`strip = true`), x86_64-pc-windows-msvc.

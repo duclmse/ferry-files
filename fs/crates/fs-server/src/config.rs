@@ -52,6 +52,59 @@ pub struct Config {
 
     #[serde(default)]
     pub file_lists: FileListsConfig,
+
+    #[serde(default)]
+    pub watcher: WatcherConfig,
+}
+
+/// How live changes reach the index (`watcher/live/`).
+#[derive(Debug, Clone, Deserialize)]
+pub struct WatcherConfig {
+    #[serde(default)]
+    pub backend: WatcherBackend,
+    /// How long changes are collected before they are applied: a path
+    /// changed several times inside the window is applied once.
+    #[serde(default = "default_debounce_ms")]
+    pub debounce_ms: u64,
+    /// Windows `native`: the change buffer of each watch root, in KiB.
+    /// Network shares accept at most 64.
+    #[serde(default = "default_watch_buffer_kib")]
+    pub buffer_kib: u32,
+}
+
+fn default_debounce_ms() -> u64 {
+    500
+}
+
+fn default_watch_buffer_kib() -> u32 {
+    1024
+}
+
+impl Default for WatcherConfig {
+    fn default() -> Self {
+        Self {
+            backend: WatcherBackend::default(),
+            debounce_ms: default_debounce_ms(),
+            buffer_kib: default_watch_buffer_kib(),
+        }
+    }
+}
+
+/// `watcher.backend`. Every backend runs the timestamp scan when it learns
+/// that changes were lost.
+#[derive(Debug, Clone, Copy, Deserialize, Default, PartialEq, Eq)]
+#[serde(rename_all = "lowercase")]
+pub enum WatcherBackend {
+    /// The `notify` crate on every platform.
+    #[default]
+    Notify,
+    /// Windows: ReadDirectoryChangesW with a large buffer that reports
+    /// overflow. Elsewhere the same as `notify`.
+    Native,
+    /// Windows: the NTFS USN journal for every root on a volume whose
+    /// journal can be read (administrator rights), `native` for the rest.
+    /// Elsewhere the same as `notify`.
+    Usn,
 }
 
 /// Everything file lists (`.efu`) whose entries are searchable alongside

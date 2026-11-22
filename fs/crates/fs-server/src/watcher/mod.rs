@@ -1,4 +1,5 @@
 pub mod journal;
+mod live;
 
 use std::collections::HashMap;
 use std::path::PathBuf;
@@ -7,14 +8,15 @@ use std::time::Duration;
 use notify::{EventKind, Watcher};
 use notify_debouncer_full::{new_debouncer, DebounceEventResult};
 use tokio::sync::mpsc;
-use tokio::sync::RwLock;
+use tokio::sync::{watch, RwLock};
 use tokio_util::sync::CancellationToken;
 
 use std::sync::Arc;
 
-use crate::config::Config;
+use crate::config::{Config, WatcherBackend};
 use crate::error::{AppError, Result};
 use crate::indexer::crawler::IndexEvent;
+use crate::store::FileStore;
 
 // ---------------------------------------------------------------------------
 
@@ -135,7 +137,7 @@ fn long_names(event: IndexEvent) -> IndexEvent {
 /// Resolves an 8.3 alias through the file system: the path itself if it
 /// still exists, else its folder (a deleted entry's own short name cannot
 /// be resolved, and is kept).
-fn long_path(path: PathBuf) -> PathBuf {
+pub(super) fn long_path(path: PathBuf) -> PathBuf {
     if !path.to_string_lossy().contains('~') {
         return path;
     }
@@ -153,22 +155,65 @@ fn long_path(path: PathBuf) -> PathBuf {
 
 // ---------------------------------------------------------------------------
 
+/// Follows changes under the watch paths until shutdown, with the backend
+/// `watcher.backend` names. When the backend reports lost changes, the
+/// timestamp scan finds them (`live::Recovery`); `reindex` asks for a crawl
+/// when that is too many to apply one by one.
 pub async fn run_watcher(
     config: Arc<RwLock<Config>>,
     tx: mpsc::Sender<IndexEvent>,
+    index: Arc<FileStore>,
+    reindex: watch::Sender<bool>,
+    shutdown: CancellationToken,
+) -> Result<()> {
+    let recovery = live::Recovery::spawn(
+        Arc::clone(&config),
+        index,
+        reindex,
+        tx.clone(),
+        shutdown.clone(),
+    );
+    let (backend, debounce_ms) = {
+        let c = config.read().await;
+        (c.watcher.backend, c.watcher.debounce_ms)
+    };
+    if backend != WatcherBackend::Notify {
+        match live::run(
+            Arc::clone(&config),
+            tx.clone(),
+            recovery.clone(),
+            shutdown.clone(),
+        )
+        .await
+        {
+            Ok(()) => return Ok(()),
+            Err(why) => tracing::info!("watcher.backend {backend:?}: {why}; using notify"),
+        }
+    }
+    run_notify(
+        config,
+        tx,
+        recovery,
+        Duration::from_millis(debounce_ms),
+        shutdown,
+    )
+    .await
+}
+
+async fn run_notify(
+    config: Arc<RwLock<Config>>,
+    tx: mpsc::Sender<IndexEvent>,
+    recovery: live::Recovery,
+    debounce: Duration,
     shutdown: CancellationToken,
 ) -> Result<()> {
     let (debounce_tx, mut debounce_rx) =
         tokio::sync::mpsc::unbounded_channel::<DebounceEventResult>();
 
     let debounce_tx_clone = debounce_tx.clone();
-    let mut debouncer = new_debouncer(
-        Duration::from_millis(500),
-        None,
-        move |result: DebounceEventResult| {
-            let _ = debounce_tx_clone.send(result);
-        },
-    )
+    let mut debouncer = new_debouncer(debounce, None, move |result: DebounceEventResult| {
+        let _ = debounce_tx_clone.send(result);
+    })
     .map_err(|e| AppError::Index(format!("debouncer create: {e}")))?;
 
     // Watch all configured paths
@@ -182,8 +227,15 @@ pub async fn run_watcher(
         }
     }
 
-    tracing::info!("filesystem watcher started");
+    tracing::info!(
+        "filesystem watcher started (notify, {} ms window)",
+        debounce.as_millis()
+    );
 
+    // Every change before this has been delivered. A batch carries changes
+    // up to one debounce window older than its arrival.
+    let lag = debounce.as_secs() + 1;
+    let mut since = live::unix_now();
     loop {
         tokio::select! {
             _ = shutdown.cancelled() => {
@@ -198,6 +250,13 @@ pub async fn run_watcher(
 
                 match result {
                     Ok(events) => {
+                        // inotify's queue overflowed, or FSEvents dropped
+                        // events: notify says so with a rescan flag and
+                        // nothing else.
+                        if events.iter().any(|e| e.need_rescan()) {
+                            recovery.request(since, "notify asked for a rescan".into());
+                        }
+                        since = live::unix_now().saturating_sub(lag);
                         let index_events = batch_to_events(events, &formats);
                         for ev in index_events {
                             if tx.send(ev).await.is_err() {

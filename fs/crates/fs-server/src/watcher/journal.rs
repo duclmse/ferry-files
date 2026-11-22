@@ -18,7 +18,7 @@ use crate::indexer::crawler::IndexEvent;
 use crate::store::FileStore;
 
 mod scan;
-mod usn;
+pub(super) mod usn;
 
 /// Store metadata key holding the serialized [`Position`].
 pub const META_KEY: &str = "journal_position";
@@ -163,6 +163,18 @@ pub fn catch_up(
             Err(reason) => CatchUp::FullCrawl(reason),
         }
     }
+}
+
+/// What changed under `roots` since `since` (Unix seconds), by the timestamp
+/// scan: how a live watcher recovers after it has lost events. Blocking.
+pub fn changes_since(
+    roots: &[PathBuf],
+    since: u64,
+    formats: &[String],
+    skip: &(dyn Fn(&Path, bool) -> bool + Sync),
+    index: &dyn IndexLookup,
+) -> CatchUp {
+    scan::reconcile(roots, since, formats, skip, index)
 }
 
 /// Turns replayed `path -> OR of event flags` into index events. The flags

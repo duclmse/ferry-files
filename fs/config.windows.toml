@@ -169,6 +169,20 @@ commit_interval_secs = 5
 # Maximum filesystem events processed in one batch.
 event_batch_size = 100
 
+# ── Live changes ──────────────────────────────────────────────────────────────
+
+[watcher]
+# "notify" (default), "native" (ReadDirectoryChangesW with a large buffer that
+# reports overflow) or "usn" (the NTFS change journal, as Everything reads it;
+# needs administrator rights, so the service; other roots use "native").
+# Whenever changes are lost, a timestamp scan finds them.
+# scripts/bench-live.py compares them.
+backend = "notify"
+# Changes are collected this long and applied together.
+debounce_ms = 500
+# "native": change buffer per watch root, KiB (network shares: at most 64).
+buffer_kib = 1024
+
 # ── Everything file lists ─────────────────────────────────────────────────────
 
 [file_lists]
