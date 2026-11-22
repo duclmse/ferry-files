@@ -31,6 +31,7 @@ use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Mutex;
 
 use super::{changed_event, deleted_event, CatchUp, IndexLookup, Position, MAX_REPLAY_PATHS};
+use crate::indexer::crawler::IndexEvent;
 
 /// Timestamps have one-second resolution in the index and on some
 /// filesystems, and the position is captured while changes may still be
@@ -177,12 +178,28 @@ pub(super) fn reconcile(
     let mut events = Vec::new();
     let mut walked: Vec<PathBuf> = Vec::new();
     let mut added: Vec<PathBuf> = Vec::new();
+    let mut compared: Vec<String> = Vec::new();
     for (path, is_dir) in found {
         if is_dir && !walked.iter().any(|w| path.starts_with(w)) {
             let Some(s) = path.to_str() else { continue };
             if index.contains(s) {
                 let indexed: HashSet<String> = index.children_of(s).into_iter().collect();
+                let listing: Vec<(PathBuf, bool)> = std::fs::read_dir(&path)
+                    .into_iter()
+                    .flatten()
+                    .flatten()
+                    .map(|e| (e.path(), e.file_type().is_ok_and(|t| t.is_dir())))
+                    .collect();
+                let listed: HashSet<&str> =
+                    listing.iter().filter_map(|(p, _)| p.to_str()).collect();
                 for child in &indexed {
+                    // The listing answers for most children: a stat each is
+                    // what made this slow on Windows, where it opens the
+                    // file. Only one missing from it is checked, in case it
+                    // is spelled another way or the listing failed.
+                    if listed.contains(child.as_str()) {
+                        continue;
+                    }
                     let child_path = PathBuf::from(child);
                     if child_path.symlink_metadata().is_ok() || !seen.insert(child_path.clone()) {
                         continue;
@@ -192,10 +209,9 @@ pub(super) fn reconcile(
                     }
                     events.push(deleted_event(child_path, formats));
                 }
-                for entry in std::fs::read_dir(&path).into_iter().flatten().flatten() {
-                    let child = entry.path();
+                compared.push(s.to_owned());
+                for (child, is_child_dir) in listing {
                     let unindexed = child.to_str().is_some_and(|c| !indexed.contains(c));
-                    let is_child_dir = entry.file_type().is_ok_and(|t| t.is_dir());
                     if unindexed && !skip(&child, is_hidden(&child)) {
                         if is_child_dir {
                             added.push(child);
@@ -230,10 +246,17 @@ pub(super) fn reconcile(
         }
     }
     if events.is_empty() {
-        CatchUp::UpToDate
-    } else {
-        CatchUp::Events(events)
+        return CatchUp::UpToDate;
     }
+    // Replaying these sweeps each touched folder, a stat per indexed child.
+    // The folders that changed were compared above, and one whose mtime did
+    // not change has had nothing added, removed or renamed in it.
+    let parents = events.iter().filter_map(|e| match e {
+        IndexEvent::Modified(p) | IndexEvent::Deleted(p) => p.parent()?.to_str(),
+        _ => None,
+    });
+    crate::indexer::crawler::mark_swept(parents.chain(compared.iter().map(String::as_str)));
+    CatchUp::Events(events)
 }
 
 #[cfg(test)]

@@ -4,7 +4,7 @@ use rayon::prelude::*;
 
 use super::matching::{compile, dupe_key, meta_filter_matches, Compiled, DupeKey, Like, PathMemo};
 use super::sort::sort_numbers;
-use super::state::{EntryRef, IndexState};
+use super::state::{EntryRef, IndexState, NO_PARENT};
 use super::{
     DupeKind, FileRecord, FuzzyRank, MemoryStore, MetaFilters, RecordView, Sort, SqlCondition,
 };
@@ -151,9 +151,19 @@ impl MemoryStore {
     /// children of `parent_path`.
     pub fn children_of(&self, parent_path: &str) -> Result<Vec<String>> {
         let state = self.read_state();
+        // A path has one slot, so every entry that extends `parent_path` points
+        // at it, and comparing that number replaces rebuilding each path. An
+        // entry added before its parent extends nothing and is checked by path.
+        let parent = state.find_any(parent_path);
         Ok(state
             .iter()
-            .filter(|e| !e.is_archive() && e.under(parent_path) == Some(true))
+            .filter(|e| {
+                !e.is_archive()
+                    && match e.parent_index() {
+                        NO_PARENT => e.under(parent_path) == Some(true),
+                        p => Some(p) == parent,
+                    }
+            })
             .map(|e| e.path_string())
             .collect())
     }

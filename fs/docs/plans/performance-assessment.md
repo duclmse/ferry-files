@@ -297,3 +297,55 @@ entries: 270 ms to 171 ms, or 205-215 ms with two rayon threads, as on a
 runner. bench-windows.ps1 now also reports the times from the daemon's
 log, makes one HTTP request before the first start, and bench-everything.ps1
 polls every 50 ms, so the next run compares like with like.
+
+## Desktop run: C:\Windows, not elevated
+
+`bench-windows.ps1 -TargetDir C:\Windows`, once per store, on an i7-10700K
+(8 cores) with Windows 11 from a normal prompt. Without elevation the crawl
+is the walk and catch-up is the timestamp scan, not the USN journal replay.
+C:\Windows is 348,605 files and folders.
+
+| | Memory store | SQLite |
+| --- | ---: | ---: |
+| Cold crawl | 8.6 s | 9.2 s |
+| Peak working set | 97.5 MB | 185 MB |
+| Index on disk | `index.bin` 26.5 MB (79.6 B/entry) | `index.db` 259 MB (778 B/entry) |
+| Catch-up after restart | 14.2 s, 9/9 checks | 15.5 s, 9/9 checks |
+
+`index.bin` at 2M synthetic entries: 107 MiB (56 B/entry), saved in 248 ms
+and loaded in 342 ms. Searches that scan all 2M entries take 6-18 ms; the
+bench process peaked at 455 MB.
+
+- The walk did about 40,000 entries/s, against 2,200-3,200/s for all of C:
+  on the 2-core runner and 10,600/s for System32 there.
+- 56 B/entry matches the runner's whole-volume `index.bin` (78 MB for 1.43M
+  entries). C:\Windows costs more per entry because its names are long
+  (WinSxS) and the memory store shares parent paths but not names.
+- The 2M load took 342 ms here, against 171 ms on an 8-core Mac. That is
+  still under 0.4 s, but it is the slowest load measured so far.
+- **Catch-up was slower than a cold crawl.** With both stores it took
+  1.6-1.7x the crawl. The timestamp scan walks every entry once, like the
+  crawl, and writes nothing for unchanged ones. Then it compares each folder
+  whose mtime changed with the index, and that comparison was the cost:
+  - The memory store's `children_of` rebuilt every entry's path to find a
+    folder's children, about 10 ms per changed folder at 100k entries in a
+    release build, growing with the index. It now compares parent numbers.
+  - Each indexed child of a changed folder was stat'ed to see whether it
+    still exists. On Windows a stat opens the file. The folder listing the
+    scan already reads now answers that; only children missing from it are
+    stat'ed.
+  - Replaying the changes then swept the same folders again: a stat per
+    indexed child, at most once per folder every 30 s. The scan now marks
+    the folders it compared, and the parents of what it replays, as swept.
+    A folder whose mtime did not change has had nothing added, removed or
+    renamed in it.
+
+  Release build on macOS, 100k entries, with a walk alone of about 150 ms:
+
+  | Changed folders | Memory store | SQLite |
+  | ---: | ---: | ---: |
+  | 50 | 693 to 212 ms | 282 to 198 ms |
+  | 200 | 2,219 to 305 ms | 575 to 330 ms |
+
+  A stat costs much more on Windows than on macOS, so the SQLite row
+  understates the gain there. The Windows timings are not measured yet.

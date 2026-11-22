@@ -387,7 +387,7 @@ impl IndexState {
     }
 
     /// Includes dead entries.
-    fn find_any(&self, path: &str) -> Option<u32> {
+    pub(super) fn find_any(&self, path: &str) -> Option<u32> {
         let h = self.hash(path);
         self.index
             .find(h, |&i| path_eq(&self.entries, &self.tails, i, path))

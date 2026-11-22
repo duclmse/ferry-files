@@ -490,6 +490,12 @@ pub async fn full_crawl(
 // process_event - incremental update from watcher
 // ---------------------------------------------------------------------------
 
+const SWEEP_EVERY: std::time::Duration = std::time::Duration::from_secs(30);
+
+static SWEPT: std::sync::LazyLock<
+    std::sync::Mutex<std::collections::HashMap<String, std::time::Instant>>,
+> = std::sync::LazyLock::new(Default::default);
+
 /// Whether a Created/Modified event under `parent` should sweep its
 /// siblings. The sweep stats every indexed sibling, thousands per event in a
 /// folder like System32, and it exists for FSEvents' lost rename sides, so
@@ -497,21 +503,13 @@ pub async fn full_crawl(
 /// the sweep is only a backstop for lost notifications, so each folder is
 /// swept at most once per `SWEEP_EVERY`.
 fn sweep_due(parent: &str) -> bool {
-    use std::collections::HashMap;
-    use std::sync::{LazyLock, Mutex};
-    use std::time::{Duration, Instant};
-
-    const SWEEP_EVERY: Duration = Duration::from_secs(30);
-    static SWEPT: LazyLock<Mutex<HashMap<String, Instant>>> =
-        LazyLock::new(|| Mutex::new(HashMap::new()));
-
     if cfg!(target_os = "macos") {
         return true;
     }
     let Ok(mut swept) = SWEPT.lock() else {
         return true;
     };
-    let now = Instant::now();
+    let now = std::time::Instant::now();
     if swept.len() > 4096 {
         swept.retain(|_, at| now.duration_since(*at) < SWEEP_EVERY);
     }
@@ -521,6 +519,18 @@ fn sweep_due(parent: &str) -> bool {
             swept.insert(parent.to_owned(), now);
             true
         }
+    }
+}
+
+/// Counts `parents` as just swept, for a caller that has compared their
+/// children with the index itself.
+pub fn mark_swept<'a>(parents: impl IntoIterator<Item = &'a str>) {
+    let Ok(mut swept) = SWEPT.lock() else {
+        return;
+    };
+    let now = std::time::Instant::now();
+    for parent in parents {
+        swept.insert(parent.to_owned(), now);
     }
 }
 

@@ -283,3 +283,12 @@ async fn an_unseen_folder_under_an_unindexed_parent_is_not_walked() {
     let child = deep.join("f.txt").to_string_lossy().into_owned();
     assert!(stores.sqlite.get_by_path(&child).unwrap().is_none());
 }
+
+#[cfg(not(target_os = "macos"))]
+#[test]
+fn a_folder_marked_swept_is_not_swept_again_soon() {
+    let parent = "/mark-swept-test/a";
+    mark_swept([parent]);
+    assert!(!sweep_due(parent));
+    assert!(sweep_due("/mark-swept-test/b"));
+}

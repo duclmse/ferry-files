@@ -396,6 +396,23 @@ fn prefix_predicates_match_whole_components_only() {
 }
 
 #[test]
+fn children_of_finds_children_added_before_their_folder() {
+    let store = make_store();
+    for r in [
+        sample(r"C:\w\early.rs"),
+        dir(r"C:\w"),
+        sample(r"C:\w\late.rs"),
+        sample(r"C:\w\d\deep.rs"),
+        sample(r"C:\wx\other.rs"),
+    ] {
+        store.upsert_file(&r);
+    }
+    let mut kids = store.children_of(r"C:\w").unwrap();
+    kids.sort();
+    assert_eq!(kids, [r"C:\w\early.rs", r"C:\w\late.rs"]);
+}
+
+#[test]
 fn archive_members_share_the_archive_entry() {
     let store = make_store();
     let mut zip = sample("/a/x.zip");
