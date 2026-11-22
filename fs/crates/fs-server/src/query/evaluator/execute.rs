@@ -6,7 +6,7 @@ use crate::config::Config;
 use crate::error::{AppError, Result};
 use crate::store::{tantivy_store::TantivyStore, FileRecord, FileStore, Sort, SqlCondition};
 
-use super::postfilter::{apply_post_filters, fuzzy_rank};
+use super::postfilter::{apply_post_filters, fuzzy_rank, FuzzyPrefilter};
 use super::types::{EvalStrategy, PostFilter, QueryPlan, QueryResult};
 
 // ---------------------------------------------------------------------------
@@ -77,11 +77,13 @@ pub async fn execute_plan(
             let threshold = cfg.search.fuzzy_threshold;
             let term_clone = term.clone();
             let store2 = Arc::clone(&store);
+            let prefilter = FuzzyPrefilter::new(term, threshold);
 
             tokio::task::spawn_blocking(move || {
                 store2.fuzzy_search(
                     &conds,
                     if max_cands > 0 { max_cands } else { 50_000 },
+                    &|name: &str| prefilter.could_match(name),
                     &|names: &[&str]| fuzzy_rank(names, &term_clone, threshold, limit),
                 )
             })

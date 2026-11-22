@@ -7,7 +7,7 @@ use rusqlite::types::Value;
 
 use crate::error::{AppError, Result};
 use crate::store::{
-    build_conditions, DupeKind, FileRecord, FuzzyRank, MetaFilters, Sort, SqlCondition,
+    build_conditions, DupeKind, FileRecord, FuzzyKeep, FuzzyRank, MetaFilters, Sort, SqlCondition,
 };
 
 use super::schema::{query_records, row_to_record, NOEXT_NAME_INDEX};
@@ -380,19 +380,28 @@ impl SqliteStore {
         &self,
         conds: &[SqlCondition],
         cap: usize,
+        keep: &FuzzyKeep<'_>,
         rank: &FuzzyRank<'_>,
     ) -> Result<Vec<FileRecord>> {
-        let (where_extra, mut params) = build_conditions(conds);
-        params.push(Value::Integer(cap as i64));
+        let (where_extra, params) = build_conditions(conds);
         let conn = self.get_conn()?;
         let mut stmt = conn.prepare(&format!(
-            "SELECT id, name FROM files WHERE 1=1 {where_extra} LIMIT ?"
+            "SELECT id, name FROM files WHERE 1=1 {where_extra}"
         ))?;
-        let candidates = stmt
-            .query_map(rusqlite::params_from_iter(params.iter()), |row| {
-                Ok((row.get::<_, i64>(0)?, row.get::<_, String>(1)?))
-            })?
-            .collect::<rusqlite::Result<Vec<(i64, String)>>>()?;
+        // `keep` runs here rather than `LIMIT` in SQL: the first rows in
+        // name order are not the ones that match.
+        let mut rows = stmt.query(rusqlite::params_from_iter(params.iter()))?;
+        let mut candidates: Vec<(i64, String)> = Vec::new();
+        while let Some(row) = rows.next()? {
+            let name = row.get_ref(1)?.as_str().map_err(rusqlite::Error::from)?;
+            if keep(name) {
+                candidates.push((row.get(0)?, name.to_owned()));
+                if candidates.len() >= cap {
+                    break;
+                }
+            }
+        }
+        drop(rows);
         let names: Vec<&str> = candidates.iter().map(|(_, n)| n.as_str()).collect();
         let ids: Vec<i64> = rank(&names).into_iter().map(|i| candidates[i].0).collect();
         drop(names);

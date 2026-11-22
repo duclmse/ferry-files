@@ -55,6 +55,8 @@ const QUERIES: &[&str] = &[
     "sort:size readme",
     "sizedupe: count:100",
     "fuzzy:reprot",
+    "fuzzy:zzqx",
+    "fuzzy:mian",
 ];
 
 fn record(i: usize, path: String, name: String, ext: Option<&str>, is_dir: bool) -> FileRecord {

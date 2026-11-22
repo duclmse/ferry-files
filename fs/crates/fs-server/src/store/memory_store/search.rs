@@ -8,7 +8,8 @@ use super::matching::{
 use super::sort::sort_numbers;
 use super::state::{EntryRef, IndexState, NO_PARENT};
 use super::{
-    DupeKind, FileRecord, FuzzyRank, MemoryStore, MetaFilters, RecordView, Sort, SqlCondition,
+    DupeKind, FileRecord, FuzzyKeep, FuzzyRank, MemoryStore, MetaFilters, RecordView, Sort,
+    SqlCondition,
 };
 use crate::error::Result;
 
@@ -258,15 +259,17 @@ impl MemoryStore {
         &self,
         conds: &[SqlCondition],
         cap: usize,
+        keep: &FuzzyKeep<'_>,
         rank: &FuzzyRank<'_>,
     ) -> Result<Vec<FileRecord>> {
         let state = self.read_state();
         let compiled = compile(conds);
-        let candidates: Vec<EntryRef<'_>> =
-            matching_entries(&state, cap, |e, memo| all_match(&compiled, e, memo))
-                .into_iter()
-                .map(|i| state.view(i))
-                .collect();
+        let candidates: Vec<EntryRef<'_>> = matching_entries(&state, cap, |e, memo| {
+            keep(e.name_str()) && all_match(&compiled, e, memo)
+        })
+        .into_iter()
+        .map(|i| state.view(i))
+        .collect();
         let names: Vec<&str> = candidates.iter().map(|e| e.name_str()).collect();
         Ok(rank(&names)
             .into_iter()

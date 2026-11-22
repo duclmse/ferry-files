@@ -305,7 +305,7 @@ fn fuzzy_search_materializes_ranked_winners_only() {
     }
     let conds = [SqlCondition::ParentPath("/b".into())];
     let hits = store
-        .fuzzy_search(&conds, 100, &|names: &[&str]| {
+        .fuzzy_search(&conds, 100, &|_| true, &|names: &[&str]| {
             names
                 .iter()
                 .enumerate()

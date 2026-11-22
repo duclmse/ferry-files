@@ -15,7 +15,8 @@ use std::sync::atomic::AtomicU64;
 use std::sync::{Mutex, RwLock};
 
 use super::{
-    CmpOp, DupeKind, FileRecord, FuzzyRank, MetaFilters, RecordView, Sort, SortKey, SqlCondition,
+    CmpOp, DupeKind, FileRecord, FuzzyKeep, FuzzyRank, MetaFilters, RecordView, Sort, SortKey,
+    SqlCondition,
 };
 
 mod crud;

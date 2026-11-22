@@ -231,18 +231,59 @@ mod boolean {
         let rank = |term: &'static str| {
             move |names: &[&str]| super::super::postfilter::fuzzy_rank(names, term, 0.7, 10)
         };
-        let hits = store.fuzzy_search(&[], 1000, &rank("mian")).unwrap();
+        let hits = store
+            .fuzzy_search(&[], 1000, &|_| true, &rank("mian"))
+            .unwrap();
         assert_eq!(hits.first().map(|r| r.path.as_str()), Some("/p/main.rs"));
         let cond = parse_plan("ext:txt").sql_conditions;
-        let hits = store.fuzzy_search(&cond, 1000, &rank("notes")).unwrap();
+        let hits = store
+            .fuzzy_search(&cond, 1000, &|_| true, &rank("notes"))
+            .unwrap();
         assert_eq!(
             hits.iter().map(|r| r.name.as_str()).collect::<Vec<_>>(),
             ["notes.txt"]
         );
         assert!(store
-            .fuzzy_search(&cond, 1000, &rank("main"))
+            .fuzzy_search(&cond, 1000, &|_| true, &rank("main"))
             .unwrap()
             .is_empty());
+    }
+
+    /// More non-matching names than the cap, before the match both in
+    /// insertion order and in name order, which is how SQLite reads them.
+    fn fuzzy_past_the_cap(store: &FileStore) {
+        for i in 0..300 {
+            store
+                .upsert_file(&rec(&format!("/p/aaaa_{i}.bin"), Some("bin"), false))
+                .unwrap();
+        }
+        store
+            .upsert_file(&rec("/p/main.rs", Some("rs"), false))
+            .unwrap();
+        let prefilter = super::super::postfilter::FuzzyPrefilter::new("mian", 0.7);
+        let hits = store
+            .fuzzy_search(
+                &[],
+                50,
+                &|name: &str| prefilter.could_match(name),
+                &|names: &[&str]| super::super::postfilter::fuzzy_rank(names, "mian", 0.7, 10),
+            )
+            .unwrap();
+        assert_eq!(
+            hits.iter().map(|r| r.name.as_str()).collect::<Vec<_>>(),
+            ["main.rs"]
+        );
+    }
+
+    #[test]
+    fn fuzzy_finds_a_match_past_the_candidate_cap() {
+        let dir = tempfile::TempDir::new().unwrap();
+        fuzzy_past_the_cap(&FileStore::Sqlite(Arc::new(
+            SqliteStore::new(&dir.path().join("i.db")).unwrap(),
+        )));
+        fuzzy_past_the_cap(&FileStore::Memory(Arc::new(
+            MemoryStore::new(dir.path()).unwrap(),
+        )));
     }
 
     #[test]

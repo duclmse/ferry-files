@@ -49,6 +49,10 @@ pub struct FileRecord {
 /// indices of the winners, best first.
 pub type FuzzyRank<'a> = dyn Fn(&[&str]) -> Vec<usize> + Sync + 'a;
 
+/// Fuzzy prefilter handed to the stores: false only for a name the ranker
+/// would reject, and cheap enough to run on every name in the index.
+pub type FuzzyKeep<'a> = dyn Fn(&str) -> bool + Sync + 'a;
+
 /// The fields predicates read, so they can run on borrowed storage (the
 /// memory store's packed entries) without building a `FileRecord` per row.
 /// The memory store keeps no whole paths, so path access goes through a
@@ -748,16 +752,18 @@ impl FileStore {
     }
 
     /// Fuzzy search: `rank` scores the names of up to `cap` rows matching
-    /// `conds`; only the winners are materialized as `FileRecord`s.
+    /// `conds` that `keep` passes; only the winners are materialized as
+    /// `FileRecord`s.
     pub fn fuzzy_search(
         &self,
         conds: &[SqlCondition],
         cap: usize,
+        keep: &FuzzyKeep<'_>,
         rank: &FuzzyRank<'_>,
     ) -> Result<Vec<FileRecord>> {
         match self {
-            FileStore::Sqlite(s) => s.fuzzy_search(conds, cap, rank),
-            FileStore::Memory(m) => m.fuzzy_search(conds, cap, rank),
+            FileStore::Sqlite(s) => s.fuzzy_search(conds, cap, keep, rank),
+            FileStore::Memory(m) => m.fuzzy_search(conds, cap, keep, rank),
         }
     }
 

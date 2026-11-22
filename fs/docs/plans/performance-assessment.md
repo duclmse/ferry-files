@@ -437,11 +437,29 @@ Median query time at 10M, in ms:
 - **SQLite `*.pdf` got slow with the `*.ext` change above.** As `id IN (...)`
   SQLite collected every match before `LIMIT` applied. It is now a
   compound select that stops at the limit, which brought it back to 0.1 ms.
-- **`fuzzy:` scores only the first `max_fuzzy_candidates` (50,000) entries
-  matching the other conditions**, 0.5% of a 10M index. Which ones depends
-  on the store: SQLite reads them in name order through `idx_files_name`, and
-  here those are all `Draft_*`, so it found nothing, while the memory store
-  found 100. Not changed yet. A bare `fuzzy:` term on a large index needs
-  either all names scored or the cap applied after a cheaper prefilter.
+- **`fuzzy:` scored only the first `max_fuzzy_candidates` (50,000) entries
+  matching the other conditions**, 0.5% of a 10M index. Which ones depended
+  on the store: SQLite read them in name order through `idx_files_name`, and
+  here those were all `Draft_*`, so it found nothing, while the memory store
+  found 100. Now every name goes through a cheap prefilter first, and the cap
+  counts only names that pass it. The prefilter rejects a name only if
+  neither score could reach the threshold:
+  - nucleo needs the term as a subsequence;
+  - the typo score needs all but `k` of the term's letters within some
+    `len + 1` bytes.
+
+  A randomized test checks that it never drops a name the ranker keeps.
+
+  | At 10M | Memory | SQLite |
+  | --- | ---: | ---: |
+  | `fuzzy:reprot` | 99 ms, 100 hits | 193 ms, 100 hits (was 0) |
+  | `fuzzy:mian` | 48 ms | 61 ms |
+  | `fuzzy:zzqx` (no match: every name tested) | 127 ms | 1,215 ms |
+
+  The same test found that a term with a capital letter could panic inside
+  nucleo, which wants a lowercase needle (`fuzzy:Ad` against `AA_bab`); the
+  term is now lowercased first. SQLite's no-match case reads every name
+  from disk on one connection; the name-range split that substring searches
+  use would cut it if it matters.
 - The `sort:size readme` maximum (419 ms memory, 146 ms SQLite) is the first
   run of the process; the median is the steady cost.

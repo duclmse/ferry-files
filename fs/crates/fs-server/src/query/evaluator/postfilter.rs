@@ -138,16 +138,20 @@ fn is_whole_word(text: &str, word: &str) -> bool {
 /// Returns indices into `names`, so callers can score borrowed names and
 /// materialize only the winning rows.
 pub(super) fn fuzzy_rank(names: &[&str], term: &str, threshold: f32, limit: usize) -> Vec<usize> {
-    let term_lower: Vec<char> = term.to_lowercase().chars().collect();
+    // nucleo ignores case only in the haystack and wants the needle
+    // lowercase already: a capital in it matched nothing, and on some names
+    // tripped an assertion inside nucleo (`fuzzy:Ad` against `AA_bab`).
+    let term = term.to_lowercase();
+    let term_lower: Vec<char> = term.chars().collect();
     if term_lower.is_empty() {
         return Vec::new();
     }
 
     let mut needle_buf = Vec::new();
-    let needle = Utf32Str::new(term, &mut needle_buf);
+    let needle = Utf32Str::new(&term, &mut needle_buf);
     let mut self_buf = Vec::new();
     let self_score = Matcher::new(NucleoConfig::DEFAULT)
-        .fuzzy_match(Utf32Str::new(term, &mut self_buf), needle)
+        .fuzzy_match(Utf32Str::new(&term, &mut self_buf), needle)
         .unwrap_or(0)
         .max(1) as f32;
 
@@ -170,6 +174,87 @@ pub(super) fn fuzzy_rank(names: &[&str], term: &str, threshold: f32, limit: usiz
     // Ties keep candidate order so results are deterministic across runs.
     scored.sort_unstable_by(|(a, i), (b, j)| b.total_cmp(a).then(i.cmp(j)));
     scored.into_iter().take(limit).map(|(_, i)| i).collect()
+}
+
+/// Rejects only names [`fuzzy_rank`] scores below the threshold, at a few
+/// nanoseconds a name, so every name in a large index can be tested and the
+/// candidate cap applies to names that could match, not to whichever rows a
+/// store reads first. A name passes if either signal could reach it:
+/// - nucleo scores only a name holding the term as a subsequence, ignoring
+///   case;
+/// - a typo similarity of at least the threshold allows at most `k` edits
+///   between the term and a window of the name at most one longer than it.
+///   A substitution or deletion loses one of the term's letters and an
+///   insertion or transposition loses none, so some `len + 1` bytes of the
+///   name hold all but `k` of them, counted with repeats.
+///
+/// A non-ASCII term or name always passes: case folding and nucleo's
+/// normalization are not byte comparisons there.
+pub(super) struct FuzzyPrefilter {
+    /// The term in ASCII lowercase; `None` when it is not ASCII.
+    term: Option<Vec<u8>>,
+    /// How often each byte occurs in the term.
+    counts: [u32; 128],
+    /// Term letters a name must hold for the typo signal to reach the
+    /// threshold; `usize::MAX` when no number of edits can.
+    need: usize,
+}
+
+impl FuzzyPrefilter {
+    pub(super) fn new(term: &str, threshold: f32) -> Self {
+        let n = term.chars().count();
+        // The same arithmetic as `typo_similarity`, so the two agree at the
+        // boundary.
+        let max_edits = (0..=n)
+            .rev()
+            .find(|&d| n > 0 && 1.0 - d as f32 / n as f32 >= threshold);
+        let need = max_edits.map_or(usize::MAX, |k| n - k);
+        let term = term
+            .is_ascii()
+            .then(|| term.to_ascii_lowercase().into_bytes());
+        let mut counts = [0u32; 128];
+        for &b in term.iter().flatten() {
+            counts[usize::from(b)] += 1;
+        }
+        Self { term, counts, need }
+    }
+
+    pub(super) fn could_match(&self, name: &str) -> bool {
+        let Some(term) = &self.term else { return true };
+        if !name.is_ascii() || self.need == 0 {
+            return true;
+        }
+        let name = name.as_bytes();
+        let width = term.len() + 1;
+        let mut next = 0;
+        // Term letters, with repeats, among the last `width` bytes.
+        let mut window = [0u32; 128];
+        let mut held = 0;
+        for (i, b) in name.iter().map(u8::to_ascii_lowercase).enumerate() {
+            if next < term.len() && term[next] == b {
+                next += 1;
+                if next == term.len() {
+                    return true;
+                }
+            }
+            if i >= width {
+                let out = usize::from(name[i - width].to_ascii_lowercase());
+                window[out] -= 1;
+                if window[out] < self.counts[out] {
+                    held -= 1;
+                }
+            }
+            let b = usize::from(b);
+            if window[b] < self.counts[b] {
+                held += 1;
+            }
+            window[b] += 1;
+            if held >= self.need {
+                return true;
+            }
+        }
+        false
+    }
 }
 
 /// `1 - d / len(term)` for the closest window of `name` (window lengths
@@ -239,6 +324,112 @@ mod fuzzy_tests {
             .into_iter()
             .map(|i| c[i].to_owned())
             .collect()
+    }
+
+    /// Every name `fuzzy_rank` keeps passes the prefilter, across typos,
+    /// transpositions, case, repeats and thresholds.
+    #[test]
+    fn the_prefilter_keeps_every_name_the_ranker_keeps() {
+        let names = [
+            "main.rs",
+            "mian.rs",
+            "MAIN.RS",
+            "domain_model.rs",
+            "report_notes_12.txt",
+            "reprot.pdf",
+            "rpeort",
+            "Draft_Index_9.md",
+            "notes.txt",
+            "aaab",
+            "abab",
+            "baaa",
+            "x",
+            "",
+            "résumé.doc",
+            "lib.rs",
+            "Cargo.toml",
+            "readme",
+            "README.md",
+            "ReAdMe",
+            "config.json",
+            "cnofig.json",
+            "confg",
+            "conf",
+            "data_backup_2024.zip",
+        ];
+        for term in [
+            "mian", "reprot", "aab", "readme", "config", "x", "ab", "résumé", "zzqx",
+        ] {
+            for threshold in [0.0, 0.3, 0.5, 0.7, 0.9, 1.0] {
+                let filter = FuzzyPrefilter::new(term, threshold);
+                for i in fuzzy_rank(&names, term, threshold, usize::MAX) {
+                    assert!(
+                        filter.could_match(names[i]),
+                        "{term:?} at {threshold} keeps {:?}",
+                        names[i]
+                    );
+                }
+            }
+        }
+    }
+
+    /// Random short names and terms over a few letters, where typos,
+    /// repeats and windows collide far more often than in real names.
+    #[test]
+    fn the_prefilter_never_drops_a_random_match() {
+        let mut seed: u64 = 0x2545_f491_4f6c_dd1d;
+        let mut next = move |n: u64| {
+            seed ^= seed << 13;
+            seed ^= seed >> 7;
+            seed ^= seed << 17;
+            seed % n
+        };
+        let mut word = |max: u64| -> String {
+            let len = 1 + next(max);
+            (0..len)
+                .map(|_| b"abcdA_."[next(7) as usize] as char)
+                .collect()
+        };
+        let names: Vec<String> = (0..400).map(|_| word(12)).collect();
+        let names: Vec<&str> = names.iter().map(String::as_str).collect();
+        for _ in 0..200 {
+            let term = word(6);
+            for threshold in [0.4, 0.6, 0.7, 0.8] {
+                let filter = FuzzyPrefilter::new(&term, threshold);
+                for i in fuzzy_rank(&names, &term, threshold, usize::MAX) {
+                    assert!(
+                        filter.could_match(names[i]),
+                        "{term:?} at {threshold} keeps {:?}",
+                        names[i]
+                    );
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn a_term_with_capitals_scores_like_its_lowercase() {
+        let c = ["main.rs", "A_b", "MAIN.RS"];
+        assert_eq!(
+            fuzzy_rank(&c, "Main", 0.7, 10),
+            fuzzy_rank(&c, "main", 0.7, 10)
+        );
+        // nucleo asserted on this pair: it wants a lowercase needle.
+        assert_eq!(fuzzy_rank(&["AA_bab.dbcb"], "Ad", 0.0, 10), [0]);
+    }
+
+    #[test]
+    fn the_prefilter_rejects_names_far_from_the_term() {
+        let filter = FuzzyPrefilter::new("reprot", 0.7);
+        assert!(filter.could_match("report_notes.txt"), "a subsequence");
+        assert!(filter.could_match("rpeort"), "a transposition");
+        assert!(!filter.could_match("Draft_Index_9.md"));
+        assert!(!filter.could_match("image.jpg"));
+        assert!(
+            !FuzzyPrefilter::new("mian", 0.7).could_match("aaaa_12.bin"),
+            "the letters are there, but not within one window"
+        );
+        assert!(FuzzyPrefilter::new("reprot", 0.0).could_match("image.jpg"));
     }
 
     #[test]
