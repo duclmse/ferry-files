@@ -64,43 +64,44 @@ archiveof:/path/a.zip # all entries inside a specific archive
 
 ### Quick start
 
-```toml
-# fs/config.toml
-[daemon]
-watch_paths = ["C:/Projects", "D:/Data"]
-pid_file    = "fs.pid"
+A minimal `config.toml`; every other setting has a default.
+`config.windows.toml`, `config.macos.toml` and
+`crates/fs-server/config.toml` (Linux) are commented, complete examples.
 
-[store]
-sqlite_path  = "fs.db"
-tantivy_path = "tantivy_index"
+```toml
+watch_paths = ["C:/Projects", "D:/Data"]
+data_dir    = "C:/ProgramData/fs"    # index snapshot / SQLite, Tantivy index
+log_dir     = "C:/ProgramData/fs/logs"
+
+[exclusions]
+path_patterns = ["**/.git/**", "**/node_modules/**", "**/target/**"]
 
 [api]
 rest_port = 7700
 grpc_port = 7701
-ipc_path  = "\\\\.\\pipe\\fs"    # Windows named pipe
-
-[indexer]
-exclude_paths    = ["**/node_modules", "**/.git"]
-index_content    = true
-max_content_size = 10_485_760             # 10 MB
-index_archives   = true
-archive_passwords = []
+# ipc_path defaults to \\.\pipe\fs on Windows and /tmp/fs.sock elsewhere
 ```
 
 ```sh
-# Start the daemon
-fs run --config config.toml
+# Check the config, then start the daemon
+fsd --config config.toml validate-config
+fsd --config config.toml daemon
 
-# Search (CLI)
-fs search "*.rs size:>1kb"
-fs search "fuzzy:reprot dm:lastweek"
+# Search. fs reads only api.ipc_path from the same file;
+# --config defaults to ./config.toml
+fs --config config.toml search "*.rs size:>1kb"
+fs --config config.toml search "fuzzy:reprot dm:lastweek"
+fs --config config.toml search --ext rs,toml --path C:/Projects --json
 
-# Force re-index
-fs reindex
-
-# Interactive TUI
-fs tui
+# Index statistics, re-index, interactive TUI
+fs --config config.toml stats
+fs --config config.toml reindex
+fs --config config.toml tui
 ```
+
+On Windows, `fsd --config C:/ProgramData/fs/config.toml install-service`
+runs it as a service. On macOS, read the notes at the top of
+`config.macos.toml` first (Full Disk Access, stopping it cleanly).
 
 ### Everything file lists (.efu)
 
