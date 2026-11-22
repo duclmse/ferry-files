@@ -95,11 +95,12 @@ impl Default for WatcherConfig {
 #[derive(Debug, Clone, Copy, Deserialize, Default, PartialEq, Eq)]
 #[serde(rename_all = "lowercase")]
 pub enum WatcherBackend {
-    /// The `notify` crate on every platform.
-    #[default]
+    /// The `notify` crate on every platform. On Windows it loses changes
+    /// in a burst without saying so (`watcher/live.rs`).
     Notify,
     /// Windows: ReadDirectoryChangesW with a large buffer that reports
     /// overflow. Elsewhere the same as `notify`.
+    #[default]
     Native,
     /// Windows: the NTFS USN journal for every root on a volume whose
     /// journal can be read (administrator rights), `native` for the rest.

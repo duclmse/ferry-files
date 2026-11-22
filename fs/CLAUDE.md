@@ -130,7 +130,9 @@ disk. The commit loop in `daemon.rs` runs every `commit_interval_secs`.
 
 ## Dependency notes
 
-- `notify` / `notify-debouncer-full` - filesystem watcher. Debounce is 500ms in
+- `notify` / `notify-debouncer-full` - filesystem watcher on Linux and macOS
+  (and Windows with `watcher.backend = "notify"`; the default there is
+  `watcher/live/rdcw.rs`). Debounce is 500ms in
   fs, 5s min-age gate in rar2zip.
 - `tantivy` - full-text index. Schema is defined once in `tantivy_store.rs`; do
   not add fields without migrating existing indices.

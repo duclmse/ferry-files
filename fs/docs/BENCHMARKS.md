@@ -1,7 +1,9 @@
 # Benchmarks
 
-Measured 2026-11-22 on commit `1c734c7` plus the uncommitted optimizations
-listed in [Findings](#findings). How to rerun everything is in
+Summary and live-change tables measured 2026-11-22 on `d7f961b` with
+`watcher.backend = "native"` (the Windows default since); the sections after
+them are from `1c734c7` plus the optimizations listed in
+[Findings](#findings), and have not moved by more than noise since. How to rerun everything is in
 [DEVELOPMENT.md §8](DEVELOPMENT.md#8-benchmarks).
 
 **Machine:** Intel i7-10700K (8C/16T), 32 GB RAM, Windows 11 Pro 26100, index
@@ -13,20 +15,20 @@ warm file cache.
 ## Summary
 
 `scripts\bench-windows.ps1 -TargetDir C:\Windows` (defaults: 8 clients, 20 s
-load, 15 s idle, 5 iterations); C:\Windows is 348,610 entries.
+load, 15 s idle, 5 iterations); C:\Windows is 348,615 entries.
 
 |                                        |                          Memory store |                      SQLite store |
 | -------------------------------------- | ------------------------------------: | --------------------------------: |
-| Crawl                                  |           **4.4 s** (79.7k entries/s) |           6.5 s (54.0k entries/s) |
-| Peak working set, whole run            |                            **100 MB** |                            158 MB |
-| Working set, idle after crawl          |                                 66 MB |                     29–141 MB [^1] |
-| Index on disk                          | **6.2 MB** `index.bin` (18.7 B/entry) | 260.3 MB `index.db` (783 B/entry) |
-| Restart catch-up, all 9 checks visible |                             **2.9 s** |                         **2.9 s** |
+| Crawl                                  |           **4.8 s** (73.3k entries/s) |           6.8 s (51.3k entries/s) |
+| Peak working set, whole run            |                            **105 MB** |                            185 MB |
+| Working set, idle after crawl          |                                 71 MB |                     35–148 MB [^1] |
+| Index on disk                          | **6.2 MB** `index.bin` (18.7 B/entry) |   264 MB `index.db` (794 B/entry) |
+| Restart catch-up, all 9 checks visible |                             **3.0 s** |                         **3.0 s** |
 | Clean stop (Ctrl+C)                    |                                 1.1 s |                             1.1 s |
-| 8-client load, 20 s                    |                 104 req/s, p50 4.9 ms |          **94 req/s**, p50 0.8 ms |
+| 8-client load, 20 s                    |                 211 req/s, p50 2.8 ms |         **157 req/s**, p50 0.8 ms |
 
 [^1]: Windows trims the SQLite daemon's working set during the idle phase,
-    from 141 MB to 29 MB; most of it is SQLite's page cache.
+    from 148 MB to 35 MB; most of it is SQLite's page cache.
 
 The memory store needs about 60% of the RAM and 1/40 of the disk, and its
 slowest queries are 10–25× faster. SQLite wins only on the cheapest indexed
@@ -34,39 +36,54 @@ lookups (`ext:`, `ext:a | ext:b`).
 
 ### How it moved
 
-| Measure                          | 29e870f | 1c734c7 | now          |
-| -------------------------------- | ------: | ------: | -----------: |
-| Catch-up, memory / SQLite        | 7.7 / 7.8 s | 7.7 / 7.9 s | **2.9 / 2.9 s** |
-| SQLite 8-client load             | 48 req/s | 31 req/s | **94 req/s** |
-| SQLite `*.rs`, 50 results asked  | ~0.5 ms | 53 ms   | **1–2 ms**   |
-| SQLite `*.rs`, 100 results asked (52 exist) | 144–250 ms | 47 ms | 49 ms |
-| Crawl, memory / SQLite           | 4.9 / 6.4 s | 4.9 / 6.0 s | 4.4 / 6.5 s |
-| `index.db`                       | 252.6 MB | 258.6 MB | 260.3 MB |
+| Measure                          | 29e870f | 1c734c7 | 6464789 | d7f961b, `native` |
+| -------------------------------- | ------: | ------: | ------: | ------: |
+| Catch-up, memory / SQLite        | 7.7 / 7.8 s | 7.7 / 7.9 s | **2.9 / 2.9 s** | 3.0 / 3.0 s |
+| Memory 8-client load             | – | – | 104 req/s | **211 req/s** |
+| SQLite 8-client load             | 48 req/s | 31 req/s | 94 req/s | **157 req/s** |
+| SQLite `*.rs`, 50 results asked  | ~0.5 ms | 53 ms   | **1–2 ms**   | – |
+| SQLite `*.rs`, 100 results asked (52 exist) | 144–250 ms | 47 ms | 49 ms | 47 ms |
+| Crawl, memory / SQLite           | 4.9 / 6.4 s | 4.9 / 6.0 s | 4.4 / 6.5 s | 4.8 / 6.8 s |
+| `index.db`                       | 252.6 MB | 258.6 MB | 260.3 MB | 264 MB |
+
+The 6464789 column is before the rebase onto the fuzzy-search work
+(`16968e5`); the load gains in the last column are that work plus `notify`'s
+watcher no longer running (on `16968e5` with `notify`: 168 / 140 req/s).
 
 ## Live changes per watcher backend
 
-`python -I scripts/bench-live.py target/release/fsd.exe --backends notify,native`,
-memory store, a fresh temp folder per backend, not elevated. Times are until a
-search returns the expected count; "stale" is what was still indexed after 15 s
-without progress.
+`python -I scripts/bench-live.py target/release/fsd.exe --backends notify,native,usn --es es.exe`
+from an elevated console, on `d7f961b`. Memory store, a fresh temp folder per
+backend; Everything 1.5 (the installed one, which reads the USN journal) is
+polled through `es.exe`, which adds about 36 ms per poll. Times are until a
+search returns the expected count; "stale" is what was still indexed after
+15 s without progress. Bursts are 40 folders × 1,000 files.
 
-| Scenario (40 × 1,000 files)         | `notify`             | `native`        |
-| ----------------------------------- | -------------------: | --------------: |
-| One new file until searchable       | median 577 ms        | median 512 ms   |
-| 40 folders created                  | 0.5 s                | 0.5 s           |
-| Those 40 folders deleted (`rmtree`) | **39,549 stale**     | 0.6 s           |
-| 40,000 files in one folder          | 0.9 s                | 0.5 s           |
-| Those files deleted one by one      | **39,544 stale**     | 0.5 s           |
-| Folder of 1,000 files renamed       | 0.8 s                | 0.5 s           |
+| Scenario                         |        `notify` |     `native` |        `usn` | Everything |
+| -------------------------------- | --------------: | -----------: | -----------: | ---------: |
+| One new file until searchable    |   576 ms median | 520 ms       | 552 ms       | 695 ms     |
+| 40 folders created               |           0.5 s | 0.5 s        | 0.5 s        | 0.6 s      |
+| Those folders deleted (`rmtree`) | **39,528 stale** | 0.5 s       | 0.6 s        | 0.6 s      |
+| 40,000 files in one folder       |           0.9 s | 0.5 s        | 0.5 s        | 0.9 s      |
+| Those files deleted one by one   | **39,563 stale** | 0.3 s       | 0.3 s        | 0.6 s      |
+| Folder of 1,000 files renamed    |           0.8 s | 0.6 s        | 0.6 s        | 0.6 s      |
+| fsd CPU over all scenarios       |          45.8 s | 8.1 s        | **5.3 s**    | –          |
+| fsd CPU, 10 s idle               |           16 ms | 0 ms         | 31 ms        | –          |
 
-`notify` loses nearly every delete in a burst: its Windows backend reads
-into 16 KiB and handles each event before it reads again, and an overflow
-is silently dropped. `native` (`watcher/live/rdcw.rs`) never overflowed here,
-even with a 4 KiB buffer, because it starts the next read before parsing the
-last one. Forced overflow (fsd suspended while `del /q` removed 20,000 files,
-64 KiB buffer): the overflow was reported, the recovery scan took 0.4 s and
-all 20,000 rows were gone 0.7 s after resume. `usn` is not measured yet (it
-needs an elevated console).
+- `notify` loses nearly every delete in a burst. Its Windows backend reads
+  into 16 KiB and handles each event (debouncer bookkeeping included) before
+  it reads again, and drops the overflow without a signal. It also costs
+  5–9× the CPU of the other two for the same changes.
+- `native` (`watcher/live/rdcw.rs`, the default on Windows) never overflowed
+  here, even with a 4 KiB buffer: it starts the next read before parsing the
+  last one.
+- `usn` (`watcher/live/usn.rs`) reads the whole volume's journal, so it spends
+  a little CPU on unrelated changes when idle (31 ms per 10 s here), and the
+  least while busy.
+- Forced loss: fsd suspended while `del /q` removed 20,000 files from one
+  folder. `native` (64 KiB buffer) reported the overflow, its recovery scan
+  took 0.4 s, and the index was right 0.6 s after resume. `usn` needed no
+  recovery: the journal still held every delete, read 0.6 s after resume.
 
 ## Release binaries
 
