@@ -121,6 +121,31 @@ pub struct Space {
 }
 
 /// Absolute, normalised device path ("/a/b", never a trailing slash except "/").
+/// Copies `from` into a new file `to`, a piece at a time, for `Transport::read_to`: `read` is told
+/// each piece's size, and `stop` cancels. `what` names the file in errors. Gives the bytes copied.
+pub fn pour(from: &mut dyn std::io::Read, to: &Path, what: &str, read: &mut dyn FnMut(u64), stop: &AtomicBool) -> Result<u64> {
+    use std::io::Write;
+    let mut f = std::fs::File::create(to).map_err(|e| DevError::Msg(format!("Can't write {}: {e}", to.display())))?;
+    let mut buf = vec![0u8; 1 << 20];
+    let mut total = 0u64;
+    loop {
+        if stop.load(std::sync::atomic::Ordering::Relaxed) {
+            return err("Cancelled.");
+        }
+        let n = match from.read(&mut buf) {
+            Ok(n) => n,
+            Err(e) if e.kind() == std::io::ErrorKind::Interrupted => continue,
+            Err(e) => return err(format!("Couldn't read {what}: {e}")),
+        };
+        if n == 0 {
+            return Ok(total);
+        }
+        f.write_all(&buf[..n]).map_err(|e| DevError::Msg(format!("Can't write {}: {e}", to.display())))?;
+        total += n as u64;
+        read(n as u64);
+    }
+}
+
 pub fn norm(path: &str) -> Result<String> {
     if !path.starts_with('/') {
         return err(format!("Use an absolute device path, not {path:?}."));

@@ -384,6 +384,13 @@ pub struct Dav {
     agent: ureq::Agent,
 }
 
+/// What a request sends: bytes, or a file on this computer, read as it's sent.
+#[derive(Clone, Copy)]
+enum Body<'a> {
+    Bytes(&'a [u8]),
+    File(&'a std::path::Path),
+}
+
 impl Dav {
     /// Connects to the folder at `server`: it must answer a PROPFIND.
     /// With `login` (user name, password), logs in with HTTP Basic authentication, or Digest
@@ -454,7 +461,7 @@ impl Dav {
 
     /// One request to one address, with the login. On a 401 that asks for Digest, the challenge is
     /// kept and the request sent again, once.
-    fn attempt(&self, method: &str, url: &str, headers: &[(String, String)], body: &[u8]) -> std::result::Result<ureq::Response, ureq::Error> {
+    fn attempt(&self, method: &str, url: &str, headers: &[(String, String)], body: Body) -> std::result::Result<ureq::Response, ureq::Error> {
         let mut retried = false;
         loop {
             let mut req = self.agent.request(method, url);
@@ -464,7 +471,16 @@ impl Dav {
             for (k, v) in headers {
                 req = req.set(k, v);
             }
-            let res = if method == "GET" { req.call() } else { req.send_bytes(body) };
+            let res = match body {
+                _ if method == "GET" => req.call(),
+                Body::Bytes(b) => req.send_bytes(b),
+                // Opened again for each try: a retry or redirect sends it from the start.
+                Body::File(from) => {
+                    let f = std::fs::File::open(from).map_err(|e| ureq::Error::from(std::io::Error::new(e.kind(), format!("{}: {e}", from.display()))))?;
+                    let size = f.metadata().map_err(ureq::Error::from)?.len();
+                    req.set("Content-Length", &size.to_string()).send(f)
+                }
+            };
             let Err(ureq::Error::Status(401, r)) = res else { return res };
             if !retried && self.login.is_some() {
                 if let Some(new) = digest_challenge(&r.all("www-authenticate")) {
@@ -489,6 +505,11 @@ impl Dav {
     /// to `HOPS` times, to the same server or the same host over https. Any other 3xx counts as an
     /// error, so nothing is taken as done. The login only goes where the request first went.
     fn send(&self, method: &str, url: &str, headers: &[(&str, &str)], body: &[u8]) -> std::result::Result<ureq::Response, ureq::Error> {
+        self.send_body(method, url, headers, Body::Bytes(body))
+    }
+
+    /// As `send`, with the body in bytes or in a file on this computer.
+    fn send_body(&self, method: &str, url: &str, headers: &[(&str, &str)], body: Body) -> std::result::Result<ureq::Response, ureq::Error> {
         let mut url = url.to_string();
         let mut headers: Vec<(String, String)> = headers.iter().map(|(k, v)| (k.to_string(), v.to_string())).collect();
         let mut hops = 0;
@@ -544,6 +565,22 @@ impl Dav {
             // Starting past the end of the file.
             Err(ureq::Error::Status(416, _)) => Ok(None),
             Err(e) => Err(self.dev(e)),
+        }
+    }
+
+    /// Writes the file under a temporary name and moves it over `path`. Gives the new version.
+    fn put(&self, path: &str, body: Body) -> Result<String> {
+        let nanos = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map_or(0, |d| d.as_nanos());
+        let tmp = join(&dirname(path), &format!(".{}.ferry-{nanos}.tmp", basename(path)));
+        self.send_body("PUT", &self.url(&tmp, false), &[], body).map_err(|e| self.dev(e))?;
+        if let Err(e) = self.move_to(&tmp, path, true) {
+            // Don't leave the temporary file behind.
+            let _ = self.send("DELETE", &self.url(&tmp, false), &[], &[]);
+            return Err(e);
+        }
+        match self.props(path)? {
+            Some(i) => Ok(i.version()),
+            None => err(format!("{path} wasn't there after it was written.")),
         }
     }
 
@@ -615,18 +652,19 @@ impl Transport for Dav {
     }
 
     fn replace(&self, path: &str, data: &[u8], _exists: bool) -> Result<String> {
-        let nanos = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map_or(0, |d| d.as_nanos());
-        let tmp = join(&dirname(path), &format!(".{}.ferry-{nanos}.tmp", basename(path)));
-        self.send("PUT", &self.url(&tmp, false), &[], data).map_err(|e| self.dev(e))?;
-        if let Err(e) = self.move_to(&tmp, path, true) {
-            // Don't leave the temporary file behind.
-            let _ = self.send("DELETE", &self.url(&tmp, false), &[], &[]);
-            return Err(e);
-        }
-        match self.props(path)? {
-            Some(i) => Ok(i.version()),
-            None => err(format!("{path} wasn't there after it was written.")),
-        }
+        self.put(path, Body::Bytes(data))
+    }
+
+    fn replace_from(&self, path: &str, from: &std::path::Path, _exists: bool) -> Result<String> {
+        self.put(path, Body::File(from))
+    }
+
+    fn read_to(&self, path: &str, to: &std::path::Path, read: &mut dyn FnMut(u64), stop: &std::sync::atomic::AtomicBool) -> Result<String> {
+        // The version first, as in `read`.
+        let item = self.props(path)?;
+        let Some(res) = self.get(path, None)? else { return err(format!("Couldn't read {path}.")) };
+        let total = crate::device::pour(&mut res.into_reader(), to, path, read, stop)?;
+        Ok(item.map(|i| i.version()).unwrap_or_else(|| format!("{total}:0")))
     }
 
     fn delete(&self, path: &str, is_dir: bool) -> Result<()> {
@@ -854,6 +892,32 @@ mod tests {
         assert!(first(&reqs[2]).starts_with("MOVE /remote.php/dav/files/me/.caf%C3%A9.epub.ferry-"), "{}", reqs[2]);
         assert!(has_header(&reqs[2], "Overwrite: T"), "{}", reqs[2]);
         assert!(reqs[2].contains(&format!("Destination: {at}/remote.php/dav/files/me/caf%C3%A9.epub")), "{}", reqs[2]);
+    }
+
+    #[test]
+    fn copies_to_and_from_files_on_this_computer() {
+        let (asked, at) = serve(vec![
+            ("207 Multi-Status", "", NEXTCLOUD),
+            ("207 Multi-Status", "", NEXTCLOUD),
+            ("200 OK", "", "the file's bytes"),
+            ("201 Created", "", ""),
+            ("204 No Content", "", ""),
+            ("207 Multi-Status", "", NEXTCLOUD),
+        ]);
+        let dav = Dav::open(&format!("{at}/remote.php/dav/files/me"), None).unwrap();
+        let dir = std::env::temp_dir().join(format!("ferry-dav-files-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let (to, from) = (dir.join("got"), dir.join("send"));
+        let mut seen = 0;
+        let v = dav.read_to("/café.epub", &to, &mut |n| seen += n, &std::sync::atomic::AtomicBool::new(false)).unwrap();
+        assert_eq!((std::fs::read(&to).unwrap(), seen, v.as_str()), (b"the file's bytes".to_vec(), 16, "\"abc123\""));
+        std::fs::write(&from, b"sent from a file").unwrap();
+        assert_eq!(dav.replace_from("/café.epub", &from, true).unwrap(), "\"abc123\"");
+        std::fs::remove_dir_all(&dir).unwrap();
+        let reqs = asked.join().unwrap();
+        assert!(first(&reqs[3]).starts_with("PUT /remote.php/dav/files/me/.caf%C3%A9.epub.ferry-"), "{}", reqs[3]);
+        assert!(has_header(&reqs[3], "Content-Length: 16") && reqs[3].ends_with("sent from a file"), "{}", reqs[3]);
+        assert!(first(&reqs[4]).starts_with("MOVE "), "{}", reqs[4]);
     }
 
     #[test]

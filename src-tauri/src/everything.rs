@@ -372,23 +372,8 @@ impl Transport for Everything {
 
     /// Streamed into the file a piece at a time.
     fn read_to(&self, path: &str, to: &std::path::Path, read: &mut dyn FnMut(u64), stop: &std::sync::atomic::AtomicBool) -> Result<String> {
-        use std::io::{Read, Write};
         let mut r = self.get(&file_url(&self.srv.base, path), None)?.into_reader();
-        let mut f = std::fs::File::create(to).map_err(|e| DevError::Msg(format!("Can't write {}: {e}", to.display())))?;
-        let mut buf = vec![0u8; 1 << 20];
-        let mut total = 0u64;
-        loop {
-            if stop.load(std::sync::atomic::Ordering::Relaxed) {
-                return Err(DevError::Msg("Cancelled.".into()));
-            }
-            let n = r.read(&mut buf).map_err(|e| DevError::Msg(format!("Couldn't read {path} from Everything: {e}")))?;
-            if n == 0 {
-                break;
-            }
-            f.write_all(&buf[..n]).map_err(|e| DevError::Msg(format!("Can't write {}: {e}", to.display())))?;
-            total += n as u64;
-            read(n as u64);
-        }
+        let total = crate::device::pour(&mut r, to, &format!("{path} from Everything"), read, stop)?;
         Ok(self.version(path).ok().flatten().unwrap_or_else(|| format!("{total}:0")))
     }
 

@@ -38,6 +38,42 @@ fn sha256_hex(data: &[u8]) -> String {
     hex::encode(Sha256::digest(data))
 }
 
+/// What a request sends: bytes, or a byte range of a file on this computer, read as it's sent.
+enum Body<'a> {
+    Bytes(&'a [u8]),
+    File(&'a std::path::Path, std::ops::Range<u64>),
+}
+
+/// Bytes `r` of file `from`, to read.
+fn part_of(from: &std::path::Path, r: std::ops::Range<u64>) -> Res<std::io::Take<std::fs::File>> {
+    use std::io::{Seek, SeekFrom};
+    let fail = |e: std::io::Error| Fail { status: 0, msg: format!("Can't read {}: {e}", from.display()) };
+    let mut f = std::fs::File::open(from).map_err(fail)?;
+    f.seek(SeekFrom::Start(r.start)).map_err(fail)?;
+    Ok(f.take(r.end - r.start))
+}
+
+/// The SHA-256 of bytes `r` of file `from`, in hex: the request is signed with it, so the file is
+/// read once for that and again as it's sent.
+fn file_sha256(from: &std::path::Path, r: std::ops::Range<u64>) -> Res<String> {
+    let mut part = part_of(from, r.clone())?;
+    let mut h = Sha256::new();
+    let mut buf = vec![0u8; 1 << 20];
+    let mut got = 0u64;
+    loop {
+        let n = part.read(&mut buf).map_err(|e| Fail { status: 0, msg: format!("Can't read {}: {e}", from.display()) })?;
+        if n == 0 {
+            break;
+        }
+        h.update(&buf[..n]);
+        got += n as u64;
+    }
+    if got != r.end - r.start {
+        return Err(Fail { status: 0, msg: format!("{} changed while it was being sent.", from.display()) });
+    }
+    Ok(hex::encode(h.finalize()))
+}
+
 fn hmac(key: &[u8], data: &str) -> Vec<u8> {
     let mut m = Hmac::<Sha256>::new_from_slice(key).expect("HMAC takes keys of any size");
     m.update(data.as_bytes());
@@ -274,9 +310,17 @@ impl S3 {
     /// Sends a request for `key` ("" for the bucket) and gives the answer, or what went wrong.
     /// `headers` are extra ones to sign, with lowercase names.
     fn call(&self, method: &str, key: &str, query: &[(&str, String)], headers: &[(&str, String)], body: &[u8]) -> Res<ureq::Response> {
+        self.call_body(method, key, query, headers, Body::Bytes(body))
+    }
+
+    /// As `call`, with the body in bytes or in part of a file on this computer.
+    fn call_body(&self, method: &str, key: &str, query: &[(&str, String)], headers: &[(&str, String)], body: Body) -> Res<ureq::Response> {
         let uri = if key.is_empty() { format!("/{}", encode(&self.bucket)) } else { format!("/{}/{}", encode(&self.bucket), encode_path(key)) };
         let query = canonical_query(query);
-        let hash = sha256_hex(body);
+        let hash = match body {
+            Body::Bytes(b) => sha256_hex(b),
+            Body::File(from, ref r) => file_sha256(from, r.clone())?,
+        };
         let amz_date = chrono::Utc::now().format("%Y%m%dT%H%M%SZ").to_string();
         let mut signed: Vec<(String, String)> = vec![
             ("host".into(), self.host.clone()),
@@ -294,7 +338,14 @@ impl S3 {
             req = req.set(k, v);
         }
         req = req.set("Authorization", &auth);
-        let sent = if matches!(method, "PUT" | "POST") { req.send_bytes(body) } else { req.call() };
+        let sent = match body {
+            _ if !matches!(method, "PUT" | "POST") => req.call(),
+            Body::Bytes(b) => req.send_bytes(b),
+            Body::File(from, r) => {
+                let f = part_of(from, r.clone())?;
+                req.set("Content-Length", &(r.end - r.start).to_string()).send(f)
+            }
+        };
         sent.map_err(|e| match e {
             ureq::Error::Status(status, res) => {
                 let text = res.into_string().unwrap_or_default();
@@ -419,6 +470,15 @@ impl S3 {
     /// Uploads `data` as a multipart upload.
     fn put_in_parts(&self, key: &str, data: &[u8]) -> Res<String> {
         self.in_parts(key, data.len() as u64, |q, _, r| Ok(etag_of(&self.call("PUT", key, q, &[], &data[r.start as usize..r.end as usize])?)))
+    }
+
+    /// Uploads file `from`, in parts when it's big.
+    fn put_from(&self, key: &str, from: &std::path::Path) -> Res<String> {
+        let size = std::fs::metadata(from).map_err(|e| Fail { status: 0, msg: format!("Can't read {}: {e}", from.display()) })?.len();
+        if size > self.single_max {
+            return self.in_parts(key, size, |q, _, r| Ok(etag_of(&self.call_body("PUT", key, q, &[], Body::File(from, r))?)));
+        }
+        Ok(etag_of(&self.call_body("PUT", key, &[], &[], Body::File(from, 0..size))?))
     }
 
     fn delete_key(&self, key: &str) -> Res<()> {
@@ -554,6 +614,25 @@ impl Transport for S3 {
             return err("Can't write a file in place of the bucket.");
         }
         Ok(self.put(key, data)?)
+    }
+
+    fn replace_from(&self, path: &str, from: &std::path::Path, _exists: bool) -> Result<String> {
+        let key = key_of(path);
+        if key.is_empty() {
+            return err("Can't write a file in place of the bucket.");
+        }
+        Ok(self.put_from(key, from)?)
+    }
+
+    fn read_to(&self, path: &str, to: &std::path::Path, read: &mut dyn FnMut(u64), stop: &std::sync::atomic::AtomicBool) -> Result<String> {
+        let res = self.call("GET", key_of(path), &[], &[], &[])?;
+        let version = etag_of(&res);
+        let size = res.header("Content-Length").and_then(|n| n.parse::<u64>().ok());
+        let got = crate::device::pour(&mut res.into_reader(), to, &format!("{path} from S3"), read, stop)?;
+        if size.is_some_and(|n| n != got) {
+            return err(format!("{path}: read {got} bytes of {}.", size.unwrap_or(0)));
+        }
+        Ok(version)
     }
 
     fn delete(&self, path: &str, is_dir: bool) -> Result<()> {
@@ -924,6 +1003,42 @@ mod tests {
              <Part><PartNumber>3</PartNumber><ETag>\"p3\"</ETag></Part></CompleteMultipartUpload>"
         );
         assert!(reqs[6].first().starts_with("PUT /bkt/small "), "{}", reqs[6].first());
+    }
+
+    #[test]
+    fn uploads_and_downloads_through_files() {
+        let (asked, at) = serve(vec![
+            ("200 OK", "", EMPTY_LIST),
+            ("200 OK", "", STARTED),
+            ("200 OK", "ETag: \"p1\"\r\n", ""),
+            ("200 OK", "ETag: \"p2\"\r\n", ""),
+            ("200 OK", "ETag: \"p3\"\r\n", ""),
+            ("200 OK", "", COMPLETED),
+            ("200 OK", "ETag: \"one\"\r\n", ""),
+            ("200 OK", "ETag: \"got\"\r\n", "0123456789"),
+        ]);
+        let s3 = small_parts(&at);
+        let dir = std::env::temp_dir().join(format!("ferry-s3-files-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let (big, small, to) = (dir.join("big"), dir.join("small"), dir.join("got"));
+        std::fs::write(&big, b"0123456789").unwrap();
+        std::fs::write(&small, b"abc").unwrap();
+        assert_eq!(s3.replace_from("/d/big.bin", &big, true).unwrap(), "whole-3");
+        assert_eq!(s3.replace_from("/small", &small, false).unwrap(), "one");
+        let mut seen = 0;
+        assert_eq!(s3.read_to("/d/big.bin", &to, &mut |n| seen += n, &std::sync::atomic::AtomicBool::new(false)).unwrap(), "got");
+        assert_eq!((std::fs::read(&to).unwrap(), seen), (b"0123456789".to_vec(), 10));
+        std::fs::remove_dir_all(&dir).unwrap();
+        let reqs = asked.join().unwrap();
+        let lens = [4, 4, 2];
+        for n in 0..3 {
+            assert!(reqs[2 + n].first().starts_with(&format!("PUT /bkt/d/big.bin?partNumber={}&", n + 1)), "{}", reqs[2 + n].first());
+            assert_eq!(reqs[2 + n].body, b"0123456789"[n * 4..n * 4 + lens[n]]);
+            // Signed with the hash of the part that was sent.
+            let hash = sha256_hex(&reqs[2 + n].body);
+            assert!(reqs[2 + n].head.to_lowercase().contains(&format!("x-amz-content-sha256: {hash}")), "{}", reqs[2 + n].head);
+        }
+        assert!(reqs[6].first().starts_with("PUT /bkt/small ") && reqs[6].body == b"abc", "{}", reqs[6].first());
     }
 
     #[test]

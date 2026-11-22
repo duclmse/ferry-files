@@ -499,6 +499,42 @@ impl<T: TlsStream + Send + 'static> Ftp<T> {
         format!("{}-{}", e.size, e.mtime)
     }
 
+    /// Writes `size` bytes, sent by `send` to the name it's given, under a temporary name, then
+    /// puts them in place of `path`. Gives the new version.
+    fn put(&self, path: &str, exists: bool, size: u64, mut send: impl FnMut(&mut Session<T>, &str) -> std::result::Result<(), Fail>) -> Result<String> {
+        let tmp = join(&dirname(path), &format!(".{}.ferry-tmp", basename(path)));
+        let backup = join(&dirname(path), &format!(".{}.ferry-old", basename(path)));
+        self.with(path, |s| {
+            send(s, &tmp)?;
+            // The new file goes in place by renaming over the old one: the old one is never gone
+            // unless the server can't do that.
+            if let Err(e) = s.ftp.rename(tmp.as_str(), path) {
+                if !exists {
+                    let _ = s.ftp.rm(&tmp);
+                    return Err(e.into());
+                }
+                // Many servers refuse to rename over a file. The old one waits under another
+                // name, and comes back if the new one can't be put in place.
+                let _ = s.ftp.rm(&backup);
+                if let Err(e) = s.ftp.rename(path, backup.as_str()) {
+                    let _ = s.ftp.rm(&tmp);
+                    return Err(e.into());
+                }
+                if let Err(e) = s.ftp.rename(tmp.as_str(), path) {
+                    let _ = s.ftp.rename(backup.as_str(), path);
+                    let _ = s.ftp.rm(&tmp);
+                    return Err(e.into());
+                }
+                let _ = s.ftp.rm(&backup);
+            }
+            let e = Self::stat_of(s, path)?.ok_or_else(|| Fail::Msg(format!("{path}: gone after writing it.")))?;
+            if e.size != size {
+                return Err(Fail::Msg(format!("{path}: wrote {size} bytes but the file has {}.", e.size)));
+            }
+            Ok(Self::version_of(&e))
+        })
+    }
+
     /// Removes a folder's contents and then the folder. Links are removed, not followed.
     fn remove_tree(s: &mut Session<T>, path: &str) -> std::result::Result<(), Fail> {
         for it in Self::items(s, path)? {
@@ -581,34 +617,37 @@ impl<T: TlsStream + Send + 'static> Transport for Ftp<T> {
     }
 
     fn replace(&self, path: &str, data: &[u8], exists: bool) -> Result<String> {
-        let tmp = join(&dirname(path), &format!(".{}.ferry-tmp", basename(path)));
-        let backup = join(&dirname(path), &format!(".{}.ferry-old", basename(path)));
+        self.put(path, exists, data.len() as u64, |s, tmp| {
+            s.ftp.put_file(tmp, &mut Cursor::new(data))?;
+            Ok(())
+        })
+    }
+
+    fn replace_from(&self, path: &str, from: &std::path::Path, exists: bool) -> Result<String> {
+        let size = std::fs::metadata(from).map_err(|e| DevError::Msg(format!("Can't read {}: {e}", from.display())))?.len();
+        self.put(path, exists, size, |s, tmp| {
+            // Opened again if the connection drops and the upload starts over.
+            let mut f = std::fs::File::open(from).map_err(|e| Fail::Msg(format!("Can't read {}: {e}", from.display())))?;
+            s.ftp.put_file(tmp, &mut f)?;
+            Ok(())
+        })
+    }
+
+    fn read_to(&self, path: &str, to: &std::path::Path, read: &mut dyn FnMut(u64), stop: &std::sync::atomic::AtomicBool) -> Result<String> {
         self.with(path, |s| {
-            s.ftp.put_file(&tmp, &mut Cursor::new(data))?;
-            // The new file goes in place by renaming over the old one: the old one is never gone
-            // unless the server can't do that.
-            if let Err(e) = s.ftp.rename(tmp.as_str(), path) {
-                if !exists {
-                    let _ = s.ftp.rm(&tmp);
-                    return Err(e.into());
-                }
-                // Many servers refuse to rename over a file. The old one waits under another
-                // name, and comes back if the new one can't be put in place.
-                let _ = s.ftp.rm(&backup);
-                if let Err(e) = s.ftp.rename(path, backup.as_str()) {
-                    let _ = s.ftp.rm(&tmp);
-                    return Err(e.into());
-                }
-                if let Err(e) = s.ftp.rename(tmp.as_str(), path) {
-                    let _ = s.ftp.rename(backup.as_str(), path);
-                    let _ = s.ftp.rm(&tmp);
-                    return Err(e.into());
-                }
-                let _ = s.ftp.rm(&backup);
+            let e = Self::stat_of(s, path)?.ok_or_else(|| Fail::Msg(format!("{path}: no such file.")))?;
+            let mut stream = s.ftp.retr_as_stream(path)?;
+            if let Err(err) = crate::device::pour(&mut stream, to, path, read, stop) {
+                // Abort, or dropping the stream waits for the end of a transfer that won't come;
+                // and start a fresh connection next time, in case the server answers it oddly.
+                let _ = s.ftp.abort(stream);
+                s.broken = true;
+                return Err(Fail::Msg(err.to_string()));
             }
-            let e = Self::stat_of(s, path)?.ok_or_else(|| Fail::Msg(format!("{path}: gone after writing it.")))?;
-            if e.size != data.len() as u64 {
-                return Err(Fail::Msg(format!("{path}: wrote {} bytes but the file has {}.", data.len(), e.size)));
+            stream.finish()?;
+            let got = std::fs::metadata(to).map(|m| m.len()).unwrap_or(0);
+            if got != e.size {
+                return Err(Fail::Msg(format!("{path}: read {got} bytes but the file has {}.", e.size)));
             }
             Ok(Self::version_of(&e))
         })
@@ -1034,6 +1073,27 @@ mod tests {
         assert_eq!(t.read_range("/small.bin", 20, 5).unwrap(), b"");
         assert_eq!(t.listdir("/").unwrap().len(), 2);
         assert_eq!(f.logins.load(std::sync::atomic::Ordering::SeqCst), 1);
+    }
+
+    #[test]
+    fn copies_to_and_from_files_on_this_computer() {
+        let f = Fake::start(true);
+        let big: Vec<u8> = (0..3_000_000u32).map(|i| (i % 251) as u8).collect();
+        f.put("/big.bin", &big);
+        let t = connect(&f);
+        let dir = std::env::temp_dir().join(format!("ferry-ftp-files-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let (to, back) = (dir.join("got"), dir.join("send"));
+        let mut seen = 0u64;
+        let v = t.read_to("/big.bin", &to, &mut |n| seen += n, &std::sync::atomic::AtomicBool::new(false)).unwrap();
+        assert_eq!((std::fs::read(&to).unwrap(), seen, v), (big.clone(), big.len() as u64, t.version("/big.bin").unwrap().unwrap()));
+        // Cancelled, then the connection still works.
+        assert!(t.read_to("/big.bin", &to, &mut |_| {}, &std::sync::atomic::AtomicBool::new(true)).is_err());
+        std::fs::write(&back, &big[..1_000_000]).unwrap();
+        let v = t.replace_from("/big.bin", &back, true).unwrap();
+        assert_eq!(t.read("/big.bin").unwrap(), (big[..1_000_000].to_vec(), v));
+        assert!(f.files.lock().unwrap().keys().all(|k| !k.contains("ferry-")));
+        std::fs::remove_dir_all(&dir).unwrap();
     }
 
     #[test]
