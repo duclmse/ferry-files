@@ -42,16 +42,34 @@ CREATE TABLE IF NOT EXISTS index_meta (
 );
 ";
 
-/// The `[store] indexes` choices: config name, index name, indexed column.
-/// Kept out of `SCHEMA`, which runs on every start and would rebuild an index
-/// the config turned off.
+/// The `[store] indexes` choices: config name, index name, what follows
+/// `ON`. Kept out of `SCHEMA`, which runs on every start and would rebuild an
+/// index the config turned off.
 pub(super) const OPTIONAL_INDEXES: &[(SqliteIndex, &str, &str)] = &[
-    (SqliteIndex::Name, "idx_files_name", "name"),
-    (SqliteIndex::Extension, "idx_files_extension", "extension"),
-    (SqliteIndex::Mtime, "idx_files_mtime", "mtime"),
-    (SqliteIndex::Size, "idx_files_size", "size_bytes"),
-    (SqliteIndex::Attrib, "idx_files_attrib", "attrib_bitmask"),
+    (SqliteIndex::Name, "idx_files_name", "files(name)"),
+    (
+        SqliteIndex::Extension,
+        "idx_files_extension",
+        "files(extension)",
+    ),
+    // A `*.ext` glob also matches names without an extension (every folder,
+    // `x.rs/`, `.rs`). Checking those through `idx_files_extension` fetched
+    // each row; this holds just their names, so the check reads the index.
+    (
+        SqliteIndex::Extension,
+        NOEXT_NAME_INDEX,
+        "files(name) WHERE extension IS NULL",
+    ),
+    (SqliteIndex::Mtime, "idx_files_mtime", "files(mtime)"),
+    (SqliteIndex::Size, "idx_files_size", "files(size_bytes)"),
+    (
+        SqliteIndex::Attrib,
+        "idx_files_attrib",
+        "files(attrib_bitmask)",
+    ),
 ];
+
+pub(super) const NOEXT_NAME_INDEX: &str = "idx_files_noext_name";
 
 // Migration: add columns if this is an existing database that pre-dates them.
 // SQLite does not support ADD COLUMN IF NOT EXISTS before 3.37, so we catch the

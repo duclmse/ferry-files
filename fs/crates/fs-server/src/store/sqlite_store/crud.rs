@@ -463,7 +463,7 @@ impl SqliteStore {
 }
 
 fn sync_optional_indexes(conn: &rusqlite::Connection, indexes: &[SqliteIndex]) -> Result<()> {
-    for (which, name, column) in OPTIONAL_INDEXES {
+    for (which, name, on) in OPTIONAL_INDEXES {
         let exists: bool = conn.query_row(
             "SELECT EXISTS (SELECT 1 FROM sqlite_master WHERE type = 'index' AND name = ?1)",
             [name],
@@ -472,7 +472,7 @@ fn sync_optional_indexes(conn: &rusqlite::Connection, indexes: &[SqliteIndex]) -
         let wanted = indexes.contains(which);
         if wanted && !exists {
             let start = std::time::Instant::now();
-            conn.execute_batch(&format!("CREATE INDEX {name} ON files({column})"))?;
+            conn.execute_batch(&format!("CREATE INDEX {name} ON {on}"))?;
             tracing::info!(
                 "built index {name} in {:.1}s",
                 start.elapsed().as_secs_f64()

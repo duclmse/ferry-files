@@ -88,6 +88,44 @@ fn newest_time(meta: &std::fs::Metadata) -> i64 {
     }
 }
 
+/// `newest_time` of a directory, read without opening it. `symlink_metadata`
+/// opens a handle, queries it and closes it, and catch-up asks this of every
+/// directory, changed or not; on a folder-heavy tree such as C:\Windows the
+/// opens add up. `None` where the call fails (a path
+/// past MAX_PATH without long-path support, say); the caller then opens it.
+#[cfg(windows)]
+fn dir_newest_time(path: &Path) -> Option<i64> {
+    use std::os::windows::ffi::OsStrExt;
+    use windows::core::PCWSTR;
+    use windows::Win32::Foundation::FILETIME;
+    use windows::Win32::Storage::FileSystem::{
+        GetFileAttributesExW, GetFileExInfoStandard, WIN32_FILE_ATTRIBUTE_DATA,
+    };
+
+    let wide: Vec<u16> = path
+        .as_os_str()
+        .encode_wide()
+        .chain(std::iter::once(0))
+        .collect();
+    let mut data = WIN32_FILE_ATTRIBUTE_DATA::default();
+    // SAFETY: `wide` is NUL-terminated and outlives the call, and `data` is
+    // the struct GetFileExInfoStandard fills.
+    unsafe {
+        GetFileAttributesExW(
+            PCWSTR(wide.as_ptr()),
+            GetFileExInfoStandard,
+            std::ptr::from_mut(&mut data).cast(),
+        )
+    }
+    .ok()?;
+    let secs = |t: FILETIME| {
+        fs_protocol::efu::filetime_to_unix(
+            (u64::from(t.dwHighDateTime) << 32) | u64::from(t.dwLowDateTime),
+        )
+    };
+    Some(secs(data.ftLastWriteTime).max(secs(data.ftCreationTime)))
+}
+
 fn is_hidden(path: &Path) -> bool {
     path.file_name()
         .and_then(|n| n.to_str())
@@ -118,15 +156,6 @@ fn changed_since(
                 return ignore::WalkState::Continue;
             };
             let path = entry.path();
-            // On Windows that metadata is the copy kept in the parent's
-            // directory listing, which NTFS does not refresh when a
-            // directory's own contents change; only the directory itself has
-            // its current mtime. One extra call per directory, not per file.
-            let meta = if cfg!(windows) && meta.is_dir() {
-                std::fs::symlink_metadata(path).unwrap_or(meta)
-            } else {
-                meta
-            };
             if skip(path, is_hidden(path)) {
                 return if meta.is_dir() {
                     ignore::WalkState::Skip
@@ -134,7 +163,25 @@ fn changed_since(
                     ignore::WalkState::Continue
                 };
             }
-            if newest_time(&meta) >= threshold {
+            // On Windows that metadata is the copy kept in the parent's
+            // directory listing, which NTFS does not refresh when a
+            // directory's own contents change; only the directory itself has
+            // its current mtime. One extra call per directory, not per file.
+            #[cfg(windows)]
+            let newest = if meta.is_dir() {
+                dir_newest_time(path)
+                    .or_else(|| {
+                        std::fs::symlink_metadata(path)
+                            .ok()
+                            .map(|m| newest_time(&m))
+                    })
+                    .unwrap_or_else(|| newest_time(&meta))
+            } else {
+                newest_time(&meta)
+            };
+            #[cfg(not(windows))]
+            let newest = newest_time(&meta);
+            if newest >= threshold {
                 let Ok(mut found) = found.lock() else {
                     return ignore::WalkState::Quit;
                 };

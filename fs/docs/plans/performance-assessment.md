@@ -349,3 +349,41 @@ bench process peaked at 455 MB.
 
   A stat costs much more on Windows than on macOS, so the SQLite row
   understates the gain there. The Windows timings are not measured yet.
+
+### Rerun after those changes
+
+Same machine and tree (348,619 entries), on a build with the compressed
+`index.bin` (`144c961`), which the first run predated.
+
+| | Memory store | SQLite |
+| --- | ---: | ---: |
+| Crawl (warm file cache) | 4.9 s | 6.4 s |
+| Peak working set | 102 MB | 186 MB |
+| Index on disk | `index.bin` 6.2 MB | `index.db` 253 MB |
+| Catch-up after restart | 7.7 s | 7.8 s |
+| 8-client load | 93-111 req/s | 48 req/s |
+
+`index.bin` at 2M entries: 28.5 MiB, saved in 555 ms and loaded in 272 ms.
+The first memory-store crawl took 8.6 s, as before; the table uses the
+rerun, so crawl and catch-up are compared with a warm cache.
+
+- **The per-folder fixes made no measurable difference here**, and the
+  explanation above was wrong for this tree: only 11 folders changed.
+  Catch-up is still about 1.6x the crawl, the same ratio as the first run
+  (7.7 / 4.9 s, 14.2 / 8.6 s), and nearly all of it goes to the 348k
+  entries that did not change. The scan's walk is the crawl's walk, plus
+  one `symlink_metadata` per directory, because the parent's listing has a
+  stale mtime for a directory. On Windows that opens a handle, and C:\Windows
+  is mostly folders. The scan now reads a directory's times with
+  `GetFileAttributesExW`, which needs no handle, and falls back to
+  `symlink_metadata` when that fails. Not measured on Windows yet.
+- **SQLite `*.rs` took 144-250 ms against 2 ms for `ext:rs`.** `*.ext` also
+  has to match names without an extension (folders named `x.rs`, `.rs`), so
+  it ran as `extension = ? OR extension IS NULL`, and C:\Windows has few
+  `.rs` files: SQLite read every row without an extension, mostly folders,
+  and never reached the limit to stop early. It is now two index reads: the
+  extension index, and a partial index `idx_files_noext_name` on the names
+  of rows without an extension, which the name check reads without fetching
+  rows. It is built with `idx_files_extension`, once, on the first start.
+  On a 350k-row synthetic table with a third of rows folders: 84 to 23 ms.
+  Not measured on Windows yet.

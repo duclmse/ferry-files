@@ -17,6 +17,7 @@ use super::SqliteStore;
 const BULK_DROPPED: &[&str] = &[
     "idx_files_name",
     "idx_files_extension",
+    super::schema::NOEXT_NAME_INDEX,
     "idx_files_mtime",
     "idx_files_size",
     "idx_files_attrib",

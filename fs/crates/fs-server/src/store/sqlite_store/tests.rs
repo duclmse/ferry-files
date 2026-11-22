@@ -765,3 +765,33 @@ fn parent_lookups_use_the_parent_index() {
         );
     }
 }
+
+#[test]
+fn an_extension_glob_reads_indexes_not_the_table() {
+    use crate::store::SqlCondition;
+
+    let dir = tempfile::tempdir().unwrap();
+    let store = SqliteStore::new(&dir.path().join("a.db")).unwrap();
+    let conds = [
+        SqlCondition::NameGlobNoCase("*.rs".into()),
+        SqlCondition::ExtOrNone("rs".into()),
+        SqlCondition::IsDir(false),
+    ];
+    let (sql, params) = super::search::extension_query(&conds, 10).unwrap();
+    let conn = store.get_conn().unwrap();
+    let mut stmt = conn.prepare(&format!("EXPLAIN QUERY PLAN {sql}")).unwrap();
+    let plan: Vec<String> = stmt
+        .query_map(rusqlite::params_from_iter(params.iter()), |r| r.get(3))
+        .unwrap()
+        .collect::<rusqlite::Result<_>>()
+        .unwrap();
+    assert!(plan.iter().all(|step| step != "SCAN files"), "{plan:#?}");
+    assert!(
+        plan.iter().any(|s| s.contains("idx_files_extension")),
+        "{plan:#?}"
+    );
+    assert!(
+        plan.iter().any(|s| s.contains("idx_files_noext_name")),
+        "{plan:#?}"
+    );
+}

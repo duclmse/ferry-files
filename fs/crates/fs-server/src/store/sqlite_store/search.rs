@@ -10,7 +10,7 @@ use crate::store::{
     build_conditions, DupeKind, FileRecord, FuzzyRank, MetaFilters, Sort, SqlCondition,
 };
 
-use super::schema::{query_records, row_to_record};
+use super::schema::{query_records, row_to_record, NOEXT_NAME_INDEX};
 use super::SqliteStore;
 
 /// One sampled name per 512 rowids (mask + 1).
@@ -317,10 +317,22 @@ impl SqliteStore {
                 .any(|c| matches!(c, SqlCondition::ExtOrNone(_)));
         let (name_conds, other_conds): (Vec<SqlCondition>, Vec<SqlCondition>) =
             conds.iter().cloned().partition(is_name_condition);
+        if by_extension && !bulk_loading {
+            return self.search_by_extension(conds, limit);
+        }
         if by_extension || name_conds.iter().all(is_match_all) || !self.name_index || bulk_loading {
             return self.search_plain(conds, limit);
         }
         self.search_by_name_index(&name_conds, &other_conds, limit)
+    }
+
+    fn search_by_extension(&self, conds: &[SqlCondition], limit: usize) -> Result<Vec<FileRecord>> {
+        let Some((sql, params)) = extension_query(conds, limit) else {
+            return self.search_plain(conds, limit);
+        };
+        let conn = self.get_conn()?;
+        let mut stmt = conn.prepare_cached(&sql)?;
+        query_records(&mut stmt, params)
     }
 
     fn search_plain(&self, conds: &[SqlCondition], limit: usize) -> Result<Vec<FileRecord>> {
@@ -573,4 +585,48 @@ impl SqliteStore {
         }
         Ok(results)
     }
+}
+
+/// `*.ext` as two index reads: the rows with that extension, and the names
+/// without one that match. Written as `extension = ? OR extension IS NULL`,
+/// SQLite scanned the table, or fetched every row without an extension (each
+/// folder) to check its name: 144-250 ms on C:\Windows, against 2 ms for
+/// `ext:`. Needs `NOEXT_NAME_INDEX`.
+pub(super) fn extension_query(
+    conds: &[SqlCondition],
+    limit: usize,
+) -> Option<(String, Vec<Value>)> {
+    let ext = conds.iter().find_map(|c| match c {
+        SqlCondition::ExtOrNone(e) => Some(e.clone()),
+        _ => None,
+    })?;
+    let rest: Vec<SqlCondition> = conds
+        .iter()
+        .filter(|c| !matches!(c, SqlCondition::ExtOrNone(e) if *e == ext))
+        .cloned()
+        .collect();
+    let names: Vec<SqlCondition> = rest
+        .iter()
+        .filter(|c| is_name_condition(c))
+        .cloned()
+        .collect();
+    let (name_sql, name_params) = build_conditions(&names);
+    let (rest_sql, rest_params) = build_conditions(&rest);
+    let sql = format!(
+        "SELECT id, path, name, extension, size_bytes, mtime, ctime,
+                is_dir, is_hidden, is_symlink, attrib_bitmask,
+                content_indexed, tantivy_id, indexed_at, archive_path
+         FROM files
+         WHERE id IN (SELECT id FROM files WHERE extension = ?
+                      UNION ALL
+                      SELECT id FROM files INDEXED BY {NOEXT_NAME_INDEX}
+                      WHERE extension IS NULL {name_sql})
+           {rest_sql}
+         LIMIT ?"
+    );
+    let mut params = vec![Value::Text(ext)];
+    params.extend(name_params);
+    params.extend(rest_params);
+    params.push(Value::Integer(limit as i64));
+    Some((sql, params))
 }
