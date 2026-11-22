@@ -216,8 +216,8 @@ pub(super) fn Sidebar() -> impl IntoView {
                     on:contextmenu=move |ev| ctx.show_place_menu(&ev, src, "/".into())>
                     <b>{i.label.clone()}</b>
                 </button>
-                {i.is_phone().then(|| {
-                    // The badge says how it's connected; when the same phone is also found the
+                {matches!(i.transport.as_str(), "adb" | "mtp").then(|| {
+                    // The badge says how an Android phone is connected; when the same phone is also found the
                     // other way, clicking it reconnects that way.
                     let wireless = i.wireless();
                     let now = if wireless { "Wi-Fi" } else if i.transport == "adb" { "adb" } else { "MTP" };

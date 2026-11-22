@@ -8,7 +8,7 @@ const ACCESS_RETRY: std::time::Duration = std::time::Duration::from_secs(5);
 /// Whether connecting failed because the phone's storage couldn't be read: it's locked, or it
 /// hasn't been allowed to share its files yet.
 fn needs_access(e: &str) -> bool {
-    e.contains("Reading the device's storage") || e.contains("shows no storage")
+    e.contains("Reading the device's storage") || e.contains("shows no storage") || e.contains("tap Trust")
 }
 
 impl Ctx {
@@ -253,7 +253,11 @@ pub(super) fn DeviceFinder() -> impl IntoView {
         let access = move || {
             ctx.awaiting.get().map(|f| view! {
                 <div class="conn-error">
-                    <p class="hint">{format!("{} won't share its files yet. Unlock it and allow access to its data; trying again every 5 seconds.", f.name)}</p>
+                    <p class="hint">{if f.transport == "iphone" {
+                        format!("{} doesn't trust {} yet. Unlock it and tap Trust; trying again every 5 seconds.", f.name, crate::os::this_computer())
+                    } else {
+                        format!("{} won't share its files yet. Unlock it and allow access to its data; trying again every 5 seconds.", f.name)
+                    }}</p>
                     <button class="btn small" on:click=move |_| ctx.stop_awaiting()>"Stop"</button>
                 </div>
             })
@@ -263,17 +267,45 @@ pub(super) fn DeviceFinder() -> impl IntoView {
         };
         // A connected phone found the other way is offered as a switch on its own row instead.
         let connected = ctx.phones.with(|ps| ps.iter().flat_map(|i| [i.serial.clone(), i.usb.clone()]).flatten().collect::<HashSet<_>>());
-        let found: Vec<UsbDevice> = d.found.iter().filter(|f| !connected.contains(&f.key())).cloned().collect();
+        let (iphones, found): (Vec<UsbDevice>, Vec<UsbDevice>) =
+            d.found.iter().filter(|f| !connected.contains(&f.key())).cloned().partition(|f| f.transport == "iphone");
+        // iPhones connect one way only: a row with one button.
+        let iphones = iphones
+            .into_iter()
+            .map(|f| {
+                let usb = f.usb.clone();
+                let connecting = move || ctx.connecting.get().as_ref() == Some(&usb);
+                let (name, tip) = (f.name.clone(), f.name.clone());
+                view! {
+                    <div class="found">
+                        <b title=tip>{name}</b>
+                        {move || if connecting() {
+                            view! { <span class="hint"><span class="spin"></span>" Connecting…"</span> }.into_any()
+                        } else {
+                            let f = f.clone();
+                            view! {
+                                <div class="seg connect-as">
+                                    <button class="pref" title="Connect to the iPhone: its photos, downloads and apps' shared files"
+                                        aria-label="Connect" disabled=move || ctx.busy.get()
+                                        on:click=move |_| ctx.connect(f.clone(), true)>"Connect"</button>
+                                </div>
+                            }.into_any()
+                        }}
+                    </div>
+                }
+            })
+            .collect_view();
         let waiting = d.adb_waiting.then(|| view! { <p class="hint">"A phone is waiting: allow USB debugging on it to use adb."</p> });
         if found.is_empty() {
-            if ctx.phones.with(|p| p.iter().any(Info::is_phone)) {
-                return view! { {waiting} {access} {error} }.into_any();
+            if ctx.phones.with(|p| p.iter().any(Info::is_phone)) || d.found.iter().any(|f| f.transport == "iphone") {
+                return view! { {iphones} {waiting} {access} {error} }.into_any();
             }
-            let mut notes = vec!["No phone found. Plug one in by USB with debugging (adb) or File transfer mode (MTP).".to_string()];
+            let mut notes = vec!["No phone found. Plug one in by USB: an Android phone with debugging (adb) or File transfer mode (MTP), or an iPhone.".to_string()];
             if !d.adb_found {
                 notes.push(format!("adb isn't installed. {}", crate::os::adb_install()));
             }
             notes.extend(d.mtp_error.clone());
+            notes.extend(d.iphone_error.clone());
             return view! {
                 {notes.into_iter().map(|n| view! { <p class="hint">{n}</p> }).collect_view()}
                 {waiting}
@@ -335,6 +367,7 @@ pub(super) fn DeviceFinder() -> impl IntoView {
                     </div>
                 }
             }).collect_view()}
+            {iphones}
             {waiting}
             {access}
             {error}

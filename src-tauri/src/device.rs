@@ -120,7 +120,6 @@ pub struct Space {
     pub path: String,
 }
 
-/// Absolute, normalised device path ("/a/b", never a trailing slash except "/").
 /// Copies `from` into a new file `to`, a piece at a time, for `Transport::read_to`: `read` is told
 /// each piece's size, and `stop` cancels. `what` names the file in errors. Gives the bytes copied.
 pub fn pour(from: &mut dyn std::io::Read, to: &Path, what: &str, read: &mut dyn FnMut(u64), stop: &AtomicBool) -> Result<u64> {
@@ -146,6 +145,7 @@ pub fn pour(from: &mut dyn std::io::Read, to: &Path, what: &str, read: &mut dyn 
     }
 }
 
+/// Absolute, normalised device path ("/a/b", never a trailing slash except "/").
 pub fn norm(path: &str) -> Result<String> {
     if !path.starts_with('/') {
         return err(format!("Use an absolute device path, not {path:?}."));
@@ -488,6 +488,10 @@ pub fn connect(transport: &str, which: Option<String>) -> Result<Device> {
         return Ok(Device::new(Box::new(crate::adb::Adb::open(serial)?)));
     }
     match transport {
+        "iphone" => match serial {
+            Some(udid) => Ok(Device::new(Box::new(crate::iphone::IPhone::open(&udid)?))),
+            None => err("Which iPhone?"),
+        },
         "mtp" => Ok(Device::new(Box::new(crate::mtp::Mtp::open(serial.as_deref())?))),
         "auto" => crate::mtp::Mtp::open(None).map(|d| Device::new(Box::new(d))).map_err(|e| {
             DevError::Msg(format!("No device found. For adb: turn on USB debugging. For MTP: {e}"))

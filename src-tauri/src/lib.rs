@@ -20,6 +20,7 @@ pub mod thumbs;
 pub mod usb;
 pub mod xml;
 mod connect;
+pub mod iphone;
 mod dupes;
 mod everything;
 mod stream;

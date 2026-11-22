@@ -5,10 +5,10 @@ use super::*;
 /// A device on USB that isn't connected yet.
 #[derive(Serialize)]
 pub(super) struct Found {
-    /// "adb:SERIAL" or "mtp:BUS-DEV".
+    /// "adb:SERIAL", "mtp:BUS-DEV" or "iphone:UDID".
     usb: String,
     transport: &'static str,
-    /// What `connect` takes as `which`: the adb serial or the MTP location.
+    /// What `connect` takes as `which`: the adb serial, the MTP location or the iPhone's UDID.
     which: String,
     name: String,
     /// The USB serial number when known; an adb device and an MTP device with the same one are
@@ -21,6 +21,8 @@ pub(super) struct Devices {
     found: Vec<Found>,
     adb_found: bool,
     mtp_error: Option<String>,
+    /// Why iPhones can't be looked for (Apple's device service is missing).
+    iphone_error: Option<String>,
     /// A phone is on USB with adb but hasn't allowed this computer yet.
     adb_waiting: bool,
     /// Disks mounted on the computer (USB drives, SD cards, disk images), as (name, path).
@@ -62,12 +64,16 @@ pub(super) fn drives() -> Vec<(String, String)> {
 }
 
 /// Whether a connected device is still there: an adb one while adb lists it (in any state, and
-/// over Wi-Fi too), an MTP one while its serial number is on USB. `None` when that can't be told
-/// (adb didn't answer, the USB devices couldn't be listed, or the device has no serial number).
-fn still_there(c: &Conn, adb: &Option<Vec<String>>, usb: &Option<Vec<crate::usb::UsbDev>>) -> Option<bool> {
+/// over Wi-Fi too), an MTP one while its serial number is on USB, an iPhone while usbmuxd lists
+/// it. `None` when that can't be told (adb or usbmuxd didn't answer, the USB devices couldn't be
+/// listed, or the device has no serial number).
+fn still_there(c: &Conn, adb: &Option<Vec<String>>, usb: &Option<Vec<crate::usb::UsbDev>>, iphones: &Option<Vec<String>>) -> Option<bool> {
     let place = c.usb.as_deref()?;
     if let Some(serial) = place.strip_prefix("adb:") {
         return adb.as_ref().map(|l| l.iter().any(|s| s == serial));
+    }
+    if let Some(udid) = place.strip_prefix("iphone:") {
+        return iphones.as_ref().map(|l| l.iter().any(|s| s == udid));
     }
     // Windows' MTP devices aren't in `usb::try_list`, which then gives nothing.
     if place.starts_with("mtp:") && !cfg!(windows) {
@@ -82,9 +88,11 @@ fn still_there(c: &Conn, adb: &Option<Vec<String>>, usb: &Option<Vec<crate::usb:
 fn drop_gone(app: &AppHandle) -> Vec<(String, String)> {
     let st = state(app);
     let (adb, usb) = (adb::listed(), crate::usb::try_list());
+    let any_iphone = st.devs().values().any(|c| c.usb.as_deref().is_some_and(|u| u.starts_with("iphone:")));
+    let iphones = if any_iphone { crate::iphone::listed() } else { None };
     // Named after the locks are let go of: a name may take asking the device.
     let looked: Vec<(String, Option<bool>, Arc<Device>)> =
-        st.devs().iter().map(|(id, c)| (id.clone(), still_there(c, &adb, &usb), c.dev.clone())).collect();
+        st.devs().iter().map(|(id, c)| (id.clone(), still_there(c, &adb, &usb, &iphones), c.dev.clone())).collect();
     let gone: Vec<(String, Arc<Device>)> = {
         let mut missing = st.missing.lock().unwrap_or_else(|e| e.into_inner());
         let was = std::mem::take(&mut *missing);
@@ -139,9 +147,22 @@ pub(super) async fn devices(app: AppHandle, state: State<'_, AppState>) -> Resul
             }
             Err(e) => Some(e.to_string()),
         };
+        let iphone_error = match crate::iphone::detect() {
+            Ok(v) => {
+                found.extend(v.into_iter().map(|d| Found {
+                    usb: format!("iphone:{}", d.udid),
+                    transport: "iphone",
+                    which: d.udid.clone(),
+                    name: d.name,
+                    serial: Some(d.udid),
+                }));
+                None
+            }
+            Err(e) => Some(e.to_string()),
+        };
         found.retain(|f| !taken.contains(&Some(f.usb.clone())));
         let adb_waiting = !adb::unauthorized().is_empty();
-        Ok(Devices { found, adb_found: adb::adb_path().is_some(), mtp_error, adb_waiting, drives: drives(), gone })
+        Ok(Devices { found, adb_found: adb::adb_path().is_some(), mtp_error, iphone_error, adb_waiting, drives: drives(), gone })
     })
     .await
 }
@@ -221,7 +242,8 @@ mod tests {
         let on_usb = |serial: &str| UsbDev { bus: 0, address: 1, vendor: 0x04e8, product: 0x6860, serial: serial.into() };
         let adb = Some(vec!["R3CR406TEMA".to_string(), "192.168.1.5:5555".to_string()]);
         let usb = Some(vec![on_usb("R3CR406TEMA")]);
-        let there = |c: &Conn| still_there(c, &adb, &usb);
+        let phones = Some(vec!["00008110-001A2B3C4D5E801E".to_string()]);
+        let there = |c: &Conn| still_there(c, &adb, &usb, &phones);
         assert_eq!(there(&conn("adb:R3CR406TEMA", Some("R3CR406TEMA"))), Some(true));
         assert_eq!(there(&conn("adb:192.168.1.5:5555", None)), Some(true));
         assert_eq!(there(&conn("adb:OTHER", Some("OTHER"))), Some(false));
@@ -233,8 +255,11 @@ mod tests {
         }
         // Can't tell: no serial, or adb or the USB list not answering.
         assert_eq!(there(&conn("mtp:0-2", None)), None);
-        assert_eq!(still_there(&conn("adb:R3CR406TEMA", None), &None, &usb), None);
-        assert_eq!(still_there(&conn("mtp:0-1", Some("R3CR406TEMA")), &adb, &None), None);
+        assert_eq!(still_there(&conn("adb:R3CR406TEMA", None), &None, &usb, &phones), None);
+        assert_eq!(still_there(&conn("mtp:0-1", Some("R3CR406TEMA")), &adb, &None, &phones), None);
+        assert_eq!(there(&conn("iphone:00008110-001A2B3C4D5E801E", None)), Some(true));
+        assert_eq!(there(&conn("iphone:00008030-000000000000002E", None)), Some(false));
+        assert_eq!(still_there(&conn("iphone:00008110-001A2B3C4D5E801E", None), &adb, &usb, &None), None);
     }
 
     #[test]

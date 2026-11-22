@@ -54,6 +54,10 @@ lopdf = { version = "0.47.0", default-features = false }
 # FTP and FTPS (rustls with its root certificates, no OpenSSL).
 suppaftp = { version = "13.0.0", default-features = false, features = ["rustls-ring"] }
 webpki-roots = "0.26"
+# iPhone and iPad over USB: Apple's usbmuxd and AFC protocols, in pure Rust (async, on tokio).
+idevice = { version = "0.1.68", default-features = false, features = ["ring", "usbmuxd", "afc", "house_arrest", "installation_proxy"] }
+tokio = { version = "1", features = ["rt", "io-util"] }
+plist = "1.8"
 
 [target.'cfg(unix)'.dependencies]
 signal-hook = "0.3"

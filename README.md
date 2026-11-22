@@ -1,7 +1,7 @@
 # Ferry Files
 
 A desktop file browser for macOS, Windows and Linux (Tauri 2 + Leptos, all Rust)
-for Android phones and other MTP devices over USB, servers, and the computer's
+for Android phones, iPhones and other MTP devices over USB, servers, and the computer's
 own files and disks, with tools for EPUB books in particular.
 
 ## Features
@@ -120,6 +120,7 @@ cargo run --example epub_smoke [-- adb|mtp]
 - `styles/`: the CSS, one file per part. `base.css` has the colour tokens.
 - `src-tauri/`: the backend.
   - Transports: `device.rs`, `adb.rs`, `mtp.rs` (`wpd.rs` on Windows),
+    `iphone.rs` (iPhones and iPads over usbmuxd and AFC),
     `local.rs`, and the servers (`sftp.rs`, `smb.rs`, `webdav.rs`, `ftp.rs`,
     `s3.rs`, `everything.rs`).
   - `platform.rs`: what differs between operating systems.

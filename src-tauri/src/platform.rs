@@ -34,6 +34,15 @@ pub fn command(program: impl AsRef<OsStr>) -> Command {
     c
 }
 
+/// Why no iPhone can be found: Apple's usbmuxd (built into macOS) isn't there.
+pub const IPHONE_HINT: &str = if cfg!(target_os = "macos") {
+    "Can't reach the Mac's iPhone service (usbmuxd)."
+} else if cfg!(windows) {
+    "For an iPhone, install Apple Devices from the Microsoft Store (or iTunes)."
+} else {
+    "For an iPhone, install and start usbmuxd (e.g. sudo apt install usbmuxd)."
+};
+
 /// How to install adb, as a sentence.
 pub const ADB_INSTALL: &str = if cfg!(target_os = "macos") {
     "Install it with: brew install --cask android-platform-tools"

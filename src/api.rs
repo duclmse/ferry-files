@@ -219,6 +219,9 @@ pub struct Devices {
     pub found: Vec<UsbDevice>,
     pub adb_found: bool,
     pub mtp_error: Option<String>,
+    /// Why iPhones can't be looked for (Apple's device service is missing).
+    #[serde(default)]
+    pub iphone_error: Option<String>,
     /// A phone is on USB with adb but hasn't allowed this Mac yet.
     pub adb_waiting: bool,
     /// Disks mounted on the Mac, as (name, path).
@@ -254,9 +257,9 @@ pub fn wireless(serial: &str) -> bool {
 }
 
 impl Info {
-    /// A phone (over adb or MTP), not a server.
+    /// A phone (over adb or MTP, or an iPhone), not a server.
     pub fn is_phone(&self) -> bool {
-        matches!(self.transport.as_str(), "adb" | "mtp")
+        matches!(self.transport.as_str(), "adb" | "mtp" | "iphone")
     }
 
     pub fn wireless(&self) -> bool {
