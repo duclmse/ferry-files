@@ -276,6 +276,16 @@ fn bench_persistence(c: &mut Criterion, memory: &MemoryStore, dir: &std::path::P
     });
     group.bench_function("load", |b| b.iter(|| MemoryStore::new(dir).expect("load")));
     group.finish();
+
+    let bytes = std::fs::metadata(dir.join("index.bin"))
+        .expect("index.bin")
+        .len();
+    eprintln!(
+        "index.bin: {} bytes ({:.1} MiB, {:.1} B/entry) for {ENTRIES} entries",
+        bytes,
+        bytes as f64 / (1024.0 * 1024.0),
+        bytes as f64 / ENTRIES as f64
+    );
 }
 
 criterion_group!(benches, bench_queries);

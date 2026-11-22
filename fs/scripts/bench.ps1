@@ -5,12 +5,17 @@
 #
 # Usage:
 #   scripts\bench.ps1 [-TargetDir <path>] [-WithContent] [-KeepDb] [-DataDir <path>]
+#                     [-Store sqlite|memory|auto]
 #
 # -TargetDir defaults to the repo root. -WithContent turns on full-text
 # content extraction for common source extensions; by default it's off, which
-# isolates pure filesystem-crawl throughput (stat + SQLite upsert only).
+# isolates pure filesystem-crawl throughput (stat + store upsert only).
 # Archive-inner-file indexing is always off, so results are comparable across
 # runs regardless of how many archives happen to live under TargetDir.
+#
+# -Store defaults to sqlite, not the daemon's default (auto, the memory
+# store): the daemon is hard-killed below, and the memory store writes
+# index.bin only on a clean stop, so a kept memory index would be empty.
 #
 # -KeepDb leaves the scratch config/data/logs directory in place instead of
 # deleting it on exit (its path is printed at the end). -DataDir <path> uses a
@@ -25,7 +30,9 @@ param(
     [string]$TargetDir = "",
     [switch]$WithContent,
     [switch]$KeepDb,
-    [string]$DataDir = ""
+    [string]$DataDir = "",
+    [ValidateSet("sqlite", "memory", "auto")]
+    [string]$Store = "sqlite"
 )
 
 $ErrorActionPreference = "Stop"
@@ -77,6 +84,9 @@ watch_paths = ["$($TargetDir -replace '\\','/')"]
 data_dir    = "$($workDir -replace '\\','/')/data"
 log_dir     = "$($workDir -replace '\\','/')/logs"
 
+[store]
+mode = "$Store"
+
 [archive_index]
 enabled = false
 
@@ -117,7 +127,8 @@ try {
     # and force a fresh crawl via the reindex API so there's actually
     # something to time; otherwise the wait below for a crawl after
     # $startEpoch hangs until timeout.
-    $logPath = "$workDir\daemon.out.log"
+    # The daemon logs to stderr; stdout stays empty.
+    $logPath = "$workDir\daemon.err.log"
     for ($i = 0; $i -lt 20; $i++) {
         if ((Test-Path $logPath) -and (Select-String -Path $logPath -Pattern "catch-up: |index already built|full crawl starting" -Quiet)) {
             break

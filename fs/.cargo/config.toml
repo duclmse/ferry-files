@@ -1,0 +1,7 @@
+[env]
+# Bundled SQLite (libsqlite3-sys) counts every allocation under one global
+# mutex by default. Searches that allocate per row (`LOWER(name) GLOB ...`
+# for `*.ext`) then serialise across the read pool: on C:\Windows, 8
+# concurrent `*.toml` searches ran at 10 req/s with it, 130 req/s without.
+# Nothing here reads SQLite's memory statistics or sets a heap limit.
+LIBSQLITE3_FLAGS = "-DSQLITE_DEFAULT_MEMSTATUS=0"

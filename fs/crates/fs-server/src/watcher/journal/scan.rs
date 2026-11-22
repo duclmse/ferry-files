@@ -27,7 +27,9 @@
 
 use std::collections::HashSet;
 use std::path::{Path, PathBuf};
+#[cfg(not(windows))]
 use std::sync::atomic::{AtomicBool, Ordering};
+#[cfg(not(windows))]
 use std::sync::Mutex;
 
 use super::{changed_event, deleted_event, CatchUp, IndexLookup, Position, MAX_REPLAY_PATHS};
@@ -88,11 +90,10 @@ fn newest_time(meta: &std::fs::Metadata) -> i64 {
     }
 }
 
-/// `newest_time` of a directory, read without opening it. `symlink_metadata`
-/// opens a handle, queries it and closes it, and catch-up asks this of every
-/// directory, changed or not; on a folder-heavy tree such as C:\Windows the
-/// opens add up. `None` where the call fails (a path
-/// past MAX_PATH without long-path support, say); the caller then opens it.
+/// `newest_time` of a directory, from the directory itself, for one whose
+/// listing has no `.` entry to read it from (a drive root) or cannot be
+/// listed. It opens the directory inside the call, which is what the walk in
+/// `walk.rs` avoids for every other one. `None` where the call fails.
 #[cfg(windows)]
 fn dir_newest_time(path: &Path) -> Option<i64> {
     use std::os::windows::ffi::OsStrExt;
@@ -132,9 +133,15 @@ fn is_hidden(path: &Path) -> bool {
         .is_some_and(|n| n.starts_with('.'))
 }
 
+#[cfg(windows)]
+mod walk;
+#[cfg(windows)]
+use walk::changed_since;
+
 /// Paths under `roots` (not excluded by `skip`) whose mtime or ctime is at or
 /// after `threshold`, with whether each is a directory. `None` past
 /// `MAX_REPLAY_PATHS`.
+#[cfg(not(windows))]
 fn changed_since(
     roots: &[PathBuf],
     threshold: i64,
@@ -163,23 +170,6 @@ fn changed_since(
                     ignore::WalkState::Continue
                 };
             }
-            // On Windows that metadata is the copy kept in the parent's
-            // directory listing, which NTFS does not refresh when a
-            // directory's own contents change; only the directory itself has
-            // its current mtime. One extra call per directory, not per file.
-            #[cfg(windows)]
-            let newest = if meta.is_dir() {
-                dir_newest_time(path)
-                    .or_else(|| {
-                        std::fs::symlink_metadata(path)
-                            .ok()
-                            .map(|m| newest_time(&m))
-                    })
-                    .unwrap_or_else(|| newest_time(&meta))
-            } else {
-                newest_time(&meta)
-            };
-            #[cfg(not(windows))]
             let newest = newest_time(&meta);
             if newest >= threshold {
                 let Ok(mut found) = found.lock() else {
@@ -251,9 +241,10 @@ pub(super) fn reconcile(
                     if child_path.symlink_metadata().is_ok() || !seen.insert(child_path.clone()) {
                         continue;
                     }
-                    for p in index.paths_under(child) {
-                        events.push(deleted_event(PathBuf::from(p), formats));
-                    }
+                    // Applying the delete of a folder removes everything
+                    // indexed below it. Listing that here cost a scan of the
+                    // memory store per deleted child: 20,000 files deleted
+                    // from one folder took minutes.
                     events.push(deleted_event(child_path, formats));
                 }
                 compared.push(s.to_owned());
@@ -404,7 +395,8 @@ mod tests {
         assert!(has("Modified", "new.txt"), "{ev:?}");
         assert!(has("Modified", "edited.txt"), "{ev:?}");
         assert!(has("Deleted", "gone\")"), "{ev:?}");
-        assert!(has("Deleted", "b.txt"), "{ev:?}");
+        // Left to the folder's delete, which removes what it held.
+        assert!(!has("", "b.txt"), "{ev:?}");
         // Moved in with its old ctime; found because `moved` is not indexed.
         assert!(has("Modified", "inner.txt"), "{ev:?}");
         // Old times and not indexed, in a directory that changed: stands in

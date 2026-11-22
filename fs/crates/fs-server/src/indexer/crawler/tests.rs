@@ -292,3 +292,54 @@ fn a_folder_marked_swept_is_not_swept_again_soon() {
     assert!(!sweep_due(parent));
     assert!(sweep_due("/mark-swept-test/b"));
 }
+
+// A live event for one entry sweeps its vanished siblings. A vanished
+// directory must take its subtree with it: catch-up compares a directory's
+// children with the index, so an orphaned row under a missing parent row is
+// never found again.
+#[tokio::test]
+async fn sibling_sweep_removes_a_vanished_directory_with_its_contents() {
+    let dir = TempDir::new().unwrap();
+    let gone = dir.path().join("gone");
+    std::fs::create_dir(&gone).unwrap();
+    let child = gone.join("child.txt");
+    std::fs::write(&child, b"x").unwrap();
+    let fresh = dir.path().join("fresh.txt");
+    std::fs::write(&fresh, b"y").unwrap();
+
+    let tmpdir2 = TempDir::new().unwrap();
+    let store = make_store(&tmpdir2);
+    for p in [&gone, &child] {
+        let meta = std::fs::metadata(p).unwrap();
+        store
+            .upsert_file(&build_file_record(p, &meta, false, unix_now()))
+            .unwrap();
+    }
+    std::fs::remove_dir_all(&gone).unwrap();
+
+    process_event(
+        IndexEvent::Modified(fresh.clone()),
+        make_config(dir.path()),
+        store.clone(),
+        make_tantivy(&tmpdir2),
+        IndexMetrics::new(),
+        Arc::new(ArchiveRegistry::disabled()),
+    )
+    .await;
+
+    assert!(store
+        .get_by_path(&fresh.to_string_lossy())
+        .unwrap()
+        .is_some());
+    assert!(store
+        .get_by_path(&gone.to_string_lossy())
+        .unwrap()
+        .is_none());
+    assert!(
+        store
+            .get_by_path(&child.to_string_lossy())
+            .unwrap()
+            .is_none(),
+        "the vanished directory's child was left behind"
+    );
+}

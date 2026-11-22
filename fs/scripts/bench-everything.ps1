@@ -19,13 +19,19 @@
 # timings likewise include an HTTP request from PowerShell. Hits are the
 # total result count, where bench-windows.ps1 reports up to 100.
 #
+# Everything and es.exe run as a named instance (-Instance), so an
+# Everything already running on the machine neither takes over the launch
+# (a second plain Everything.exe hands off to the running one and exits) nor
+# answers the queries.
+#
 # Results go to -OutDir: summary.txt, samples.csv, queries.csv, checks.csv.
 param(
     [string]$OutDir = "",
     [int]$Iterations = 3,
     [int]$IndexTimeout = 1800,
     [string]$EverythingVersion = "1.4.1.1032",
-    [string]$EsVersion = "1.1.0.38"
+    [string]$EsVersion = "1.1.0.38",
+    [string]$Instance = "fs-bench"
 )
 
 $ErrorActionPreference = "Stop"
@@ -93,7 +99,11 @@ check_for_updates_on_startup=0
 "@ | Set-Content -Path $ini -Encoding ASCII
 
 function Invoke-Es([string[]]$esArgs) {
-    $out = & $es @esArgs 2>$null
+    # Until Everything is up, es.exe prints "IPC not found" on stderr. Under
+    # Windows PowerShell with "Stop", native stderr is a terminating error
+    # even when redirected (PowerShell 7, which CI uses, does not do that).
+    $ErrorActionPreference = "Continue"
+    $out = & $es -instance $Instance @esArgs 2>$null
     [pscustomobject]@{ Code = $LASTEXITCODE; Out = $out }
 }
 
@@ -134,7 +144,9 @@ function Start-Everything([string]$label) {
         IpcAt  = $null
         LoadAt = $null
     }
-    $ev.Proc = Start-Process -FilePath $exe -ArgumentList "-config", "`"$ini`"", "-db", "`"$db`"", "-startup" -PassThru
+    $ev.Proc = Start-Process -FilePath $exe -ArgumentList "-instance", $Instance, "-config", "`"$ini`"", "-db", "`"$db`"", "-startup" -PassThru
+    # A failed start throws before $running is set; the cleanup still needs it.
+    $script:launched = $ev.Proc
     $deadline = (Get-Date).AddSeconds($IndexTimeout)
     while ($true) {
         if ($ev.Proc.HasExited) { throw "Everything ($label) exited during startup (code $($ev.Proc.ExitCode))" }
@@ -156,7 +168,7 @@ function Start-Everything([string]$label) {
 function Stop-Everything($ev) {
     if ($ev.Proc.HasExited) { return "already exited (code $($ev.Proc.ExitCode))" }
     $sw = [Diagnostics.Stopwatch]::StartNew()
-    & $exe -exit | Out-Null
+    & $exe -instance $Instance -exit | Out-Null
     if ($ev.Proc.WaitForExit(60000)) { return "-exit, exited in $([math]::Round($sw.Elapsed.TotalSeconds, 1))s" }
     Stop-Process -Id $ev.Proc.Id -Force -ErrorAction SilentlyContinue
     $ev.Proc.WaitForExit(10000) | Out-Null
@@ -382,8 +394,8 @@ try {
     $exitCode = if ($failed -gt 0) { 1 } else { 0 }
 }
 finally {
-    if ($running -and -not $running.Proc.HasExited) {
-        Stop-Process -Id $running.Proc.Id -Force -ErrorAction SilentlyContinue
+    if ($launched -and -not $launched.HasExited) {
+        Stop-Process -Id $launched.Id -Force -ErrorAction SilentlyContinue
     }
     $samples   | Export-Csv -NoTypeInformation -Path (Join-Path $OutDir "samples.csv")
     $queryRows | Export-Csv -NoTypeInformation -Path (Join-Path $OutDir "queries.csv")

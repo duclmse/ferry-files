@@ -709,6 +709,24 @@ try {
     $peak = ($samples | Measure-Object peak_ws_mb -Maximum).Maximum
     Say "Peak working set over the whole run: $peak MB"
 
+    # Measured after the clean stop, when the memory store has written
+    # index.bin and SQLite has checkpointed its WAL.
+    Say ""
+    Say "---- index on disk ----"
+    $dataDir = Join-Path $workDir "data"
+    $entriesNow = [int64]$stats.total_files + [int64]$stats.total_dirs
+    $total = 0
+    foreach ($item in Get-ChildItem -Path $dataDir -Force -ErrorAction SilentlyContinue) {
+        $bytes = if ($item.PSIsContainer) {
+            [int64](Get-ChildItem -Path $item.FullName -Recurse -File -Force -ErrorAction SilentlyContinue |
+                Measure-Object Length -Sum).Sum
+        } else { [int64]$item.Length }
+        $total += $bytes
+        $per = if ($entriesNow -gt 0) { "{0:N1} B/entry" -f ($bytes / $entriesNow) } else { "" }
+        Say ("{0,-24} {1,10} MB  {2}" -f $item.Name, (Format-MB $bytes), $per)
+    }
+    Say ("{0,-24} {1,10} MB" -f "total", (Format-MB $total))
+
     Say ""
     Say "---- query load: $Clients clients, $LoadSeconds s ----"
     Say ("Requests {0}, errors {1}, {2} req/s; latency ms p50 {3}, p95 {4}, p99 {5}, max {6}" -f `

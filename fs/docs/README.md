@@ -81,6 +81,10 @@ upgrading, because stored watch roots no longer carry the `\\?\` prefix.
 
 ## Overview
 
+- [Development guide](DEVELOPMENT.md) - toolchain, build, run, test, lint,
+  change checklists, benchmarks, helper scripts
+- [Benchmarks](BENCHMARKS.md) - crawl, memory, query latency, `index.bin`
+  and binary sizes (Nov 2026)
 - [Overview](overview.md) - workspace crates (`common`, `fs-protocol`,
   `fs-server` daemon, `fs-cli` client, `rar2zip` and `sftpd` extensions),
   archive service summary, resolved decisions Q1–Q6 and AS1–AS6

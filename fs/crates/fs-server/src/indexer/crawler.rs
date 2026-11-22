@@ -732,13 +732,10 @@ impl FileBatch {
                 continue;
             };
             for child in children {
+                // A vanished child may be a folder; dropping only its row
+                // would orphan its contents, which catch-up never finds again.
                 if std::fs::symlink_metadata(&child).is_err() {
-                    if let Err(e) = stores.sqlite.remove_file(&child) {
-                        tracing::warn!("stale-sibling remove: {e}");
-                    }
-                    if let Err(e) = stores.tantivy.remove(&child) {
-                        tracing::warn!("stale-sibling tantivy remove: {e}");
-                    }
+                    remove_path(&stores.sqlite, &stores.tantivy, &child);
                 }
             }
         }

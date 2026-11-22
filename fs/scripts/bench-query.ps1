@@ -62,7 +62,8 @@ try {
     # the crawl (ready as soon as it logged that), or it ran one (ready once
     # it logs completion).
     Write-Host "==> Waiting for the daemon to be ready to serve queries (timeout 600s)"
-    $logPath = "$DataDir\daemon.query-bench.out.log"
+    # The daemon logs to stderr; stdout stays empty.
+    $logPath = "$DataDir\daemon.query-bench.err.log"
     $ready = $false
     for ($i = 0; $i -lt 600; $i++) {
         if ($proc.HasExited) {
