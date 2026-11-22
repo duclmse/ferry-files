@@ -147,3 +147,7 @@ harness = false
 [[bench]]
 name    = "reconcile"
 harness = false
+
+[[bench]]
+name    = "store_scale"
+harness = false

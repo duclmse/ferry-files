@@ -8,27 +8,28 @@ use crate::store::parent_text;
 // Helpers
 // ---------------------------------------------------------------------------
 
-/// Borrowed so grouping millions of entries allocates nothing per entry.
-/// Numbers order numerically, matching SQLite's `ORDER BY` on those columns.
-#[derive(PartialEq, Eq, PartialOrd, Ord)]
-pub(super) enum DupeKey<'a> {
-    Text(&'a str),
-    Number(i128),
-}
-
-pub(super) fn dupe_key<'a>(e: &EntryRef<'a>, kind: DupeKind) -> DupeKey<'a> {
+/// What a name dupe compares, borrowed so grouping millions of entries
+/// allocates nothing per entry.
+pub(super) fn dupe_text<'a>(e: &EntryRef<'a>, kind: DupeKind) -> &'a str {
     let name = e.name_str();
     match kind {
-        DupeKind::Name => DupeKey::Text(name),
-        DupeKind::NamePart => DupeKey::Text(
-            e.ext_str()
-                .and_then(|x| name.strip_suffix(x)?.strip_suffix('.'))
-                .unwrap_or(name),
-        ),
-        DupeKind::Size => DupeKey::Number(i128::from(e.size_bytes())),
-        DupeKind::DateModified | DupeKind::DateAccessed => DupeKey::Number(i128::from(e.mtime())),
-        DupeKind::DateCreated => DupeKey::Number(i128::from(e.ctime())),
-        DupeKind::Attrib => DupeKey::Number(i128::from(e.attrib_bitmask())),
+        DupeKind::NamePart => e
+            .ext_str()
+            .and_then(|x| name.strip_suffix(x)?.strip_suffix('.'))
+            .unwrap_or(name),
+        _ => name,
+    }
+}
+
+/// What a numeric dupe compares, ordered as SQLite's `ORDER BY` on that
+/// column. An `i64`, not a wider type: the sort buffer holds one per entry,
+/// and an `i128` key made each slot 48 bytes, 1.4 GB at peak for 10M.
+pub(super) fn dupe_number(e: &EntryRef<'_>, kind: DupeKind) -> i64 {
+    match kind {
+        DupeKind::Size => i64::try_from(e.size_bytes()).unwrap_or(i64::MAX),
+        DupeKind::DateCreated => e.ctime(),
+        DupeKind::Attrib => i64::from(e.attrib_bitmask()),
+        _ => e.mtime(),
     }
 }
 

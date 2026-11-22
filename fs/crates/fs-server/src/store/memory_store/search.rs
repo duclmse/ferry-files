@@ -2,7 +2,9 @@ use std::sync::OnceLock;
 
 use rayon::prelude::*;
 
-use super::matching::{compile, dupe_key, meta_filter_matches, Compiled, DupeKey, Like, PathMemo};
+use super::matching::{
+    compile, dupe_number, dupe_text, meta_filter_matches, Compiled, Like, PathMemo,
+};
 use super::sort::sort_numbers;
 use super::state::{EntryRef, IndexState, NO_PARENT};
 use super::{
@@ -304,30 +306,48 @@ impl MemoryStore {
     ) -> Result<Vec<FileRecord>> {
         let state = self.read_state();
         let compiled = compile(conds);
-
-        let mut memo = PathMemo::new();
-        let mut keyed: Vec<(DupeKey<'_>, u32)> = state
-            .iter()
-            .filter(|e| !e.is_archive() && all_match(&compiled, e, &mut memo))
-            .map(|e| (dupe_key(&e, kind), e.index()))
-            .collect();
-        match scan_pool() {
-            Some(pool) => pool.install(|| keyed.par_sort_unstable()),
-            None => keyed.sort_unstable(),
-        }
-
-        let mut result = Vec::new();
-        for group in keyed.chunk_by(|a, b| a.0 == b.0) {
-            if group.len() <= 1 {
-                continue;
+        Ok(match kind {
+            DupeKind::Name | DupeKind::NamePart => {
+                dupe_groups(&state, &compiled, |e| dupe_text(e, kind), limit)
             }
-            for (_, i) in group {
-                if result.len() >= limit {
-                    return Ok(result);
-                }
-                result.push(state.view(*i).to_record());
-            }
-        }
-        Ok(result)
+            _ => dupe_groups(&state, &compiled, |e| dupe_number(e, kind), limit),
+        })
     }
+}
+
+/// The first `limit` entries of groups that share a key, group by group.
+fn dupe_groups<'s, K: Ord + Send>(
+    state: &'s IndexState,
+    compiled: &[Compiled],
+    key: impl Fn(&EntryRef<'s>) -> K,
+    limit: usize,
+) -> Vec<FileRecord> {
+    let mut memo = PathMemo::new();
+    // Reserved once: growing by doubling held the old and new buffers at
+    // the same time, at 10M entries hundreds of MB more.
+    let mut keyed: Vec<(K, u32)> = Vec::with_capacity(state.len());
+    keyed.extend(
+        state
+            .iter()
+            .filter(|e| !e.is_archive() && all_match(compiled, e, &mut memo))
+            .map(|e| (key(&e), e.index())),
+    );
+    match scan_pool() {
+        Some(pool) => pool.install(|| keyed.par_sort_unstable()),
+        None => keyed.sort_unstable(),
+    }
+
+    let mut result = Vec::new();
+    for group in keyed.chunk_by(|a, b| a.0 == b.0) {
+        if group.len() <= 1 {
+            continue;
+        }
+        for (_, i) in group {
+            if result.len() >= limit {
+                return result;
+            }
+            result.push(state.view(*i).to_record());
+        }
+    }
+    result
 }

@@ -587,11 +587,13 @@ impl SqliteStore {
     }
 }
 
-/// `*.ext` as two index reads: the rows with that extension, and the names
-/// without one that match. Written as `extension = ? OR extension IS NULL`,
-/// SQLite scanned the table, or fetched every row without an extension (each
-/// folder) to check its name: 144-250 ms on C:\Windows, against 2 ms for
-/// `ext:`. Needs `NOEXT_NAME_INDEX`.
+/// `*.ext` as two index reads: the rows with that extension, then the
+/// names without one that match. Written as `extension = ? OR extension IS
+/// NULL`, SQLite scanned the table, or fetched every row without an
+/// extension (each folder) to check its name: 144-250 ms on C:\Windows,
+/// against 2 ms for `ext:`. A compound select, not `id IN (...)`: the `IN`
+/// list is built in full before `LIMIT` applies, 147 ms for a common
+/// extension at 10M rows. Needs `NOEXT_NAME_INDEX`.
 pub(super) fn extension_query(
     conds: &[SqlCondition],
     limit: usize,
@@ -605,27 +607,19 @@ pub(super) fn extension_query(
         .filter(|c| !matches!(c, SqlCondition::ExtOrNone(e) if *e == ext))
         .cloned()
         .collect();
-    let names: Vec<SqlCondition> = rest
-        .iter()
-        .filter(|c| is_name_condition(c))
-        .cloned()
-        .collect();
-    let (name_sql, name_params) = build_conditions(&names);
     let (rest_sql, rest_params) = build_conditions(&rest);
-    let sql = format!(
-        "SELECT id, path, name, extension, size_bytes, mtime, ctime,
+    let columns = "id, path, name, extension, size_bytes, mtime, ctime,
                 is_dir, is_hidden, is_symlink, attrib_bitmask,
-                content_indexed, tantivy_id, indexed_at, archive_path
-         FROM files
-         WHERE id IN (SELECT id FROM files WHERE extension = ?
-                      UNION ALL
-                      SELECT id FROM files INDEXED BY {NOEXT_NAME_INDEX}
-                      WHERE extension IS NULL {name_sql})
-           {rest_sql}
+                content_indexed, tantivy_id, indexed_at, archive_path";
+    let sql = format!(
+        "SELECT {columns} FROM files WHERE extension = ? {rest_sql}
+         UNION ALL
+         SELECT {columns} FROM files INDEXED BY {NOEXT_NAME_INDEX}
+         WHERE extension IS NULL {rest_sql}
          LIMIT ?"
     );
     let mut params = vec![Value::Text(ext)];
-    params.extend(name_params);
+    params.extend(rest_params.iter().cloned());
     params.extend(rest_params);
     params.push(Value::Integer(limit as i64));
     Some((sql, params))

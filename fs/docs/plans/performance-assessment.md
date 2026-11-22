@@ -387,3 +387,61 @@ rerun, so crawl and catch-up are compared with a warm cache.
   rows. It is built with `idx_files_extension`, once, on the first start.
   On a 350k-row synthetic table with a third of rows folders: 84 to 23 ms.
   Not measured on Windows yet.
+
+## Scale: 2M and 10M synthetic entries
+
+`benches/store_scale.rs`, one store and one phase per process, on an 8-core
+Mac with 16 GB, release build. The tree is `memory_search`'s: folders of 40
+files, mixed-case names, ten extensions. Names are shorter than a real
+volume's, so real indexes need more memory per entry than this. `build` is
+the crawl's write path and a save; `open` is a restart, then each query run
+five times. Peak memory is `/usr/bin/time -l`'s maximum resident set.
+
+| | Memory 2M | SQLite 2M | Memory 10M | SQLite 10M |
+| --- | ---: | ---: | ---: | ---: |
+| Build and save | 2.1 s | 16.1 s | 10.6 s | 163 s (67 s rows, 95 s indexes) |
+| On disk | 28.4 MiB | 685 MiB | 142 MiB (15 B/entry) | 3,451 MiB (362 B/entry) |
+| Open | 0.21 s | 0 s | 1.0 s | 0 s |
+| Resident after open | 244 MiB | 12 MiB | 1,102 MiB | 10 MiB |
+| Peak while querying | 716 MiB | 114 MiB | 3,041 MiB, 1,257 MiB after the dupe fix | 128 MiB |
+
+Median query time at 10M, in ms:
+
+| Query | Memory | SQLite |
+| --- | ---: | ---: |
+| `zzqx` (no match) | 28 | 249 (max 572) |
+| `readme` | 0.1 | 9.2 |
+| `*.zzq` | 23 | 30 |
+| `*.pdf` | 0.1 | 147, 0.1 after the fix below |
+| `ext:zzq` | 20 | 0.0 |
+| `"zzqx.txt"` | 29 | 215 |
+| `path:/bench/report` | 0.1 | 0.1 |
+| `parent:/bench/report/report` | 3.6 | 0.1 |
+| `size:>999kb` (no match) | 11 | 0.1 |
+| `sort:size readme` | 1.9 | 0.7 |
+| `sizedupe: count:100` | 483, 136 after the fix | 165,975 |
+| `fuzzy:reprot` | 79, 100 hits | 99, 0 hits |
+
+- **Memory.** The memory store holds the whole index: 1.1 GB at 10M here,
+  more with real names. SQLite stays near 100 MB at any size and is the
+  store for a machine that cannot spare that. It pays for it everywhere
+  else: 15x the build time, 24x the disk, substring and whole-name searches
+  of 200-250 ms against the 50 ms target, and `sizedupe:` that takes
+  almost three minutes.
+- **`sizedupe:` doubled the memory store's peak.** Its sort buffer held a
+  48-byte `(i128 key, u32)` per entry and grew by doubling, so for a moment
+  it held both buffers: 1.4 GB on top of the index, most of which the
+  allocator kept. Keys are now `i64` or `&str` (16 or 24 bytes), and the
+  buffer is reserved once. Peak memory went from 2.53 to 1.26 GB and the query
+  from 591 to 136 ms.
+- **SQLite `*.pdf` got slow with the `*.ext` change above.** As `id IN (...)`
+  SQLite collected every match before `LIMIT` applied. It is now a
+  compound select that stops at the limit, which brought it back to 0.1 ms.
+- **`fuzzy:` scores only the first `max_fuzzy_candidates` (50,000) entries
+  matching the other conditions**, 0.5% of a 10M index. Which ones depends
+  on the store: SQLite reads them in name order through `idx_files_name`, and
+  here those are all `Draft_*`, so it found nothing, while the memory store
+  found 100. Not changed yet. A bare `fuzzy:` term on a large index needs
+  either all names scored or the cap applied after a cheaper prefilter.
+- The `sort:size readme` maximum (419 ms memory, 146 ms SQLite) is the first
+  run of the process; the median is the steady cost.
