@@ -76,6 +76,11 @@ Every write or delete, on a phone or the computer:
 2. backs up the old version (see Backups in the sidebar),
 3. writes the new version and checks it.
 
+Deleting on the computer is the exception: Delete moves items to the Trash (the
+Recycle Bin on Windows), or backs them up as on a phone where the disk has none
+(network drives, USB sticks on Windows). Delete permanently (⌥⌘⌫, Shift+Delete
+elsewhere) keeps nothing, after asking; it's offered only on the computer.
+
 Previews read only what they show: media and hex by range, and phone thumbnails
 one at a time, only for folders on screen. A phone or server that can't send part of a
 file is copied to the computer in the background, and plays while it's copied.

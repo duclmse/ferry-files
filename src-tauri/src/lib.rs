@@ -220,6 +220,8 @@ pub fn run() {
             files::colour_text,
             files::mkdir,
             files::remove,
+            files::move_to_trash,
+            files::remove_forever,
             files::remove_tree,
             files::download,
             files::upload,

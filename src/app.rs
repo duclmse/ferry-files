@@ -271,7 +271,10 @@ enum Act {
     Rename,
     QuickLook,
     Favourite,
+    /// To the Trash on the computer; elsewhere deleted with a backup.
     Delete,
+    /// Deleted with no backup, folders with everything in them: only on the computer.
+    DeleteForever,
     Sync,
     Read,
     Check,
@@ -347,7 +350,8 @@ enum Notice {
     None,
     Error(String),
     Ok(String),
-    ConfirmDelete(Vec<Entry>),
+    /// Asks before deleting these, `forever` (no backup) or with a backup.
+    ConfirmDelete(Vec<Entry>, bool),
     /// The result of comparing this pane's folder with the other pane's, before syncing.
     /// `mode` is the one picked at first: "copy", "update" or "mirror".
     Sync { report: CompareReport, from: (Src, String), to: (Src, String), mode: String },
@@ -1481,7 +1485,11 @@ pub fn App() -> impl IntoView {
                     true
                 }
                 "delete" => {
-                    ctx.ask_delete(p);
+                    ctx.ask_delete(p, false);
+                    true
+                }
+                "delete_forever" => {
+                    ctx.ask_delete(p, true);
                     true
                 }
                 "help" => {

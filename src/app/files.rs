@@ -93,46 +93,110 @@ impl Ctx {
         });
     }
 
-    pub(super) fn ask_delete(self, p: Pane) {
-        if self.read_only(p.src.get_untracked()) {
+    /// Deletes what's picked. On the computer that's to the Trash, straight away, as in Finder
+    /// and File Explorer; `forever` (only there) and anywhere else it asks first.
+    pub(super) fn ask_delete(self, p: Pane, forever: bool) {
+        let src = p.src.get_untracked();
+        if self.read_only(src) {
             p.error("Files on an Everything server can only be read, not deleted.");
             return;
         }
+        if forever && src != Src::Mac {
+            let pc = crate::os::the_computer();
+            p.error(format!("Only files on {pc} can be deleted permanently. Here Delete always keeps a backup on {pc}."));
+            return;
+        }
         let items = p.picked();
-        if !items.is_empty() {
-            p.notice.set(Notice::ConfirmDelete(items));
+        if items.is_empty() {
+            return;
+        }
+        if src == Src::Mac && !forever {
+            self.delete(p, items, false);
+        } else {
+            p.notice.set(Notice::ConfirmDelete(items, forever));
         }
     }
 
-    /// Deletes each item in turn (folders only when empty), stopping at the first error.
-    pub(super) fn delete(self, p: Pane, items: Vec<Entry>) {
+    /// Deletes each item in turn, stopping at the first error. `forever`: with no backup, folders
+    /// with everything in them (only on the computer). Otherwise on the computer each goes to the
+    /// Trash, or, on a disk with none, is deleted as on a phone: files backed up first, folders
+    /// only when empty.
+    pub(super) fn delete(self, p: Pane, items: Vec<Entry>, forever: bool) {
         let src = p.src.get_untracked();
         p.notice.set(Notice::None);
+        let trash = crate::os::trash();
         spawn_local(async move {
-            let mut done = 0;
-            let mut backups = 0;
+            let (mut done, mut trashed, mut backups) = (0, 0, 0);
             let mut error = None;
             let mut gone = vec![];
             for e in &items {
-                match call::<Option<String>>("remove", json!({ "src": src.key(), "path": e.path })).await {
+                let args = json!({ "src": src.key(), "path": e.path });
+                if forever {
+                    match call::<()>("remove_forever", args).await {
+                        Ok(()) => done += 1,
+                        Err(err) => {
+                            error = Some(err);
+                            break;
+                        }
+                    }
+                    continue;
+                }
+                let to_trash = src == Src::Mac;
+                if to_trash {
+                    match call::<bool>("move_to_trash", args.clone()).await {
+                        Ok(true) => {
+                            done += 1;
+                            trashed += 1;
+                            continue;
+                        }
+                        Ok(false) => {}
+                        Err(err) => {
+                            error = Some(err);
+                            break;
+                        }
+                    }
+                }
+                match call::<Option<String>>("remove", args).await {
                     Ok(b) => {
                         done += 1;
                         backups += b.is_some() as usize;
                         gone.push((e.path.clone(), e.dir, b));
                     }
                     Err(err) => {
-                        error = Some(err);
+                        error = Some(if to_trash { format!("{err} That disk has no {trash}.") } else { err });
                         break;
                     }
                 }
             }
-            let what = if items.len() == 1 { items[0].name.clone() } else { format!("{done} items") };
+            let one = items.len() == 1;
+            let what = if one { items[0].name.clone() } else { format!("{done} items") };
+            let place = self.place(src);
             let note = if backups > 0 { format!(" Backups are kept on {}.", crate::os::the_computer()) } else { String::new() };
-            if done > 0 {
-                self.log_undo(format!("Deleted {what} from {}", self.place(src)), Undo::Delete { src, items: gone });
+            // What went to the Trash comes back from there; what was backed up, with Undo.
+            if forever && done > 0 {
+                self.log(format!("Deleted {what} permanently from {place}"));
+            } else if trashed > 0 {
+                let t = if one { what.clone() } else { format!("{trashed} items") };
+                self.log(format!("Moved {t} to the {trash} from {place}"));
             }
+            let fell_back = gone.len();
+            if !gone.is_empty() {
+                let g = if one { what.clone() } else { format!("{fell_back} items") };
+                self.log_undo(format!("Deleted {g} from {place}"), Undo::Delete { src, items: gone });
+            }
+            let ok = if forever {
+                format!("Deleted {what} permanently.")
+            } else if src != Src::Mac {
+                format!("Deleted {what}.{note}")
+            } else if trashed == done {
+                format!("Moved {what} to the {trash}.")
+            } else if trashed == 0 {
+                format!("Deleted {what}: that disk has no {trash}.{note}")
+            } else {
+                format!("Moved {trashed} to the {trash}; {fell_back} more had no {trash} on their disk and were deleted.{note}")
+            };
             match error {
-                None => p.notice.set(Notice::Ok(format!("Deleted {what}.{note}"))),
+                None => p.notice.set(Notice::Ok(ok)),
                 Some(err) if done == 0 => p.error(err),
                 Some(err) => p.error(format!("Deleted {done} of {}, then: {err}", items.len())),
             }

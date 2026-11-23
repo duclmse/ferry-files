@@ -30,6 +30,8 @@ fn main() {
             "colour_text",
             "mkdir",
             "remove",
+            "move_to_trash",
+            "remove_forever",
             "remove_tree",
             "download",
             "upload",

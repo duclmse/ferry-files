@@ -81,6 +81,18 @@ pub trait Transport: Send + Sync {
         self.replace(path, &data, exists)
     }
     fn delete(&self, path: &str, is_dir: bool) -> Result<()>;
+    /// Moves a file, or a folder with everything in it, to the system's Trash (the Recycle Bin on
+    /// Windows). Ok(false) when there's none for it (a phone, a network drive, a USB stick) and
+    /// nothing was changed: the caller deletes it with a backup instead.
+    fn to_trash(&self, _path: &str) -> Result<bool> {
+        Ok(false)
+    }
+    /// Deletes a file, or a folder with everything in it, with no backup. Ok(false) when the
+    /// transport doesn't allow that: only the computer's own files can be deleted this way, as
+    /// its user chose to instead of the Trash. Phones and servers always keep a backup.
+    fn delete_forever(&self, _path: &str) -> Result<bool> {
+        Ok(false)
+    }
     fn make_dir(&self, path: &str) -> Result<()>;
     /// Renames a file or folder within its folder. The caller has checked the new name is free.
     fn rename(&self, path: &str, new_name: &str) -> Result<()>;
@@ -397,6 +409,31 @@ impl Device {
         let backup = self.backup(&path, "deleted")?;
         self.t.delete(&path, false)?;
         Ok(Some(backup.display().to_string()))
+    }
+
+    /// Moves a file or folder to the Trash; see `Transport::to_trash`. Ok(false): there's no Trash
+    /// for it, and nothing changed.
+    pub fn trash(&self, path: &str) -> Result<bool> {
+        let path = norm(path)?;
+        let _g = self.lock();
+        if self.t.stat(&path)?.is_none() {
+            return err(format!("No such file or folder: {path}"));
+        }
+        self.t.to_trash(&path)
+    }
+
+    /// Deletes a file or a folder with everything in it, with no backup; only on the computer.
+    /// The one delete that keeps nothing, so it's only ever what the user asked for by name.
+    pub fn remove_forever(&self, path: &str) -> Result<()> {
+        let path = norm(path)?;
+        let _g = self.lock();
+        if self.t.stat(&path)?.is_none() {
+            return err(format!("No such file or folder: {path}"));
+        }
+        if !self.t.delete_forever(&path)? {
+            return err("Only files on the computer can be deleted permanently. Delete keeps a backup of them instead.");
+        }
+        Ok(())
     }
 
     pub fn mkdir(&self, path: &str) -> Result<()> {

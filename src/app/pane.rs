@@ -163,16 +163,21 @@ pub(super) fn Notices(pane: Pane) -> impl IntoView {
                 <div class="notice ok"><span class="text">{m}</span>
                     <button class="btn icon-only" title="Dismiss" aria-label="Dismiss" on:click=dismiss>{ico(Icon::Close)}</button></div>
             }.into_any(),
-            Notice::ConfirmDelete(items) => {
+            Notice::ConfirmDelete(items, forever) => {
                 let place = ctx.place(p.src.get_untracked());
-                let label = match items.as_slice() {
-                    [e] if e.dir => format!("Delete the folder {} from {place}? Only an empty folder can be deleted.", e.name),
-                    [e] => format!("Delete {} from {place}? A backup is kept on {}.", e.name, crate::os::the_computer()),
+                let trash = crate::os::trash();
+                let label = match (items.as_slice(), forever) {
+                    ([e], true) if e.dir => format!("Delete the folder {} and everything in it permanently? It won't go to the {trash} and no backup is kept. This can't be undone.", e.name),
+                    ([e], true) => format!("Delete {} permanently? It won't go to the {trash} and no backup is kept. This can't be undone.", e.name),
+                    (_, true) => format!("Delete {} items permanently, folders with everything in them? They won't go to the {trash} and no backup is kept. This can't be undone.", items.len()),
+                    ([e], false) if e.dir => format!("Delete the folder {} from {place}? Only an empty folder can be deleted.", e.name),
+                    ([e], false) => format!("Delete {} from {place}? A backup is kept on {}.", e.name, crate::os::the_computer()),
                     _ => format!("Delete {} items from {place}? Files are backed up on {}; folders are deleted only when empty.", items.len(), crate::os::the_computer()),
                 };
+                let button = if forever { "Delete permanently" } else { "Delete" };
                 view! {
                     <div class="notice"><span class="text">{label}</span>
-                        <button class="btn danger solid" on:click=move |_| ctx.delete(p, items.clone())>{ico(Icon::Trash)}"Delete"</button>
+                        <button class="btn danger solid" on:click=move |_| ctx.delete(p, items.clone(), forever)>{ico(Icon::Trash)}{button}</button>
                         <button class="btn" on:click=dismiss>"Cancel"</button></div>
                 }.into_any()
             }

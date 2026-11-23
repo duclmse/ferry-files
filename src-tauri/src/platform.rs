@@ -301,6 +301,43 @@ fn drives_here() -> Vec<(String, String)> {
         .collect()
 }
 
+/// The system's Trash, as used here: on the Mac through NSFileManager, since the default asks
+/// the Finder through AppleScript, which can bring up a permission prompt.
+pub fn trash_context() -> trash::TrashContext {
+    #[allow(unused_mut)]
+    let mut t = trash::TrashContext::default();
+    #[cfg(target_os = "macos")]
+    {
+        use trash::macos::{DeleteMethod, TrashContextExtMacos};
+        t.set_delete_method(DeleteMethod::NsFileManager);
+    }
+    t
+}
+
+/// Moves a file or folder on the computer to the Trash (the Recycle Bin on Windows). Ok(false)
+/// when the disk has none, so nothing changed. On Windows only fixed disks are tried: a network
+/// or removable drive has no Recycle Bin, and Windows would delete the file for good instead.
+/// Elsewhere a disk with no Trash makes the move fail, which also gives Ok(false).
+pub fn to_trash(path: &Path) -> Result<bool, String> {
+    #[cfg(windows)]
+    if !fixed_disk(path) {
+        return Ok(false);
+    }
+    Ok(trash_context().delete(path).is_ok())
+}
+
+/// Whether `path` is on a fixed disk (not a network, removable or optical drive).
+#[cfg(windows)]
+fn fixed_disk(path: &Path) -> bool {
+    use windows::Win32::Storage::FileSystem::GetDriveTypeW;
+    // DRIVE_FIXED, from GetDriveTypeW's documented return values.
+    const DRIVE_FIXED: u32 = 3;
+    let s = path.to_string_lossy();
+    let Some(d) = s.get(..2).filter(|d| d.ends_with(':')) else { return false };
+    let root: Vec<u16> = format!("{d}\\").encode_utf16().chain([0]).collect();
+    unsafe { GetDriveTypeW(windows::core::PCWSTR(root.as_ptr())) == DRIVE_FIXED }
+}
+
 /// Free and total bytes of the disk holding the folder at app path `dir`.
 pub fn free_space(dir: &str) -> Option<(u64, u64)> {
     #[cfg(windows)]

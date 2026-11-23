@@ -457,7 +457,7 @@ impl Ctx {
             let renamable = self.renamable(p);
             v.push(MenuItem::Do { label: format!("Rename {picked} items…"), key: "rename", act: Act::Rename, danger: false, enabled: renamable });
             v.push(MenuItem::Sep);
-            v.push(MenuItem::Do { label: format!("Delete {picked} items…"), key: "delete", act: Act::Delete, danger: true, enabled: !self.read_only(p.src.get_untracked()) });
+            v.extend(self.delete_items(p, &format!("{picked} items"), false));
             return v;
         }
         let mut v = vec![];
@@ -515,8 +515,29 @@ impl Ctx {
         }
         v.extend([item("Copy name", "", Act::CopyName), item("Copy path", "", Act::CopyPath)]);
         v.extend([MenuItem::Sep, item("Refresh", "", Act::Refresh), MenuItem::Sep]);
-        let label = if e.dir { "Delete folder if empty…" } else { "Delete…" };
-        v.push(MenuItem::Do { label: label.into(), key: "delete", act: Act::Delete, danger: true, enabled: !self.read_only(p.src.get_untracked()) });
+        v.extend(self.delete_items(p, "", e.dir));
+        v
+    }
+
+    /// Delete, and on the computer Delete permanently. `what` is "3 items", or "" for one item;
+    /// `dir`: that one item is a folder.
+    fn delete_items(self, p: Pane, what: &str, dir: bool) -> Vec<MenuItem> {
+        let enabled = !self.read_only(p.src.get_untracked());
+        let mut v = vec![];
+        if p.src.get_untracked() == Src::Mac {
+            let trash = crate::os::trash();
+            let label = if what.is_empty() { format!("Move to {trash}") } else { format!("Move {what} to {trash}") };
+            v.push(MenuItem::Do { label, key: "delete", act: Act::Delete, danger: true, enabled });
+            let label = if what.is_empty() { "Delete permanently…".to_string() } else { format!("Delete {what} permanently…") };
+            v.push(MenuItem::Do { label, key: "delete_forever", act: Act::DeleteForever, danger: true, enabled });
+        } else {
+            let label = match (what.is_empty(), dir) {
+                (true, true) => "Delete folder if empty…".to_string(),
+                (true, false) => "Delete…".to_string(),
+                _ => format!("Delete {what}…"),
+            };
+            v.push(MenuItem::Do { label, key: "delete", act: Act::Delete, danger: true, enabled });
+        }
         v
     }
 
@@ -531,7 +552,8 @@ impl Ctx {
             (Act::QuickLook, Some(_)) => self.quick_look(p),
             (Act::Favourite, Some(e)) => self.toggle_fav(p.src.get_untracked(), e.path),
             (Act::Favourite, None) => self.toggle_fav(p.src.get_untracked(), p.cwd.get_untracked()),
-            (Act::Delete, Some(_)) => self.ask_delete(p),
+            (Act::Delete, Some(_)) => self.ask_delete(p, false),
+            (Act::DeleteForever, Some(_)) => self.ask_delete(p, true),
             (Act::NewFolder, _) => p.notice.set(Notice::NewItem { folder: true }),
             (Act::NewFile, _) => p.notice.set(Notice::NewItem { folder: false }),
             (Act::Upload, _) => self.upload(p),

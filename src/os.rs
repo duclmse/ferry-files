@@ -61,6 +61,11 @@ pub fn this_computer() -> &'static str {
     }
 }
 
+/// Where deleted files go: "Recycle Bin" on Windows, "Trash" elsewhere.
+pub fn trash() -> &'static str {
+    if os() == Os::Windows { "Recycle Bin" } else { "Trash" }
+}
+
 /// "sidebar" on the Mac, "navigation pane" elsewhere.
 pub fn sidebar() -> &'static str {
     if is_mac() { "sidebar" } else { "navigation pane" }

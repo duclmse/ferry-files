@@ -205,6 +205,23 @@ pub(super) async fn remove(state: State<'_, AppState>, src: Option<String>, path
     blocking(move || dev.remove(&path).map_err(msg)).await
 }
 
+/// Moves a file or folder on the computer to the Trash (the Recycle Bin on Windows). False when
+/// there's no Trash for it (a phone, a server, a network drive, a USB stick) and nothing changed:
+/// `remove` deletes it with a backup instead.
+#[tauri::command(rename_all = "snake_case")]
+pub(super) async fn move_to_trash(state: State<'_, AppState>, src: Option<String>, path: String) -> Result<bool, String> {
+    let dev = state.source(src.as_deref())?;
+    blocking(move || dev.trash(&path).map_err(msg)).await
+}
+
+/// Deletes a file, or a folder with everything in it, on the computer with no backup. Phones and
+/// servers refuse: their deletes always keep a backup.
+#[tauri::command(rename_all = "snake_case")]
+pub(super) async fn remove_forever(state: State<'_, AppState>, src: Option<String>, path: String) -> Result<(), String> {
+    let dev = state.source(src.as_deref())?;
+    blocking(move || dev.remove_forever(&path).map_err(msg)).await
+}
+
 /// Removes a file, or a folder with everything in it: each file backed up, like any delete, then
 /// the folders, deepest first. Used to undo a copy. Stops at the first error.
 pub(super) fn remove_all(dev: &Device, path: &str) -> Result<u32, String> {

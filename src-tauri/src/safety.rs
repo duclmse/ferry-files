@@ -100,15 +100,7 @@ pub(super) async fn clear_backups() -> Result<(), String> {
         if !dir.exists() {
             return Ok(());
         }
-        #[allow(unused_mut)]
-        let mut trash = trash::TrashContext::default();
-        // The default asks the Finder through AppleScript, which can bring up a permission prompt.
-        #[cfg(target_os = "macos")]
-        {
-            use trash::macos::{DeleteMethod, TrashContextExtMacos};
-            trash.set_delete_method(DeleteMethod::NsFileManager);
-        }
-        trash.delete(&dir).map_err(|e| format!("Couldn't move the backups to the Trash: {e}"))
+        crate::platform::trash_context().delete(&dir).map_err(|e| format!("Couldn't move the backups to the Trash: {e}"))
     })
     .await
 }

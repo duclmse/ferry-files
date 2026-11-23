@@ -181,6 +181,26 @@ impl Transport for Local {
         r.map_err(|e| io(path, e))
     }
 
+    fn to_trash(&self, path: &str) -> Result<bool> {
+        crate::platform::to_trash(&native(path)).map_err(DevError::Msg)
+    }
+
+    fn delete_forever(&self, path: &str) -> Result<bool> {
+        let p = native(path);
+        if path == "/" || (cfg!(windows) && dirname(path) == "/") {
+            return err("A whole drive can't be deleted.");
+        }
+        let meta = fs::symlink_metadata(&p).map_err(|e| io(path, e))?;
+        // A link is removed, not what it points to; on Windows a link to a folder is a folder.
+        let r = if meta.is_dir() {
+            fs::remove_dir_all(&p)
+        } else {
+            fs::remove_file(&p).or_else(|e| if meta.file_type().is_symlink() { fs::remove_dir(&p) } else { Err(e) })
+        };
+        r.map_err(|e| io(path, e))?;
+        Ok(true)
+    }
+
     fn make_dir(&self, path: &str) -> Result<()> {
         if dirname(path) == "/" && cfg!(windows) {
             return err("Folders can't be made next to the drives.");
@@ -252,6 +272,24 @@ mod tests {
         got.sort();
         std::fs::remove_dir_all(&dir).unwrap();
         assert_eq!(got, [("flagged".to_string(), true), ("shown".to_string(), false)]);
+    }
+
+    #[test]
+    fn deleting_permanently_takes_folders_whole_but_never_a_drive() {
+        let dir = std::env::temp_dir().join(format!("ferry-forever-test-{}", std::process::id()));
+        std::fs::create_dir_all(dir.join("folder/inner")).unwrap();
+        std::fs::write(dir.join("folder/inner/a.txt"), b"a").unwrap();
+        std::fs::write(dir.join("b.txt"), b"b").unwrap();
+        let root = crate::platform::app_path(&dir);
+        let dev = Device::new(Box::new(super::Local));
+        dev.remove_forever(&format!("{root}/folder")).unwrap();
+        dev.remove_forever(&format!("{root}/b.txt")).unwrap();
+        let left = std::fs::read_dir(&dir).unwrap().count();
+        let missing = dev.remove_forever(&format!("{root}/b.txt")).is_err();
+        std::fs::remove_dir_all(&dir).unwrap();
+        assert_eq!(left, 0);
+        assert!(missing);
+        assert!(dev.remove_forever("/").is_err());
     }
 
     #[test]

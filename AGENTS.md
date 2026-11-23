@@ -23,7 +23,7 @@ Phone tests (`cargo run --example smoke` and `--example epub_smoke`) need a conn
 
 ## Rules for changes
 
-- **User data comes first.** Every write to the phone goes through `Device::write` and `Device::remove`, which check the version and make a backup. Never bypass them. Tests and experiments must work on scratch copies (as `epub_smoke` does), never on the user's real files, and must clean up afterwards.
+- **User data comes first.** Every write to the phone goes through `Device::write` and `Device::remove`, which check the version and make a backup. Never bypass them. The only deletes without a backup are on the computer: the Trash (`Device::trash`) and Delete permanently (`Device::remove_forever`), which the user picks by name; phones and servers never get them. Tests and experiments must work on scratch copies (as `epub_smoke` does), never on the user's real files, and must clean up afterwards.
 - **EPUB edits splice the original text.** `src-tauri/src/epub.rs` edits by byte ranges from `xml.rs` tokens, so untouched markup keeps its exact bytes. Don't re-serialize whole documents with a DOM library. Validate edited XHTML/OPF with `xml::check` before storing it, and write error messages in plain language that name the line.
 - **Adding a Tauri command** means updating four places:
   1. the function in the fitting module (`files.rs`, `transfer.rs`, …), with `#[tauri::command(rename_all = "snake_case")]`;

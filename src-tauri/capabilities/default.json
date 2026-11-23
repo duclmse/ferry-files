@@ -33,6 +33,8 @@
     "allow-colour-text",
     "allow-mkdir",
     "allow-remove",
+    "allow-move-to-trash",
+    "allow-remove-forever",
     "allow-remove-tree",
     "allow-download",
     "allow-upload",
