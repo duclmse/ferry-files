@@ -474,7 +474,7 @@ pub(super) fn Preview(pane: Pane, #[prop(optional)] entry: Option<Entry>, #[prop
     let (pic_turn, video_turn) = (Turn::new(), Turn::new());
     // Only a different item (or a different "show as") rebuilds it, so a reload doesn't restart
     // a playing video.
-    let shown = Memo::new(move |_| {
+    let wanted = Memo::new(move |_| {
         let picked = match &entry {
             Some(e) => Some(e.clone()),
             None => p.selected_entry(),
@@ -486,6 +486,28 @@ pub(super) fn Preview(pane: Pane, #[prop(optional)] entry: Option<Entry>, #[prop
             let inner = p.zip_pick.with(|z| z.as_ref().filter(|z| z.0 == src && z.1 == e.path).map(|z| (z.2.clone(), z.3, z.4)));
             (e, forced, inner)
         })
+    });
+    // What's shown: what's picked, except that a picture not yet read is read (and decoded)
+    // first, while what was shown stays, instead of its thumbnail and then the picture. The
+    // first thing shown, and anything else, shows at once.
+    let shown = RwSignal::new(wanted.get_untracked());
+    Effect::new(move |_| {
+        let w = wanted.get();
+        if shown.with_untracked(|s| *s == w) {
+            return;
+        }
+        let read = (!alone && shown.with_untracked(Option::is_some)).then(|| picture_url(p, &w)).flatten();
+        match read {
+            Some((path, url)) => {
+                let target = StoredValue::new(w);
+                when_read(p, path, url, move || target.with_value(|t| wanted.with_untracked(|now| now == t)), move || shown.set(target.get_value()));
+            }
+            None => {
+                p.coming.set(None);
+                p.pending.set_value(None);
+                shown.set(w);
+            }
+        }
     });
     view! {
         <div class="preview" style=move || match p.preview_w.get() {
@@ -612,28 +634,36 @@ fn is_text(e: &Entry) -> bool {
 }
 
 /// Selects the picture, video or sound before (`-1`) or after (`1`) `e` in the pane, skipping
-/// other files. A picture is read first, and selected once it's here (see `when_read`); a step
-/// meanwhile goes on from it.
+/// other files. It goes from what's picked, which can be ahead of what the preview shows while
+/// the next picture is read.
 pub(super) fn step_media(p: Pane, e: &Entry, delta: isize) {
     let Some(m) = media(e) else { return };
-    let from = p.coming.with_untracked(|c| c.as_ref().map(|(path, _)| path.clone())).unwrap_or_else(|| e.path.clone());
+    let picked = p.selected.get_untracked();
     let next = p.entries.with_untracked(|es| {
         let same: Vec<&Entry> = es.iter().filter(|x| media(x) == Some(m)).collect();
-        let i = same.iter().position(|x| x.path == from)? as isize + delta;
-        (i >= 0).then(|| same.get(i as usize).map(|&x| x.clone())).flatten()
+        let at = picked.as_ref().and_then(|s| same.iter().position(|x| x.path == *s)).or_else(|| same.iter().position(|x| x.path == e.path))?;
+        let i = at as isize + delta;
+        (i >= 0).then(|| same.get(i as usize).map(|x| x.path.clone())).flatten()
     });
-    let Some(next) = next else { return };
-    if m != Media::Image {
-        p.coming.set(None);
-        p.select_only(Some(next.path));
-        return;
+    if let Some(path) = next {
+        p.select_only(Some(path));
+    }
+}
+
+/// The picture the preview would show for `w` in full, and the URL it reads it from (the photo
+/// shrunk to the preview, or the file; in a ZIP, the file unpacked). None for anything else.
+fn picture_url(p: Pane, w: &Option<(Entry, Option<PeekAs>, Option<(String, u64, bool)>)>) -> Option<(String, String)> {
+    let (e, forced, inner) = w.as_ref()?;
+    if forced.is_some() {
+        return None;
     }
     let src = p.src.get_untracked();
-    // What the preview will ask for: the photo shrunk to the preview, or the file.
-    let url = fit_url(src, &next).unwrap_or_else(|| stream_url(src, &next));
-    let was = p.selected.get_untracked();
-    let path = next.path.clone();
-    when_read(p, next.path, url, move || p.selected.get_untracked() == was, move || p.select_only(Some(path)));
+    let is_picture =
+        |name: &str| media(&Entry { name: base(name), path: name.to_string(), dir: false, size: 0, mtime: 0, hidden: false }) == Some(Media::Image);
+    match inner {
+        Some((name, _, _)) => is_picture(name).then(|| (name.clone(), super::views::zipped_url(src, e, name))),
+        None => (!e.dir && media(e) == Some(Media::Image)).then(|| (e.path.clone(), fit_url(src, e).unwrap_or_else(|| stream_url(src, e)))),
+    }
 }
 
 /// Shows a picture once it's been read into memory and decoded: `show` puts `path`'s picture
@@ -1657,8 +1687,7 @@ fn Zipped(pane: Pane, src: Src, zip: Entry, name: String, size: u64, stored: boo
     let info = RwSignal::new(MediaInfo::default());
     let forced = RwSignal::new(None::<PeekAs>);
     // ‹ › and the picture's sides go through the pictures (or videos, or sounds) in its folder.
-    let zip_entry = StoredValue::new(zip.clone());
-    let step = Callback::new(move |d| super::views::step_zipped(p, d, &zip_entry.get_value()));
+    let step = Callback::new(move |d| super::views::step_zipped(p, d));
     // Whether the body is text (as the match below picks it), for the wrap and line-number toggles.
     let text_e = e.clone();
     let body = move || {

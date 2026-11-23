@@ -113,6 +113,18 @@
   gap: 6px;
 }
 
+.script-place .script-key {
+  flex: none;
+  min-width: 96px;
+  justify-content: center;
+  font-variant-numeric: tabular-nums;
+}
+
+.script-place .script-key.waiting {
+  border-color: var(--accent);
+  color: var(--accent);
+}
+
 .script-place .about {
   color: var(--muted);
 }
@@ -391,8 +403,25 @@
 .dialog.palette {
   width: min(600px, 100%);
   max-height: 70vh;
-  padding: 10px;
+  /* Room under the hint at its bottom. */
+  padding: 10px 10px 16px;
   gap: 6px;
+}
+
+/* A description with its button at the right (Settings > Sidebar's Reset). */
+.hint-row {
+  display: flex;
+  align-items: flex-start;
+  gap: 12px;
+}
+
+.hint-row .hint {
+  flex: 1;
+  min-width: 0;
+}
+
+.hint-row .btn {
+  flex: none;
 }
 
 .palette-q {
@@ -510,6 +539,27 @@
 .conn-filter input {
   flex: 1;
   min-width: 0;
+  height: 28px;
+  box-sizing: border-box;
+  padding: 0 8px;
+  font: inherit;
+  color: var(--ink);
+  background: var(--bg);
+  border: 1px solid var(--line);
+  border-radius: 7px;
+}
+
+.conn-filter input:focus {
+  outline: none;
+  border-color: var(--accent);
+}
+
+.conn-filter input::placeholder {
+  color: var(--muted);
+}
+
+.conn-filter .btn {
+  flex: none;
 }
 .conn-list {
   display: flex;

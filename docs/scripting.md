@@ -20,6 +20,12 @@ elsewhere.
 
 The pane lists its folder again when the script changed something.
 
+A script can also have a shortcut: in **Settings > Scripts**, click **Add shortcut** beside it and
+press the keys (Esc stops, ⌫ takes the shortcut away). Pressing it runs the script on what's
+picked in the active pane, or on its folder. A shortcut one of the app's commands already has is
+refused; change that one under **Settings > Keyboard** first. The menu shows each script's
+shortcut beside its name.
+
 ## Where scripts are
 
 **Settings > Scripts** lists every script the app found, and where it looks:

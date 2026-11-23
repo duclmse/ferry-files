@@ -9,6 +9,8 @@ use crate::api::{ScriptInfo, ScriptReport};
 pub(super) const PLACES_KEY: &str = "ferry-files.script-places";
 /// The scripts folder picked in Settings > Scripts (an app path); none: the app's own.
 pub(super) const FOLDER_KEY: &str = "ferry-files.scripts-folder";
+/// Scripts' shortcuts: a JSON map from a script's path to its chord.
+pub(super) const KEYS_KEY: &str = "ferry-files.script-keys";
 
 impl Ctx {
     /// Finds the scripts again, for the menu.
@@ -25,6 +27,52 @@ impl Ctx {
                 }
                 Err(e) => self.script_error.set(Some(e)),
             }
+        });
+    }
+
+    /// The script `chord` runs, if it's one that's found.
+    pub(super) fn script_for(self, chord: &str) -> Option<ScriptInfo> {
+        let path = self.script_keys.with_untracked(|k| k.iter().find(|(_, c)| *c == chord).map(|(p, _)| p.clone()))?;
+        self.scripts.with_untracked(|v| v.iter().find(|s| s.path == path).cloned())
+    }
+
+    /// The shortcut of the script at `path`, as shown ("Ctrl+Shift+1"), or "".
+    pub(super) fn script_key_label(self, path: &str) -> String {
+        self.script_keys.with(|k| k.get(path).map(|c| super::keymap::label(c)).unwrap_or_default())
+    }
+
+    fn set_script_keys(self, f: impl FnOnce(&mut HashMap<String, String>)) {
+        self.script_keys.update(f);
+        self.script_keys.with_untracked(|k| store(KEYS_KEY, &serde_json::to_string(k).unwrap_or_default()));
+    }
+
+    /// A key pressed while the script at `path` waits for its shortcut: Esc stops waiting, ⌫ or
+    /// Delete takes the shortcut away, a chord one of the app's commands has is refused (it's
+    /// changed under Keyboard), and any other becomes the script's, taken from another script.
+    pub(super) fn capture_script_key(self, path: String, chord: String) {
+        self.script_capturing.set(None);
+        self.script_key_note.set(None);
+        match chord.as_str() {
+            "Escape" => return,
+            "Backspace" | "Delete" => {
+                self.set_script_keys(|k| {
+                    k.remove(&path);
+                });
+                return;
+            }
+            _ => {}
+        }
+        if let Some(c) = self.command_for(&chord) {
+            self.script_key_note.set(Some(format!(
+                "{} is the shortcut of “{}”. Pick another, or change that one under Keyboard.",
+                super::keymap::label(&chord),
+                c.what
+            )));
+            return;
+        }
+        self.set_script_keys(|k| {
+            k.retain(|_, c| *c != chord);
+            k.insert(path, chord);
         });
     }
 
@@ -108,6 +156,11 @@ pub(super) fn done(ctx: Ctx, p: Pane, script: ScriptInfo, items: Vec<String>, r:
 pub(super) fn ScriptSettings() -> impl IntoView {
     let ctx = expect_context::<Ctx>();
     ctx.load_scripts();
+    // Leaving Settings stops waiting for a shortcut.
+    on_cleanup(move || {
+        let _ = ctx.script_capturing.try_set(None);
+        let _ = ctx.script_key_note.try_set(None);
+    });
     let error = RwSignal::new(None::<String>);
     // Where the app's own scripts folder is: the one the guide is in.
     let own = RwSignal::new(String::new());
@@ -180,15 +233,17 @@ pub(super) fn ScriptSettings() -> impl IntoView {
         <div class="script-places">
             <div class="script-place">
                 <span class="path" title=move || { let f = ctx.script_folder.get(); shown(&if f.is_empty() { own.get() } else { f }) }>
-                    <b>{move || if ctx.script_folder.with(String::is_empty) { "The scripts folder (the app's)" } else { "The scripts folder (picked)" }}</b>
+                    <b>"The scripts folder (the app's)"</b>
                     <br/>
                     <span class="about">{move || { let f = ctx.script_folder.get(); shown(&if f.is_empty() { own.get() } else { f }) }}</span>
                 </span>
                 <button class="btn icon-only" title=format!("Open in {}", crate::os::file_manager()) aria-label=format!("Open in {}", crate::os::file_manager())
                     on:click=open_folder>{ico(Icon::Folder)}</button>
-                <button class="btn" title="Use another folder as the scripts folder (new scripts go there)" on:click=move |_| pick_folder()>"Change…"</button>
+                <button class="btn icon-only" title="Use another folder as the scripts folder (new scripts go there)" aria-label="Use another folder"
+                    on:click=move |_| pick_folder()>{ico(Icon::FolderSwap)}</button>
                 {move || (!ctx.script_folder.get().is_empty()).then(|| view! {
-                    <button class="btn" title="Use the app's own scripts folder again" on:click=move |_| ctx.set_script_folder(String::new())>"Use the app's"</button>
+                    <button class="btn icon-only" title="Use the app's own scripts folder again" aria-label="Use the app's folder"
+                        on:click=move |_| ctx.set_script_folder(String::new())>{ico(Icon::Restore)}</button>
                 })}
             </div>
             {move || ctx.script_places.get().into_iter().map(|place| {
@@ -203,26 +258,28 @@ pub(super) fn ScriptSettings() -> impl IntoView {
             }).collect_view()}
         </div>
         <div class="row-buttons">
-            <button class="btn" on:click=move |_| add(false)>{ico(Icon::Plus)}"Add scripts…"</button>
-            <button class="btn" on:click=move |_| add(true)>{ico(Icon::Folder)}"Add a folder…"</button>
-            <button class="btn" title="Look for scripts again" on:click=move |_| ctx.load_scripts()>{ico(Icon::Refresh)}"Reload"</button>
-            <button class="btn" title="What a script can do, with examples, in the editor"
+            <button class="btn icon-only" title="Add script files…" aria-label="Add script files" on:click=move |_| add(false)>{ico(Icon::Plus)}</button>
+            <button class="btn icon-only" title="Add a folder of scripts…" aria-label="Add a folder of scripts" on:click=move |_| add(true)>{ico(Icon::FolderPlus)}</button>
+            <button class="btn icon-only" title="Look for scripts again" aria-label="Look for scripts again" on:click=move |_| ctx.load_scripts()>{ico(Icon::Refresh)}</button>
+            <button class="btn icon-only" title="Scripting guide: what a script can do, with examples" aria-label="Scripting guide"
                 on:click=move |_| spawn_local(async move {
                     match call::<String>("script_guide", json!({})).await {
                         Ok(path) => edit(path),
                         Err(e) => error.set(Some(e)),
                     }
-                })>{ico(Icon::Book)}"Scripting guide"</button>
+                })>{ico(Icon::Book)}</button>
         </div>
         <div class="row-buttons">
             <input class="script-name" placeholder="New script's name" prop:value=move || new_name.get()
                 on:input=move |ev| new_name.set(event_target_value(&ev))
                 on:keydown=move |ev| if ev.key() == "Enter" { make() }/>
-            <button class="btn" disabled=move || new_name.with(|n| n.trim().is_empty())
-                title="Make a script in the scripts folder and open it in the editor" on:click=move |_| make()>{ico(Icon::Plus)}"New script"</button>
+            <button class="btn icon-only" aria-label="New script" disabled=move || new_name.with(|n| n.trim().is_empty())
+                title="Make a script in the scripts folder and open it in the editor" on:click=move |_| make()>{ico(Icon::Plus)}</button>
         </div>
         {move || error.get().or_else(|| ctx.script_error.get()).map(|e| view! { <p class="error">{e}</p> })}
         <h3>"Scripts"</h3>
+        <p class="hint flush">"A script with a shortcut runs on what's picked (or the folder) when it's pressed."</p>
+        {move || ctx.script_key_note.get().map(|e| view! { <p class="error">{e}</p> })}
         {move || {
             let list = ctx.scripts.get();
             if list.is_empty() {
@@ -235,6 +292,20 @@ pub(super) fn ScriptSettings() -> impl IntoView {
                         view! {
                             <div class="script-place" title=shown(&s.path)>
                                 <span class="path"><b>{s.name.clone()}</b>" "<span class="about">{s.about.clone()}</span></span>
+                                {
+                                    let at = StoredValue::new(s.path.clone());
+                                    let waiting = move || at.with_value(|a| ctx.script_capturing.with(|c| c.as_deref() == Some(a.as_str())));
+                                    let key = move || at.with_value(|a| ctx.script_key_label(a));
+                                    view! {
+                                        <button class="btn script-key" class:waiting=waiting
+                                            title="Click, then press the shortcut (Esc to stop, ⌫ to take it away)"
+                                            on:click=move |_| { ctx.script_key_note.set(None); ctx.script_capturing.set(Some(at.get_value())) }>
+                                            {move || if waiting() { "Press a key…".to_string() } else {
+                                                match key() { k if k.is_empty() => "Add shortcut".to_string(), k => k }
+                                            }}
+                                        </button>
+                                    }
+                                }
                                 <button class="btn icon-only" title=format!("View and edit {}", s.name) aria-label="View and edit"
                                     on:click=move |_| edit(path.clone())>{ico(Icon::Edit)}</button>
                             </div>

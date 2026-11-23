@@ -61,6 +61,10 @@ pub(crate) enum Icon {
     Replace,
     /// Replace's, into a stack of boxes.
     ReplaceAll,
+    /// A folder with a + on it: add a folder.
+    FolderPlus,
+    /// A folder with an arrow round to it: use another folder.
+    FolderSwap,
 }
 
 impl Icon {
@@ -77,6 +81,12 @@ impl Icon {
             }
             Icon::Trash => r#"<path d="M2.5 4.5h11M6.5 4.5V3h3v1.5M4 4.5l.7 9h6.6l.7-9"/>"#,
             Icon::Folder => r#"<path d="M1.5 12.5v-9a1 1 0 0 1 1-1h3.5l1.5 2h6a1 1 0 0 1 1 1v7a1 1 0 0 1-1 1h-11a1 1 0 0 1-1-1z"/>"#,
+            Icon::FolderPlus => {
+                r#"<path d="M1.5 12.5v-9a1 1 0 0 1 1-1h3.5l1.5 2h6a1 1 0 0 1 1 1v7a1 1 0 0 1-1 1h-11a1 1 0 0 1-1-1z"/><path d="M8 7v4.5M5.75 9.25h4.5"/>"#
+            }
+            Icon::FolderSwap => {
+                r#"<path d="M1.5 12.5v-9a1 1 0 0 1 1-1h3.5l1.5 2h6a1 1 0 0 1 1 1v7a1 1 0 0 1-1 1h-11a1 1 0 0 1-1-1z"/><path d="M10.5 8.5a2.5 2.5 0 1 1-.9-1.9"/><path d="M10 5.5v1.5h-1.5"/>"#
+            }
             Icon::Book => r#"<path d="M8 4.5C6.5 3.5 4.5 3 2 3v9.5c2.5 0 4.5.5 6 1.5 1.5-1 3.5-1.5 6-1.5V3c-2.5 0-4.5.5-6 1.5zM8 4.5V14"/>"#,
             Icon::File => r#"<path d="M3.5 1.5h6l3 3v10h-9z"/><path d="M9.5 1.5v3h3"/>"#,
             Icon::Edit => r#"<path d="M10.5 2.5l3 3-8 8h-3v-3z"/>"#,

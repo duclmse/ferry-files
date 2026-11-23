@@ -650,7 +650,16 @@ impl Ctx {
 
     /// Run script ▸: the scripts (Settings > Scripts), then a way to add some.
     fn script_menu(self) -> MenuItem {
-        let mut items: Vec<MenuItem> = self.scripts.with_untracked(|v| v.iter().enumerate().map(|(i, s)| item(s.name.clone(), "", Act::Script(i))).collect());
+        // A tab before its shortcut puts the shortcut where the menu shows them.
+        let mut items: Vec<MenuItem> = self.scripts.with_untracked(|v| {
+            v.iter()
+                .enumerate()
+                .map(|(i, s)| {
+                    let key = untrack(|| self.script_key_label(&s.path));
+                    item(if key.is_empty() { s.name.clone() } else { format!("{}\t{key}", s.name) }, "", Act::Script(i))
+                })
+                .collect()
+        });
         if items.is_empty() {
             items.push(MenuItem::Do { label: "No scripts yet".into(), key: "", act: Act::ScriptSettings, danger: false, enabled: false });
         }
@@ -838,12 +847,19 @@ fn rows(ctx: Ctx, items: Vec<MenuItem>, run: Callback<Act>) -> AnyView {
         .into_iter()
         .map(|it| match it {
             MenuItem::Sep => view! { <div class="sep"></div> }.into_any(),
-            MenuItem::Do { label, key, act, danger, enabled } => view! {
-                <button role="menuitem" class:danger=danger disabled=!enabled on:click=move |_| run.run(act)>
-                    <span>{label}</span><span class="key">{move || ctx.key_label(key)}</span>
-                </button>
+            MenuItem::Do { label, key, act, danger, enabled } => {
+                // A shortcut written after a tab in the label (a script's) shows like a command's.
+                let (label, own) = match label.split_once('\t') {
+                    Some((l, k)) => (l.to_string(), Some(k.to_string())),
+                    None => (label, None),
+                };
+                view! {
+                    <button role="menuitem" class:danger=danger disabled=!enabled on:click=move |_| run.run(act)>
+                        <span>{label}</span><span class="key">{move || own.clone().unwrap_or_else(|| ctx.key_label(key))}</span>
+                    </button>
+                }
+                .into_any()
             }
-            .into_any(),
             MenuItem::Sub { label, items } => {
                 let left = RwSignal::new(false);
                 let enter = move |ev: web_sys::MouseEvent| {

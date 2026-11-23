@@ -97,6 +97,8 @@ fn from_menu_in(group: &'static str, under: &str, items: Vec<MenuItem>, entry: O
             _ => continue,
         };
         let checked = label.starts_with('✓');
+        // Without a shortcut after a tab (a script's).
+        let label = label.split('\t').next().unwrap_or_default().to_string();
         let bare = label.trim_start_matches(['✓', '\u{2003}', ' ']).to_string();
         let label = match act {
             Act::View(_) if checked => continue,

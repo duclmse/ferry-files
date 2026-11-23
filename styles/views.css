@@ -869,6 +869,16 @@ td.name input.rename {
   color: var(--ink);
 }
 
+/* The buttons under what's shown stay at the bottom of the preview, with what's shown in the
+   middle of the room above them. */
+.preview > .view > :first-child {
+  margin-top: auto;
+}
+
+.preview > .view > .viewer-bar:last-child {
+  margin-top: auto;
+}
+
 /* A picture with its buttons, which go full screen together (on black). */
 .preview .picview {
   flex: 1 1 auto;
@@ -902,6 +912,15 @@ td.name input.rename {
 
 .preview .pic.stage img.full {
   transition: transform 0.12s ease-out;
+}
+
+/* The picture takes the room there is (its thumbnail in the middle while it loads), so its
+   buttons are at the bottom. */
+.preview .picview > .pic.stage {
+  flex: 1 1 0;
+  min-height: 0;
+  width: 100%;
+  height: auto;
 }
 
 /* The picture's left and right sides: a click goes to the previous or next picture. The arrow

@@ -210,10 +210,11 @@ fn conn_form(ctx: Ctx, editing: RwSignal<Option<Conn>>, is_new: bool) -> impl In
             })}
             {move || error.get().map(|e| view! { <p class="error">{e}</p> })}
             <div class="buttons">
-                <button class="btn" on:click=move |_| editing.set(None)>"Cancel"</button>
-                <button class="btn primary" disabled=move || trying.get() on:click=move |_| save()>
-                    {move || if trying.get() { "Connecting…" } else if is_new { "Add" } else { "Save" }}
-                </button>
+                <button class="btn icon-only" title="Cancel" aria-label="Cancel" on:click=move |_| editing.set(None)>{ico(Icon::Close)}</button>
+                <button class="btn primary icon-only" disabled=move || trying.get()
+                    title=move || if trying.get() { "Connecting…" } else if is_new { "Add the connection" } else { "Save the connection" }
+                    aria-label=move || if trying.get() { "Connecting" } else if is_new { "Add" } else { "Save" }
+                    on:click=move |_| save()>{ico(Icon::Check)}</button>
             </div>
         </div>
     }
@@ -271,7 +272,8 @@ pub(super) fn ConnectionsSettings() -> impl IntoView {
                         _ => {}
                     }
                 }/>
-            <button class="btn" on:click=move |_| start(query.get_untracked())>{ico(Icon::Plus)}"New"</button>
+            <button class="btn icon-only" title="New connection (with what's typed as its address)" aria-label="New connection"
+                on:click=move |_| start(query.get_untracked())>{ico(Icon::Plus)}</button>
         </div>
         {move || adding.get().map(|_| conn_form(ctx, editing, true))}
         <div class="conn-list">
@@ -289,10 +291,11 @@ pub(super) fn ConnectionsSettings() -> impl IntoView {
                             <b>{c.name()}</b>
                             <span class="about">{move || status.get().1}" · "{auth_label(&c)}</span>
                         </div>
-                        <button class="btn" aria-expanded=move || is_open().to_string()
-                            on:click=move |_| if is_open2() { editing.set(None) } else { is_new.set(false); editing.set(Some(c2.clone())) }>"Edit"</button>
-                        <button class="btn" on:click=move |_| { if open_id.get_untracked().as_deref() == Some(id.as_str()) { editing.set(None) } ctx.remove_conn(&id) }>
-                            {ico(Icon::Trash)}"Remove"</button>
+                        <button class="btn icon-only" aria-expanded=move || is_open().to_string() title="Edit" aria-label="Edit"
+                            on:click=move |_| if is_open2() { editing.set(None) } else { is_new.set(false); editing.set(Some(c2.clone())) }>{ico(Icon::Edit)}</button>
+                        <button class="btn icon-only" title="Remove from the connections" aria-label="Remove"
+                            on:click=move |_| { if open_id.get_untracked().as_deref() == Some(id.as_str()) { editing.set(None) } ctx.remove_conn(&id) }>
+                            {ico(Icon::Trash)}</button>
                     </div>
                     {move || is_open3().then(|| conn_form(ctx, editing, false))}
                 }
@@ -341,7 +344,12 @@ pub(super) fn SidebarSettings() -> impl IntoView {
         ctx.set_hidden_sections(hidden);
     };
     view! {
-        <p class="hint flush">"The sidebar's sections, top to bottom. Drag them by ⠿ (or their titles in the sidebar) to move them. Favourites and Sync pairs show only when there are some."</p>
+        <div class="hint-row">
+            <p class="hint flush">"The sidebar's sections, top to bottom. Drag them by ⠿ (or their titles in the sidebar) to move them. Favourites and Sync pairs show only when there are some."</p>
+            <button class="btn" title="Put the sections back in the usual order"
+                disabled=move || ctx.section_order.with(|o| o.iter().copied().eq(SECTIONS.iter().map(|s| s.0)))
+                on:click=move |_| ctx.set_section_order(SECTIONS.iter().map(|s| s.0).collect())>{ico(Icon::Restore)}"Reset"</button>
+        </div>
         <div class="order" class:reordering=move || reorder.dragging.get().is_some()
             on:pointermove=move |ev| reorder.track(ev)
             on:pointerup=move |_| reorder.release(ctx, true)
@@ -368,8 +376,6 @@ pub(super) fn SidebarSettings() -> impl IntoView {
                 }).collect_view()
             }}
         </div>
-        <button class="btn" disabled=move || ctx.section_order.with(|o| o.iter().copied().eq(SECTIONS.iter().map(|s| s.0)))
-            on:click=move |_| ctx.set_section_order(SECTIONS.iter().map(|s| s.0).collect())>"Put back in the usual order"</button>
         <label class="check">
             <input type="checkbox" prop:checked=move || ctx.follow_folder.get() on:change=move |e| ctx.set_follow_folder(event_target_checked(&e))/>
             "Show the current folder: open the sidebar's folders down to the one shown, and scroll to it"

@@ -1151,6 +1151,11 @@ struct Ctx {
     script_folder: RwSignal<String>,
     /// Why the scripts couldn't be found (the folder picked is gone).
     script_error: RwSignal<Option<String>>,
+    /// Scripts' shortcuts: a chord (as keymap.rs writes them) for a script's path.
+    script_keys: RwSignal<HashMap<String, String>>,
+    /// The script whose shortcut is being typed, in Settings > Scripts; and what the last try said.
+    script_capturing: RwSignal<Option<String>>,
+    script_key_note: RwSignal<Option<String>>,
     /// The sidebar's folders open down to the one the active pane shows, which is scrolled to.
     follow_folder: RwSignal<bool>,
     /// The sidebar's sections, top to bottom (keys of `SECTIONS`).
@@ -1254,6 +1259,9 @@ impl Ctx {
             script_places: RwSignal::new(stored(scripts::PLACES_KEY).and_then(|s| serde_json::from_str(&s).ok()).unwrap_or_default()),
             script_folder: RwSignal::new(stored(scripts::FOLDER_KEY).unwrap_or_default()),
             script_error: RwSignal::new(None),
+            script_keys: RwSignal::new(stored(scripts::KEYS_KEY).and_then(|s| serde_json::from_str(&s).ok()).unwrap_or_default()),
+            script_capturing: RwSignal::new(None),
+            script_key_note: RwSignal::new(None),
             section_order: RwSignal::new(sidebar::section_order(
                 &stored(SECTION_ORDER_KEY).and_then(|s| serde_json::from_str::<Vec<String>>(&s).ok()).unwrap_or_default(),
             )),
@@ -1489,6 +1497,32 @@ pub fn App() -> impl IntoView {
             e.prevent_default();
         }
     });
+    // The mouse's Back button goes up a folder, in the pane under the pointer (or the active one).
+    // Its Forward button does nothing; both are kept from the web view, which would go back a page.
+    let _mouse_nav = window_event_listener(ev::mouseup, move |e| {
+        if !matches!(e.button(), 3 | 4) {
+            return;
+        }
+        e.prevent_default();
+        if e.button() != 3 || ctx.settings.get_untracked() || ctx.panel.get_untracked().is_some() || ctx.editor.get_untracked().is_some() {
+            return;
+        }
+        let under = e
+            .target()
+            .and_then(|t| t.dyn_into::<web_sys::Element>().ok())
+            .and_then(|el| el.closest("[data-pane]").ok().flatten())
+            .and_then(|el| el.get_attribute("data-pane"))
+            .and_then(|i| i.parse::<usize>().ok())
+            .and_then(|i| ctx.panes.get(i).copied());
+        let p = under.unwrap_or_else(|| ctx.act());
+        ctx.active.set(p.id);
+        ctx.go_up(p);
+    });
+    let _mouse_nav_down = window_event_listener(ev::mousedown, move |e| {
+        if matches!(e.button(), 3 | 4) {
+            e.prevent_default();
+        }
+    });
     let _keys = window_event_listener(ev::keydown, move |e| {
         let meta = e.meta_key() || e.ctrl_key();
         if ctx.menu.get_untracked().is_some() {
@@ -1511,6 +1545,15 @@ pub fn App() -> impl IntoView {
         let bound = chord.as_deref().and_then(|c| ctx.command_for(c));
         if ctx.settings.get_untracked() {
             // Changing a shortcut: the next key press is the new one; Esc stops waiting.
+            // Giving a script its shortcut (Settings > Scripts): Esc stops, ⌫ takes it away.
+            if let Some(path) = ctx.script_capturing.get_untracked() {
+                if let Some(c) = chord {
+                    e.prevent_default();
+                    e.stop_propagation();
+                    ctx.capture_script_key(path, c);
+                }
+                return;
+            }
             if let Some(id) = ctx.capturing.get_untracked() {
                 if let Some(c) = chord {
                     e.prevent_default();
@@ -1601,6 +1644,15 @@ pub fn App() -> impl IntoView {
         let typing = e.target().and_then(|t| t.dyn_into::<web_sys::Element>().ok()).is_some_and(|el| el.closest("input, textarea").ok().flatten().is_some());
         if typing && !bound.is_some_and(|b| b.anywhere && chord.as_deref().is_some_and(held)) {
             return;
+        }
+        // A script's shortcut (Settings > Scripts) runs it on what's picked, or the folder.
+        if bound.is_none() {
+            if let Some(s) = chord.as_deref().and_then(|c| ctx.script_for(c)) {
+                e.prevent_default();
+                let items = p.picked().into_iter().map(|x| x.path).collect();
+                ctx.run_script(p, s, items);
+                return;
+            }
         }
         let entries = p.shown_rows();
         let idx = p.selected.get_untracked().and_then(|s| entries.iter().position(|x| x.path == s));
