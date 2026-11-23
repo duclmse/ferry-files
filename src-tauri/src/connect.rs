@@ -27,6 +27,8 @@ pub(super) struct Devices {
     adb_waiting: bool,
     /// Disks mounted on the computer (USB drives, SD cards, disk images), as (name, path).
     drives: Vec<(String, String)>,
+    /// The paths of those that can be ejected (not the disks inside the computer).
+    ejectable: Vec<String>,
     /// Connected devices that went from USB (unplugged, or the Mac slept), now disconnected, as
     /// (id, name).
     gone: Vec<(String, String)>,
@@ -156,7 +158,9 @@ pub(super) async fn devices(app: AppHandle, state: State<'_, AppState>) -> Resul
         };
         found.retain(|f| !taken.contains(&Some(f.usb.clone())));
         let adb_waiting = !adb::unauthorized().is_empty();
-        Ok(Devices { found, adb_found: adb::adb_path().is_some(), mtp_error, iphone_error, adb_waiting, drives: drives(), gone })
+        let drives = drives();
+        let ejectable = drives.iter().map(|(_, p)| p.clone()).filter(|p| crate::platform::ejectable(p)).collect();
+        Ok(Devices { found, adb_found: adb::adb_path().is_some(), mtp_error, iphone_error, adb_waiting, drives, ejectable, gone })
     })
     .await
 }
@@ -252,11 +256,24 @@ mod tests {
     }
 
     #[test]
-    fn drives_skip_the_startup_disk() {
-        let root = std::fs::canonicalize("/").unwrap();
-        for (name, path) in super::drives() {
+    fn drives_are_disks_in_order() {
+        let drives = super::drives();
+        assert!(drives.windows(2).all(|w| w[0].1 <= w[1].1), "{drives:?}");
+        for (name, path) in &drives {
             assert!(!name.starts_with('.'), "{name}");
-            assert_ne!(std::fs::canonicalize(crate::platform::native(&path)).unwrap(), root, "{path}");
+            assert!(crate::platform::native(path).is_dir(), "{path}");
+        }
+        if cfg!(windows) {
+            // Every drive, the system's too, which is never one to eject.
+            let system = format!("/{}", std::env::var("SystemDrive").unwrap_or_else(|_| "C:".into()).to_uppercase());
+            assert!(drives.iter().any(|(_, p)| *p == system), "{drives:?}");
+            assert!(!crate::platform::ejectable(&system));
+        } else {
+            // Not the disk the system is on.
+            let root = std::fs::canonicalize("/").unwrap();
+            for (_, path) in &drives {
+                assert_ne!(std::fs::canonicalize(crate::platform::native(path)).unwrap(), root, "{path}");
+            }
         }
     }
 }

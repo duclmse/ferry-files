@@ -225,6 +225,16 @@ const PIECE: u64 = 8 * 1024 * 1024;
 /// original is kept, since it isn't known that this copy is the one made from it. With `verify`,
 /// a copy that reads back different is removed and reported, and its original is kept.
 #[allow(clippy::too_many_arguments)]
+/// Why a file of `size` bytes isn't copied to a disk that takes files of `max` bytes at most.
+fn too_big(size: u64, max: u64) -> String {
+    let gb = |n: u64| format!("{:.1} GB", n as f64 / 1e9);
+    format!(
+        "It's {}, and the disk it would go to (FAT32) takes files up to {}. Copy it to a disk formatted exFAT or NTFS instead.",
+        gb(size),
+        if max == u32::MAX as u64 { "4 GB".to_string() } else { gb(max) }
+    )
+}
+
 pub(super) fn run_items(
     a: &Device,
     b: &Device,
@@ -243,6 +253,8 @@ pub(super) fn run_items(
     let mut failed: Vec<String> = vec![];
     // Folders whose contents were all moved, removed afterwards (deepest first).
     let mut emptied: Vec<String> = vec![];
+    // The biggest file the disk copied to takes (FAT's 4 GB), asked once, before the first file.
+    let mut limit = None::<Option<u64>>;
     for it in items {
         if stop.load(Ordering::Relaxed) {
             report.cancelled = true;
@@ -292,6 +304,14 @@ pub(super) fn run_items(
                     continue;
                 }
             }
+        }
+        let max = *limit.get_or_insert_with(|| b.max_file_size(&device::dirname(&it.to)));
+        if let Some(max) = max.filter(|m| it.size > *m) {
+            report.skipped.push((name, too_big(it.size, max)));
+            emptied.retain(|d| !it.from.starts_with(&format!("{d}/")));
+            p.files_done += 1;
+            p.bytes_done += it.size;
+            continue;
         }
         let mut counted = 0u64;
         let done = (|| -> Result<(), String> {

@@ -188,7 +188,11 @@ pub(super) fn Sidebar() -> impl IntoView {
     // A section hidden with a right-click shows nothing, not even its title.
     let shown = move |key: &str| ctx.hidden_sections.with(|h| !h.iter().any(|x| x == key));
     // Disks mounted on the Mac: USB drives, SD cards, disk images.
-    let drives = Memo::new(move |_| ctx.devices.with(|d| d.as_ref().map(|d| d.drives.clone()).unwrap_or_default()));
+    // With whether each can be ejected (not the disks inside the computer).
+    let drives = Memo::new(move |_| {
+        ctx.devices
+            .with(|d| d.as_ref().map(|d| d.drives.iter().map(|(n, p)| (n.clone(), p.clone(), d.ejectable.contains(p))).collect::<Vec<_>>()).unwrap_or_default())
+    });
     let device = move |i: Info| {
         let src = Src::of(&i.id);
         // Its folders fold away under its name; remembered for the device across launches.
@@ -463,13 +467,17 @@ pub(super) fn Sidebar() -> impl IntoView {
                 {move || mac_open.get().then(|| view! {
                     {ctx.mac.get().map(|i| i.quick_dirs).unwrap_or_default().into_iter()
                         .map(|(name, path)| view! { <TreeNode src=Src::Mac name path depth=1/> }).collect_view()}
-                    {drives.get().into_iter().map(|(name, path)| {
+                    {drives.get().into_iter().map(|(name, path, can)| {
+                        // Only a disk that can be taken out (USB, SD card, disk image) has Eject.
+                        if !can {
+                            return view! { <TreeNode src=Src::Mac name path depth=1 class="drive"/> }.into_any();
+                        }
                         let (tip, at) = (format!("Eject {name}"), path.clone());
                         let eject = ViewFn::from(move || {
                             let (tip, at) = (tip.clone(), at.clone());
                             view! { <button class="act" title=tip aria-label="Eject" on:click=move |_| ctx.eject(at.clone())>{ico(Icon::Eject)}</button> }
                         });
-                        view! { <TreeNode src=Src::Mac name path depth=1 class="drive" extra=eject/> }
+                        view! { <TreeNode src=Src::Mac name path depth=1 class="drive" extra=eject/> }.into_any()
                     }).collect_view()}
                 })}
             }

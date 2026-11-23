@@ -198,14 +198,137 @@ pub fn quick_look(path: &Path) -> Result<(), String> {
     open(path)
 }
 
-/// Disks other than the one the system is on (USB drives, SD cards, disk images), as
-/// (name, app path). Network shares aren't disks: they're under Servers, with Unmount.
+/// The disks, as (name, app path), in the order of their paths (drive letters on Windows). On
+/// Windows every drive, C: too; elsewhere those other than the one the system is on (USB drives,
+/// SD cards, disk images). Network shares aren't disks: they're under Servers, with Unmount.
 pub fn drives() -> Vec<(String, String)> {
     let mut out = drives_here();
     let net: Vec<String> = net_mounted().into_iter().map(|(_, at)| at).collect();
     out.retain(|(_, at)| !net.contains(at));
-    out.sort();
+    out.sort_by(|a, b| a.1.cmp(&b.1).then_with(|| a.0.cmp(&b.0)));
     out
+}
+
+/// Whether the disk at app path `path` (one of `drives()`) can be ejected: on Windows a
+/// removable or optical drive, or a disk on USB, FireWire or an SD card reader (not one inside
+/// the computer); elsewhere every disk `drives()` lists.
+pub fn ejectable(path: &str) -> bool {
+    if !is_drive(path) {
+        return false;
+    }
+    #[cfg(windows)]
+    {
+        external_drive(path.trim_start_matches('/'))
+    }
+    #[cfg(not(windows))]
+    {
+        true
+    }
+}
+
+/// Whether drive `d` ("E:") can be taken out: GetDriveTypeW says removable or optical, or the
+/// disk's bus (IOCTL_STORAGE_QUERY_PROPERTY) is USB, FireWire, SD or MMC.
+#[cfg(windows)]
+fn external_drive(d: &str) -> bool {
+    use windows::Win32::Foundation::CloseHandle;
+    use windows::Win32::Storage::FileSystem::{
+        BusType1394, BusTypeMmc, BusTypeSd, BusTypeUsb, CreateFileW, GetDriveTypeW, FILE_FLAGS_AND_ATTRIBUTES, FILE_SHARE_READ, FILE_SHARE_WRITE, OPEN_EXISTING,
+    };
+    use windows::Win32::System::Ioctl::{
+        PropertyStandardQuery, StorageDeviceProperty, IOCTL_STORAGE_QUERY_PROPERTY, STORAGE_DEVICE_DESCRIPTOR, STORAGE_PROPERTY_QUERY,
+    };
+    use windows::Win32::System::IO::DeviceIoControl;
+    // GetDriveTypeW's documented return values.
+    const DRIVE_REMOVABLE: u32 = 2;
+    const DRIVE_CDROM: u32 = 5;
+    let root: Vec<u16> = format!("{d}\\").encode_utf16().chain([0]).collect();
+    let kind = unsafe { GetDriveTypeW(windows::core::PCWSTR(root.as_ptr())) };
+    if kind == DRIVE_REMOVABLE || kind == DRIVE_CDROM {
+        return true;
+    }
+    // The volume, opened with no access rights: enough to ask about its disk, without admin.
+    let volume: Vec<u16> = format!("\\\\.\\{d}").encode_utf16().chain([0]).collect();
+    let Ok(h) = (unsafe {
+        CreateFileW(windows::core::PCWSTR(volume.as_ptr()), 0, FILE_SHARE_READ | FILE_SHARE_WRITE, None, OPEN_EXISTING, FILE_FLAGS_AND_ATTRIBUTES(0), None)
+    }) else {
+        return false;
+    };
+    let query = STORAGE_PROPERTY_QUERY { PropertyId: StorageDeviceProperty, QueryType: PropertyStandardQuery, AdditionalParameters: [0] };
+    // The descriptor is followed by its strings; only its fixed part is read.
+    let mut desc = STORAGE_DEVICE_DESCRIPTOR::default();
+    let mut got = 0u32;
+    let asked = unsafe {
+        DeviceIoControl(
+            h,
+            IOCTL_STORAGE_QUERY_PROPERTY,
+            Some(&query as *const _ as *const std::ffi::c_void),
+            std::mem::size_of::<STORAGE_PROPERTY_QUERY>() as u32,
+            Some(&mut desc as *mut _ as *mut std::ffi::c_void),
+            std::mem::size_of::<STORAGE_DEVICE_DESCRIPTOR>() as u32,
+            Some(&mut got),
+            None,
+        )
+    };
+    unsafe {
+        let _ = CloseHandle(h);
+    }
+    asked.is_ok()
+        && got as usize >= std::mem::offset_of!(STORAGE_DEVICE_DESCRIPTOR, RawPropertiesLength)
+        && [BusTypeUsb, BusType1394, BusTypeSd, BusTypeMmc].contains(&desc.BusType)
+}
+
+/// The largest file the disk holding app path `dir` can take, when it's smaller than files can
+/// be: 4 GB less a byte on FAT (FAT32, as many USB sticks and SD cards come).
+pub fn max_file_size(dir: &str) -> Option<u64> {
+    let fs = fs_type(dir)?.to_ascii_lowercase();
+    ["fat", "fat12", "fat16", "fat32", "vfat", "msdos"].contains(&fs.as_str()).then_some(u32::MAX as u64)
+}
+
+/// The file system of the disk holding app path `dir`: "NTFS", "FAT32", "exFAT" on Windows;
+/// "apfs", "msdos", "exfat" on macOS; "ext4", "vfat", "exfat" on Linux.
+fn fs_type(dir: &str) -> Option<String> {
+    #[cfg(windows)]
+    {
+        use windows::Win32::Storage::FileSystem::GetVolumeInformationW;
+        let d = dir.trim_start_matches('/').get(..2).filter(|d| d.ends_with(':'))?;
+        let root: Vec<u16> = format!("{d}\\").encode_utf16().chain([0]).collect();
+        let mut name = [0u16; 64];
+        unsafe { GetVolumeInformationW(windows::core::PCWSTR(root.as_ptr()), None, None, None, None, Some(&mut name)) }.ok()?;
+        let len = name.iter().position(|&c| c == 0).unwrap_or(0);
+        Some(String::from_utf16_lossy(&name[..len]))
+    }
+    #[cfg(target_os = "macos")]
+    {
+        let out = command("mount").output().ok()?;
+        fs_in_mount(&String::from_utf8_lossy(&out.stdout), dir)
+    }
+    #[cfg(all(unix, not(target_os = "macos")))]
+    {
+        let text = std::fs::read_to_string("/proc/self/mounts").ok()?;
+        mounts_typed(&text).into_iter().filter(|(_, at, _)| holds(at, dir)).max_by_key(|(_, at, _)| at.len()).map(|(_, _, t)| t)
+    }
+}
+
+/// Whether mount point `at` holds `dir`.
+#[cfg(any(unix, test))]
+fn holds(at: &str, dir: &str) -> bool {
+    let at = at.trim_end_matches('/');
+    at.is_empty() || dir == at || dir.starts_with(&format!("{at}/"))
+}
+
+/// The file system type of the mount holding `dir`, from macOS's `mount` output:
+/// "/dev/disk4s1 on /Volumes/STICK (msdos, local, nodev, nosuid, noowners)".
+#[cfg(any(target_os = "macos", test))]
+fn fs_in_mount(out: &str, dir: &str) -> Option<String> {
+    out.lines()
+        .filter_map(|l| {
+            let (_, rest) = l.split_once(" on ")?;
+            let (at, opts) = rest.rsplit_once(" (")?;
+            Some((at.to_string(), opts.split([',', ')']).next()?.trim().to_string()))
+        })
+        .filter(|(at, _)| holds(at, dir))
+        .max_by_key(|(at, _)| at.len())
+        .map(|(_, t)| t)
 }
 
 #[cfg(target_os = "macos")]
@@ -276,23 +399,29 @@ pub(crate) fn mounts_typed(text: &str) -> Vec<(String, String, String)> {
         .collect()
 }
 
-/// Every drive but the one Windows is on, named like File Explorer does: "USB stick (E:)".
+/// Every drive (a card reader without a card isn't one), named like File Explorer does:
+/// "USB stick (E:)", "Local Disk (C:)".
 #[cfg(windows)]
 fn drives_here() -> Vec<(String, String)> {
     use windows::Win32::Storage::FileSystem::{GetLogicalDrives, GetVolumeInformationW};
-    let system = std::env::var("SystemDrive").unwrap_or_else(|_| "C:".into()).to_uppercase();
     let mask = unsafe { GetLogicalDrives() };
     (0..26u8)
         .filter(|i| mask & (1 << i) != 0)
         .map(|i| format!("{}:", (b'A' + i) as char))
-        .filter(|d| *d != system && Path::new(&format!("{d}\\")).is_dir())
+        .filter(|d| Path::new(&format!("{d}\\")).is_dir())
         .map(|d| {
             let root: Vec<u16> = format!("{d}\\").encode_utf16().chain([0]).collect();
             let mut label = [0u16; 261];
             let ok = unsafe { GetVolumeInformationW(windows::core::PCWSTR(root.as_ptr()), Some(&mut label), None, None, None, None) }.is_ok();
             let len = label.iter().position(|&c| c == 0).unwrap_or(0);
             let label = if ok { String::from_utf16_lossy(&label[..len]) } else { String::new() };
-            let name = if label.is_empty() { format!("Drive ({d})") } else { format!("{label} ({d})") };
+            let name = if !label.is_empty() {
+                format!("{label} ({d})")
+            } else if fixed_disk(Path::new(&d)) {
+                format!("Local Disk ({d})")
+            } else {
+                format!("Drive ({d})")
+            };
             (name, format!("/{d}"))
         })
         .collect()
@@ -391,14 +520,14 @@ pub(crate) fn parse_df(out: &str) -> Option<(u64, u64)> {
     Some((free * 1024, total * 1024))
 }
 
-/// Whether `path` is one of `drives()`, which are what can be ejected.
+/// Whether `path` is one of `drives()`.
 fn is_drive(path: &str) -> bool {
     drives().iter().any(|(_, p)| p == path)
 }
 
-/// Ejects a disk from `drives()` (its app path).
+/// Ejects a disk from `drives()` (its app path) that's `ejectable`.
 pub fn eject(path: &str) -> Result<(), String> {
-    if !is_drive(path) {
+    if !ejectable(path) {
         return Err(format!("{path} isn't a disk that can be ejected."));
     }
     let name = crate::device::basename(path).to_string();
@@ -487,6 +616,7 @@ pub fn net_mounted() -> Vec<(String, String)> {
 }
 
 /// "host:/path" (how NFS names what's mounted) as "nfs://host/path".
+#[cfg(any(unix, test))]
 fn nfs_of(what: &str) -> Option<String> {
     let (host, path) = what.split_once(":/")?;
     (!host.is_empty() && !host.contains('/')).then(|| format!("nfs://{host}/{}", path.trim_end_matches('/')).trim_end_matches('/').to_string())
@@ -739,6 +869,18 @@ mod tests {
     }
 
     #[cfg(windows)]
+    #[test]
+    fn finds_the_file_system_holding_a_folder() {
+        let mount = "/dev/disk3s1s1 on / (apfs, sealed, local, read-only, journaled)\n\
+                     /dev/disk4s1 on /Volumes/STICK (msdos, local, nodev, nosuid, noowners)\n\
+                     /dev/disk5s1 on /Volumes/STICK 2 (exfat, local, nodev, nosuid, noowners)\n";
+        assert_eq!(fs_in_mount(mount, "/Volumes/STICK/DCIM").as_deref(), Some("msdos"));
+        assert_eq!(fs_in_mount(mount, "/Volumes/STICK").as_deref(), Some("msdos"));
+        assert_eq!(fs_in_mount(mount, "/Volumes/STICK 2/a").as_deref(), Some("exfat"));
+        assert_eq!(fs_in_mount(mount, "/Volumes/STICKS").as_deref(), Some("apfs"));
+        assert_eq!(fs_in_mount(mount, "/Users/me").as_deref(), Some("apfs"));
+    }
+
     #[test]
     fn drives_are_top_folders() {
         assert_eq!(native("/C:/Users/me"), PathBuf::from(r"C:\Users\me"));

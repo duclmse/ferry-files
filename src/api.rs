@@ -227,6 +227,9 @@ pub struct Devices {
     pub adb_waiting: bool,
     /// Disks mounted on the Mac, as (name, path).
     pub drives: Vec<(String, String)>,
+    /// The paths of those that can be ejected (not the disks inside the computer).
+    #[serde(default)]
+    pub ejectable: Vec<String>,
     /// Connected devices no longer on USB, which were disconnected, as (id, name).
     #[serde(default)]
     pub gone: Vec<(String, String)>,

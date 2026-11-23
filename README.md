@@ -35,7 +35,8 @@ own files and disks, with tools for EPUB books in particular.
   download. Use the right-click menu, F5/F6, ⌘C/⌘X/⌘V (shared with Finder) or
   drag and drop (onto a pane, or a folder or device in the sidebar, which opens
   when held over). Copies merge folders and never replace a file, with progress
-  and Cancel.
+  and Cancel. A file over 4 GB isn't copied to a FAT32 disk (many USB sticks and
+  SD cards), which can't hold it; the copy says so and goes on with the rest.
 - **Sync** a folder to the other pane, with three modes: copy missing, update or
   mirror. It lists what it will do first, and pairs can be saved.
 - **Sidebar**: favourites, workspaces, disks (with eject), devices, servers,
@@ -63,7 +64,8 @@ Press ? for the keyboard shortcuts.
 
 - **adb**: turn on USB debugging and install adb
   (`brew install --cask android-platform-tools`). It's fast. Paths look like
-  `/sdcard/Download`.
+  `/sdcard/Download`. An SD card in the phone shows in the sidebar under it
+  (`/storage/1234-ABCD`).
 - **MTP**: the phone's normal "File transfer" mode. Paths start with the storage
   name, e.g. `/Internal storage/Download`. macOS and Linux use libmtp, which the
   macOS app bundles (otherwise `brew install libmtp`). Windows uses its own MTP
@@ -96,7 +98,8 @@ The copy is deleted after two minutes unused.
 ## Platforms
 
 The text above is written for macOS. On Windows, Ctrl replaces ⌘ and drives
-show under `/` (`/C:/Users/...`). On Linux, disks are mounted under `/media`,
+show under `/` (`/C:/Users/...`); the sidebar lists every drive, C: too, by
+letter, with Eject only for those that can be taken out (USB, SD cards). On Linux, disks are mounted under `/media`,
 `/run/media` or `/mnt`, and MTP needs libmtp's udev rules. CI builds Windows and
 Linux, but they've seen little use on real hardware.
 

@@ -214,6 +214,10 @@ impl Transport for Local {
         Ok(true)
     }
 
+    fn max_file_size(&self, dir: &str) -> Option<u64> {
+        crate::platform::max_file_size(dir)
+    }
+
     fn make_dir(&self, path: &str) -> Result<()> {
         if dirname(path) == "/" && cfg!(windows) {
             return err("Folders can't be made next to the drives.");
@@ -247,8 +251,10 @@ impl Transport for Local {
 
     /// The disk holding the home folder (named after the computer), and each other disk.
     fn space(&self) -> Vec<crate::device::Space> {
-        let mut dirs = vec![(crate::platform::COMPUTER.to_string(), self.default_dir())];
-        dirs.extend(crate::platform::drives());
+        let home = self.default_dir();
+        let mut dirs = vec![(crate::platform::COMPUTER.to_string(), home.clone())];
+        // On Windows the home folder's drive is among the drives: it's there once.
+        dirs.extend(crate::platform::drives().into_iter().filter(|(_, d)| !home.starts_with(&format!("{}/", d.trim_end_matches('/')))));
         dirs.into_iter()
             .filter_map(|(name, dir)| crate::platform::free_space(&dir).map(|(free, total)| crate::device::Space { name, free, total, path: dir }))
             .collect()

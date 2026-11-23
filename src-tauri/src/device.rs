@@ -120,6 +120,10 @@ pub trait Transport: Send + Sync {
     fn space(&self) -> Vec<Space> {
         vec![]
     }
+    /// The largest file folder `dir`'s disk can hold, when it's known to be small (FAT's 4 GB).
+    fn max_file_size(&self, _dir: &str) -> Option<u64> {
+        None
+    }
     fn refresh(&self) {}
     /// Names under `dir` (any depth) that `s` asks for, up to `s.max`, and whether that's all
     /// of them, from an index the transport has. None when it has none (or can't answer for
@@ -530,6 +534,11 @@ impl Device {
     pub fn space(&self) -> Vec<Space> {
         let _g = self.lock();
         self.t.space()
+    }
+
+    /// The largest file that fits on folder `dir`'s disk, when that's known to be small.
+    pub fn max_file_size(&self, dir: &str) -> Option<u64> {
+        self.t.max_file_size(dir)
     }
 
     /// "mac" for the Mac, otherwise the transport and device name ("adb:Pixel 7"), as the

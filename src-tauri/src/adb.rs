@@ -97,6 +97,20 @@ pub struct Adb {
     adb: PathBuf,
     serial: Option<String>,
     model: String,
+    /// The SD cards and USB drives in the phone, found when it's connected: "/storage/1234-ABCD".
+    cards: Vec<String>,
+}
+
+/// The removable storage in `ls /storage`'s output: volumes named by their serial number
+/// ("1234-ABCD"), not "emulated" (internal storage) or "self".
+fn cards_in(ls: &str) -> Vec<String> {
+    let card = |n: &str| {
+        let b = n.as_bytes();
+        b.len() == 9 && b[4] == b'-' && b.iter().enumerate().all(|(i, c)| i == 4 || c.is_ascii_hexdigit())
+    };
+    let mut out: Vec<String> = ls.split_whitespace().filter(|n| card(n)).map(|n| format!("/storage/{n}")).collect();
+    out.sort();
+    out
 }
 
 impl Adb {
@@ -104,10 +118,11 @@ impl Adb {
         let Some(adb) = adb_path() else {
             return err(format!("adb not found. {}", crate::platform::ADB_INSTALL));
         };
-        let mut dev = Adb { adb, serial, model: String::new() };
+        let mut dev = Adb { adb, serial, model: String::new(), cards: vec![] };
         dev.run(&["get-state"])?; // fails early with adb's own message if there's no device
         dev.model =
             dev.shell("getprop ro.product.model").map(|s| s.trim().to_string()).ok().filter(|s| !s.is_empty()).unwrap_or_else(|| "Android device".into());
+        dev.cards = dev.shell("ls /storage 2>/dev/null; true").map(|s| cards_in(&s)).unwrap_or_default();
         Ok(dev)
     }
 
@@ -195,8 +210,15 @@ impl Transport for Adb {
         "/sdcard".into()
     }
 
+    /// Internal storage and its folders, then each SD card or USB drive in the phone.
     fn quick_dirs(&self) -> Vec<(String, String)> {
-        [("Storage", "/sdcard"), ("Documents", "/sdcard/Documents"), ("Books", "/sdcard/Books")].iter().map(|(a, b)| (a.to_string(), b.to_string())).collect()
+        let mut out: Vec<(String, String)> = [("Storage", "/sdcard"), ("Documents", "/sdcard/Documents"), ("Books", "/sdcard/Books")]
+            .iter()
+            .map(|(a, b)| (a.to_string(), b.to_string()))
+            .collect();
+        let one = self.cards.len() == 1;
+        out.extend(self.cards.iter().map(|c| (if one { "SD card".to_string() } else { format!("SD card ({})", basename(c)) }, c.clone())));
+        out
     }
 
     fn listdir(&self, path: &str) -> Result<Vec<Entry>> {
@@ -303,5 +325,17 @@ impl Transport for Adb {
         crate::platform::parse_df(&out)
             .map(|(free, total)| vec![crate::device::Space { name: "Storage".into(), free, total, path: "/".into() }])
             .unwrap_or_default()
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn finds_sd_cards() {
+        assert_eq!(cards_in("emulated\nself\n1234-ABCD\n0F1E-2D3C\n"), ["/storage/0F1E-2D3C", "/storage/1234-ABCD"]);
+        assert!(cards_in("emulated  self").is_empty());
+        assert!(cards_in("12345-ABC 1234-ABCG").is_empty());
     }
 }
