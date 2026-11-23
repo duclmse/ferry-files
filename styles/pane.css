@@ -72,6 +72,15 @@
   min-width: 8px;
 }
 
+/* Where a tab dragged along the strip, or from the other pane, would go. */
+.tabs .tab.drop-before {
+  box-shadow: inset 2px 0 0 var(--accent);
+}
+
+.tabs .tab.drop-after {
+  box-shadow: inset -2px 0 0 var(--accent);
+}
+
 .tabs .tab:hover {
   background: var(--hover);
 }

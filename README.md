@@ -6,7 +6,7 @@ own files and disks, with tools for EPUB books in particular.
 
 ## Features
 
-- **Panes and views**: one or two panes (⌘\\), each with tabs (⌘T, ⌘W), shown as
+- **Panes and views**: one or two panes (⌘\\), each with tabs (⌘T, ⌘W; drag one along, or to the other pane, which a pane's last tab closes), shown as
   a list, thumbnails or columns (names too long to show keep their extension in view). The list can
   show folders as a tree (right-click its header). Sort, filter (⌘F; Enter searches subfolders), show hidden files (⌘.),
   type a path (⌘L). All edges can be dragged to resize, and sizes are remembered.

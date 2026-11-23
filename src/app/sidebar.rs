@@ -760,6 +760,12 @@ pub(super) fn Settings() -> impl IntoView {
                 "Bring back the tabs at launch"
             </label>
             <p class="hint">"Opens the tabs, split and widths the app had when it quit. Tabs on a phone come back when it's connected."</p>
+            <label class="check">
+                <input type="checkbox" prop:checked=stored_flag(super::workspace::LAST_TAB_CLOSES_KEY, true)
+                    on:change=move |e| store(super::workspace::LAST_TAB_CLOSES_KEY, if event_target_checked(&e) { "1" } else { "0" })/>
+                "Dragging a pane's only tab to the other pane closes the pane"
+            </label>
+            <p class="hint">"Otherwise the tab is copied, and both panes stay."</p>
         }
         .into_any()
     };

@@ -712,8 +712,34 @@ fn Tabs(pane: Pane) -> impl IntoView {
     let ctx = expect_context::<Ctx>();
     let p = pane;
     let n = move || p.tabs.with(Vec::len);
+    // Tabs can be dragged along the strip, or to the other pane's. `at`: the place a drop takes.
+    let over = move |ev: web_sys::DragEvent, at: usize| {
+        if ctx.tab_drag.get_value().is_none() {
+            return;
+        }
+        ev.prevent_default();
+        ev.stop_propagation();
+        if let Some(dt) = ev.data_transfer() {
+            dt.set_drop_effect("move");
+        }
+        if ctx.tab_drop.get_untracked() != Some((p.id, at)) {
+            ctx.tab_drop.set(Some((p.id, at)));
+        }
+    };
+    let drop = move |ev: web_sys::DragEvent, at: usize| {
+        let Some((from, i)) = ctx.tab_drag.write_value().take() else { return };
+        ev.prevent_default();
+        ev.stop_propagation();
+        ctx.tab_drop.set(None);
+        if let Some(&from) = ctx.panes.get(from) {
+            ctx.move_tab(from, i, p, at);
+        }
+    };
+    let marked = move |at: usize| ctx.tab_drop.get() == Some((p.id, at));
     view! {
-        <div class="tabs" role="tablist">
+        <div class="tabs" role="tablist"
+            on:dragover=move |ev| over(ev, n())
+            on:drop=move |ev| drop(ev, n())>
             {move || (0..n()).map(|i| {
                 let shown = move || p.tab.get() == i;
                 // The shown tab follows the pane; the others are where they were left.
@@ -737,8 +763,32 @@ fn Tabs(pane: Pane) -> impl IntoView {
                     let label = ctx.src_info(src).map_or_else(String::new, |i| i.label);
                     if src == Src::Mac { crate::os::native_path(&cwd) } else { format!("{label}: {cwd}") }
                 };
+                // Over a tab's left half the drop goes before it, over its right half after it.
+                let place = move |ev: &web_sys::DragEvent| {
+                    let half = ev.current_target().and_then(|t| t.dyn_into::<web_sys::Element>().ok()).is_some_and(|el| {
+                        let r = el.get_bounding_client_rect();
+                        ev.client_x() as f64 > r.left() + r.width() / 2.0
+                    });
+                    i + half as usize
+                };
                 view! {
                     <div class="tab" class:shown=shown role="tab" aria-selected=move || shown().to_string() title=title
+                        draggable="true"
+                        class:drop-before=move || marked(i)
+                        class:drop-after=move || i + 1 == n() && marked(i + 1)
+                        on:dragstart=move |ev: web_sys::DragEvent| {
+                            if let Some(dt) = ev.data_transfer() {
+                                let _ = dt.set_data("text/plain", &title());
+                                dt.set_effect_allowed("move");
+                            }
+                            ctx.tab_drag.set_value(Some((p.id, i)));
+                        }
+                        on:dragend=move |_| {
+                            ctx.tab_drag.set_value(None);
+                            ctx.tab_drop.set(None);
+                        }
+                        on:dragover=move |ev: web_sys::DragEvent| { let at = place(&ev); over(ev, at) }
+                        on:drop=move |ev: web_sys::DragEvent| { let at = place(&ev); drop(ev, at) }
                         on:click=move |_| ctx.show_tab(p, i)
                         // A middle click closes it.
                         on:mousedown=middle_down on:mouseup=move |ev| if ev.button() == 1 { ev.prevent_default(); ctx.close_tab(p, i) }>

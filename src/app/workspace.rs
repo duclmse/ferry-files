@@ -9,6 +9,8 @@ use std::cell::{Cell, RefCell};
 pub(super) const WORKSPACES_KEY: &str = "ferry-files.workspaces";
 const SESSION_KEY: &str = "ferry-files.session";
 pub(super) const RESTORE_KEY: &str = "ferry-files.restore-tabs";
+/// Dragging a pane's only tab to the other pane closes the pane it left (else the tab is copied).
+pub(super) const LAST_TAB_CLOSES_KEY: &str = "ferry-files.last-tab-closes-pane";
 
 #[derive(Clone, PartialEq, serde::Serialize, serde::Deserialize)]
 struct SavedTab {

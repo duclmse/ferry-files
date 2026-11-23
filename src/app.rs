@@ -980,6 +980,10 @@ struct Ctx {
     panel: RwSignal<Option<Panel>>,
     /// What's being dragged from a pane: its side and paths.
     drag: StoredValue<Option<(Src, Vec<String>)>>,
+    /// A tab being dragged: its pane and place.
+    tab_drag: StoredValue<Option<(usize, usize)>>,
+    /// Where a dragged tab would go: the pane, and the place it would take there.
+    tab_drop: RwSignal<Option<(usize, usize)>>,
     /// What Copy or Cut kept, for Paste.
     clip: RwSignal<Option<Clip>>,
     /// The computer's files the last Copy put on the system clipboard.
@@ -1076,6 +1080,8 @@ impl Ctx {
             sync_pairs: RwSignal::new(stored(SYNC_PAIRS_KEY).and_then(|s| serde_json::from_str(&s).ok()).unwrap_or_default()),
             workspaces: RwSignal::new(saved_workspaces()),
             drag: StoredValue::new(None),
+            tab_drag: StoredValue::new(None),
+            tab_drop: RwSignal::new(None),
             clip: RwSignal::new(None),
             wrote: StoredValue::new(vec![]),
             finder: RwSignal::new(vec![]),

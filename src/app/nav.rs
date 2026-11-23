@@ -517,6 +517,78 @@ impl Ctx {
         }
     }
 
+    /// Moves tab `i` of pane `from` to place `to` of pane `into` (where it's then shown, and the
+    /// pane active): along the strip in the same pane, or across to the other. A pane's only tab
+    /// closes the pane it leaves, when Settings says so (`close_after_last_tab`); otherwise it's
+    /// copied across, as a pane always has one.
+    pub(super) fn move_tab(self, from: Pane, i: usize, into: Pane, to: usize) {
+        let (n, shown) = (from.tabs.with_untracked(Vec::len), from.tab.get_untracked());
+        if i >= n {
+            return;
+        }
+        if from.id == into.id {
+            // Along the strip: the place is counted before the tab leaves its own.
+            let to = if to > i { to - 1 } else { to }.min(n - 1);
+            if to == i {
+                return;
+            }
+            self.save_tab(from);
+            from.tabs.update(|ts| {
+                let t = ts.remove(i);
+                ts.insert(to, t);
+            });
+            // The tab shown stays shown, wherever it went.
+            let now = if shown == i {
+                to
+            } else if i < shown && to >= shown {
+                shown - 1
+            } else if i > shown && to <= shown {
+                shown + 1
+            } else {
+                shown
+            };
+            from.tab.set(now);
+            return;
+        }
+        // Leaving the tab shown: as for closing it, unsaved changes in the editor are asked about.
+        if i == shown && n > 1 && !self.may_leave() {
+            return;
+        }
+        if i == shown {
+            self.save_tab(from);
+        }
+        let Some(t) = from.tabs.with_untracked(|ts| ts.get(i).cloned()) else { return };
+        if n == 1 && stored_flag(super::workspace::LAST_TAB_CLOSES_KEY, true) {
+            self.close_after_last_tab(t, into, to);
+            return;
+        }
+        self.close_tab(from, i);
+        self.save_tab(into);
+        let to = to.min(into.tabs.with_untracked(Vec::len));
+        into.tabs.update(|ts| ts.insert(to, t));
+        into.tab.set(to);
+        self.active.set(into.id);
+        self.go_to_tab(into);
+    }
+
+    /// A pane's only tab `t` dragged to place `to` of pane `into`: one pane is left, with
+    /// `into`'s tabs and `t` among them, shown at `to`. That's the first pane, so when the second
+    /// is the one left, its tabs move over. The second pane keeps `t` for when it's shown again.
+    fn close_after_last_tab(self, t: Tab, into: Pane, to: usize) {
+        self.save_tab(into);
+        let first = self.panes[0];
+        let mut tabs = into.tabs.get_untracked();
+        let to = to.min(tabs.len());
+        tabs.insert(to, t.clone());
+        first.tabs.set(tabs);
+        first.tab.set(to);
+        let second = self.panes[1];
+        second.tabs.set(vec![t]);
+        second.tab.set(0);
+        self.set_split(false);
+        self.go_to_tab(first);
+    }
+
     /// Lists the shown tab's folder. A tab whose device is gone opens the Mac instead.
     pub(super) fn go_to_tab(self, p: Pane) {
         let Some(t) = p.tabs.with_untracked(|ts| ts.get(p.tab.get_untracked()).cloned()) else { return };
