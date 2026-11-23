@@ -78,6 +78,7 @@ pub(super) fn ListView(pane: Pane) -> impl IntoView {
     let tree = Memo::new(move |_| p.tree_on().then(|| p.tree_rows()));
     let len = Signal::derive(move || tree.with(|t| t.as_ref().map(Vec::len)).unwrap_or_else(|| p.entries.with(Vec::len)));
     let win = rows::Window::new(scroller, len, rows::Rows { h: 29.0, per: 1, top: 30.0 }, rows::list_rows, Signal::derive(move || Some(p.id)));
+    top_on_new_folder(p, scroller, win);
     let gap =
         move |h: f64| {
             (h > 0.0).then(|| view! {
@@ -322,6 +323,7 @@ pub(super) fn ThumbView(pane: Pane) -> impl IntoView {
     let scroller = NodeRef::<html::Div>::new();
     let len = Signal::derive(move || p.entries.with(Vec::len));
     let win = rows::Window::new(scroller, len, rows::Rows { h: 160.0, per: 4, top: 12.0 }, rows::tile_rows, Signal::derive(move || Some(p.id)));
+    top_on_new_folder(p, scroller, win);
     view! {
         <div class="list" node_ref=scroller data-rows="" class:drop=move || ctx.drop_at.get().as_deref() == Some(here.as_str())
             on:click=move |_| p.select_only(None) on:contextmenu=move |ev| ctx.show_menu(p, &ev, None)
@@ -645,6 +647,22 @@ pub(super) fn Column(pane: Pane, dir: String, chain: Memo<Vec<String>>, width: R
 
 /// How near the bottom (in pixels) scrolling loads the folder's next page.
 const MORE_NEAR: i32 = 600;
+
+/// Another folder (or device) in the pane shows from its start, not scrolled as far as the last
+/// one was. An item picked in it (the folder just left, going up) is scrolled to after that.
+fn top_on_new_folder(p: Pane, scroller: NodeRef<html::Div>, win: rows::Window) {
+    Effect::new(move |prev: Option<(Src, String)>| {
+        let now = (p.src.get(), p.cwd.get());
+        if prev.is_some_and(|prev| prev != now) {
+            if let Some(el) = scroller.get_untracked() {
+                el.set_scroll_top(0);
+                el.set_scroll_left(0);
+            }
+            win.update();
+        }
+        now
+    });
+}
 
 /// Loads pane `p`'s next page when `scroller` is scrolled near its bottom.
 fn more_near_end(ctx: Ctx, p: Pane, scroller: NodeRef<html::Div>) {
