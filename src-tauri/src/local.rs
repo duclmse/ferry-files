@@ -245,9 +245,7 @@ impl Transport for Local {
         let mut dirs = vec![(crate::platform::COMPUTER.to_string(), self.default_dir())];
         dirs.extend(crate::platform::drives());
         dirs.into_iter()
-            .filter_map(|(name, dir)| {
-                crate::platform::free_space(&dir).map(|(free, total)| crate::device::Space { name, free, total, path: dir })
-            })
+            .filter_map(|(name, dir)| crate::platform::free_space(&dir).map(|(free, total)| crate::device::Space { name, free, total, path: dir }))
             .collect()
     }
 }

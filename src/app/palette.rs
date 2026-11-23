@@ -100,7 +100,13 @@ impl Ctx {
         let mut out = vec![];
         let picked = p.picked();
         if let Some(e) = picked.first() {
-            let group = if picked.len() > 1 { "Picked" } else if e.dir { "Folder" } else { "File" };
+            let group = if picked.len() > 1 {
+                "Picked"
+            } else if e.dir {
+                "Folder"
+            } else {
+                "File"
+            };
             from_menu(group, self.menu_items(p, Some(e)), Some(e), &mut out);
         }
         from_menu("Here", self.menu_items(p, None), None, &mut out);
@@ -183,11 +189,8 @@ pub(super) fn Palette() -> impl IntoView {
             if q.is_empty() {
                 return (0..hs.len()).collect::<Vec<_>>();
             }
-            let mut hits: Vec<(i32, usize)> = hs
-                .iter()
-                .enumerate()
-                .filter_map(|(i, (own, with_group))| score(&q, own).max(score(&q, with_group).map(|s| s - 2)).map(|s| (s, i)))
-                .collect();
+            let mut hits: Vec<(i32, usize)> =
+                hs.iter().enumerate().filter_map(|(i, (own, with_group))| score(&q, own).max(score(&q, with_group).map(|s| s - 2)).map(|s| (s, i))).collect();
             hits.sort_by_key(|&(s, i)| (std::cmp::Reverse(s), i));
             hits.into_iter().map(|(_, i)| i).collect()
         })

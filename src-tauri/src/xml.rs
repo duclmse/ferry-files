@@ -78,11 +78,7 @@ pub fn tokenize(s: &str) -> Result<Vec<Tok>, String> {
             None
         };
         if let Some((pat, kind, what)) = special {
-            let end = if kind == Kind::Doctype {
-                doctype_end(rest)
-            } else {
-                rest[2..].find(pat).map(|k| k + 2 + pat.len())
-            };
+            let end = if kind == Kind::Doctype { doctype_end(rest) } else { rest[2..].find(pat).map(|k| k + 2 + pat.len()) };
             let end = end.ok_or_else(|| format!("Line {}: this {what} never ends.", line_of(s, i)))?;
             out.push(Tok::plain(kind, i, i + end));
             i += end;
@@ -127,10 +123,7 @@ fn tag(s: &str, start: usize) -> Result<Tok, String> {
     }
     let name = s[name_start..i].to_string();
     if name.is_empty() {
-        return Err(format!(
-            "Line {}: a \"<\" that doesn't start a tag. Write &lt; for a literal <.",
-            line_of(s, start)
-        ));
+        return Err(format!("Line {}: a \"<\" that doesn't start a tag. Write &lt; for a literal <.", line_of(s, start)));
     }
     let mut attrs = vec![];
     loop {
@@ -218,14 +211,7 @@ pub fn check(s: &str) -> Result<(), String> {
             Kind::Empty if stack.is_empty() => roots += 1,
             Kind::Close => match stack.pop() {
                 Some((n, _)) if n == t.name => {}
-                Some((n, at)) => {
-                    return Err(format!(
-                        "Line {}: </{}> doesn't match <{n}> opened on line {}.",
-                        line_of(s, t.start),
-                        t.name,
-                        line_of(s, at)
-                    ))
-                }
+                Some((n, at)) => return Err(format!("Line {}: </{}> doesn't match <{n}> opened on line {}.", line_of(s, t.start), t.name, line_of(s, at))),
                 None => return Err(format!("Line {}: </{}> has no start tag.", line_of(s, t.start), t.name)),
             },
             Kind::Text => {
@@ -234,10 +220,7 @@ pub fn check(s: &str) -> Result<(), String> {
                     return Err(format!("Line {}: text outside the root element.", line_of(s, t.start)));
                 }
                 if let Some(k) = bare_ampersand(text) {
-                    return Err(format!(
-                        "Line {}: a bare \"&\". Write &amp; for a literal &.",
-                        line_of(s, t.start + k)
-                    ));
+                    return Err(format!("Line {}: a bare \"&\". Write &amp; for a literal &.", line_of(s, t.start + k)));
                 }
             }
             _ => {}

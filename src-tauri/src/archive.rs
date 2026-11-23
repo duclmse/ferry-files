@@ -47,7 +47,10 @@ pub fn list(size: u64, read: &mut Read) -> Result<Listing, String> {
     let (mut total, mut dir_size, mut dir_at) = (u16_at(&tail, end + 10), u32_at(&tail, end + 12), u32_at(&tail, end + 16));
     let mut zip64 = false;
     // ZIP64: the real numbers are in another record, found through the locator just before.
-    if [total, dir_size, dir_at].iter().any(|v| matches!(v, Some(0xFFFF) | Some(0xFFFF_FFFF))) && end >= 20 && tail[end - 20..end - 16] == [0x50, 0x4B, 0x06, 0x07] {
+    if [total, dir_size, dir_at].iter().any(|v| matches!(v, Some(0xFFFF) | Some(0xFFFF_FFFF)))
+        && end >= 20
+        && tail[end - 20..end - 16] == [0x50, 0x4B, 0x06, 0x07]
+    {
         let rec_at = u64_at(&tail, end - 12).ok_or_else(bad)?;
         let rec = read(rec_at, 56)?;
         if rec.get(0..4) == Some(&[0x50, 0x4B, 0x06, 0x06]) {
@@ -67,7 +70,11 @@ pub fn list(size: u64, read: &mut Read) -> Result<Listing, String> {
     let mut at = 0usize;
     while items.len() < LIST_MAX && dir.get(at..at + 4) == Some(&[0x50, 0x4B, 0x01, 0x02]) {
         let stored = u16_at(&dir, at + 10) == Some(0) && u16_at(&dir, at + 8).is_some_and(|f| f & 1 == 0);
-        let (Some(mut size), Some(name_len), Some(extra_len), Some(note_len)) = (u32_at(&dir, at + 24), u16_at(&dir, at + 28), u16_at(&dir, at + 30), u16_at(&dir, at + 32)) else { break };
+        let (Some(mut size), Some(name_len), Some(extra_len), Some(note_len)) =
+            (u32_at(&dir, at + 24), u16_at(&dir, at + 28), u16_at(&dir, at + 30), u16_at(&dir, at + 32))
+        else {
+            break;
+        };
         let name_at = at + 46;
         let Some(name) = dir.get(name_at..name_at + name_len as usize) else { break };
         // Some Windows tools write \ between folders.

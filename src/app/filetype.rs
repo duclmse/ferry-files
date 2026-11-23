@@ -16,8 +16,8 @@ pub(super) enum FileType {
 }
 
 const DOC_EXTS: &[&str] = &[
-    "pdf", "doc", "docx", "odt", "rtf", "pages", "txt", "md", "markdown", "log", "xls", "xlsx", "ods", "csv",
-    "tsv", "numbers", "ppt", "pptx", "odp", "key", "mobi", "azw3", "djvu",
+    "pdf", "doc", "docx", "odt", "rtf", "pages", "txt", "md", "markdown", "log", "xls", "xlsx", "ods", "csv", "tsv", "numbers", "ppt", "pptx", "odp", "key",
+    "mobi", "azw3", "djvu",
 ];
 const PIC_EXTS: &[&str] = &["jpg", "jpeg", "png", "gif", "webp", "bmp", "heic", "heif", "avif", "svg", "tif", "tiff", "ico", "raw", "dng", "cr2", "nef", "arw"];
 const FILM_EXTS: &[&str] = &["mp4", "m4v", "mov", "webm", "3gp", "mkv", "avi", "wmv", "flv", "mpg", "mpeg", "ts"];
@@ -56,12 +56,18 @@ pub(super) fn type_icon(e: &Entry) -> AnyView {
     let t = file_type(e);
     let (class, mark) = match t {
         FileType::Folder => ("folder", r#"<path class="fill" d="M5 13a3 3 0 0 1 3-3h10l4 4h18a3 3 0 0 1 3 3v20a3 3 0 0 1-3 3H8a3 3 0 0 1-3-3z"/>"#),
-        FileType::Book => ("book", r#"<path class="fill" d="M14 5h22a2 2 0 0 1 2 2v35H15a4 4 0 0 1-4-4V8a3 3 0 0 1 3-3z"/><path class="mark" d="M11 38a4 4 0 0 1 4-4h23M18 13h13M18 19h9"/>"#),
+        FileType::Book => (
+            "book",
+            r#"<path class="fill" d="M14 5h22a2 2 0 0 1 2 2v35H15a4 4 0 0 1-4-4V8a3 3 0 0 1 3-3z"/><path class="mark" d="M11 38a4 4 0 0 1 4-4h23M18 13h13M18 19h9"/>"#,
+        ),
         FileType::Document => ("doc", r#"<path class="mark" d="M16 22h16M16 28h16M16 34h10"/>"#),
         FileType::Code => ("code", r#"<path class="mark" d="M19 23l-5 5 5 5M29 23l5 5-5 5M26 20l-4 16"/>"#),
         FileType::Image => ("image", r#"<path class="solid" d="M15 37l7-9 5 6 3-4 5 7z"/><circle class="solid" cx="29" cy="21" r="2.5"/>"#),
         FileType::Video => ("video", r#"<path class="solid" d="M19 21v14l12-7z"/>"#),
-        FileType::Music => ("music", r#"<path class="mark" d="M21 35V22l11-2v12"/><circle class="solid" cx="18.5" cy="35" r="2.5"/><circle class="solid" cx="29.5" cy="32" r="2.5"/>"#),
+        FileType::Music => (
+            "music",
+            r#"<path class="mark" d="M21 35V22l11-2v12"/><circle class="solid" cx="18.5" cy="35" r="2.5"/><circle class="solid" cx="29.5" cy="32" r="2.5"/>"#,
+        ),
         FileType::Other => ("other", ""),
     };
     let page = if matches!(t, FileType::Folder | FileType::Book) { "" } else { PAGE };

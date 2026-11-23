@@ -126,13 +126,7 @@ pub(super) async fn devices(app: AppHandle, state: State<'_, AppState>) -> Resul
         let gone = drop_gone(&app);
         let mut found: Vec<Found> = adb::ready_devices()
             .into_iter()
-            .map(|(serial, name)| Found {
-                usb: format!("adb:{serial}"),
-                transport: "adb",
-                which: serial.clone(),
-                name,
-                serial: Some(serial),
-            })
+            .map(|(serial, name)| Found { usb: format!("adb:{serial}"), transport: "adb", which: serial.clone(), name, serial: Some(serial) })
             .collect();
         let mtp_error = match mtp::detect() {
             Ok(v) => {
@@ -170,12 +164,7 @@ pub(super) async fn devices(app: AppHandle, state: State<'_, AppState>) -> Resul
 /// Connects a device found by `devices` (`which` is its adb serial or MTP location, `serial` its
 /// USB serial number when known), alongside any already connected.
 #[tauri::command(rename_all = "snake_case")]
-pub(super) async fn connect(
-    state: State<'_, AppState>,
-    transport: String,
-    which: Option<String>,
-    serial: Option<String>,
-) -> Result<Info, String> {
+pub(super) async fn connect(state: State<'_, AppState>, transport: String, which: Option<String>, serial: Option<String>) -> Result<Info, String> {
     let usb = which.as_ref().map(|w| format!("{transport}:{w}"));
     let serial = serial.or_else(|| which.clone().filter(|_| transport == "adb"));
     let same = |c: &Conn| (usb.is_some() && c.usb == usb) || (serial.is_some() && c.serial == serial);

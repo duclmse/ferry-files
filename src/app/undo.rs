@@ -47,9 +47,7 @@ impl Ctx {
 
     /// The newest action that can still be undone (its index in `history`).
     pub(super) fn last_undo(self) -> Option<(usize, String)> {
-        self.history.with_untracked(|h| {
-            h.iter().enumerate().rev().find(|(_, o)| o.undo.is_some() && !o.undone).map(|(i, o)| (i, o.text.clone()))
-        })
+        self.history.with_untracked(|h| h.iter().enumerate().rev().find(|(_, o)| o.undo.is_some() && !o.undone).map(|(i, o)| (i, o.text.clone())))
     }
 
     /// ⌘Z: undoes the newest action that can be, with the result in the active pane.

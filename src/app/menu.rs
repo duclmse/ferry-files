@@ -71,11 +71,18 @@ impl Ctx {
     /// ✓ beside each of the sidebar's sections that's shown.
     pub(super) fn section_items(self) -> Vec<MenuItem> {
         let hidden = self.hidden_sections.get_untracked();
-        let mut v: Vec<MenuItem> = SECTIONS.iter().enumerate().map(|(i, &(key, title))| {
-            let title = if key == "mac" { crate::os::computer() } else { title };
-            item(format!("{} {title}", if hidden.iter().any(|h| h == key) { "\u{2003}" } else { "✓" }), "", Act::Section(i))
-        }).collect();
-        v.extend([MenuItem::Sep, MenuItem::Do { label: "Show all sections".into(), key: "", act: Act::AllSections, danger: false, enabled: !hidden.is_empty() }]);
+        let mut v: Vec<MenuItem> = SECTIONS
+            .iter()
+            .enumerate()
+            .map(|(i, &(key, title))| {
+                let title = if key == "mac" { crate::os::computer() } else { title };
+                item(format!("{} {title}", if hidden.iter().any(|h| h == key) { "\u{2003}" } else { "✓" }), "", Act::Section(i))
+            })
+            .collect();
+        v.extend([
+            MenuItem::Sep,
+            MenuItem::Do { label: "Show all sections".into(), key: "", act: Act::AllSections, danger: false, enabled: !hidden.is_empty() },
+        ]);
         v
     }
 
@@ -112,9 +119,9 @@ impl Ctx {
             MenuItem::Sep,
             MenuItem::Do { label: "✓ Name".into(), key: "", act: Act::Column(usize::MAX), danger: false, enabled: false },
         ];
-        v.extend(LIST_ORDER.iter().map(|&c| {
-            item(format!("{} {}", if shown.contains(&c) { "✓" } else { "\u{2003}" }, LIST_COLS[c].label()), "", Act::Column(c))
-        }));
+        v.extend(
+            LIST_ORDER.iter().map(|&c| item(format!("{} {}", if shown.contains(&c) { "✓" } else { "\u{2003}" }, LIST_COLS[c].label()), "", Act::Column(c))),
+        );
         v.extend([MenuItem::Sep, item("Default columns", "", Act::ResetColumns)]);
         v
     }
@@ -260,7 +267,13 @@ impl Ctx {
             let cwd = p.cwd.get_untracked();
             let mut v = vec![
                 MenuItem::Do { label: "Set root to the folder above".into(), key: "", act: Act::Up, danger: false, enabled: cwd != "/" && !cwd.is_empty() },
-                MenuItem::Do { label: "Collapse all folders".into(), key: "", act: Act::CollapseAll, danger: false, enabled: !p.tree_open.with_untracked(HashSet::is_empty) },
+                MenuItem::Do {
+                    label: "Collapse all folders".into(),
+                    key: "",
+                    act: Act::CollapseAll,
+                    danger: false,
+                    enabled: !p.tree_open.with_untracked(HashSet::is_empty),
+                },
                 item("Refresh", "", Act::Refresh),
                 MenuItem::Sep,
                 item("New text file…", "", Act::NewFile),
@@ -377,7 +390,8 @@ impl Ctx {
             if device {
                 v.push(MenuItem::Do { label: "Upload files…".into(), key: "", act: Act::Upload, danger: false, enabled: here });
             }
-            let fav = if self.is_fav(p.src.get_untracked(), &p.cwd.get_untracked()) { "Remove this folder from Favourites" } else { "Add this folder to Favourites" };
+            let fav =
+                if self.is_fav(p.src.get_untracked(), &p.cwd.get_untracked()) { "Remove this folder from Favourites" } else { "Add this folder to Favourites" };
             v.push(MenuItem::Do {
                 label: "Books in this folder…".into(),
                 key: "",
@@ -393,20 +407,8 @@ impl Ctx {
                 enabled: !p.entries.with_untracked(Vec::is_empty) && self.renamable(p),
             });
             v.extend([MenuItem::Sep, item("New tab", "new_tab", Act::NewTab), item(fav, "", Act::Favourite), item("Refresh", "", Act::Refresh)]);
-            v.push(MenuItem::Do {
-                label: "Import photos…".into(),
-                key: "",
-                act: Act::Import,
-                danger: false,
-                enabled: !p.cwd.get_untracked().is_empty(),
-            });
-            v.push(MenuItem::Do {
-                label: "Find duplicates…".into(),
-                key: "",
-                act: Act::Dupes,
-                danger: false,
-                enabled: !p.cwd.get_untracked().is_empty(),
-            });
+            v.push(MenuItem::Do { label: "Import photos…".into(), key: "", act: Act::Import, danger: false, enabled: !p.cwd.get_untracked().is_empty() });
+            v.push(MenuItem::Do { label: "Find duplicates…".into(), key: "", act: Act::Dupes, danger: false, enabled: !p.cwd.get_untracked().is_empty() });
             v.push(MenuItem::Do {
                 label: "Compare with the other pane".into(),
                 key: "",
@@ -423,9 +425,7 @@ impl Ctx {
             });
             v.push(MenuItem::Sep);
             let now = p.view.get_untracked();
-            v.extend(ViewMode::ALL.map(|m| {
-                item(format!("{} as {}", if m == now { "✓" } else { "\u{2003}" }, m.label()), "", Act::View(m))
-            }));
+            v.extend(ViewMode::ALL.map(|m| item(format!("{} as {}", if m == now { "✓" } else { "\u{2003}" }, m.label()), "", Act::View(m))));
             if now == ViewMode::List {
                 v.push(MenuItem::Sep);
                 v.extend(self.column_items(p));
@@ -451,7 +451,13 @@ impl Ctx {
             if split {
                 let enabled = self.in_storage(self.other(p));
                 v.push(MenuItem::Do { label: self.to_label(p, "Copy", picked), key: "copy", act: Act::Copy, danger: false, enabled });
-                v.push(MenuItem::Do { label: self.to_label(p, "Move", picked), key: "move", act: Act::Move, danger: false, enabled: enabled && !self.read_only(p.src.get_untracked()) });
+                v.push(MenuItem::Do {
+                    label: self.to_label(p, "Move", picked),
+                    key: "move",
+                    act: Act::Move,
+                    danger: false,
+                    enabled: enabled && !self.read_only(p.src.get_untracked()),
+                });
                 v.push(MenuItem::Sep);
             }
             let renamable = self.renamable(p);
@@ -500,7 +506,13 @@ impl Ctx {
         if split {
             let enabled = self.in_storage(self.other(p));
             v.push(MenuItem::Do { label: self.to_label(p, "Copy", 1), key: "copy", act: Act::Copy, danger: false, enabled });
-            v.push(MenuItem::Do { label: self.to_label(p, "Move", 1), key: "move", act: Act::Move, danger: false, enabled: enabled && !self.read_only(p.src.get_untracked()) });
+            v.push(MenuItem::Do {
+                label: self.to_label(p, "Move", 1),
+                key: "move",
+                act: Act::Move,
+                danger: false,
+                enabled: enabled && !self.read_only(p.src.get_untracked()),
+            });
         }
         let renamable = self.renamable(p);
         v.push(MenuItem::Do { label: "Rename".into(), key: "rename", act: Act::Rename, danger: false, enabled: renamable });
@@ -618,55 +630,57 @@ impl Ctx {
 #[component]
 pub(super) fn ContextMenu() -> impl IntoView {
     let ctx = expect_context::<Ctx>();
-    move || ctx.menu.get().map(|m| {
-        let p = ctx.panes[m.pane];
-        let items = if m.tree {
-            ctx.tree_items(p, m.entry.as_ref())
-        } else if let Some((src, path)) = &m.place {
-            ctx.place_items(*src, path)
-        } else if !m.folders.is_empty() {
-            m.folders.iter().enumerate().map(|(i, f)| item(base(f), "", Act::Go(i))).collect()
-        } else if m.columns {
-            ctx.column_items(p)
-        } else if m.sections {
-            ctx.section_items()
-        } else {
-            ctx.menu_items(p, m.entry.as_ref())
-        };
-        let folders = StoredValue::new(m.folders.clone());
-        let place = StoredValue::new(m.place.clone());
-        view! {
-            <div class="menu" role="menu" style=format!("left:{}px;top:{}px", m.x, m.y)
-                on:contextmenu=|e| { e.prevent_default(); e.stop_propagation(); }>
-                {items.into_iter().map(|it| match it {
-                    MenuItem::Sep => view! { <div class="sep"></div> }.into_any(),
-                    MenuItem::Do { label, key, act, danger, enabled } => {
-                        let entry = m.entry.clone();
-                        view! {
-                            <button role="menuitem" class:danger=danger disabled=!enabled
-                                on:click=move |_| {
-                                    ctx.menu.set(None);
-                                    if let Some((src, path)) = place.get_value() {
-                                        ctx.run_place(act, src, path);
-                                        return;
-                                    }
-                                    if m.tree {
-                                        ctx.run_tree(p, act, entry.clone());
-                                        return;
-                                    }
-                                    match act {
-                                        Act::Go(i) => if let Some(f) = folders.with_value(|f| f.get(i).cloned()) { ctx.navigate(p, f) },
-                                        _ => ctx.run(p, act, entry.clone()),
-                                    }
-                                }>
-                                <span>{label}</span><span class="key">{move || ctx.key_label(key)}</span>
-                            </button>
-                        }.into_any()
-                    }
-                }).collect_view()}
-            </div>
-        }
-    })
+    move || {
+        ctx.menu.get().map(|m| {
+            let p = ctx.panes[m.pane];
+            let items = if m.tree {
+                ctx.tree_items(p, m.entry.as_ref())
+            } else if let Some((src, path)) = &m.place {
+                ctx.place_items(*src, path)
+            } else if !m.folders.is_empty() {
+                m.folders.iter().enumerate().map(|(i, f)| item(base(f), "", Act::Go(i))).collect()
+            } else if m.columns {
+                ctx.column_items(p)
+            } else if m.sections {
+                ctx.section_items()
+            } else {
+                ctx.menu_items(p, m.entry.as_ref())
+            };
+            let folders = StoredValue::new(m.folders.clone());
+            let place = StoredValue::new(m.place.clone());
+            view! {
+                <div class="menu" role="menu" style=format!("left:{}px;top:{}px", m.x, m.y)
+                    on:contextmenu=|e| { e.prevent_default(); e.stop_propagation(); }>
+                    {items.into_iter().map(|it| match it {
+                        MenuItem::Sep => view! { <div class="sep"></div> }.into_any(),
+                        MenuItem::Do { label, key, act, danger, enabled } => {
+                            let entry = m.entry.clone();
+                            view! {
+                                <button role="menuitem" class:danger=danger disabled=!enabled
+                                    on:click=move |_| {
+                                        ctx.menu.set(None);
+                                        if let Some((src, path)) = place.get_value() {
+                                            ctx.run_place(act, src, path);
+                                            return;
+                                        }
+                                        if m.tree {
+                                            ctx.run_tree(p, act, entry.clone());
+                                            return;
+                                        }
+                                        match act {
+                                            Act::Go(i) => if let Some(f) = folders.with_value(|f| f.get(i).cloned()) { ctx.navigate(p, f) },
+                                            _ => ctx.run(p, act, entry.clone()),
+                                        }
+                                    }>
+                                    <span>{label}</span><span class="key">{move || ctx.key_label(key)}</span>
+                                </button>
+                            }.into_any()
+                        }
+                    }).collect_view()}
+                </div>
+            }
+        })
+    }
 }
 
 /// `path` from the folder `root`: "src/main.rs" under "/a/b" for "/a/b/src/main.rs".

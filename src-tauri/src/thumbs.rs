@@ -213,7 +213,11 @@ fn read_tiff(t: &[u8], base: usize) -> Option<Exif> {
     let u32_at = |o: usize| {
         t.get(o..o + 4).map(|b| {
             let b = [b[0], b[1], b[2], b[3]];
-            if le { u32::from_le_bytes(b) } else { u32::from_be_bytes(b) }
+            if le {
+                u32::from_le_bytes(b)
+            } else {
+                u32::from_be_bytes(b)
+            }
         })
     };
     // A directory's (tag, value) pairs (a SHORT's or LONG's value; offsets for the rest), and

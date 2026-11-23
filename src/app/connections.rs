@@ -85,7 +85,13 @@ fn conn_form(ctx: Ctx, editing: RwSignal<Option<Conn>>, is_new: bool) -> impl In
     let error = RwSignal::new(None::<String>);
     let trying = RwSignal::new(false);
     let get = move || editing.get().unwrap_or_else(|| Conn::new(ConnKind::Sftp));
-    let set = move |f: &dyn Fn(&mut Conn)| editing.update(|e| if let Some(c) = e { f(c) });
+    let set = move |f: &dyn Fn(&mut Conn)| {
+        editing.update(|e| {
+            if let Some(c) = e {
+                f(c)
+            }
+        })
+    };
     let kind = Memo::new(move |_| get().kind);
     let auth = Memo::new(move |_| get().auth);
     let tls = Memo::new(move |_| get().tls);
@@ -107,13 +113,15 @@ fn conn_form(ctx: Ctx, editing: RwSignal<Option<Conn>>, is_new: bool) -> impl In
             trying.set(false);
         });
     };
-    let text = move |label: &'static str, placeholder: &'static str, value: Signal<String>, put: fn(&mut Conn, String)| view! {
-        <label class="field">
-            <span>{label}</span>
-            <input type="text" spellcheck="false" autocomplete="off" placeholder=placeholder prop:value=move || value.get()
-                on:input=move |e| { let v = event_target_value(&e); set(&|c| put(c, v.clone())) }
-                on:keydown=move |e| if e.key() == "Enter" { save() }/>
-        </label>
+    let text = move |label: &'static str, placeholder: &'static str, value: Signal<String>, put: fn(&mut Conn, String)| {
+        view! {
+            <label class="field">
+                <span>{label}</span>
+                <input type="text" spellcheck="false" autocomplete="off" placeholder=placeholder prop:value=move || value.get()
+                    on:input=move |e| { let v = event_target_value(&e); set(&|c| put(c, v.clone())) }
+                    on:keydown=move |e| if e.key() == "Enter" { save() }/>
+            </label>
+        }
     };
     let secret_label = move || match (kind.get(), auth.get()) {
         (_, Auth::Key) => "Passphrase",
@@ -219,7 +227,11 @@ pub(super) fn ConnectionsSettings() -> impl IntoView {
     let editing = RwSignal::new(None::<Conn>);
     let is_new = RwSignal::new(true);
     let filter = NodeRef::<html::Input>::new();
-    filter.on_load(move |el| { request_animation_frame(move || { let _ = el.focus(); }); });
+    filter.on_load(move |el| {
+        request_animation_frame(move || {
+            let _ = el.focus();
+        });
+    });
     let start = move |text: String| {
         let (kind, tls) = servers::kind_and_tls(&text);
         let mut c = Conn::new(kind);

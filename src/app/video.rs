@@ -109,12 +109,21 @@ impl Turn {
         }
         self.instant.set(true);
         self.count.set(t.rem_euclid(4));
-        set_timeout(move || { let _ = self.instant.try_set(false); }, Duration::from_millis(50));
+        set_timeout(
+            move || {
+                let _ = self.instant.try_set(false);
+            },
+            Duration::from_millis(50),
+        );
     }
 
     /// Added to the style: no animation while settling.
     pub(super) fn css(self) -> &'static str {
-        if self.instant.get() { "; transition: none" } else { "" }
+        if self.instant.get() {
+            "; transition: none"
+        } else {
+            ""
+        }
     }
 }
 
@@ -150,8 +159,7 @@ fn remember(key: &str, m: &web_sys::HtmlMediaElement) {
     if t >= RESUME_EDGE && t < d - RESUME_EDGE {
         all.insert(key.to_string(), json!([t, js_sys::Date::now()]));
         if all.len() > RESUME_KEEP {
-            let mut by_age: Vec<(String, f64)> =
-                all.iter().map(|(k, v)| (k.clone(), v.get(1).and_then(|s| s.as_f64()).unwrap_or(0.0))).collect();
+            let mut by_age: Vec<(String, f64)> = all.iter().map(|(k, v)| (k.clone(), v.get(1).and_then(|s| s.as_f64()).unwrap_or(0.0))).collect();
             by_age.sort_by(|a, b| a.1.total_cmp(&b.1));
             for (k, _) in by_age.into_iter().take(all.len() - RESUME_KEEP) {
                 all.remove(&k);
@@ -539,7 +547,13 @@ pub(super) fn VideoPlayer(
         if let Some(t) = badge_timer.try_update_value(Option::take).flatten() {
             t.clear();
         }
-        let t = set_timeout_with_handle(move || { let _ = badge.try_set(None); }, Duration::from_millis(900)).ok();
+        let t = set_timeout_with_handle(
+            move || {
+                let _ = badge.try_set(None);
+            },
+            Duration::from_millis(900),
+        )
+        .ok();
         badge_timer.set_value(t);
     };
     let back = move || {
@@ -682,9 +696,12 @@ pub(super) fn VideoPlayer(
     };
     Effect::new(move |_| {
         let Some(v) = video_ref.get() else { return };
-        let picked: Vec<(String, String)> = shown.get().iter().enumerate().filter_map(|(at, &i)| {
-            subs.with(|s| s.get(i).map(|t| (t.name.clone(), if at == 0 { t.vtt.clone() } else { at_top(&t.vtt) })))
-        }).collect();
+        let picked: Vec<(String, String)> = shown
+            .get()
+            .iter()
+            .enumerate()
+            .filter_map(|(at, &i)| subs.with(|s| s.get(i).map(|t| (t.name.clone(), if at == 0 { t.vtt.clone() } else { at_top(&t.vtt) }))))
+            .collect();
         free_tracks();
         let mut made = vec![];
         for (name, vtt) in picked {
@@ -833,11 +850,7 @@ pub(super) fn VideoPlayer(
             move || {
                 let _ = idle_timer.try_set_value(None);
                 // Not while the mouse is on the controls.
-                let on_controls = player_ref
-                    .try_get_untracked()
-                    .flatten()
-                    .and_then(|p| p.query_selector(".vcontrols:hover").ok().flatten())
-                    .is_some();
+                let on_controls = player_ref.try_get_untracked().flatten().and_then(|p| p.query_selector(".vcontrols:hover").ok().flatten()).is_some();
                 if !on_controls {
                     let _ = idle.try_set(true);
                 }
@@ -852,9 +865,9 @@ pub(super) fn VideoPlayer(
         let cb = Closure::<dyn Fn()>::new(move || {
             let doc: JsValue = document().into();
             let get = |k: &str| js_sys::Reflect::get(&doc, &k.into()).ok().filter(|v| !v.is_undefined() && !v.is_null());
-            let on = get("fullscreenElement").or_else(|| get("webkitFullscreenElement")).is_some_and(|el| {
-                player_ref.try_get_untracked().flatten().is_some_and(|p| JsValue::from(p) == el)
-            });
+            let on = get("fullscreenElement")
+                .or_else(|| get("webkitFullscreenElement"))
+                .is_some_and(|el| player_ref.try_get_untracked().flatten().is_some_and(|p| JsValue::from(p) == el));
             let _ = full.try_set(on);
             wake();
         });
@@ -866,9 +879,7 @@ pub(super) fn VideoPlayer(
     let full_screen = move || {
         let doc = document();
         let get = |o: &JsValue, k: &str| js_sys::Reflect::get(o, &k.into()).ok().filter(|v| !v.is_undefined() && !v.is_null());
-        let call0 = |o: &JsValue, k: &str| {
-            get(o, k).and_then(|f| f.dyn_into::<js_sys::Function>().ok()).is_some_and(|f| f.call0(o).is_ok())
-        };
+        let call0 = |o: &JsValue, k: &str| get(o, k).and_then(|f| f.dyn_into::<js_sys::Function>().ok()).is_some_and(|f| f.call0(o).is_ok());
         let doc: JsValue = doc.into();
         if get(&doc, "fullscreenElement").or_else(|| get(&doc, "webkitFullscreenElement")).is_some() {
             let _ = call0(&doc, "exitFullscreen") || call0(&doc, "webkitExitFullscreen");
@@ -1062,7 +1073,11 @@ pub(super) fn VideoPlayer(
         let (vw, vh) = natural.get();
         let a = if vw > 0 && vh > 0 { vw as f64 / vh as f64 } else { 16.0 / 9.0 };
         let a = if video_turn().rem_euclid(2) == 1 { 1.0 / a } else { a };
-        if a >= 160.0 / 120.0 { (160.0, 160.0 / a) } else { (120.0 * a, 120.0) }
+        if a >= 160.0 / 120.0 {
+            (160.0, 160.0 / a)
+        } else {
+            (120.0 * a, 120.0)
+        }
     };
     let tip = move || {
         let (x, w, t) = hover.get()?;
@@ -1226,7 +1241,11 @@ const CONTROLS_H: f64 = 64.0;
 fn clock(secs: f64) -> String {
     let s = if secs.is_finite() { secs.max(0.0).floor() as u64 } else { 0 };
     let (h, m, s) = (s / 3600, s / 60 % 60, s % 60);
-    if h > 0 { format!("{h}:{m:02}:{s:02}") } else { format!("{m}:{s:02}") }
+    if h > 0 {
+        format!("{h}:{m:02}:{s:02}")
+    } else {
+        format!("{m}:{s:02}")
+    }
 }
 
 /// The video this window was opened for, when it's a popped-out player (the backend sets it).

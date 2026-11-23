@@ -5,9 +5,8 @@ use super::*;
 use crate::transfer::{run_items, Item, Opts, Progress, TransferReport};
 
 /// Photos and videos, by extension.
-const MEDIA: [&str; 20] = [
-    "jpg", "jpeg", "heic", "heif", "avif", "png", "gif", "webp", "dng", "raw", "cr2", "cr3", "nef", "arw", "mp4", "mov", "m4v", "3gp", "avi", "mkv",
-];
+const MEDIA: [&str; 20] =
+    ["jpg", "jpeg", "heic", "heif", "avif", "png", "gif", "webp", "dng", "raw", "cr2", "cr3", "nef", "arw", "mp4", "mov", "m4v", "3gp", "avi", "mkv"];
 
 fn is_media(name: &str) -> bool {
     name.rsplit_once('.').is_some_and(|(_, x)| MEDIA.contains(&x.to_ascii_lowercase().as_str()))

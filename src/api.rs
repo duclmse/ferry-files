@@ -166,9 +166,7 @@ pub struct Pos {
 }
 
 pub async fn call<T: DeserializeOwned>(cmd: &str, args: serde_json::Value) -> Result<T, String> {
-    let args = args
-        .serialize(&serde_wasm_bindgen::Serializer::json_compatible())
-        .map_err(|e| e.to_string())?;
+    let args = args.serialize(&serde_wasm_bindgen::Serializer::json_compatible()).map_err(|e| e.to_string())?;
     match invoke(cmd, args).await {
         Ok(v) => serde_wasm_bindgen::from_value(v).map_err(|e| e.to_string()),
         Err(e) => Err(e.as_string().unwrap_or_else(|| format!("{e:?}"))),

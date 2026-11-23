@@ -153,7 +153,9 @@ fn CodeNode(pane: Pane, entry: Entry, depth: usize) -> impl IntoView {
                 return p.doc_peek.with(|e| e.as_ref().is_some_and(|e| path.with_value(|x| *x == e.path)));
             }
             if p.doc.with(Option::is_none) {
-                return p.docs.with(|ds| ds.get(p.doc_at.get()).is_some_and(|d| matches!(d, Doc::File { .. }) && d.src() == src && path.with_value(|x| x == d.path())));
+                return p
+                    .docs
+                    .with(|ds| ds.get(p.doc_at.get()).is_some_and(|d| matches!(d, Doc::File { .. }) && d.src() == src && path.with_value(|x| x == d.path())));
             }
             p.doc.with(|d| d.as_ref().is_some_and(|d| d.src == src && path.with_value(|x| *x == d.path)))
         });

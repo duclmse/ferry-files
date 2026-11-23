@@ -1,7 +1,10 @@
 //! The file browser UI: connect screen, one or two panes of folders (each on the phone or the Mac,
 //! in a list, thumbnail or column view, with a context menu), and a text editor.
 
-use crate::api::{call, Backup, BookInfo, CompareReport, DupeProgress, Dupes, Marks, Issue, Devices, Space, Entry, FileDrop, Info, Progress, SmbMount, TextFile, TransferReport, UsbDevice, WriteResult};
+use crate::api::{
+    call, Backup, BookInfo, CompareReport, Devices, DupeProgress, Dupes, Entry, FileDrop, Info, Issue, Marks, Progress, SmbMount, Space, TextFile,
+    TransferReport, UsbDevice, WriteResult,
+};
 use leptos::ev;
 use leptos::html;
 use leptos::prelude::*;
@@ -12,18 +15,18 @@ use wasm_bindgen::JsCast;
 
 mod batch;
 mod books;
+mod code;
 mod compare;
+mod connections;
 mod devices;
-mod everything;
-mod servers;
 mod dupes;
 mod editor;
-mod code;
+mod everything;
 mod files;
 mod filetype;
 mod find;
-mod import;
 mod icons;
+mod import;
 mod keymap;
 mod layout;
 mod listtree;
@@ -36,9 +39,9 @@ mod preview;
 mod rows;
 mod safety;
 mod search;
-mod connections;
-mod terminal;
+mod servers;
 mod sidebar;
+mod terminal;
 mod transfer;
 mod undo;
 mod util;
@@ -49,17 +52,17 @@ mod workspace;
 
 use batch::*;
 use books::*;
-use compare::*;
-use dupes::*;
-use import::*;
-use devices::*;
-use editor::*;
 use code::*;
-use filetype::*;
-pub(crate) use icons::{ico, Icon};
+use compare::*;
+use connections::*;
+use devices::*;
+use dupes::*;
+use editor::*;
 /// For the EPUB editor's Source view.
 pub(crate) use editor::{code_html, shift_runs, LAYER_MAX};
-pub(crate) use util::{store, stored_flag};
+use filetype::*;
+pub(crate) use icons::{ico, Icon};
+use import::*;
 use keymap::*;
 use layout::*;
 use menu::*;
@@ -68,17 +71,17 @@ use pane::*;
 use preview::*;
 use safety::*;
 use search::*;
-use connections::*;
-use terminal::*;
 use sidebar::*;
+use terminal::*;
 use transfer::*;
-use video::*;
-pub use video::{popped_out, PopOut};
 use undo::*;
 use util::*;
+pub(crate) use util::{store, stored_flag};
+use video::*;
+pub use video::{popped_out, PopOut};
 use views::*;
-use workspace::*;
 use wifi::*;
+use workspace::*;
 
 /// Where a pane's files are: on the Mac, or on connected device n (the backend's "dn").
 #[derive(Clone, Copy, PartialEq, Eq, Hash)]
@@ -354,9 +357,16 @@ enum Notice {
     ConfirmDelete(Vec<Entry>, bool),
     /// The result of comparing this pane's folder with the other pane's, before syncing.
     /// `mode` is the one picked at first: "copy", "update" or "mirror".
-    Sync { report: CompareReport, from: (Src, String), to: (Src, String), mode: String },
+    Sync {
+        report: CompareReport,
+        from: (Src, String),
+        to: (Src, String),
+        mode: String,
+    },
     /// Asking for a name; `folder` says whether it's a new folder or a new text file.
-    NewItem { folder: bool },
+    NewItem {
+        folder: bool,
+    },
 }
 
 #[derive(Clone, PartialEq)]
@@ -744,10 +754,7 @@ impl Pane {
     fn picked(self) -> Vec<Entry> {
         let marked = self.marked.get_untracked();
         let sel = self.selected.get_untracked();
-        self.shown_rows()
-            .into_iter()
-            .filter(|e| if marked.is_empty() { sel.as_deref() == Some(e.path.as_str()) } else { marked.contains(&e.path) })
-            .collect()
+        self.shown_rows().into_iter().filter(|e| if marked.is_empty() { sel.as_deref() == Some(e.path.as_str()) } else { marked.contains(&e.path) }).collect()
     }
 
     /// Selects one item, unmarking the rest.
@@ -1150,7 +1157,11 @@ impl Ctx {
 
     /// The panes on screen.
     fn shown(self) -> Vec<Pane> {
-        if self.split.get_untracked() { self.panes.to_vec() } else { vec![self.panes[0]] }
+        if self.split.get_untracked() {
+            self.panes.to_vec()
+        } else {
+            vec![self.panes[0]]
+        }
     }
 
     fn src_info(self, src: Src) -> Option<Info> {
@@ -1239,10 +1250,7 @@ pub fn App() -> impl IntoView {
         },
         std::time::Duration::from_secs(3),
     );
-    let _ = set_interval_with_handle(
-        move || ctx.check_conns(),
-        everything::EVERYTHING_EVERY,
-    );
+    let _ = set_interval_with_handle(move || ctx.check_conns(), everything::EVERYTHING_EVERY);
 
     // Keyboard. ⌘S saves in the editors. Elsewhere the shortcuts are the user's (keymap.rs), but
     // for arrows, which move (←/→ also go up/in in the column view and move across in the
@@ -1294,9 +1302,7 @@ pub fn App() -> impl IntoView {
         }
         // ⌘S in the preview's book editor saves the book.
         if meta && e.key() == "s" && ep.book.with_untracked(|b| b.is_some()) {
-            let in_book = document()
-                .active_element()
-                .is_some_and(|el| el.closest(".epub-edit, .epub-bar").ok().flatten().is_some());
+            let in_book = document().active_element().is_some_and(|el| el.closest(".epub-edit, .epub-bar").ok().flatten().is_some());
             if in_book {
                 e.prevent_default();
                 ep.save();
@@ -1333,9 +1339,7 @@ pub fn App() -> impl IntoView {
                 // rename box is one.
                 let focused = document().active_element();
                 let in_field = focused.as_ref().is_some_and(|el| el.tag_name() == "INPUT");
-                let row = focused
-                    .and_then(|el| el.closest(".code-tree .tree-row").ok().flatten())
-                    .and_then(|row| row.get_attribute("data-path"));
+                let row = focused.and_then(|el| el.closest(".code-tree .tree-row").ok().flatten()).and_then(|row| row.get_attribute("data-path"));
                 let shown = || {
                     if p.peek_on.get_untracked() {
                         p.doc_peek.with_untracked(|e| e.as_ref().map(|e| e.path.clone()))
@@ -1367,10 +1371,7 @@ pub fn App() -> impl IntoView {
         }
         // Typing in a field (the filter) is the field's, but for shortcuts with ⌘ or ⌃ that work
         // anywhere: tabs, the palette and the sidebar.
-        let typing = e
-            .target()
-            .and_then(|t| t.dyn_into::<web_sys::Element>().ok())
-            .is_some_and(|el| el.closest("input, textarea").ok().flatten().is_some());
+        let typing = e.target().and_then(|t| t.dyn_into::<web_sys::Element>().ok()).is_some_and(|el| el.closest("input, textarea").ok().flatten().is_some());
         if typing && !bound.is_some_and(|b| b.anywhere && chord.as_deref().is_some_and(held)) {
             return;
         }
@@ -1563,10 +1564,7 @@ pub fn App() -> impl IntoView {
 
     // The context menu closes on any click outside it, and when the window loses focus.
     let _press = window_event_listener(ev::mousedown, move |e| {
-        let inside = e
-            .target()
-            .and_then(|t| t.dyn_into::<web_sys::Element>().ok())
-            .is_some_and(|el| el.closest(".menu").ok().flatten().is_some());
+        let inside = e.target().and_then(|t| t.dyn_into::<web_sys::Element>().ok()).is_some_and(|el| el.closest(".menu").ok().flatten().is_some());
         if !inside {
             ctx.menu.set(None);
         }
@@ -1578,10 +1576,7 @@ pub fn App() -> impl IntoView {
     let _resize = window_event_listener(ev::resize, move |_| ctx.menu.set(None));
     // No browser menu (Reload, Inspect…) outside text fields; the panes have their own.
     let _ctx_menu = window_event_listener(ev::contextmenu, move |e| {
-        let editable = e
-            .target()
-            .and_then(|t| t.dyn_into::<web_sys::Element>().ok())
-            .is_some_and(|el| el.closest("input, textarea").ok().flatten().is_some());
+        let editable = e.target().and_then(|t| t.dyn_into::<web_sys::Element>().ok()).is_some_and(|el| el.closest("input, textarea").ok().flatten().is_some());
         if !editable {
             e.prevent_default();
         }
@@ -1667,28 +1662,30 @@ fn Browser() -> impl IntoView {
     let ctx = expect_context::<Ctx>();
     // Only opening and closing the editor rebuilds the main area, not saving in it.
     let editing = Memo::new(move |_| ctx.editor.with(Option::is_some));
-    move || view! {
-        <div class="app browse" class:no-side=move || !ctx.side.get() style=move || match ctx.side_w.get() {
-            w if w > 0.0 && ctx.side.get() => format!("grid-template-columns: auto {}px auto 1fr", w.max(SIDE_MIN)),
-            _ => String::new(),
-        }>
-            <ActivityBar/>
-            {move || ctx.side.get().then(|| view! {
-                <Sidebar/>
-                <Grip size=ctx.side_w key=SIDE_W_KEY.into() min=SIDE_MIN max=480.0 room=480.0 class="grip side-grip"/>
-            })}
-            <div class="main">
-                {move || if editing.get() { view! { <TextEditor file=ctx.full_slot()/> }.into_any() } else { view! {
-                    <div class="panes">
-                        <PaneView pane=ctx.panes[0]/>
-                        {move || ctx.split.get().then(|| view! {
-                            <Grip size=ctx.pane_w key=PANE_W_KEY.into() min=240.0 room=RIGHT_PANE_MIN class="grip pane-grip"/>
-                            <PaneView pane=ctx.panes[1]/>
-                        })}
-                    </div>
-                }.into_any() }}
-                <TransferBar/>
+    move || {
+        view! {
+            <div class="app browse" class:no-side=move || !ctx.side.get() style=move || match ctx.side_w.get() {
+                w if w > 0.0 && ctx.side.get() => format!("grid-template-columns: auto {}px auto 1fr", w.max(SIDE_MIN)),
+                _ => String::new(),
+            }>
+                <ActivityBar/>
+                {move || ctx.side.get().then(|| view! {
+                    <Sidebar/>
+                    <Grip size=ctx.side_w key=SIDE_W_KEY.into() min=SIDE_MIN max=480.0 room=480.0 class="grip side-grip"/>
+                })}
+                <div class="main">
+                    {move || if editing.get() { view! { <TextEditor file=ctx.full_slot()/> }.into_any() } else { view! {
+                        <div class="panes">
+                            <PaneView pane=ctx.panes[0]/>
+                            {move || ctx.split.get().then(|| view! {
+                                <Grip size=ctx.pane_w key=PANE_W_KEY.into() min=240.0 room=RIGHT_PANE_MIN class="grip pane-grip"/>
+                                <PaneView pane=ctx.panes[1]/>
+                            })}
+                        </div>
+                    }.into_any() }}
+                    <TransferBar/>
+                </div>
             </div>
-        </div>
+        }
     }
 }

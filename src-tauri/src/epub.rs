@@ -162,7 +162,11 @@ impl Package {
         let line = &self.text[..pos];
         let start = line.rfind('\n').map_or(0, |k| k + 1);
         let ws: String = line[start..].chars().take_while(|c| *c == ' ' || *c == '\t').collect();
-        if ws.is_empty() { "    ".into() } else { ws }
+        if ws.is_empty() {
+            "    ".into()
+        } else {
+            ws
+        }
     }
 }
 
@@ -182,9 +186,7 @@ pub fn resolve(base: &str, href: &str) -> Option<String> {
     }
     if let Some(colon) = href.find(':') {
         let scheme = &href[..colon];
-        if scheme.chars().next().is_some_and(|c| c.is_ascii_alphabetic())
-            && scheme.chars().all(|c| c.is_ascii_alphanumeric() || matches!(c, '+' | '-' | '.'))
-        {
+        if scheme.chars().next().is_some_and(|c| c.is_ascii_alphabetic()) && scheme.chars().all(|c| c.is_ascii_alphanumeric() || matches!(c, '+' | '-' | '.')) {
             return None;
         }
     }
@@ -245,8 +247,7 @@ pub fn media_guess(path: &str) -> &'static str {
 
 /// Elements that can't have content in HTML. Others written as <x/> must become <x></x>
 /// before the chapter is parsed as HTML in the visual editor.
-const VOID: &[&str] =
-    &["area", "base", "br", "col", "embed", "hr", "img", "input", "link", "meta", "param", "source", "track", "wbr"];
+const VOID: &[&str] = &["area", "base", "br", "col", "embed", "hr", "img", "input", "link", "meta", "param", "source", "track", "wbr"];
 
 /// Non-overlapping matches of `needle` in `hay`, as byte ranges.
 pub fn find_all(hay: &str, needle: &str, match_case: bool, whole_word: bool) -> Vec<(usize, usize)> {
@@ -331,14 +332,22 @@ impl Book {
     /// table of contents, each asked of `get`. For `chapters` and `meta`; nothing else is read.
     pub fn contents_only(get: &mut dyn FnMut(&str) -> Result<Vec<u8>>) -> Result<Book> {
         let container = get("META-INF/container.xml").map_err(|_| "Not an EPUB: META-INF/container.xml is missing.".to_string())?;
-        let mut book = Book { files: vec![("META-INF/container.xml".into(), container)], opf: String::new(), source: String::new(), version: String::new(), dirty: false, rev: 0 };
+        let mut book = Book {
+            files: vec![("META-INF/container.xml".into(), container)],
+            opf: String::new(),
+            source: String::new(),
+            version: String::new(),
+            dirty: false,
+            rev: 0,
+        };
         book.opf = book.find_opf()?;
         let opf = get(&book.opf).map_err(|_| format!("The package document {} is missing.", book.opf))?;
         book.files.push((book.opf.clone(), opf));
         let p = book.package()?;
-        let toc = p.items.iter().filter(|i| {
-            i.props.split_whitespace().any(|x| x == "nav") || i.media == "application/x-dtbncx+xml" || p.toc_id.as_deref() == Some(i.id.as_str())
-        });
+        let toc = p
+            .items
+            .iter()
+            .filter(|i| i.props.split_whitespace().any(|x| x == "nav") || i.media == "application/x-dtbncx+xml" || p.toc_id.as_deref() == Some(i.id.as_str()));
         for path in toc.map(|i| i.path.clone()).collect::<Vec<_>>() {
             if let Ok(data) = get(&path) {
                 book.files.push((path, data));
@@ -373,10 +382,7 @@ impl Book {
     }
 
     pub fn media_type(&self, path: &str) -> String {
-        self.package()
-            .ok()
-            .and_then(|p| p.items.iter().find(|i| i.path == path).map(|i| i.media.clone()))
-            .unwrap_or_else(|| media_guess(path).to_string())
+        self.package().ok().and_then(|p| p.items.iter().find(|i| i.path == path).map(|i| i.media.clone())).unwrap_or_else(|| media_guess(path).to_string())
     }
 
     fn package(&self) -> Result<Package> {

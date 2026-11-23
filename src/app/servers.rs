@@ -207,7 +207,10 @@ impl Conn {
             ConnKind::WebDav => ("webdav_connect", json!({ "server": self.addr(), "user": user, "secret": self.secret() })),
             ConnKind::Ftp => {
                 let port = self.port.map(|p| format!(":{p}")).unwrap_or_default();
-                ("ftp_connect", json!({ "server": format!("{}{port}", self.host), "tls": self.tls, "trust": self.tls && self.trust, "user": user, "secret": self.secret() }))
+                (
+                    "ftp_connect",
+                    json!({ "server": format!("{}{port}", self.host), "tls": self.tls, "trust": self.tls && self.trust, "user": user, "secret": self.secret() }),
+                )
             }
             ConnKind::S3 => (
                 "s3_connect",
@@ -314,13 +317,14 @@ pub(super) fn kind_and_tls(text: &str) -> (ConnKind, bool) {
     if scheme.is_empty() && t.contains(":/") {
         return (ConnKind::Nfs, false);
     }
-    let kind = if t.starts_with("smb:") || t.starts_with("\\\\") || (t.contains('/') && !t.starts_with("sftp:") && !t.starts_with("ssh:") && !t.starts_with("http")) {
-        ConnKind::Smb
-    } else if t.starts_with("http") {
-        ConnKind::Everything
-    } else {
-        ConnKind::Sftp
-    };
+    let kind =
+        if t.starts_with("smb:") || t.starts_with("\\\\") || (t.contains('/') && !t.starts_with("sftp:") && !t.starts_with("ssh:") && !t.starts_with("http")) {
+            ConnKind::Smb
+        } else if t.starts_with("http") {
+            ConnKind::Everything
+        } else {
+            ConnKind::Sftp
+        };
     (kind, false)
 }
 
@@ -594,7 +598,10 @@ mod tests {
         f.auth = Auth::Password;
         assert_eq!(f.addr(), "me@ftp.host:2121");
         let s3 = conn(ConnKind::S3, "s3.us-east-1.amazonaws.com", "AKIA", None, "photos");
-        assert_eq!((s3.auth, s3.addr(), s3.name()), (Auth::Password, "https://s3.us-east-1.amazonaws.com/photos".to_string(), "s3.us-east-1.amazonaws.com/photos".to_string()));
+        assert_eq!(
+            (s3.auth, s3.addr(), s3.name()),
+            (Auth::Password, "https://s3.us-east-1.amazonaws.com/photos".to_string(), "s3.us-east-1.amazonaws.com/photos".to_string())
+        );
         assert!(conn(ConnKind::S3, "s3", "AKIA", None, "").problem().is_some());
         assert!(conn(ConnKind::S3, "s3", "", None, "b").problem().is_some());
     }

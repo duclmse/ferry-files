@@ -251,15 +251,17 @@ pub(super) fn DeviceFinder() -> impl IntoView {
         };
         // A phone that's connected again until it lets its files be read.
         let access = move || {
-            ctx.awaiting.get().map(|f| view! {
-                <div class="conn-error">
-                    <p class="hint">{if f.transport == "iphone" {
-                        format!("{} doesn't trust {} yet. Unlock it and tap Trust; trying again every 5 seconds.", f.name, crate::os::this_computer())
-                    } else {
-                        format!("{} won't share its files yet. Unlock it and allow access to its data; trying again every 5 seconds.", f.name)
-                    }}</p>
-                    <button class="btn small" on:click=move |_| ctx.stop_awaiting()>"Stop"</button>
-                </div>
+            ctx.awaiting.get().map(|f| {
+                view! {
+                    <div class="conn-error">
+                        <p class="hint">{if f.transport == "iphone" {
+                            format!("{} doesn't trust {} yet. Unlock it and tap Trust; trying again every 5 seconds.", f.name, crate::os::this_computer())
+                        } else {
+                            format!("{} won't share its files yet. Unlock it and allow access to its data; trying again every 5 seconds.", f.name)
+                        }}</p>
+                        <button class="btn small" on:click=move |_| ctx.stop_awaiting()>"Stop"</button>
+                    </div>
+                }
             })
         };
         let Some(d) = ctx.devices.get() else {
@@ -300,7 +302,8 @@ pub(super) fn DeviceFinder() -> impl IntoView {
             if ctx.phones.with(|p| p.iter().any(Info::is_phone)) || d.found.iter().any(|f| f.transport == "iphone") {
                 return view! { {iphones} {waiting} {access} {error} }.into_any();
             }
-            let mut notes = vec!["No phone found. Plug one in by USB: an Android phone with debugging (adb) or File transfer mode (MTP), or an iPhone.".to_string()];
+            let mut notes =
+                vec!["No phone found. Plug one in by USB: an Android phone with debugging (adb) or File transfer mode (MTP), or an iPhone.".to_string()];
             if !d.adb_found {
                 notes.push(format!("adb isn't installed. {}", crate::os::adb_install()));
             }
@@ -311,7 +314,8 @@ pub(super) fn DeviceFinder() -> impl IntoView {
                 {waiting}
                 {access}
                 {error}
-            }.into_any();
+            }
+            .into_any();
         }
         // (name, adb, mtp) per row: one row per phone, by serial number.
         let mut rows: Vec<(String, Option<UsbDevice>, Option<UsbDevice>)> = vec![];

@@ -234,10 +234,10 @@ impl Ctx {
         let label = label.join(", ");
         if !query.is_empty() {
             self.searches.update(|v| {
-            v.retain(|q| *q != query);
-            v.insert(0, query.clone());
-            v.truncate(10);
-            store(SEARCHES_KEY, &serde_json::to_string(v).unwrap_or_default());
+                v.retain(|q| *q != query);
+                v.insert(0, query.clone());
+                v.truncate(10);
+                store(SEARCHES_KEY, &serde_json::to_string(v).unwrap_or_default());
             });
         }
         let (src, dir) = (p.src.get_untracked(), p.cwd.get_untracked());
@@ -456,13 +456,7 @@ impl Ctx {
             Some((src, path)) => (src, path, None),
             None => (p.src.get_untracked(), p.cwd.get_untracked(), p.selected.get_untracked()),
         };
-        let here = Tab {
-            src,
-            cwd,
-            selected,
-            view: p.view.get_untracked(),
-            root: p.root.get_untracked(),
-        };
+        let here = Tab { src, cwd, selected, view: p.view.get_untracked(), root: p.root.get_untracked() };
         let i = p.tab.get_untracked();
         p.tabs.update(|ts| {
             if let Some(t) = ts.get_mut(i) {

@@ -343,10 +343,7 @@ impl Session {
     }
 
     fn lost(&self) -> DevError {
-        DevError::Msg(format!(
-            "Lost the connection to the server. {}",
-            self.said.lock().unwrap_or_else(|e| e.into_inner()).lines().last().unwrap_or_default()
-        ))
+        DevError::Msg(format!("Lost the connection to the server. {}", self.said.lock().unwrap_or_else(|e| e.into_inner()).lines().last().unwrap_or_default()))
     }
 
     fn id(&mut self) -> u32 {
@@ -596,7 +593,14 @@ impl Sftp {
     }
 
     fn entry(path: &str, a: &Attrs) -> Entry {
-        Entry { name: basename(path).to_string(), path: path.to_string(), dir: a.is_dir(), size: if a.is_dir() { 0 } else { a.size }, mtime: a.mtime, hidden: false }
+        Entry {
+            name: basename(path).to_string(),
+            path: path.to_string(),
+            dir: a.is_dir(),
+            size: if a.is_dir() { 0 } else { a.size },
+            mtime: a.mtime,
+            hidden: false,
+        }
     }
 
     fn version_of(a: &Attrs) -> String {

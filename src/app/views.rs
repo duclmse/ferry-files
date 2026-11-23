@@ -78,9 +78,12 @@ pub(super) fn ListView(pane: Pane) -> impl IntoView {
     let tree = Memo::new(move |_| p.tree_on().then(|| p.tree_rows()));
     let len = Signal::derive(move || tree.with(|t| t.as_ref().map(Vec::len)).unwrap_or_else(|| p.entries.with(Vec::len)));
     let win = rows::Window::new(scroller, len, rows::Rows { h: 29.0, per: 1, top: 30.0 }, rows::list_rows, Signal::derive(move || Some(p.id)));
-    let gap = move |h: f64| (h > 0.0).then(|| view! {
+    let gap =
+        move |h: f64| {
+            (h > 0.0).then(|| view! {
         <tr class="gap" aria-hidden="true"><td colspan=move || (1 + p.list_cols.with(Vec::len)).to_string() style=format!("height: {h}px")></td></tr>
-    });
+    })
+        };
     view! {
         <div class="list" node_ref=scroller data-rows="" class:tree=move || tree.with(Option::is_some) class:drop=move || ctx.drop_at.get().as_deref() == Some(here.as_str())
             on:click=move |_| p.select_only(None) on:contextmenu=move |ev| ctx.show_menu(p, &ev, None)
@@ -280,7 +283,12 @@ pub(super) fn Thumbnail(src: Src, entry: Entry) -> impl IntoView {
         let id = near::watch(&el, move |on| {
             wait();
             if on {
-                if let Ok(h) = set_timeout_with_handle(move || { let _ = shown.try_set(true); }, THUMB_DELAY) {
+                if let Ok(h) = set_timeout_with_handle(
+                    move || {
+                        let _ = shown.try_set(true);
+                    },
+                    THUMB_DELAY,
+                ) {
                     soon.set_value(Some(h));
                 }
                 return;
@@ -385,10 +393,8 @@ pub(super) fn ColumnView(pane: Pane) -> impl IntoView {
     // A ZIP file picked in the last column: what's in it, as more columns.
     // Also any file the menu's Open as ZIP in columns (or the preview's Show as ZIP) was used on.
     let zip = Memo::new(move |_| {
-        p.selected_entry().filter(|e| {
-            super::preview::has_ext(e, super::preview::ZIP_EXTS)
-                || p.peek_as.with(|f| matches!(f, Some((path, PeekAs::Zip)) if *path == e.path))
-        })
+        p.selected_entry()
+            .filter(|e| super::preview::has_ext(e, super::preview::ZIP_EXTS) || p.peek_as.with(|f| matches!(f, Some((path, PeekAs::Zip)) if *path == e.path)))
     });
     let zip_open = RwSignal::new(Vec::<String>::new());
     // Show the newest column: scroll to the right end when the folder changes.
@@ -625,17 +631,23 @@ fn more_near_end(ctx: Ctx, p: Pane, scroller: NodeRef<html::Div>) {
 /// The row at the bottom of a folder listed a page at a time, while it has more: loads the next
 /// page when clicked (and when scrolled to).
 fn more_row(ctx: Ctx, p: Pane) -> impl IntoView {
-    move || p.more.get().then(|| view! {
-        <div class="more-row">
-            {move || if p.loading_more.get() {
-                view! { <span><span class="spin"></span>" Loading more…"</span> }.into_any()
-            } else {
-                view! {
-                    <span class="count">{move || format!("{} of {}", count(p.got.get_value() as u64), count(p.total.get()))}</span>
-                    <button on:click=move |ev| { ev.stop_propagation(); ctx.load_more(p) }>
-                        {format!("Load {} more", count(super::nav::PAGE as u64))}</button>
-                }.into_any()
-            }}
-        </div>
-    })
+    move || {
+        p.more.get().then(|| {
+            view! {
+                <div class="more-row">
+                    {move || if p.loading_more.get() {
+                        view! { <span><span class="spin"></span>" Loading more…"</span> }.into_any()
+                    } else {
+                        view! {
+                            <span class="count">{move ||
+                                format!("{} of {}", count(p.got.get_value() as u64), count(p.total.get()))
+                            }</span>
+                            <button on:click=move |ev| { ev.stop_propagation(); ctx.load_more(p) }>
+                                {format!("Load {} more", count(super::nav::PAGE as u64))}</button>
+                        }.into_any()
+                    }}
+                </div>
+            }
+        })
+    }
 }

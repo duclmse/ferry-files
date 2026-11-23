@@ -36,7 +36,13 @@ pub(super) fn Grip(
     let el = NodeRef::<html::Div>::new();
     let listeners = StoredValue::new_local(None::<(WindowListenerHandle, WindowListenerHandle)>);
     let key = StoredValue::new(key);
-    let save = move |v: &str| key.with_value(|k| if !k.is_empty() { store(k, v) });
+    let save = move |v: &str| {
+        key.with_value(|k| {
+            if !k.is_empty() {
+                store(k, v)
+            }
+        })
+    };
     let stop = move || {
         if let Some((a, b)) = listeners.try_update_value(Option::take).flatten() {
             a.remove();

@@ -30,11 +30,7 @@ impl PeekAs {
 }
 
 /// Under a file shown another way: back to how its type shows, or another way.
-fn peek_as_buttons(
-    now: PeekAs,
-    zip: bool,
-    set: impl Fn(Option<PeekAs>) + Clone + Send + Sync + 'static,
-) -> impl IntoView {
+fn peek_as_buttons(now: PeekAs, zip: bool, set: impl Fn(Option<PeekAs>) + Clone + Send + Sync + 'static) -> impl IntoView {
     view! {
         <div class="peek-as">
             <OpenAs now=now zip small=true pick=move |h| set(Some(h))/>
@@ -53,10 +49,7 @@ fn OpenAs(
 ) -> impl IntoView {
     // Where the list is, under the arrow; None while closed.
     let at = RwSignal::new(None::<(f64, f64)>);
-    let ways: Vec<PeekAs> = [PeekAs::Text, PeekAs::Hex, PeekAs::Image, PeekAs::Video]
-        .into_iter()
-        .chain(zip.then_some(PeekAs::Zip))
-        .collect();
+    let ways: Vec<PeekAs> = [PeekAs::Text, PeekAs::Hex, PeekAs::Image, PeekAs::Video].into_iter().chain(zip.then_some(PeekAs::Zip)).collect();
     let rows = ways.len();
     let wrap = NodeRef::<html::Span>::new();
     // Under the whole button, or over it when there's no room below; kept in the window.
@@ -69,16 +62,11 @@ fn OpenAs(
             return;
         };
         let r = el.get_bounding_client_rect();
-        let size =
-            |v: Result<wasm_bindgen::JsValue, _>| v.ok().and_then(|v| v.as_f64()).unwrap_or(800.0);
+        let size = |v: Result<wasm_bindgen::JsValue, _>| v.ok().and_then(|v| v.as_f64()).unwrap_or(800.0);
         let (vw, vh) = (size(window().inner_width()), size(window().inner_height()));
         let (w, h) = (140.0_f64.max(r.width()), rows as f64 * 26.0 + 12.0);
         let x = r.left().min(vw - w - 4.0).max(4.0);
-        let y = if r.bottom() + 4.0 + h <= vh - 4.0 {
-            r.bottom() + 4.0
-        } else {
-            (r.top() - 4.0 - h).max(4.0)
-        };
+        let y = if r.bottom() + 4.0 + h <= vh - 4.0 { r.bottom() + 4.0 } else { (r.top() - 4.0 - h).max(4.0) };
         at.set(Some((x, y)));
     };
     view! {
@@ -105,10 +93,7 @@ fn OpenAs(
 
 const PDF_EXTS: &[&str] = &["pdf"];
 const FONT_EXTS: &[&str] = &["ttf", "otf", "woff", "woff2"];
-pub(super) const ZIP_EXTS: &[&str] = &[
-    "zip", "apk", "jar", "cbz", "xapk", "ipa", "aar", "war", "whl", "vsix", "nupkg",
-];
-
+pub(super) const ZIP_EXTS: &[&str] = &["zip", "apk", "jar", "cbz", "xapk", "ipa", "aar", "war", "whl", "vsix", "nupkg"];
 
 /// Asks the built-in viewer for the pages only: no toolbar or side panes. Edge on Windows does as
 /// asked; WebKit (macOS, Linux) ignores it and keeps its own controls.
@@ -236,10 +221,7 @@ fn PdfView(pane: Pane, src: Src, entry: Entry, url: String, #[prop(optional)] in
             3 => format!("translateY({big_w}px) rotate(-90deg) "),
             _ => String::new(),
         };
-        (
-            format!("width: {box_w}px; height: {box_h}px"),
-            format!("width: {own_w}px; height: {own_h}px; transform: {turn}scale({z})"),
-        )
+        (format!("width: {box_w}px; height: {box_h}px"), format!("width: {own_w}px; height: {own_h}px; transform: {turn}scale({z})"))
     };
     let heading_list = move || match outline.get() {
         None => view! { <span class="hint">"Loading…"</span> }.into_any(),
@@ -390,13 +372,9 @@ fn EpubView(pane: Pane, src: Src, entry: Entry, line: AnyView) -> impl IntoView 
     };
     let chapter_list = move || {
         contents.with(|c| match c {
-            Some(Ok(c)) => c
-                .chapters
-                .iter()
-                .enumerate()
-                .map(|(k, ch)| view! { <option value=k.to_string()>{ch.label.clone()}</option> })
-                .collect_view()
-                .into_any(),
+            Some(Ok(c)) => {
+                c.chapters.iter().enumerate().map(|(k, ch)| view! { <option value=k.to_string()>{ch.label.clone()}</option> }).collect_view().into_any()
+            }
             _ => ().into_any(),
         })
     };
@@ -488,11 +466,7 @@ pub(super) fn has_ext(e: &Entry, exts: &[&str]) -> bool {
 /// `entry`: this file instead of the pane's selected item (the Editor view's preview tab), with
 /// no ‹ › (the files around it aren't the pane's); `src`, where it is, if not the pane's place.
 #[component]
-pub(super) fn Preview(
-    pane: Pane,
-    #[prop(optional)] entry: Option<Entry>,
-    #[prop(optional)] src: Option<Src>,
-) -> impl IntoView {
+pub(super) fn Preview(pane: Pane, #[prop(optional)] entry: Option<Entry>, #[prop(optional)] src: Option<Src>) -> impl IntoView {
     let src_of = src;
     let p = pane;
     let alone = entry.is_some();
@@ -506,16 +480,10 @@ pub(super) fn Preview(
             None => p.selected_entry(),
         };
         picked.map(|e| {
-            let forced = p
-                .peek_as
-                .with(|f| f.as_ref().filter(|(path, _)| *path == e.path).map(|f| f.1));
+            let forced = p.peek_as.with(|f| f.as_ref().filter(|(path, _)| *path == e.path).map(|f| f.1));
             // A file picked in this ZIP's columns.
             let src = p.src.get();
-            let inner = p.zip_pick.with(|z| {
-                z.as_ref()
-                    .filter(|z| z.0 == src && z.1 == e.path)
-                    .map(|z| (z.2.clone(), z.3, z.4))
-            });
+            let inner = p.zip_pick.with(|z| z.as_ref().filter(|z| z.0 == src && z.1 == e.path).map(|z| (z.2.clone(), z.3, z.4)));
             (e, forced, inner)
         })
     });
@@ -650,9 +618,7 @@ pub(super) fn step_media(p: Pane, e: &Entry, delta: isize) {
     let next = p.entries.with_untracked(|es| {
         let same: Vec<&Entry> = es.iter().filter(|x| media(x) == Some(m)).collect();
         let i = same.iter().position(|x| x.path == e.path)? as isize + delta;
-        (i >= 0)
-            .then(|| same.get(i as usize).map(|x| x.path.clone()))
-            .flatten()
+        (i >= 0).then(|| same.get(i as usize).map(|x| x.path.clone())).flatten()
     });
     if let Some(path) = next {
         p.select_only(Some(path));
@@ -691,11 +657,7 @@ fn BigCover(src: Src, entry: Entry) -> impl IntoView {
     let pic = NodeRef::<html::Div>::new();
     // The space the cover could take is the preview's, above the details.
     request_animation_frame(move || {
-        let Some(room) = pic
-            .try_get_untracked()
-            .flatten()
-            .and_then(|d| d.parent_element())
-        else {
+        let Some(room) = pic.try_get_untracked().flatten().and_then(|d| d.parent_element()) else {
             return;
         };
         let dpr = window().device_pixel_ratio().max(1.0);
@@ -704,12 +666,7 @@ fn BigCover(src: Src, entry: Entry) -> impl IntoView {
         }
     });
     let p = uri_part(&entry.path);
-    let url = crate::os::served(&format!(
-        "cover?src={}&p={p}&s={}&m={}",
-        src.key(),
-        entry.size,
-        entry.mtime
-    ));
+    let url = crate::os::served(&format!("cover?src={}&p={p}&s={}&m={}", src.key(), entry.size, entry.mtime));
     view! {
         <div class="pic" class:whole=loaded node_ref=pic>
             {let e = entry.clone(); move || (!loaded.get()).then(|| view! { <Thumbnail src entry=e.clone()/> })}
@@ -731,14 +688,7 @@ fn BigCover(src: Src, entry: Entry) -> impl IntoView {
 /// A big photo comes shrunk to about what the preview shows (`fit_url`), and the file itself
 /// replaces it when it's zoomed in. Sizes and zoom levels are always of the photo's own pixels.
 #[component]
-fn FullImage(
-    pane: Pane,
-    src: Src,
-    entry: Entry,
-    info: RwSignal<MediaInfo>,
-    turn: Turn,
-    #[prop(optional)] url: Option<String>,
-) -> impl IntoView {
+fn FullImage(pane: Pane, src: Src, entry: Entry, info: RwSignal<MediaInfo>, turn: Turn, #[prop(optional)] url: Option<String>) -> impl IntoView {
     let alone = url.is_some();
     let loaded = RwSignal::new(false);
     let natural = RwSignal::new((0u32, 0u32));
@@ -772,10 +722,7 @@ fn FullImage(
     let measure = move || {
         if let Some(img) = img_ref.try_get_untracked().flatten() {
             if img.natural_width() > 0 && img.offset_width() > 0 {
-                fit.set(
-                    img.offset_width() as f64
-                        / (img.natural_width() as f64 * per_px.get_untracked()),
-                );
+                fit.set(img.offset_width() as f64 / (img.natural_width() as f64 * per_px.get_untracked()));
             }
         }
     };
@@ -801,10 +748,7 @@ fn FullImage(
         }
     });
     let load = move |ev: web_sys::Event| {
-        if let Some(img) = ev
-            .target()
-            .and_then(|t| t.dyn_into::<web_sys::HtmlImageElement>().ok())
-        {
+        if let Some(img) = ev.target().and_then(|t| t.dyn_into::<web_sys::HtmlImageElement>().ok()) {
             let (w, h) = (img.natural_width(), img.natural_height());
             if shrunk.get_untracked() {
                 raw.set((w, h)); // The effect above works out the photo's size.
@@ -844,11 +788,7 @@ fn FullImage(
         let (x, y) = pan.get();
         let (w, h) = natural.get();
         let s = zoom.get() * turn_fit(turn.get(), w, h);
-        format!(
-            "transform: translate({x}px, {y}px) scale({s}) rotate({}deg){}",
-            turn.get() * 90,
-            turn.css()
-        )
+        format!("transform: translate({x}px, {y}px) scale({s}) rotate({}deg){}", turn.get() * 90, turn.css())
     };
     // Dragging a zoomed picture around.
     let listeners = StoredValue::new_local(None::<(WindowListenerHandle, WindowListenerHandle)>);
@@ -923,15 +863,7 @@ fn FullImage(
 /// the pane's media keys, and goes on from where the file was stopped last time.
 /// `alone`: no ‹ › (a file in a ZIP).
 #[component]
-fn Player(
-    pane: Pane,
-    entry: Entry,
-    url: String,
-    video: bool,
-    info: RwSignal<MediaInfo>,
-    turn: Turn,
-    #[prop(optional)] alone: bool,
-) -> impl IntoView {
+fn Player(pane: Pane, entry: Entry, url: String, video: bool, info: RwSignal<MediaInfo>, turn: Turn, #[prop(optional)] alone: bool) -> impl IntoView {
     let key = resume_key(&entry);
     let player = if video {
         let pop = Callback::new(|video: Popped| {
@@ -942,8 +874,7 @@ fn Player(
             });
         });
         let near = (!alone).then(|| (pane.src.get_untracked(), entry.path.clone()));
-        view! { <VideoPlayer url key title=entry.name.clone() info turn pane=pane.id pop near/> }
-            .into_any()
+        view! { <VideoPlayer url key title=entry.name.clone() info turn pane=pane.id pop near/> }.into_any()
     } else {
         view! { <SoundPlayer url key info pane=pane.id/> }.into_any()
     };
@@ -958,10 +889,7 @@ fn Player(
 fn FontSample(src: Src, entry: Entry) -> impl IntoView {
     // A name of its own for each preview, so a font shown earlier isn't reused.
     let family = format!("ferry-peek-{}", js_sys::Date::now() as u64);
-    let css = format!(
-        "@font-face {{ font-family: \"{family}\"; src: url(\"{}\"); }}",
-        stream_url(src, &entry)
-    );
+    let css = format!("@font-face {{ font-family: \"{family}\"; src: url(\"{}\"); }}", stream_url(src, &entry));
     let face = format!("font-family: \"{family}\", system-ui");
     view! {
         <style>{css}</style>
@@ -997,10 +925,7 @@ fn zip_tree(items: &[Packed]) -> Vec<ZipRow> {
         size: u64,
         kids: std::collections::BTreeMap<String, Node>,
     }
-    let mut top = Node {
-        dir: true,
-        ..Default::default()
-    };
+    let mut top = Node { dir: true, ..Default::default() };
     for i in items {
         let parts: Vec<&str> = i.name.split('/').filter(|s| !s.is_empty()).collect();
         let Some((last, dirs)) = parts.split_last() else {
@@ -1029,13 +954,7 @@ fn zip_tree(items: &[Packed]) -> Vec<ZipRow> {
         kids.sort_by_key(|(name, k)| (!k.dir, name.to_lowercase()));
         for (name, k) in kids {
             let path = format!("{prefix}{name}{}", if k.dir { "/" } else { "" });
-            out.push(ZipRow {
-                path: path.clone(),
-                name: name.clone(),
-                depth,
-                dir: k.dir,
-                size: k.size,
-            });
+            out.push(ZipRow { path: path.clone(), name: name.clone(), depth, dir: k.dir, size: k.size });
             if k.dir {
                 walk(k, &path, depth + 1, out);
             }
@@ -1138,10 +1057,7 @@ struct Piece {
 impl Piece {
     /// Where the piece after this one starts counting lines.
     fn next_line(&self) -> (usize, bool) {
-        (
-            self.line + self.text.matches('\n').count(),
-            !self.text.is_empty() && !self.text.ends_with('\n'),
-        )
+        (self.line + self.text.matches('\n').count(), !self.text.is_empty() && !self.text.ends_with('\n'))
     }
 }
 
@@ -1199,11 +1115,7 @@ fn segment_view(class: &'static str, s: &str) -> AnyView {
 fn piece_text(p: &Piece, lines: bool) -> AnyView {
     let segs = segments(p);
     if !lines {
-        return segs
-            .into_iter()
-            .map(|(c, s)| segment_view(c, s))
-            .collect_view()
-            .into_any();
+        return segs.into_iter().map(|(c, s)| segment_view(c, s)).collect_view().into_any();
     }
     let mut out = vec![];
     let mut line = vec![];
@@ -1224,11 +1136,7 @@ fn piece_text(p: &Piece, lines: bool) -> AnyView {
     out.into_iter()
         .enumerate()
         .map(|(k, segs)| {
-            let n = if k == 0 && p.cont {
-                String::new()
-            } else {
-                (p.line + k).to_string()
-            };
+            let n = if k == 0 && p.cont { String::new() } else { (p.line + k).to_string() };
             view! { <span class="ln" data-n=n>{segs.collect_view()}</span> }
         })
         .collect_view()
@@ -1274,10 +1182,7 @@ where
     };
     fetch(0);
     let scrolled = move |ev: web_sys::Event| {
-        let Some(el) = ev
-            .target()
-            .and_then(|t| t.dyn_into::<web_sys::Element>().ok())
-        else {
+        let Some(el) = ev.target().and_then(|t| t.dyn_into::<web_sys::Element>().ok()) else {
             return;
         };
         let left = el.scroll_height() - el.scroll_top() - el.client_height();
@@ -1332,17 +1237,10 @@ fn piece_view(
     cap: u64,
 ) -> impl IntoView {
     let ctx = expect_context::<Ctx>();
-    let empty = move || {
-        pieces.with(|v| v.len() == 1 && v[0].text.trim().is_empty()) && next.get().is_none()
-    };
+    let empty = move || pieces.with(|v| v.len() == 1 && v[0].text.trim().is_empty()) && next.get().is_none();
     let stopped = move || pieces.with(|v| v.iter().any(|p| p.stopped));
     // Room for the longest line number so far.
-    let digits = move || {
-        pieces.with(|v| {
-            v.last()
-                .map_or(1, |p| p.next_line().0.max(1).to_string().len())
-        })
-    };
+    let digits = move || pieces.with(|v| v.last().map_or(1, |p| p.next_line().0.max(1).to_string().len()));
     let (wrap, numbers) = (ctx.wrap_text, ctx.line_numbers);
     view! {
         <div class="peek">
@@ -1395,36 +1293,11 @@ const UNPACK_MAX: u64 = 64 * 1024 * 1024;
 fn Zipped(pane: Pane, src: Src, zip: Entry, name: String, size: u64, stored: bool) -> impl IntoView {
     let p = pane;
     let short = name.rsplit('/').next().unwrap_or(&name).to_string();
-    let e = Entry {
-        name: short.clone(),
-        path: name.clone(),
-        dir: false,
-        size,
-        mtime: 0,
-        hidden: false,
-    };
-    let url = crate::os::served(&format!(
-        "zipped?src={}&p={}&s={}&m={}&e={}",
-        src.key(),
-        uri_part(&zip.path),
-        zip.size,
-        zip.mtime,
-        uri_part(&name),
-    ));
+    let e = Entry { name: short.clone(), path: name.clone(), dir: false, size, mtime: 0, hidden: false };
+    let url = crate::os::served(&format!("zipped?src={}&p={}&s={}&m={}&e={}", src.key(), uri_part(&zip.path), zip.size, zip.mtime, uri_part(&name),));
     // An EPUB in the ZIP shows its cover.
-    let cover = crate::os::served(&format!(
-        "cover?src={}&p={}&s={}&m={}&e={}",
-        src.key(),
-        uri_part(&zip.path),
-        zip.size,
-        zip.mtime,
-        uri_part(&name),
-    ));
-    let inner = Inner {
-        name: name.clone(),
-        zip_path: zip.path.clone(),
-        zip_size: zip.size,
-    };
+    let cover = crate::os::served(&format!("cover?src={}&p={}&s={}&m={}&e={}", src.key(), uri_part(&zip.path), zip.size, zip.mtime, uri_part(&name),));
+    let inner = Inner { name: name.clone(), zip_path: zip.path.clone(), zip_size: zip.size };
     let (pic_turn, video_turn) = (Turn::new(), Turn::new());
     let info = RwSignal::new(MediaInfo::default());
     let forced = RwSignal::new(None::<PeekAs>);
@@ -1433,37 +1306,19 @@ fn Zipped(pane: Pane, src: Src, zip: Entry, name: String, size: u64, stored: boo
     let body = move || {
         let (e, url, inner, cover) = (e.clone(), url.clone(), inner.clone(), cover.clone());
         if size > UNPACK_MAX && !stored {
-            return view! { <span class="hint">"Too big to show from inside the ZIP."</span> }
-                .into_any();
+            return view! { <span class="hint">"Too big to show from inside the ZIP."</span> }.into_any();
         }
         match (forced.get(), media(&e)) {
             (Some(PeekAs::Text), _) => view! { <TextPeek src entry=e inner/> }.into_any(),
             (Some(PeekAs::Hex), _) => view! { <HexPeek src entry=e inner/> }.into_any(),
-            (Some(PeekAs::Image), _) => {
-                view! { <FullImage pane=p src entry=e info turn=pic_turn url/> }.into_any()
-            }
-            (Some(PeekAs::Video), _) => {
-                view! { <Player pane=p entry=e url video=true info turn=video_turn alone=true/> }
-                    .into_any()
-            }
+            (Some(PeekAs::Image), _) => view! { <FullImage pane=p src entry=e info turn=pic_turn url/> }.into_any(),
+            (Some(PeekAs::Video), _) => view! { <Player pane=p entry=e url video=true info turn=video_turn alone=true/> }.into_any(),
             // A ZIP in a ZIP isn't listed.
-            (Some(PeekAs::Zip), _) => {
-                view! { <span class="hint">"Not shown from inside a ZIP."</span> }.into_any()
-            }
-            (None, Some(Media::Image)) => {
-                view! { <FullImage pane=p src entry=e info turn=pic_turn url/> }.into_any()
-            }
-            (None, Some(Media::Video)) => {
-                view! { <Player pane=p entry=e url video=true info turn=video_turn alone=true/> }
-                    .into_any()
-            }
-            (None, Some(Media::Audio)) => {
-                view! { <Player pane=p entry=e url video=false info turn=video_turn alone=true/> }
-                    .into_any()
-            }
-            _ if has_ext(&e, PDF_EXTS) => {
-                view! { <PdfView pane=p src entry=e url inner/> }.into_any()
-            }
+            (Some(PeekAs::Zip), _) => view! { <span class="hint">"Not shown from inside a ZIP."</span> }.into_any(),
+            (None, Some(Media::Image)) => view! { <FullImage pane=p src entry=e info turn=pic_turn url/> }.into_any(),
+            (None, Some(Media::Video)) => view! { <Player pane=p entry=e url video=true info turn=video_turn alone=true/> }.into_any(),
+            (None, Some(Media::Audio)) => view! { <Player pane=p entry=e url video=false info turn=video_turn alone=true/> }.into_any(),
+            _ if has_ext(&e, PDF_EXTS) => view! { <PdfView pane=p src entry=e url inner/> }.into_any(),
             _ if has_ext(&e, &["epub"]) => view! { <ZippedCover url=cover/> }.into_any(),
             _ if is_text(&e) => view! { <TextPeek src entry=e inner/> }.into_any(),
             _ => view! {
@@ -1518,15 +1373,7 @@ fn TextPeek(src: Src, entry: Entry, #[prop(optional)] inner: Option<Inner>) -> i
         let get = move |start: u64| async move {
             let path = path.try_get_value().unwrap_or_default();
             let p = call::<Peek>("peek_text", json!({ "src": src.key(), "path": path, "start": start, "inner": inner.try_get_value().flatten().map(|i| i.name), "zip_size": inner.try_get_value().flatten().map(|i| i.zip_size), "colour": colour })).await?;
-            Ok((
-                Piece {
-                    text: p.text,
-                    runs: p.runs,
-                    stopped: p.colours_stopped,
-                    ..Piece::default()
-                },
-                p.next,
-            ))
+            Ok((Piece { text: p.text, runs: p.runs, stopped: p.colours_stopped, ..Piece::default() }, p.next))
         };
         pieces(get, TEXT_CAP)
     }
@@ -1614,7 +1461,8 @@ fn HexPeek(src: Src, entry: Entry, #[prop(optional)] inner: Option<Inner>) -> im
             let start = k * CHUNK;
             let path = path.try_get_value().unwrap_or_default();
             let i = inner.try_get_value().flatten();
-            let args = json!({ "src": src.key(), "path": path, "start": start, "inner": i.as_ref().map(|i| i.name.clone()), "zip_size": i.map(|i| i.zip_size) });
+            let args =
+                json!({ "src": src.key(), "path": path, "start": start, "inner": i.as_ref().map(|i| i.name.clone()), "zip_size": i.map(|i| i.zip_size) });
             // The preview may show something else by now: then these are gone and nothing is set.
             match call::<Bytes>("peek_bytes", args).await {
                 Ok(b) => {
@@ -1819,13 +1667,7 @@ fn hex_lines(start: u64, bytes: &[u8], width: usize) -> String {
             }
         }
         out.push(' ');
-        out.extend(row.iter().map(|&b| {
-            if b.is_ascii_graphic() || b == b' ' {
-                b as char
-            } else {
-                '.'
-            }
-        }));
+        out.extend(row.iter().map(|&b| if b.is_ascii_graphic() || b == b' ' { b as char } else { '.' }));
         out.push('\n');
     }
     out
@@ -1868,26 +1710,13 @@ mod tests {
     }
 
     fn packed(name: &str, size: u64) -> Packed {
-        Packed {
-            name: name.into(),
-            size,
-            dir: name.ends_with('/'),
-            stored: false,
-        }
+        Packed { name: name.into(), size, dir: name.ends_with('/'), stored: false }
     }
 
     #[test]
     fn zip_tree_nests_and_sorts() {
-        let items = [
-            packed("b.txt", 1),
-            packed("a/z.txt", 2),
-            packed("a/c/d.txt", 3),
-            packed("A2/", 0),
-        ];
-        let rows: Vec<(String, usize, bool, u64)> = zip_tree(&items)
-            .into_iter()
-            .map(|r| (r.path, r.depth, r.dir, r.size))
-            .collect();
+        let items = [packed("b.txt", 1), packed("a/z.txt", 2), packed("a/c/d.txt", 3), packed("A2/", 0)];
+        let rows: Vec<(String, usize, bool, u64)> = zip_tree(&items).into_iter().map(|r| (r.path, r.depth, r.dir, r.size)).collect();
         assert_eq!(
             rows,
             [

@@ -232,7 +232,13 @@ pub(super) async fn rename_all(src: Src, items: Vec<(String, String)>) -> (Vec<(
 
 /// New names for `items` with what `find` matches (any case; a regular expression with `pattern`,
 /// where `replace` may use $1…) replaced, as (item, new name, what's wrong with it).
-pub(super) fn replace_plan(items: &[Entry], find: &str, replace: &str, pattern: bool, taken: &HashMap<String, HashSet<String>>) -> Result<Vec<(Entry, String, Option<String>)>, String> {
+pub(super) fn replace_plan(
+    items: &[Entry],
+    find: &str,
+    replace: &str,
+    pattern: bool,
+    taken: &HashMap<String, HashSet<String>>,
+) -> Result<Vec<(Entry, String, Option<String>)>, String> {
     let r = Rule { find: find.into(), replace: replace.into(), pattern, template: "{name}".into(), start: 1, ..Default::default() };
     Ok(plan(items, &r, taken)?.into_iter().map(|x| (x.entry, x.new, x.problem)).collect())
 }
@@ -330,14 +336,18 @@ pub(super) fn BatchRename(pane: usize, items: Vec<Entry>) -> impl IntoView {
         let r = rule.get();
         taken.with(|t| t.as_ref().map(|t| items.with_value(|v| plan(v, &r, t))))
     });
-    let changes = move || rows.with(|r| match r {
-        Some(Ok(rows)) => rows.iter().filter(|x| x.new != x.entry.name).count(),
-        _ => 0,
-    });
-    let problems = move || rows.with(|r| match r {
-        Some(Ok(rows)) => rows.iter().filter(|x| x.problem.is_some()).count(),
-        _ => 0,
-    });
+    let changes = move || {
+        rows.with(|r| match r {
+            Some(Ok(rows)) => rows.iter().filter(|x| x.new != x.entry.name).count(),
+            _ => 0,
+        })
+    };
+    let problems = move || {
+        rows.with(|r| match r {
+            Some(Ok(rows)) => rows.iter().filter(|x| x.problem.is_some()).count(),
+            _ => 0,
+        })
+    };
 
     // Something to rename, and nothing wrong.
     let ready = move || changes() != 0 && problems() == 0;

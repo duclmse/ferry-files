@@ -70,13 +70,7 @@ fn split<K: std::hash::Hash + Eq>(groups: Vec<Vec<(usize, Entry)>>, mut key: imp
     out
 }
 
-pub(super) fn find_dupes(
-    devs: &[(Arc<Device>, String)],
-    hidden: bool,
-    min_size: u64,
-    stop: &std::sync::atomic::AtomicBool,
-    emit: impl Fn(String),
-) -> Dupes {
+pub(super) fn find_dupes(devs: &[(Arc<Device>, String)], hidden: bool, min_size: u64, stop: &std::sync::atomic::AtomicBool, emit: impl Fn(String)) -> Dupes {
     let mut report = Dupes { complete: true, ..Default::default() };
     // Every file, by size.
     let mut by_size: HashMap<u64, Vec<(usize, Entry)>> = HashMap::new();
@@ -144,7 +138,14 @@ pub(super) fn find_dupes(
 /// Finds files with the same content under the `folders` (source, folder) given. Stopped by
 /// `cancel_transfer` with the same `job`; progress goes out as the "dupes" event.
 #[tauri::command(rename_all = "snake_case")]
-pub(super) async fn duplicates(app: AppHandle, state: State<'_, AppState>, job: u32, folders: Vec<(String, String)>, hidden: bool, min_size: u64) -> Result<Dupes, String> {
+pub(super) async fn duplicates(
+    app: AppHandle,
+    state: State<'_, AppState>,
+    job: u32,
+    folders: Vec<(String, String)>,
+    hidden: bool,
+    min_size: u64,
+) -> Result<Dupes, String> {
     use tauri::Emitter;
     let mut devs = vec![];
     for (src, dir) in folders {

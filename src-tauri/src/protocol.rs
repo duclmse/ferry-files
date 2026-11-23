@@ -9,10 +9,10 @@
 //!       a file itself, for the preview's image, video and audio. Honours Range, and reads only the
 //!       part asked for, so a video starts and seeks without copying the file to the Mac.
 
+use crate::thumbs::{self, Thumb};
 use percent_encoding::{percent_decode_str, utf8_percent_encode, AsciiSet, NON_ALPHANUMERIC};
 use tauri::http::{Request, Response, StatusCode};
 use tauri::AppHandle;
-use crate::thumbs::{self, Thumb};
 
 /// Keep these unescaped in path segments; everything else is percent-encoded.
 const SEGMENT: &AsciiSet = &NON_ALPHANUMERIC.remove(b'-').remove(b'_').remove(b'.').remove(b'~');

@@ -1,0 +1,33 @@
+#!/usr/bin/env bash
+# Formats the Rust files being committed with rustfmt (rustfmt.toml), and stages the result.
+# Turn it on once per clone:  git config core.hooksPath .githooks
+#
+# Each file is formatted on its own, through stdin: rustfmt given a path would also format the
+# modules it declares, files that may not be part of this commit. A file with changes that
+# aren't staged is only checked: formatting and re-staging it would commit those changes too.
+
+command -v rustfmt >/dev/null 2>&1 || { echo "pre-commit: rustfmt isn't installed (rustup component add rustfmt)." >&2; exit 1; }
+
+root=$(git rev-parse --show-toplevel) || exit 1
+cd "$root" || exit 1
+config="$root/rustfmt.toml"
+status=0
+tmp=$(mktemp) || exit 1
+trap 'rm -f "$tmp"' EXIT
+
+git diff --cached --name-only --diff-filter=ACMR -z -- '*.rs' | while IFS= read -r -d '' f; do
+    if ! rustfmt --config-path "$config" --emit stdout < "$f" > "$tmp"; then
+        echo "pre-commit: rustfmt couldn't read $f; fix it, or commit with --no-verify." >&2
+        exit 1
+    fi
+    cmp -s "$tmp" "$f" && continue
+    if git diff --quiet -- "$f"; then
+        cat "$tmp" > "$f" && git add -- "$f" && echo "pre-commit: formatted $f"
+    else
+        echo "pre-commit: $f needs formatting, but has changes that aren't staged." >&2
+        echo "  Stage the whole file (or stash the rest) and commit again." >&2
+        exit 1
+    fi
+done || status=1
+
+exit $status

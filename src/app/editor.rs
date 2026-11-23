@@ -183,7 +183,8 @@ impl Ctx {
     pub(super) fn show_doc(self, p: Pane, i: usize) {
         p.peek_on.set(false);
         let n = p.docs.with_untracked(Vec::len);
-        let here = i == p.doc_at.get_untracked() && (p.doc.with_untracked(Option::is_some) || p.docs.with_untracked(|ds| matches!(ds.get(i), Some(Doc::File { .. }))));
+        let here =
+            i == p.doc_at.get_untracked() && (p.doc.with_untracked(Option::is_some) || p.docs.with_untracked(|ds| matches!(ds.get(i), Some(Doc::File { .. }))));
         if here || i >= n {
             return;
         }
@@ -318,8 +319,23 @@ const MARGIN: usize = 60;
 
 /// The class of each kind of run (`highlight::Kind` in the backend), as the preview's.
 const TOKEN_CLASSES: [&str; 17] = [
-    "", "tok-comment", "tok-string", "tok-number", "tok-keyword", "tok-type", "tok-function", "tok-tag", "tok-attr", "tok-heading",
-    "tok-link", "tok-url", "tok-bold", "tok-italic", "tok-quote", "tok-list", "tok-code",
+    "",
+    "tok-comment",
+    "tok-string",
+    "tok-number",
+    "tok-keyword",
+    "tok-type",
+    "tok-function",
+    "tok-tag",
+    "tok-attr",
+    "tok-heading",
+    "tok-link",
+    "tok-url",
+    "tok-bold",
+    "tok-italic",
+    "tok-quote",
+    "tok-list",
+    "tok-code",
 ];
 
 /// The runs over `from..to` of text the `runs` cover.
@@ -544,16 +560,17 @@ fn utf16_at(t: &str, b: usize) -> u32 {
 
 /// What one indent is in `t`: a tab if lines start with tabs, else four spaces.
 fn indent_unit(t: &str) -> &'static str {
-    if t.lines().take(2000).any(|l| l.starts_with('\t')) { "\t" } else { "    " }
+    if t.lines().take(2000).any(|l| l.starts_with('\t')) {
+        "\t"
+    } else {
+        "    "
+    }
 }
 
 /// Types `s` into the box where the selection is, as typing would (so ⌘Z undoes it).
 fn type_text(el: &web_sys::HtmlTextAreaElement, s: &str) {
-    let typed = document()
-        .dyn_into::<web_sys::HtmlDocument>()
-        .ok()
-        .and_then(|d| d.exec_command_with_show_ui_and_value("insertText", false, s).ok())
-        .unwrap_or(false);
+    let typed =
+        document().dyn_into::<web_sys::HtmlDocument>().ok().and_then(|d| d.exec_command_with_show_ui_and_value("insertText", false, s).ok()).unwrap_or(false);
     if !typed {
         let v = el.value();
         let (a, b) = (el.selection_start().ok().flatten().unwrap_or(0), el.selection_end().ok().flatten().unwrap_or(0));
@@ -661,7 +678,8 @@ pub(super) fn TextEditor(file: Slot) -> impl IntoView {
     };
     let draw_at = move |rich: Range<usize>| {
         let Some(l) = layer.get_untracked() else { return };
-        let html = slot.text.with_untracked(|t| runs.with_value(|r| hits.with_untracked(|h| code_html(t, r.as_deref(), h, shown.get_untracked(), rich.clone()))));
+        let html =
+            slot.text.with_untracked(|t| runs.with_value(|r| hits.with_untracked(|h| code_html(t, r.as_deref(), h, shown.get_untracked(), rich.clone()))));
         l.set_inner_html(&html);
         starts.set_value(slot.text.with_untracked(|t| utf16_starts(t)));
         painted.set_value(rich);
@@ -865,7 +883,8 @@ pub(super) fn TextEditor(file: Slot) -> impl IntoView {
             step(false);
             return;
         };
-        let w = slot.text.with_untracked(|t| find::replacement_at(t, &query.get_untracked(), opts.get_untracked(), &with.get_untracked(), keep.get_untracked(), a));
+        let w =
+            slot.text.with_untracked(|t| find::replacement_at(t, &query.get_untracked(), opts.get_untracked(), &with.get_untracked(), keep.get_untracked(), a));
         let Some(w) = w else { return };
         let (ua, ub) = slot.text.with_untracked(|t| (utf16_at(t, a), utf16_at(t, b)));
         // Typed into the text (focused, so it goes there), so ⌘Z undoes it; its input event finds
@@ -1015,7 +1034,11 @@ pub(super) fn TextEditor(file: Slot) -> impl IntoView {
     let replace_keys = move |ev: web_sys::KeyboardEvent| match ev.key().as_str() {
         "Enter" => {
             ev.prevent_default();
-            if ev.meta_key() || ev.ctrl_key() { replace_every() } else { replace_one() }
+            if ev.meta_key() || ev.ctrl_key() {
+                replace_every()
+            } else {
+                replace_one()
+            }
         }
         "Escape" => {
             ev.prevent_default();
@@ -1042,16 +1065,24 @@ pub(super) fn TextEditor(file: Slot) -> impl IntoView {
         refind();
         draw();
     };
-    let opt_btn = move |label: &'static str, keys: &'static str, on: fn(find::FindOpts) -> bool, flip: fn(&mut find::FindOpts), glyph: &'static str, class: &'static str| view! {
-        <button class="filter-opt" class:on=move || on(opts.get()) aria-pressed=move || on(opts.get()).to_string()
-            title=crate::os::keys(keys).to_string() aria-label=label
-            on:mousedown=|ev: web_sys::MouseEvent| ev.prevent_default() on:click=move |_| opt(flip)>
-            <span class=class>{glyph}</span>
-        </button>
+    let opt_btn = move |label: &'static str,
+                        keys: &'static str,
+                        on: fn(find::FindOpts) -> bool,
+                        flip: fn(&mut find::FindOpts),
+                        glyph: &'static str,
+                        class: &'static str| {
+        view! {
+            <button class="filter-opt" class:on=move || on(opts.get()) aria-pressed=move || on(opts.get()).to_string()
+                title=crate::os::keys(keys).to_string() aria-label=label
+                on:mousedown=|ev: web_sys::MouseEvent| ev.prevent_default() on:click=move |_| opt(flip)>
+                <span class=class>{glyph}</span>
+            </button>
+        }
     };
     // Shown on request (⌘F, or the Find button): the find box and its counts, and Replace with
     // under it (⌥⌘F, or the chevron).
-    let find_bar = move || finding.get().then(|| view! {
+    let find_bar = move || {
+        finding.get().then(|| view! {
         <div class="find-bar" class:replacing=move || replacing.get() on:keydown=keys>
             <button class="btn icon-only chevron" class:open=move || replacing.get() aria-expanded=move || replacing.get().to_string()
                 title=move || if replacing.get() { "Hide Replace with".to_string() } else { crate::os::keys("Replace (⌥⌘F)").to_string() } aria-label="Replace"
@@ -1101,7 +1132,8 @@ pub(super) fn TextEditor(file: Slot) -> impl IntoView {
                 </div>
             })}
         </div>
-    });
+    })
+    };
     let head = match slot.pane {
         // The Editor view: its tabs have the Find button.
         Some(_) => ().into_any(),

@@ -3,14 +3,8 @@
 use super::*;
 
 /// The sidebar's sections, top to bottom: (key, title). The computer's title is its name.
-pub(super) const SECTIONS: [(&str, &str); 6] = [
-    ("workspaces", "Workspaces"),
-    ("favs", "Favourites"),
-    ("mac", ""),
-    ("pairs", "Sync pairs"),
-    ("devices", "Devices"),
-    ("servers", "Servers"),
-];
+pub(super) const SECTIONS: [(&str, &str); 6] =
+    [("workspaces", "Workspaces"), ("favs", "Favourites"), ("mac", ""), ("pairs", "Sync pairs"), ("devices", "Devices"), ("servers", "Servers")];
 
 /// The sections in the order chosen (`stored`, keys of `SECTIONS`), then any it doesn't name.
 pub(super) fn section_order(stored: &[String]) -> Vec<&'static str> {
@@ -61,8 +55,8 @@ impl Reorder {
                 return;
             }
             // Not from the buttons and boxes in a heading or row.
-            let skip = ev.target().and_then(|t| t.dyn_into::<web_sys::Element>().ok())
-                .is_some_and(|e| e.closest("[data-no-grip], input").ok().flatten().is_some());
+            let skip =
+                ev.target().and_then(|t| t.dyn_into::<web_sys::Element>().ok()).is_some_and(|e| e.closest("[data-no-grip], input").ok().flatten().is_some());
             if !skip {
                 self.pressed.set_value(Some((key, ev.client_x() as f64, ev.client_y() as f64)));
             }
@@ -105,7 +99,12 @@ impl Reorder {
         self.dragging.set(None);
         self.over.set(None);
         self.just_moved.set_value(true);
-        let _ = set_timeout_with_handle(move || { let _ = self.just_moved.try_set_value(false); }, std::time::Duration::from_millis(50));
+        let _ = set_timeout_with_handle(
+            move || {
+                let _ = self.just_moved.try_set_value(false);
+            },
+            std::time::Duration::from_millis(50),
+        );
     }
 
     /// True right after a drag, for click handlers to ignore the release.
@@ -163,23 +162,27 @@ pub(super) fn Sidebar() -> impl IntoView {
     // Naming a workspace to save: None when not asked.
     let ws_name = RwSignal::new(None::<String>);
     let (mac_heading, mac_open) = section("mac", crate::os::computer(), None);
-    let dev_buttons = ViewFn::from(move || view! {
-        <button class="refresh" title="Connect a phone over Wi-Fi (adb Wireless debugging)" aria-label="Connect over Wi-Fi"
-            on:click=move |_| ctx.wifi.set(true)>{ico(Icon::Wifi)}</button>
-        <button class="refresh" class:turning=move || ctx.looking.get()
-            title="Look for devices and disks again" aria-label="Look for devices again"
-            on:click=move |_| ctx.refresh_devices()>
-            <svg viewBox="0 0 16 16" aria-hidden="true"><path d="M13 8a5 5 0 1 1-1.5-3.6"/><path d="M13 2.5v3h-3"/></svg>
-        </button>
+    let dev_buttons = ViewFn::from(move || {
+        view! {
+            <button class="refresh" title="Connect a phone over Wi-Fi (adb Wireless debugging)" aria-label="Connect over Wi-Fi"
+                on:click=move |_| ctx.wifi.set(true)>{ico(Icon::Wifi)}</button>
+            <button class="refresh" class:turning=move || ctx.looking.get()
+                title="Look for devices and disks again" aria-label="Look for devices again"
+                on:click=move |_| ctx.refresh_devices()>
+                <svg viewBox="0 0 16 16" aria-hidden="true"><path d="M13 8a5 5 0 1 1-1.5-3.6"/><path d="M13 2.5v3h-3"/></svg>
+            </button>
+        }
     });
     let (dev_heading, dev_open) = section("devices", "Devices", Some(dev_buttons));
     let open_conns = move || {
         ctx.settings_tab.set("connections");
         ctx.settings.set(true);
     };
-    let srv_buttons = ViewFn::from(move || view! {
-        <button class="refresh" title="Add a server: SFTP, SMB share or Everything" aria-label="Add a server"
-            on:click=move |_| open_conns()>{ico(Icon::Plus)}</button>
+    let srv_buttons = ViewFn::from(move || {
+        view! {
+            <button class="refresh" title="Add a server: SFTP, SMB share or Everything" aria-label="Add a server"
+                on:click=move |_| open_conns()>{ico(Icon::Plus)}</button>
+        }
     });
     let (srv_heading, srv_open) = section("servers", "Servers", Some(srv_buttons));
     // A section hidden with a right-click shows nothing, not even its title.
@@ -268,7 +271,8 @@ pub(super) fn Sidebar() -> impl IntoView {
         }
     };
     // The sections, in the order chosen in Settings > Sidebar.
-    let sec_workspaces = move || shown("workspaces").then(|| view! {
+    let sec_workspaces = move || {
+        shown("workspaces").then(|| view! {
         {ws_heading()}
         {move || ws_open.get().then(|| view! {
             {move || ctx.workspaces.get().into_iter().map(|w| {
@@ -318,8 +322,10 @@ pub(super) fn Sidebar() -> impl IntoView {
                 }
             }}
         })}
-    });
-    let sec_favs = move || (shown("favs") && !ctx.favs.with(|f| f.is_empty())).then(|| view! {
+    })
+    };
+    let sec_favs = move || {
+        (shown("favs") && !ctx.favs.with(|f| f.is_empty())).then(|| view! {
             {fav_heading()}
             {move || fav_open.get().then(|| ctx.favs.get().into_iter().map(|f| {
                 let src = ctx.fav_src(&f);
@@ -349,8 +355,10 @@ pub(super) fn Sidebar() -> impl IntoView {
                     }.into_any(),
                 }
             }).collect_view())}
-    });
-    let sec_pairs = move || (shown("pairs") && !ctx.sync_pairs.with(|x| x.is_empty())).then(|| view! {
+    })
+    };
+    let sec_pairs = move || {
+        (shown("pairs") && !ctx.sync_pairs.with(|x| x.is_empty())).then(|| view! {
             {pairs_heading()}
             {move || pairs_open.get().then(|| ctx.sync_pairs.get().into_iter().map(|pair| {
                 let how = SYNC_MODES.iter().find(|m| m.0 == pair.mode).map_or("Copy missing", |m| m.1);
@@ -367,7 +375,8 @@ pub(super) fn Sidebar() -> impl IntoView {
                     </div>
                 }
             }).collect_view())}
-    });
+    })
+    };
     // A mounted network share: a folder on the computer, with a button to disconnect it.
     let mounted = move |name: String, path: String| {
         let (tip, at, n) = (format!("Disconnect {name}"), path.clone(), name.clone());
@@ -395,13 +404,16 @@ pub(super) fn Sidebar() -> impl IntoView {
             </div>
         }
     };
-    let add_row = move |tip: &'static str| view! {
-        <div class="tree-row" style="--depth: 1">
-            <span class="twisty none"></span>
-            <button class="item add" title=tip on:click=move |_| open_conns()>"Add a server…"</button>
-        </div>
+    let add_row = move |tip: &'static str| {
+        view! {
+            <div class="tree-row" style="--depth: 1">
+                <span class="twisty none"></span>
+                <button class="item add" title=tip on:click=move |_| open_conns()>"Add a server…"</button>
+            </div>
+        }
     };
-    let sec_servers = move || shown("servers").then(|| view! {
+    let sec_servers = move || {
+        shown("servers").then(|| view! {
         {srv_heading()}
         {move || srv_open.get().then(|| view! {
             {move || ctx.conns_of(servers::ConnKind::Sftp).into_iter().map(|c| match ctx.conn_src(&c).and_then(|s| ctx.src_info(s)) {
@@ -426,29 +438,38 @@ pub(super) fn Sidebar() -> impl IntoView {
             {move || (ctx.conns.with(Vec::is_empty) && ctx.smb_mounts.with(Vec::is_empty))
                 .then(|| add_row("Add an SFTP, WebDAV or FTP server, an SMB share (Windows sharing, NAS), an NFS export, an S3 bucket or a Windows computer running Everything"))}
         })}
-    });
-    let sec_mac = move || shown("mac").then(|| view! {
-        {mac_heading()}
-        {move || mac_open.get().then(|| view! {
-            {ctx.mac.get().map(|i| i.quick_dirs).unwrap_or_default().into_iter()
-                .map(|(name, path)| view! { <TreeNode src=Src::Mac name path depth=1/> }).collect_view()}
-            {drives.get().into_iter().map(|(name, path)| {
-                let (tip, at) = (format!("Eject {name}"), path.clone());
-                let eject = ViewFn::from(move || {
-                    let (tip, at) = (tip.clone(), at.clone());
-                    view! { <button class="act" title=tip aria-label="Eject" on:click=move |_| ctx.eject(at.clone())>{ico(Icon::Eject)}</button> }
-                });
-                view! { <TreeNode src=Src::Mac name path depth=1 class="drive" extra=eject/> }
-            }).collect_view()}
-        })}
-    });
-    let sec_devices = move || shown("devices").then(|| view! {
-        {dev_heading()}
-        {move || dev_open.get().then(|| view! {
-            {ctx.phones.get().into_iter().filter(Info::is_phone).map(device).collect_view()}
-            <DeviceFinder/>
-        })}
-    });
+    })
+    };
+    let sec_mac = move || {
+        shown("mac").then(|| {
+            view! {
+                {mac_heading()}
+                {move || mac_open.get().then(|| view! {
+                    {ctx.mac.get().map(|i| i.quick_dirs).unwrap_or_default().into_iter()
+                        .map(|(name, path)| view! { <TreeNode src=Src::Mac name path depth=1/> }).collect_view()}
+                    {drives.get().into_iter().map(|(name, path)| {
+                        let (tip, at) = (format!("Eject {name}"), path.clone());
+                        let eject = ViewFn::from(move || {
+                            let (tip, at) = (tip.clone(), at.clone());
+                            view! { <button class="act" title=tip aria-label="Eject" on:click=move |_| ctx.eject(at.clone())>{ico(Icon::Eject)}</button> }
+                        });
+                        view! { <TreeNode src=Src::Mac name path depth=1 class="drive" extra=eject/> }
+                    }).collect_view()}
+                })}
+            }
+        })
+    };
+    let sec_devices = move || {
+        shown("devices").then(|| {
+            view! {
+                {dev_heading()}
+                {move || dev_open.get().then(|| view! {
+                    {ctx.phones.get().into_iter().filter(Info::is_phone).map(device).collect_view()}
+                    <DeviceFinder/>
+                })}
+            }
+        })
+    };
     view! {
         <nav class="side" class:reordering=move || reorder.dragging.get().is_some() on:contextmenu=move |ev| ctx.show_sections_menu(&ev)>
             <div class="side-scroll"
@@ -621,34 +642,40 @@ pub(super) fn Settings() -> impl IntoView {
             </div>
         }
     };
-    let check = move |on: Signal<bool>, set: fn(Ctx, bool), text: &'static str| view! {
-        <label class="check">
-            <input type="checkbox" prop:checked=move || on.get() on:change=move |e| set(ctx, event_target_checked(&e))/>
-            {text}
-        </label>
+    let check = move |on: Signal<bool>, set: fn(Ctx, bool), text: &'static str| {
+        view! {
+            <label class="check">
+                <input type="checkbox" prop:checked=move || on.get() on:change=move |e| set(ctx, event_target_checked(&e))/>
+                {text}
+            </label>
+        }
     };
-    let general = move || view! {
-        <label class="row">
-            "Appearance"
-            <select prop:value=move || ctx.theme.get() on:change=move |e| {
-                let t = event_target_value(&e);
-                apply_theme(&t);
-                store(THEME_KEY, &t);
-                ctx.theme.set(t);
-            }>
-                <option value="auto">{if crate::os::is_mac() { "As the Mac" } else { "As the system" }}</option>
-                <option value="light">"Light"</option>
-                <option value="dark">"Dark"</option>
-            </select>
-        </label>
-        <label class="check">
-            <input type="checkbox" prop:checked=restore.get_untracked()
-                on:change=move |e| { let on = event_target_checked(&e); restore.set(on); store(RESTORE_KEY, if on { "1" } else { "0" }); }/>
-            "Bring back the tabs at launch"
-        </label>
-        <p class="hint">"Opens the tabs, split and widths the app had when it quit. Tabs on a phone come back when it's connected."</p>
-    }.into_any();
-    let files = move || view! {
+    let general = move || {
+        view! {
+            <label class="row">
+                "Appearance"
+                <select prop:value=move || ctx.theme.get() on:change=move |e| {
+                    let t = event_target_value(&e);
+                    apply_theme(&t);
+                    store(THEME_KEY, &t);
+                    ctx.theme.set(t);
+                }>
+                    <option value="auto">{if crate::os::is_mac() { "As the Mac" } else { "As the system" }}</option>
+                    <option value="light">"Light"</option>
+                    <option value="dark">"Dark"</option>
+                </select>
+            </label>
+            <label class="check">
+                <input type="checkbox" prop:checked=restore.get_untracked()
+                    on:change=move |e| { let on = event_target_checked(&e); restore.set(on); store(RESTORE_KEY, if on { "1" } else { "0" }); }/>
+                "Bring back the tabs at launch"
+            </label>
+            <p class="hint">"Opens the tabs, split and widths the app had when it quit. Tabs on a phone come back when it's connected."</p>
+        }
+        .into_any()
+    };
+    let files = move || {
+        view! {
         {check(ctx.show_hidden.into(), Ctx::set_show_hidden, "Show hidden files (names starting with a dot)")}
         {check(ctx.colour_code.into(), Ctx::set_colour_code, "Colour code in the preview and the editor")}
         <p class="hint">"Colours keywords, strings and comments in code files, by the file's extension or its first line (#!)."</p>
@@ -656,13 +683,17 @@ pub(super) fn Settings() -> impl IntoView {
         {check(ctx.line_numbers.into(), Ctx::set_line_numbers, "Line numbers in the editor")}
         {check(ctx.verify.into(), Ctx::set_verify, "Check copies")}
         <p class="hint">"Reads each copied file back and compares it with the original; a copy that doesn't match is removed and reported, and a move keeps its original. Copies to a phone over MTP take about twice as long. (adb copies are always checked.)"</p>
-    }.into_any();
-    let phones = move || view! {
+    }.into_any()
+    };
+    let phones = move || {
+        view! {
         {check(ctx.auto_connect.into(), Ctx::set_auto_connect, "Connect phones when they're plugged in (adb if allowed, else MTP)")}
         {check(ctx.phone_thumbs.into(), Ctx::set_phone_thumbs, "Thumbnails of phone files")}
         <p class="hint">{format!("Each phone thumbnail reads the whole image or EPUB over USB, once; then it's cached on {}. Files on {} always get thumbnails.", crate::os::the_computer(), crate::os::the_computer())}</p>
-    }.into_any();
-    let video = move || view! {
+    }.into_any()
+    };
+    let video = move || {
+        view! {
         <label class="row">
             "Hold to play at"
             <select prop:value=move || prefs.hold_speed.get().to_string()
@@ -684,13 +715,16 @@ pub(super) fn Settings() -> impl IntoView {
                 on:change=move |e| prefs.set_sub_langs(event_target_value(&e).trim().to_string())/>
         </label>
         <p class="hint">"Up to two, such as \"en, vi\" or \"English\". A video shows the subtitles in these languages, the first at the bottom and the second at the top, when their file names say the language (Movie.en.srt). If none do, the first subtitle file shows."</p>
-    }.into_any();
-    let storage = move || view! {
+    }.into_any()
+    };
+    let storage = move || {
+        view! {
         {folder("backups", "Backups", "Copies of files from before they were replaced or deleted. Kept until you clear them in Backups, which moves them to the Trash.")}
         {folder("thumbs", "Thumbnail cache", "Made again when needed, so it's safe to clear.")}
         {folder("opened", "Opened phone files", "Copies made to open phone files in other apps. Changes to them don't go back to the phone.")}
         {move || error.get().map(|e| view! { <p class="error">{e}</p> })}
-    }.into_any();
+    }.into_any()
+    };
     let storage_name = format!("On {}", crate::os::this_computer());
     let sections: [(&'static str, String); 8] = [
         ("general", "General".into()),

@@ -45,7 +45,8 @@ pub(super) fn ImportPhotos(pane: usize, from: (Src, String), targets: Vec<(Src, 
         let (src, dir) = from.get_value();
         let (to, to_dir) = targets.with_value(|t| t[target.get_untracked()].clone());
         store(PATTERN_KEY, &pattern.get_untracked());
-        let work = Work::Import { from: ctx.side(src), from_dir: dir, to: ctx.side(to), to_dir, pattern: pattern.get_untracked(), moving: moving.get_untracked() };
+        let work =
+            Work::Import { from: ctx.side(src), from_dir: dir, to: ctx.side(to), to_dir, pattern: pattern.get_untracked(), moving: moving.get_untracked() };
         ctx.enqueue(pane, work, false);
         close();
     };

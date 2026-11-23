@@ -193,7 +193,11 @@ pub fn basename(path: &str) -> &str {
 }
 
 pub fn join(dir: &str, name: &str) -> String {
-    if dir.ends_with('/') { format!("{dir}{name}") } else { format!("{dir}/{name}") }
+    if dir.ends_with('/') {
+        format!("{dir}{name}")
+    } else {
+        format!("{dir}/{name}")
+    }
 }
 
 /// One line of the backups index (`index.tsv` in the backups folder): the backup's file name,
@@ -262,10 +266,18 @@ impl Device {
         self.op.lock().unwrap_or_else(|e| e.into_inner())
     }
 
-    pub fn kind(&self) -> &'static str { self.t.kind() }
-    pub fn label(&self) -> String { self.t.label() }
-    pub fn default_dir(&self) -> String { self.t.default_dir() }
-    pub fn quick_dirs(&self) -> Vec<(String, String)> { self.t.quick_dirs() }
+    pub fn kind(&self) -> &'static str {
+        self.t.kind()
+    }
+    pub fn label(&self) -> String {
+        self.t.label()
+    }
+    pub fn default_dir(&self) -> String {
+        self.t.default_dir()
+    }
+    pub fn quick_dirs(&self) -> Vec<(String, String)> {
+        self.t.quick_dirs()
+    }
 
     pub fn refresh(&self) {
         let _g = self.lock();
@@ -384,9 +396,7 @@ impl Device {
         }
         if let Some(base) = base_version {
             if current.as_deref() != Some(base) {
-                return Err(DevError::Conflict(format!(
-                    "{path} changed on the device since it was opened. Not overwritten."
-                )));
+                return Err(DevError::Conflict(format!("{path} changed on the device since it was opened. Not overwritten.")));
             }
         }
         let parent = dirname(&path);
@@ -551,8 +561,7 @@ impl Device {
 /// device: an adb serial, or an MTP location from `mtp::detect`; None takes the first one.
 pub fn connect(transport: &str, which: Option<String>) -> Result<Device> {
     let serial = which;
-    let use_adb = transport == "adb"
-        || (transport == "auto" && (serial.is_some() || !crate::adb::ready_serials().is_empty()));
+    let use_adb = transport == "adb" || (transport == "auto" && (serial.is_some() || !crate::adb::ready_serials().is_empty()));
     if use_adb {
         return Ok(Device::new(Box::new(crate::adb::Adb::open(serial)?)));
     }
@@ -562,9 +571,9 @@ pub fn connect(transport: &str, which: Option<String>) -> Result<Device> {
             None => err("Which iPhone?"),
         },
         "mtp" => Ok(Device::new(Box::new(crate::mtp::Mtp::open(serial.as_deref())?))),
-        "auto" => crate::mtp::Mtp::open(None).map(|d| Device::new(Box::new(d))).map_err(|e| {
-            DevError::Msg(format!("No device found. For adb: turn on USB debugging. For MTP: {e}"))
-        }),
+        "auto" => crate::mtp::Mtp::open(None)
+            .map(|d| Device::new(Box::new(d)))
+            .map_err(|e| DevError::Msg(format!("No device found. For adb: turn on USB debugging. For MTP: {e}"))),
         other => err(format!("Unknown transport {other:?}.")),
     }
 }

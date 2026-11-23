@@ -46,15 +46,14 @@ pub(super) struct Window {
 impl Window {
     /// `measure` reads the layout once something is rendered; `guess` stands until then. While
     /// `pane` is some pane, this is the list `reveal` scrolls for it.
-    pub(super) fn new(scroller: NodeRef<html::Div>, len: Signal<usize>, guess: Rows, measure: fn(&web_sys::Element) -> Option<Rows>, pane: Signal<Option<usize>>) -> Self {
-        let w = Window {
-            range: RwSignal::new((0, len.get_untracked().min(60))),
-            rows: RwSignal::new(guess),
-            scroller,
-            len,
-            measure,
-            pane,
-        };
+    pub(super) fn new(
+        scroller: NodeRef<html::Div>,
+        len: Signal<usize>,
+        guess: Rows,
+        measure: fn(&web_sys::Element) -> Option<Rows>,
+        pane: Signal<Option<usize>>,
+    ) -> Self {
+        let w = Window { range: RwSignal::new((0, len.get_untracked().min(60))), rows: RwSignal::new(guess), scroller, len, measure, pane };
         // Again once what's newly rendered can be measured.
         Effect::new(move |_| {
             w.len.track();
@@ -148,10 +147,8 @@ fn height_of(el: &web_sys::Element, selector: &str) -> Option<f64> {
 /// top loses half a border in a table) doesn't skew it. One row: its height plus `gap`.
 fn pitch(el: &web_sys::Element, selector: &str, gap: f64) -> Option<f64> {
     let found = el.query_selector_all(selector).ok()?;
-    let mut tops: Vec<f64> = (0..found.length())
-        .filter_map(|n| found.item(n)?.dyn_into::<web_sys::Element>().ok())
-        .map(|e| e.get_bounding_client_rect().top())
-        .collect();
+    let mut tops: Vec<f64> =
+        (0..found.length()).filter_map(|n| found.item(n)?.dyn_into::<web_sys::Element>().ok()).map(|e| e.get_bounding_client_rect().top()).collect();
     tops.dedup_by(|a, b| (*a - *b).abs() < 0.5);
     match tops.as_slice() {
         [] => None,

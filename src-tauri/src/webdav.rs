@@ -305,11 +305,8 @@ impl Digest {
         }
         let ha2 = self.hash(&format!("{method}:{uri}"));
         let nc_hex = format!("{nc:08x}");
-        let response = if self.qop {
-            self.hash(&format!("{a1}:{}:{nc_hex}:{cnonce}:auth:{ha2}", self.nonce))
-        } else {
-            self.hash(&format!("{a1}:{}:{ha2}", self.nonce))
-        };
+        let response =
+            if self.qop { self.hash(&format!("{a1}:{}:{nc_hex}:{cnonce}:auth:{ha2}", self.nonce)) } else { self.hash(&format!("{a1}:{}:{ha2}", self.nonce)) };
         let q = |s: &str| s.replace('\\', "\\\\").replace('"', "\\\"");
         let mut h = format!(
             "Digest username=\"{}\", realm=\"{}\", nonce=\"{}\", uri=\"{}\", algorithm={}{}, response=\"{response}\"",
@@ -421,7 +418,11 @@ impl Dav {
     fn dev(&self, e: ureq::Error) -> DevError {
         let conflict = matches!(e, ureq::Error::Status(412, _));
         let msg = self.fail(e);
-        if conflict { DevError::Conflict(msg) } else { DevError::Msg(msg) }
+        if conflict {
+            DevError::Conflict(msg)
+        } else {
+            DevError::Msg(msg)
+        }
     }
 
     fn dev_pf(&self, e: Pf) -> DevError {
@@ -838,11 +839,8 @@ mod tests {
 
     #[test]
     fn asks_again_at_the_address_with_a_slash() {
-        let (asked, at) = serve(vec![
-            ("207 Multi-Status", "", APACHE),
-            ("301 Moved Permanently", "Location: /share/a.txt/\r\n", ""),
-            ("207 Multi-Status", "", APACHE),
-        ]);
+        let (asked, at) =
+            serve(vec![("207 Multi-Status", "", APACHE), ("301 Moved Permanently", "Location: /share/a.txt/\r\n", ""), ("207 Multi-Status", "", APACHE)]);
         let dav = Dav::open(&format!("{at}/share"), None).unwrap();
         assert_eq!(dav.stat("/a.txt").unwrap().unwrap().size, 7);
         let reqs = asked.join().unwrap();
@@ -877,12 +875,8 @@ mod tests {
 
     #[test]
     fn writes_through_a_temporary_file() {
-        let (asked, at) = serve(vec![
-            ("207 Multi-Status", "", NEXTCLOUD),
-            ("201 Created", "", ""),
-            ("204 No Content", "", ""),
-            ("207 Multi-Status", "", NEXTCLOUD),
-        ]);
+        let (asked, at) =
+            serve(vec![("207 Multi-Status", "", NEXTCLOUD), ("201 Created", "", ""), ("204 No Content", "", ""), ("207 Multi-Status", "", NEXTCLOUD)]);
         let dav = Dav::open(&format!("{at}/remote.php/dav/files/me"), None).unwrap();
         let v = dav.replace("/café.epub", b"new text", true).unwrap();
         assert_eq!(v, "\"abc123\"");
@@ -964,7 +958,8 @@ mod tests {
 
     #[test]
     fn reads_digest_challenges() {
-        let both = ["Basic realm=\"x\"", "Digest realm=\"a, b\", nonce=\"n1\", algorithm=MD5", "Digest realm=\"a, b\", nonce=\"n2\", algorithm=SHA-256, stale=TRUE"];
+        let both =
+            ["Basic realm=\"x\"", "Digest realm=\"a, b\", nonce=\"n1\", algorithm=MD5", "Digest realm=\"a, b\", nonce=\"n2\", algorithm=SHA-256, stale=TRUE"];
         let d = digest_challenge(&both).unwrap();
         assert_eq!((d.realm.as_str(), d.nonce.as_str(), d.sha256, d.stale, d.qop), ("a, b", "n2", true, true, false));
         assert!(digest_challenge(&["Basic realm=\"x\""]).is_none());

@@ -53,8 +53,8 @@ pub fn decode(data: &[u8]) -> String {
 /// A Windows-1252 byte as a character.
 fn cp1252(b: u8) -> char {
     const HIGH: [char; 32] = [
-        '€', '\u{81}', '‚', 'ƒ', '„', '…', '†', '‡', 'ˆ', '‰', 'Š', '‹', 'Œ', '\u{8D}', 'Ž', '\u{8F}',
-        '\u{90}', '‘', '’', '“', '”', '•', '–', '—', '˜', '™', 'š', '›', 'œ', '\u{9D}', 'ž', 'Ÿ',
+        '€', '\u{81}', '‚', 'ƒ', '„', '…', '†', '‡', 'ˆ', '‰', 'Š', '‹', 'Œ', '\u{8D}', 'Ž', '\u{8F}', '\u{90}', '‘', '’', '“', '”', '•', '–', '—', '˜', '™',
+        'š', '›', 'œ', '\u{9D}', 'ž', 'Ÿ',
     ];
     match b {
         0x80..=0x9F => HIGH[(b - 0x80) as usize],
@@ -253,19 +253,13 @@ mod tests {
     fn turns_srt_into_vtt() {
         let srt = "\u{FEFF}1\r\n00:00:01,500 --> 00:00:03,000 X1:0\r\n<i>Hello</i> & <font color=\"red\">you</font>\r\n{\\an8}Two\r\n\r\n2\r\n01:02:03,4 --> 01:02:04,000\r\na < b\r\n";
         let vtt = to_vtt(srt.as_bytes(), "a.srt").unwrap();
-        assert_eq!(
-            vtt,
-            "WEBVTT\n\n00:00:01.500 --> 00:00:03.000\n<i>Hello</i> &amp; you\nTwo\n\n01:02:03.400 --> 01:02:04.000\na &lt; b\n\n"
-        );
+        assert_eq!(vtt, "WEBVTT\n\n00:00:01.500 --> 00:00:03.000\n<i>Hello</i> &amp; you\nTwo\n\n01:02:03.400 --> 01:02:04.000\na &lt; b\n\n");
     }
 
     #[test]
     fn turns_microdvd_into_vtt() {
         let sub = "{1}{1}25\n{25}{50}{y:i}One|Two\n{100}{125}Three\n";
-        assert_eq!(
-            to_vtt(sub.as_bytes(), "a.sub").unwrap(),
-            "WEBVTT\n\n00:00:01.000 --> 00:00:02.000\nOne\nTwo\n\n00:00:04.000 --> 00:00:05.000\nThree\n\n"
-        );
+        assert_eq!(to_vtt(sub.as_bytes(), "a.sub").unwrap(), "WEBVTT\n\n00:00:01.000 --> 00:00:02.000\nOne\nTwo\n\n00:00:04.000 --> 00:00:05.000\nThree\n\n");
         // No frame rate given.
         assert!(to_vtt(b"{0}{24}Hi", "a.sub").unwrap().contains("00:00:00.000 --> 00:00:01.001\nHi"));
     }
@@ -273,10 +267,7 @@ mod tests {
     #[test]
     fn turns_subviewer_into_vtt() {
         let sub = "[INFORMATION]\n[TITLE]x\n[END INFORMATION]\n\n00:00:01.20,00:00:02.50\nOne[br]Two\n\n00:01:00.00,00:01:01.00\nThree\n";
-        assert_eq!(
-            to_vtt(sub.as_bytes(), "a.sub").unwrap(),
-            "WEBVTT\n\n00:00:01.200 --> 00:00:02.500\nOne\nTwo\n\n00:01:00.000 --> 00:01:01.000\nThree\n\n"
-        );
+        assert_eq!(to_vtt(sub.as_bytes(), "a.sub").unwrap(), "WEBVTT\n\n00:00:01.200 --> 00:00:02.500\nOne\nTwo\n\n00:01:00.000 --> 00:01:01.000\nThree\n\n");
     }
 
     #[test]

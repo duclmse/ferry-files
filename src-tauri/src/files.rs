@@ -319,8 +319,7 @@ pub(super) async fn open_file(state: State<'_, AppState>, src: Option<String>, p
     let dev = state.source(src.as_deref())?;
     blocking(move || {
         let local = local_copy(&dev, mac, &path)?;
-        crate::platform::open(&local)
-            .map_err(|_| format!("No app on this {} opens {}.", crate::platform::COMPUTER, device::basename(&path)))?;
+        crate::platform::open(&local).map_err(|_| format!("No app on this {} opens {}.", crate::platform::COMPUTER, device::basename(&path)))?;
         Ok(local.display().to_string())
     })
     .await
@@ -424,7 +423,15 @@ pub(super) fn glob(pattern: &[char], name: &[char]) -> bool {
 /// the filters let through. Stops at 1000 results or after 30 seconds. Folders starting with a dot
 /// are skipped unless `hidden`.
 #[tauri::command(rename_all = "snake_case")]
-pub(super) async fn find(state: State<'_, AppState>, src: String, dir: String, query: String, hidden: bool, filters: Option<Filters>, regex: Option<bool>) -> Result<Matches, String> {
+pub(super) async fn find(
+    state: State<'_, AppState>,
+    src: String,
+    dir: String,
+    query: String,
+    hidden: bool,
+    filters: Option<Filters>,
+    regex: Option<bool>,
+) -> Result<Matches, String> {
     let dev = state.source(Some(&src))?;
     let filters = filters.unwrap_or_default();
     let regex = regex.unwrap_or(false);
@@ -660,8 +667,7 @@ fn read_part(dev: &Device, path: &str, inner: Option<&str>, zip_size: Option<u64
 #[tauri::command(rename_all = "snake_case")]
 pub(super) async fn zip_list(state: State<'_, AppState>, src: Option<String>, path: String, size: u64) -> Result<crate::archive::Listing, String> {
     let dev = state.source(src.as_deref())?;
-    blocking(move || crate::archive::list(size, &mut |at, len| dev.read_range(&path, at, len).map_err(msg)))
-    .await
+    blocking(move || crate::archive::list(size, &mut |at, len| dev.read_range(&path, at, len).map_err(msg))).await
 }
 
 /// A PDF's page count and outline. `inner`, `zip_size`: as for `peek_text`. The PDF is read whole,
@@ -717,10 +723,7 @@ pub(super) async fn epub_peek(state: State<'_, AppState>, src: String, path: Str
 /// The files on the system clipboard (copied in Finder or File Explorer), as app paths.
 #[tauri::command(rename_all = "snake_case")]
 pub(super) fn clip_files() -> Vec<String> {
-    arboard::Clipboard::new()
-        .and_then(|mut c| c.get().file_list())
-        .map(|v| v.iter().map(|p| crate::platform::app_path(p)).collect())
-        .unwrap_or_default()
+    arboard::Clipboard::new().and_then(|mut c| c.get().file_list()).map(|v| v.iter().map(|p| crate::platform::app_path(p)).collect()).unwrap_or_default()
 }
 
 /// Puts files on the system clipboard, for Finder to paste: `paths` (app paths on the
@@ -728,11 +731,7 @@ pub(super) fn clip_files() -> Vec<String> {
 #[tauri::command(rename_all = "snake_case")]
 pub(super) fn clip_set(paths: Vec<String>, text: String) -> Result<(), String> {
     let mut c = arboard::Clipboard::new().map_err(|e| format!("Couldn't use the clipboard: {e}"))?;
-    let r = if paths.is_empty() {
-        c.set_text(text)
-    } else {
-        c.set().file_list(&paths.iter().map(|p| crate::platform::native(p)).collect::<Vec<_>>())
-    };
+    let r = if paths.is_empty() { c.set_text(text) } else { c.set().file_list(&paths.iter().map(|p| crate::platform::native(p)).collect::<Vec<_>>()) };
     r.map_err(|e| format!("Couldn't copy: {e}"))
 }
 
@@ -773,7 +772,11 @@ mod tests {
         let mac = crate::Device::new(Box::new(crate::local::Local));
         let r = crate::platform::app_path(&root);
         let names = |hidden| -> Vec<String> {
-            super::find_in(&mac, &r, &super::Query::text("BOOK"), hidden, &Default::default(), 100, std::time::Duration::from_secs(5)).entries.into_iter().map(|e| e.name).collect()
+            super::find_in(&mac, &r, &super::Query::text("BOOK"), hidden, &Default::default(), 100, std::time::Duration::from_secs(5))
+                .entries
+                .into_iter()
+                .map(|e| e.name)
+                .collect()
         };
         assert_eq!(names(false), ["Book one.epub", "book two.EPUB"]);
         assert_eq!(names(true).len(), 3);
@@ -781,7 +784,11 @@ mod tests {
         assert!(!f.complete && f.entries.len() == 2);
         // Patterns and filters.
         let with = |q: &str, f: super::Filters| -> Vec<String> {
-            let mut v: Vec<String> = super::find_in(&mac, &r, &super::Query::text(q), false, &f, 100, std::time::Duration::from_secs(5)).entries.into_iter().map(|e| e.name).collect();
+            let mut v: Vec<String> = super::find_in(&mac, &r, &super::Query::text(q), false, &f, 100, std::time::Duration::from_secs(5))
+                .entries
+                .into_iter()
+                .map(|e| e.name)
+                .collect();
             v.sort();
             v
         };
@@ -793,7 +800,12 @@ mod tests {
         assert_eq!(with("o", super::Filters { after: Some(0), ..Default::default() }).len(), 3, "files only, no folders");
         // Regular expressions, any case.
         let re = |q: &str| -> Vec<String> {
-            let mut v: Vec<String> = super::find_in(&mac, &r, &super::Query::regex(q).unwrap(), false, &Default::default(), 100, std::time::Duration::from_secs(5)).entries.into_iter().map(|e| e.name).collect();
+            let mut v: Vec<String> =
+                super::find_in(&mac, &r, &super::Query::regex(q).unwrap(), false, &Default::default(), 100, std::time::Duration::from_secs(5))
+                    .entries
+                    .into_iter()
+                    .map(|e| e.name)
+                    .collect();
             v.sort();
             v
         };

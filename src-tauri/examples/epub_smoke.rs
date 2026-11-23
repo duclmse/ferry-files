@@ -64,9 +64,9 @@ fn main() {
         book.set_meta(&meta).expect("set meta");
 
         // Replace a common word with a marker, if the book has one.
-        let word = ["the", "và", "の", "a"].into_iter().find(|w| {
-            book.find(&Query { find: w.to_string(), replace: String::new(), match_case: false, whole_word: true }).is_ok_and(|f| f.total > 0)
-        });
+        let word = ["the", "và", "の", "a"]
+            .into_iter()
+            .find(|w| book.find(&Query { find: w.to_string(), replace: String::new(), match_case: false, whole_word: true }).is_ok_and(|f| f.total > 0));
         let mut replaced = 0;
         if let Some(w) = word {
             let q = Query { find: w.to_string(), replace: "FERRYSMOKE".into(), match_case: false, whole_word: true };

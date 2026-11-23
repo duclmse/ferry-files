@@ -110,10 +110,7 @@ impl Book {
             .iter()
             .filter_map(|id| p.item_by_id(id))
             .filter(|i| i.media.contains("html") && !i.path.is_empty())
-            .map(|i| ChapterRef {
-                path: i.path.clone(),
-                label: labels.get(&i.path).cloned().unwrap_or_else(|| file_name(&i.path).to_string()),
-            })
+            .map(|i| ChapterRef { path: i.path.clone(), label: labels.get(&i.path).cloned().unwrap_or_else(|| file_name(&i.path).to_string()) })
             .collect())
     }
 
@@ -149,11 +146,7 @@ impl Book {
         if !out.is_empty() {
             return out;
         }
-        let ncx = p
-            .toc_id
-            .as_deref()
-            .and_then(|id| p.item_by_id(id))
-            .or_else(|| p.items.iter().find(|i| i.media == "application/x-dtbncx+xml"));
+        let ncx = p.toc_id.as_deref().and_then(|id| p.item_by_id(id)).or_else(|| p.items.iter().find(|i| i.media == "application/x-dtbncx+xml"));
         if let Some(ncx) = ncx {
             if let Some((s, toks)) = self.text(&ncx.path).ok().and_then(|s| xml::tokenize(&s).ok().map(|t| (s, t))) {
                 let mut label = String::new();
@@ -187,12 +180,8 @@ impl Book {
         let mut edits = vec![];
         let path = if let Some(item) = p.cover() {
             if item.media != media {
-                let attrs: Vec<(String, String)> = item
-                    .tok
-                    .attrs
-                    .iter()
-                    .map(|(k, v)| (k.clone(), if k == "media-type" { media.to_string() } else { v.clone() }))
-                    .collect();
+                let attrs: Vec<(String, String)> =
+                    item.tok.attrs.iter().map(|(k, v)| (k.clone(), if k == "media-type" { media.to_string() } else { v.clone() })).collect();
                 edits.push((item.tok.start, item.tok.end, tag_text(&item.tok.name, &attrs, item.tok.kind == Kind::Empty)));
             }
             item.path.clone()

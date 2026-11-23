@@ -65,7 +65,9 @@ pub(super) fn pair_result(out: &str) -> Result<(), String> {
     }
     let why = out.lines().map(str::trim).find(|l| !l.is_empty()).unwrap_or("adb said nothing.");
     if why.contains("Wrong password") || why.contains("wrong password") {
-        return Err("Pairing failed: the code was wrong, or it expired. Open “Pair device with pairing code” on the phone again and use the new code and port.".into());
+        return Err(
+            "Pairing failed: the code was wrong, or it expired. Open “Pair device with pairing code” on the phone again and use the new code and port.".into(),
+        );
     }
     Err(format!("Pairing failed: {why}"))
 }

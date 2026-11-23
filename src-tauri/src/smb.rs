@@ -148,10 +148,13 @@ mod tests {
         assert_eq!(mounted_at("smb://nas/photos", &mounts).as_deref(), Some("/Volumes/Photos"));
         assert_eq!(mounted_at("smb://nas/Music", &mounts), None);
         assert_eq!(mounted_at("nfs://nas/Photos", &mounts), None);
-        let named = name_mounts(&["smb://nas/Photos".into()], vec![
-            SmbMount { share: "smb://me@nas._smb._tcp.local/Photos".into(), path: "/Volumes/Photos".into() },
-            SmbMount { share: "smb://pc/Music".into(), path: "/Volumes/Music".into() },
-        ]);
+        let named = name_mounts(
+            &["smb://nas/Photos".into()],
+            vec![
+                SmbMount { share: "smb://me@nas._smb._tcp.local/Photos".into(), path: "/Volumes/Photos".into() },
+                SmbMount { share: "smb://pc/Music".into(), path: "/Volumes/Music".into() },
+            ],
+        );
         assert_eq!(named[0].share, "smb://nas/Photos");
         assert_eq!(named[1].share, "smb://pc/Music");
     }

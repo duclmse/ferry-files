@@ -72,7 +72,8 @@ pub(super) fn Library(src: Src, dir: String) -> impl IntoView {
     let stop = StoredValue::new(false);
     let form = RwSignal::new(None::<BookForm>);
     let message = RwSignal::new(None::<(String, bool)>);
-    let (authors, language, publisher, subjects) = (RwSignal::new(String::new()), RwSignal::new(String::new()), RwSignal::new(String::new()), RwSignal::new(String::new()));
+    let (authors, language, publisher, subjects) =
+        (RwSignal::new(String::new()), RwSignal::new(String::new()), RwSignal::new(String::new()), RwSignal::new(String::new()));
     let (side, quality) = (RwSignal::new("1600".to_string()), RwSignal::new("80".to_string()));
 
     let load = move || {
@@ -234,7 +235,17 @@ pub(super) fn Library(src: Src, dir: String) -> impl IntoView {
                     match call::<Shrunk>("book_shrink", args).await {
                         Ok(Shrunk { before, after, images, path: Some(to) }) => {
                             made.set(made.get() + 1);
-                            note(&e.path, format!("{} → {} ({images} {} made smaller): saved as {}.", human_size(before), human_size(after), if images == 1 { "image" } else { "images" }, base(&to)), true);
+                            note(
+                                &e.path,
+                                format!(
+                                    "{} → {} ({images} {} made smaller): saved as {}.",
+                                    human_size(before),
+                                    human_size(after),
+                                    if images == 1 { "image" } else { "images" },
+                                    base(&to)
+                                ),
+                                true,
+                            );
                             ctx.changed(src, &parent(&to));
                         }
                         Ok(_) => note(&e.path, "Already as small as it gets: no copy made.".into(), true),
@@ -255,9 +266,11 @@ pub(super) fn Library(src: Src, dir: String) -> impl IntoView {
     };
 
     let close = move || ctx.close_panel();
-    let field = |label: &'static str, hint: &'static str, sig: RwSignal<String>| view! {
-        <label class="field"><span>{label}</span>
-            <input placeholder=hint prop:value=move || sig.get() on:input=move |ev| sig.set(event_target_value(&ev))/></label>
+    let field = |label: &'static str, hint: &'static str, sig: RwSignal<String>| {
+        view! {
+            <label class="field"><span>{label}</span>
+                <input placeholder=hint prop:value=move || sig.get() on:input=move |ev| sig.set(event_target_value(&ev))/></label>
+        }
     };
     let place = ctx.place(src);
     view! {

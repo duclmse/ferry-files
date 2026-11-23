@@ -103,7 +103,13 @@ fn key_bytes(e: &web_sys::KeyboardEvent, app_cursor: bool) -> Option<Vec<u8>> {
     let arrow = |c: char| if app_cursor { format!("\x1bO{c}").into_bytes() } else { format!("\x1b[{c}").into_bytes() };
     let bytes = match key.as_str() {
         "Enter" => b"\r".to_vec(),
-        "Backspace" => if e.alt_key() { b"\x1b\x7f".to_vec() } else { b"\x7f".to_vec() },
+        "Backspace" => {
+            if e.alt_key() {
+                b"\x1b\x7f".to_vec()
+            } else {
+                b"\x7f".to_vec()
+            }
+        }
         "Tab" if e.shift_key() => csi("Z"),
         "Tab" => b"\t".to_vec(),
         "Escape" => b"\x1b".to_vec(),

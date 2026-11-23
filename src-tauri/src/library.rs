@@ -4,7 +4,6 @@
 use super::*;
 use crate::files::{find_in, Matches, Query};
 
-
 /// Every EPUB under `dir`, nearest first.
 #[tauri::command(rename_all = "snake_case")]
 pub(super) async fn library(state: State<'_, AppState>, src: String, dir: String, hidden: bool) -> Result<Matches, String> {

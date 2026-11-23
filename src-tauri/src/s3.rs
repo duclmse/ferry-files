@@ -322,11 +322,8 @@ impl S3 {
             Body::File(from, ref r) => file_sha256(from, r.clone())?,
         };
         let amz_date = chrono::Utc::now().format("%Y%m%dT%H%M%SZ").to_string();
-        let mut signed: Vec<(String, String)> = vec![
-            ("host".into(), self.host.clone()),
-            ("x-amz-content-sha256".into(), hash.clone()),
-            ("x-amz-date".into(), amz_date.clone()),
-        ];
+        let mut signed: Vec<(String, String)> =
+            vec![("host".into(), self.host.clone()), ("x-amz-content-sha256".into(), hash.clone()), ("x-amz-date".into(), amz_date.clone())];
         signed.extend(headers.iter().map(|(k, v)| (k.to_string(), v.clone())));
         let keys = Keys { access: &self.access, secret: &self.secret, region: &self.region };
         let auth = authorization(method, &uri, &query, &signed, &hash, &keys, &amz_date);
@@ -809,10 +806,8 @@ mod tests {
                     assert!(n > 0, "request ended early");
                 };
                 let head = String::from_utf8_lossy(&buf[..end]).to_string();
-                let want = head
-                    .lines()
-                    .find_map(|l| l.to_lowercase().strip_prefix("content-length:").map(|n| n.trim().parse::<usize>().unwrap_or(0)))
-                    .unwrap_or(0);
+                let want =
+                    head.lines().find_map(|l| l.to_lowercase().strip_prefix("content-length:").map(|n| n.trim().parse::<usize>().unwrap_or(0))).unwrap_or(0);
                 while buf.len() < end + want {
                     let n = s.read(&mut chunk).unwrap();
                     buf.extend_from_slice(&chunk[..n]);
@@ -1102,7 +1097,8 @@ mod tests {
     /// Signs the request again from what the server received, to see that the host it was signed
     /// with is the Host header that arrived.
     fn signed_host_matches(r: &Req, want_host: &str) {
-        let header = |name: &str| r.head.lines().find_map(|l| l.split_once(": ").filter(|(k, _)| k.eq_ignore_ascii_case(name)).map(|(_, v)| v)).unwrap().to_string();
+        let header =
+            |name: &str| r.head.lines().find_map(|l| l.split_once(": ").filter(|(k, _)| k.eq_ignore_ascii_case(name)).map(|(_, v)| v)).unwrap().to_string();
         let host = header("Host");
         assert_eq!(host, want_host);
         let auth = header("Authorization");
@@ -1132,11 +1128,7 @@ mod tests {
 
     #[test]
     fn says_what_went_wrong() {
-        let (asked, at) = serve(vec![(
-            "403 Forbidden",
-            "",
-            "<Error><Code>InvalidAccessKeyId</Code><Message>The key does not exist</Message></Error>",
-        )]);
+        let (asked, at) = serve(vec![("403 Forbidden", "", "<Error><Code>InvalidAccessKeyId</Code><Message>The key does not exist</Message></Error>")]);
         assert!(S3::open(&at, "", "bkt", "AK", "SK").err().unwrap().contains("access key"));
         asked.join().unwrap();
         let port = std::net::TcpListener::bind("127.0.0.1:0").unwrap().local_addr().unwrap().port();

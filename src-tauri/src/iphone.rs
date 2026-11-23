@@ -171,11 +171,7 @@ impl IPhone {
             let name = device_name(&provider).await.unwrap_or_else(|| "iPhone".into());
             Ok::<_, DevError>((provider, name, afc))
         })?;
-        Ok(IPhone {
-            name,
-            conn: Mutex::new(Conn { rt, provider, afc: Some(afc), apps: None, vended: HashMap::new() }),
-            stop: AtomicBool::new(false),
-        })
+        Ok(IPhone { name, conn: Mutex::new(Conn { rt, provider, afc: Some(afc), apps: None, vended: HashMap::new() }), stop: AtomicBool::new(false) })
     }
 
     fn conn(&self) -> std::sync::MutexGuard<'_, Conn> {
@@ -190,9 +186,8 @@ impl IPhone {
         match bundle {
             None if c.afc.is_none() => c.afc = Some(c.rt.block_on(AfcClient::connect(&c.provider)).map_err(plain)?),
             Some(b) if !c.vended.contains_key(b) => {
-                let afc = c
-                    .rt
-                    .block_on(async {
+                let afc =
+                    c.rt.block_on(async {
                         let ha = HouseArrestClient::connect(&c.provider).await?;
                         ha.vend_documents(b).await
                     })
@@ -211,9 +206,8 @@ impl IPhone {
         if let Some(a) = &c.apps {
             return Ok(a.clone());
         }
-        let found = c
-            .rt
-            .block_on(async {
+        let found =
+            c.rt.block_on(async {
                 let mut ip = InstallationProxyClient::connect(&c.provider).await?;
                 ip.get_apps(Some("User"), None).await
             })
@@ -265,7 +259,11 @@ impl IPhone {
                         return Err(e);
                     }
                     let names = afc.list_dir(dirname(path)).await.unwrap_or_default();
-                    if names.iter().any(|n| n == basename(path)) { Err(e) } else { Ok(None) }
+                    if names.iter().any(|n| n == basename(path)) {
+                        Err(e)
+                    } else {
+                        Ok(None)
+                    }
                 }
                 Err(e) => Err(e),
             }
@@ -342,7 +340,11 @@ impl IPhone {
     }
 
     /// Runs one AFC request on `bundle`'s connection.
-    fn ask<T>(&self, bundle: Option<&str>, f: impl FnOnce(&mut AfcClient) -> std::pin::Pin<Box<dyn std::future::Future<Output = std::result::Result<T, IdeviceError>> + '_>>) -> Result<T> {
+    fn ask<T>(
+        &self,
+        bundle: Option<&str>,
+        f: impl FnOnce(&mut AfcClient) -> std::pin::Pin<Box<dyn std::future::Future<Output = std::result::Result<T, IdeviceError>> + '_>>,
+    ) -> Result<T> {
         let mut s = self.session(bundle)?;
         let (rt, afc) = s.parts();
         let r = rt.block_on(f(afc));
@@ -459,12 +461,7 @@ impl Transport for IPhone {
     }
 
     fn quick_dirs(&self) -> Vec<(String, String)> {
-        vec![
-            ("Photos".into(), "/DCIM".into()),
-            ("Downloads".into(), "/Downloads".into()),
-            ("Books".into(), "/Books".into()),
-            ("Apps".into(), APPS.into()),
-        ]
+        vec![("Photos".into(), "/DCIM".into()), ("Downloads".into(), "/Downloads".into()), ("Books".into(), "/Books".into()), ("Apps".into(), APPS.into())]
     }
 
     fn refresh(&self) {
@@ -632,7 +629,15 @@ impl Transport for IPhone {
 
     fn delete(&self, path: &str, is_dir: bool) -> Result<()> {
         let (bundle, inner) = self.file_place(path)?;
-        self.ask(bundle.as_deref(), |afc| Box::pin(async move { if is_dir { afc.remove_all(inner).await } else { afc.remove(inner).await } }))
+        self.ask(bundle.as_deref(), |afc| {
+            Box::pin(async move {
+                if is_dir {
+                    afc.remove_all(inner).await
+                } else {
+                    afc.remove(inner).await
+                }
+            })
+        })
     }
 
     fn make_dir(&self, path: &str) -> Result<()> {

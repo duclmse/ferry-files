@@ -102,9 +102,7 @@ impl Ctx {
     /// The pane's tabs as `apply` left them, while it hasn't been used since.
     fn as_applied(self, i: usize) -> Option<Applied> {
         let p = self.panes[i];
-        APPLIED
-            .with_borrow(|a| a[i].clone())
-            .filter(|a| a.tab == p.tab.get_untracked() && a.order.len() == p.tabs.with_untracked(Vec::len))
+        APPLIED.with_borrow(|a| a[i].clone()).filter(|a| a.tab == p.tab.get_untracked() && a.order.len() == p.tabs.with_untracked(Vec::len))
     }
 
     /// Pane `p` went to another folder: the first time after `apply`, that's it landing on the

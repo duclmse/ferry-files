@@ -80,7 +80,11 @@ fn app_path_of(folder: &str, name: &str) -> String {
 /// The app's "/C:/Users/me" as Windows' "C:\Users\me"; a drive as "C:\".
 fn windows_path(path: &str) -> String {
     let p = path.trim_start_matches('/').replace('/', "\\");
-    if p.ends_with(':') { format!("{p}\\") } else { p }
+    if p.ends_with(':') {
+        format!("{p}\\")
+    } else {
+        p
+    }
 }
 
 /// Reads Everything's JSON answer.
@@ -94,13 +98,7 @@ fn parse(body: &str) -> std::result::Result<Found, String> {
                     let name = r["name"].as_str()?.to_string();
                     let path = app_path_of(r["path"].as_str().unwrap_or(""), &name);
                     let dir = r["type"].as_str().is_some_and(|t| t != "file");
-                    Some(Hit {
-                        size: if dir { 0 } else { number(r.get("size")) },
-                        mtime: unix_time(number(r.get("date_modified"))),
-                        name,
-                        path,
-                        dir,
-                    })
+                    Some(Hit { size: if dir { 0 } else { number(r.get("size")) }, mtime: unix_time(number(r.get("date_modified"))), name, path, dir })
                 })
                 .collect::<Vec<_>>()
         })
@@ -321,13 +319,8 @@ impl Transport for Everything {
             return Ok(Some(Entry { name: String::new(), path: "/".into(), dir: true, size: 0, mtime: 0, hidden: false }));
         }
         let parent = dirname(path);
-        let kept = self
-            .last
-            .lock()
-            .unwrap_or_else(|e| e.into_inner())
-            .as_ref()
-            .filter(|(p, _, at)| *p == parent && at.elapsed() < KEEP)
-            .map(|(_, es, _)| es.clone());
+        let kept =
+            self.last.lock().unwrap_or_else(|e| e.into_inner()).as_ref().filter(|(p, _, at)| *p == parent && at.elapsed() < KEEP).map(|(_, es, _)| es.clone());
         let entries = match kept {
             Some(es) => es,
             None => self.list(&parent)?,
@@ -510,7 +503,10 @@ mod tests {
             ("200 OK", r#"{"results":[{"type":"file","name":"x.md","path":"C:","size":"5"},{"type":"folder","name":"Users","path":"C:"}]}"#),
             ("200 OK", "hello"),
             ("206 Partial Content", "ell"),
-            ("200 OK", r#"{"totalResults":"9","results":[{"type":"file","name":"x.md","path":"C:\\Users","size":"3"},{"type":"file","name":"x.md","path":"C:\\Other","size":"3"}]}"#),
+            (
+                "200 OK",
+                r#"{"totalResults":"9","results":[{"type":"file","name":"x.md","path":"C:\\Users","size":"3"},{"type":"file","name":"x.md","path":"C:\\Other","size":"3"}]}"#,
+            ),
         ]);
         let ev = Everything::open(&at, None).unwrap();
         assert_eq!(ev.quick_dirs(), vec![("C:".to_string(), "/C:".to_string()), ("D:".to_string(), "/D:".to_string())]);

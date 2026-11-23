@@ -31,7 +31,11 @@ pub fn is_mac() -> bool {
 
 /// The command key: ⌘ on the Mac, Ctrl elsewhere.
 pub fn cmd(meta: bool, ctrl: bool) -> bool {
-    if is_mac() { meta } else { ctrl }
+    if is_mac() {
+        meta
+    } else {
+        ctrl
+    }
 }
 
 /// "Mac", "PC" or "computer".
@@ -63,12 +67,20 @@ pub fn this_computer() -> &'static str {
 
 /// Where deleted files go: "Recycle Bin" on Windows, "Trash" elsewhere.
 pub fn trash() -> &'static str {
-    if os() == Os::Windows { "Recycle Bin" } else { "Trash" }
+    if os() == Os::Windows {
+        "Recycle Bin"
+    } else {
+        "Trash"
+    }
 }
 
 /// "sidebar" on the Mac, "navigation pane" elsewhere.
 pub fn sidebar() -> &'static str {
-    if is_mac() { "sidebar" } else { "navigation pane" }
+    if is_mac() {
+        "sidebar"
+    } else {
+        "navigation pane"
+    }
 }
 
 /// How to install adb, as a sentence.
@@ -91,7 +103,11 @@ pub fn file_manager() -> &'static str {
 
 /// What Space does on a file: Quick Look on the Mac; elsewhere it opens in its app.
 pub fn quick_look() -> &'static str {
-    if is_mac() { "Quick Look" } else { "Open in default app" }
+    if is_mac() {
+        "Quick Look"
+    } else {
+        "Open in default app"
+    }
 }
 
 /// Keys as written on the Mac ("⌘⌫", "⌘\\"), as written here: "Ctrl+Backspace" elsewhere.
@@ -120,7 +136,11 @@ pub fn keys(mac: &'static str) -> &'static str {
 
 /// Where the backend serves files: its own scheme, which Windows' web view reaches over http.
 pub fn served(rest: &str) -> String {
-    if os() == Os::Windows { format!("http://ferry.localhost/{rest}") } else { format!("ferry://localhost/{rest}") }
+    if os() == Os::Windows {
+        format!("http://ferry.localhost/{rest}")
+    } else {
+        format!("ferry://localhost/{rest}")
+    }
 }
 
 /// A path on the computer as the app writes it ("/C:/Users" on Windows), from the system's own.
@@ -130,7 +150,11 @@ pub fn app_path(native: &str) -> String {
     }
     let p = native.strip_prefix(r"\\?\").unwrap_or(native).replace('\\', "/");
     let p = p.trim_end_matches('/');
-    if p.is_empty() { "/".into() } else { format!("/{p}") }
+    if p.is_empty() {
+        "/".into()
+    } else {
+        format!("/{p}")
+    }
 }
 
 /// A path on the computer as the system writes it ("C:\Users" on Windows).
@@ -139,5 +163,9 @@ pub fn native_path(app: &str) -> String {
         return app.to_string();
     }
     let p = app.trim_start_matches('/').replace('/', "\\");
-    if p.len() == 2 && p.ends_with(':') { format!("{p}\\") } else { p }
+    if p.len() == 2 && p.ends_with(':') {
+        format!("{p}\\")
+    } else {
+        p
+    }
 }

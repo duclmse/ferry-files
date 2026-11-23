@@ -94,9 +94,9 @@ pub(super) fn SearchPane(pane: Pane) -> impl IntoView {
             let shown: HashSet<String> = p.entries.with(|es| es.iter().map(|e| e.path.clone()).collect());
             let others: HashSet<String> = p.all.with(|all| all.iter().filter(|e| !shown.contains(&e.path)).map(|e| e.name.to_lowercase()).collect());
             let taken = HashMap::from([(p.cwd.get(), others)]);
-            p.entries.with(|es| batch::replace_plan(es, &find, &replace, regex, &taken)).map(|rows| {
-                rows.into_iter().filter(|(e, new, _)| *new != e.name).map(|(e, new, problem)| (e.path, (new, problem))).collect()
-            })
+            p.entries
+                .with(|es| batch::replace_plan(es, &find, &replace, regex, &taken))
+                .map(|rows| rows.into_iter().filter(|(e, new, _)| *new != e.name).map(|(e, new, problem)| (e.path, (new, problem))).collect())
         };
         if p.replace_rows.with_untracked(|r| *r != rows) {
             p.replace_rows.set(rows);
@@ -146,18 +146,21 @@ pub(super) fn SearchPane(pane: Pane) -> impl IntoView {
     };
     // Some kind, size or time is chosen (shown on the options button while they're hidden).
     let narrowed = move || p.search_kind.get() + p.search_size.get() + p.search_time.get() > 0;
-    let pick = |label: &'static str, sig: RwSignal<usize>, names: Vec<&'static str>| view! {
-        <select aria-label=label prop:value=move || sig.get().to_string()
-            on:change=move |e| sig.set(event_target_value(&e).parse().unwrap_or(0))>
-            {names.into_iter().enumerate().map(|(i, n)| view! { <option value=i.to_string()>{n}</option> }).collect_view()}
-        </select>
+    let pick = |label: &'static str, sig: RwSignal<usize>, names: Vec<&'static str>| {
+        view! {
+            <select aria-label=label prop:value=move || sig.get().to_string()
+                on:change=move |e| sig.set(event_target_value(&e).parse().unwrap_or(0))>
+                {names.into_iter().enumerate().map(|(i, n)| view! { <option value=i.to_string()>{n}</option> }).collect_view()}
+            </select>
+        }
     };
 
     // A grid: the chevron (beside both boxes while Replace with shows), the search and Replace
     // with boxes one above the other (so always as wide as each other), then the buttons, and
     // Close at the right end; the options take the row under them. A box with something wrong is outlined in red, and says
     // what in its tooltip.
-    move || p.filters_open.get().then(|| view! {
+    move || {
+        p.filters_open.get().then(|| view! {
         <div class="search-filters">
             <button class="filter-opt chevron" class:open=move || p.replacing.get() aria-expanded=move || p.replacing.get().to_string()
                 title=move || ctx.with_key(if p.replacing.get() { "Hide Replace with" } else { "Replace in names" }, "replace") aria-label="Replace"
@@ -251,4 +254,5 @@ pub(super) fn SearchPane(pane: Pane) -> impl IntoView {
             })}
         </div>
     })
+    }
 }

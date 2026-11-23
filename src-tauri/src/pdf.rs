@@ -41,7 +41,10 @@ mod tests {
         for &k in &kids {
             doc.objects.insert(k, Object::Dictionary(dictionary! { "Type" => "Page", "Parent" => pages }));
         }
-        doc.objects.insert(pages, Object::Dictionary(dictionary! { "Type" => "Pages", "Kids" => kids.iter().map(|&k| k.into()).collect::<Vec<Object>>(), "Count" => 3 }));
+        doc.objects.insert(
+            pages,
+            Object::Dictionary(dictionary! { "Type" => "Pages", "Kids" => kids.iter().map(|&k| k.into()).collect::<Vec<Object>>(), "Count" => 3 }),
+        );
         doc.objects.insert((5, 0), Object::Dictionary(dictionary! { "Type" => "Catalog", "Pages" => pages }));
         doc.trailer.set("Root", (5, 0));
         doc.max_id = 5;

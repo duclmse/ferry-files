@@ -116,9 +116,7 @@ fn syntax_for<'a>(ss: &'a SyntaxSet, name: &str, first_line: &str) -> Option<&'a
         "podfile" | "fastfile" => Some("rb"),
         "justfile" | "gnumakefile" => Some("mk"),
         ".zshrc" | ".zprofile" | ".zshenv" | ".envrc" => Some("sh"),
-        n if n == "dockerfile" || n == "containerfile" || n.starts_with("dockerfile.") || n.ends_with(".dockerfile") => {
-            Some("sh")
-        }
+        n if n == "dockerfile" || n == "containerfile" || n.starts_with("dockerfile.") || n.ends_with(".dockerfile") => Some("sh"),
         n if n == ".env" || n.starts_with(".env.") => Some("sh"),
         _ => None,
     };

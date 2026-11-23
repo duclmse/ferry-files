@@ -106,12 +106,8 @@ impl Adb {
         };
         let mut dev = Adb { adb, serial, model: String::new() };
         dev.run(&["get-state"])?; // fails early with adb's own message if there's no device
-        dev.model = dev
-            .shell("getprop ro.product.model")
-            .map(|s| s.trim().to_string())
-            .ok()
-            .filter(|s| !s.is_empty())
-            .unwrap_or_else(|| "Android device".into());
+        dev.model =
+            dev.shell("getprop ro.product.model").map(|s| s.trim().to_string()).ok().filter(|s| !s.is_empty()).unwrap_or_else(|| "Android device".into());
         Ok(dev)
     }
 
@@ -120,15 +116,9 @@ impl Adb {
         if let Some(s) = &self.serial {
             cmd.args(["-s", s]);
         }
-        let out = cmd
-            .args(args)
-            .stdin(Stdio::null())
-            .output()
-            .map_err(|e| DevError::Msg(format!("Couldn't run adb: {e}")))?;
+        let out = cmd.args(args).stdin(Stdio::null()).output().map_err(|e| DevError::Msg(format!("Couldn't run adb: {e}")))?;
         if !out.status.success() {
-            let msg = String::from_utf8_lossy(if out.stderr.is_empty() { &out.stdout } else { &out.stderr })
-                .trim()
-                .to_string();
+            let msg = String::from_utf8_lossy(if out.stderr.is_empty() { &out.stdout } else { &out.stderr }).trim().to_string();
             return err(if msg.is_empty() { format!("adb {} failed ({})", args[0], out.status) } else { msg });
         }
         Ok(out.stdout)
@@ -195,15 +185,18 @@ impl Transport for Adb {
         Some(c)
     }
 
-    fn kind(&self) -> &'static str { "adb" }
-    fn label(&self) -> String { self.model.clone() }
-    fn default_dir(&self) -> String { "/sdcard".into() }
+    fn kind(&self) -> &'static str {
+        "adb"
+    }
+    fn label(&self) -> String {
+        self.model.clone()
+    }
+    fn default_dir(&self) -> String {
+        "/sdcard".into()
+    }
 
     fn quick_dirs(&self) -> Vec<(String, String)> {
-        [("Storage", "/sdcard"), ("Documents", "/sdcard/Documents"), ("Books", "/sdcard/Books")]
-            .iter()
-            .map(|(a, b)| (a.to_string(), b.to_string()))
-            .collect()
+        [("Storage", "/sdcard"), ("Documents", "/sdcard/Documents"), ("Books", "/sdcard/Books")].iter().map(|(a, b)| (a.to_string(), b.to_string())).collect()
     }
 
     fn listdir(&self, path: &str) -> Result<Vec<Entry>> {
@@ -224,7 +217,9 @@ impl Transport for Adb {
         } else {
             Self::entry(line, None).map(|mut e| {
                 e.path = path.to_string();
-                if path == "/" { e.name = "/".into() }
+                if path == "/" {
+                    e.name = "/".into()
+                }
                 e
             })
         })

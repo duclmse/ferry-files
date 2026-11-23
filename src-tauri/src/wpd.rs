@@ -15,8 +15,7 @@ use windows::Win32::Devices::PortableDevices::*;
 use windows::Win32::Foundation::PROPERTYKEY;
 use windows::Win32::System::Com::StructuredStorage::{PropVariantClear, PROPVARIANT};
 use windows::Win32::System::Com::{
-    CoCreateInstance, CoInitializeEx, CoTaskMemFree, IStream, CLSCTX_INPROC_SERVER, COINIT_MULTITHREADED, STGC_DEFAULT, STREAM_SEEK_SET,
-    STGM_READ,
+    CoCreateInstance, CoInitializeEx, CoTaskMemFree, IStream, CLSCTX_INPROC_SERVER, COINIT_MULTITHREADED, STGC_DEFAULT, STGM_READ, STREAM_SEEK_SET,
 };
 use windows::Win32::System::Variant::VT_DATE;
 
@@ -185,7 +184,11 @@ fn ole_date(v: &IPortableDeviceValues, key: &PROPERTYKEY) -> i64 {
     let Ok(mut pv) = (unsafe { v.GetValue(key) }) else { return 0 };
     let secs = unsafe {
         let inner = &pv.Anonymous.Anonymous;
-        if inner.vt == VT_DATE { ((inner.Anonymous.date - 25569.0) * 86400.0) as i64 } else { 0 }
+        if inner.vt == VT_DATE {
+            ((inner.Anonymous.date - 25569.0) * 86400.0) as i64
+        } else {
+            0
+        }
     };
     let _ = unsafe { PropVariantClear(&mut pv) };
     secs
@@ -201,8 +204,7 @@ impl Link {
     }
 
     fn ids(&self, parent: &str) -> Result<Vec<String>> {
-        let found = unsafe { self.content.EnumObjects(0, &HSTRING::from(parent), None) }
-            .map_err(|e| werr("Couldn't list the folder", e))?;
+        let found = unsafe { self.content.EnumObjects(0, &HSTRING::from(parent), None) }.map_err(|e| werr("Couldn't list the folder", e))?;
         let mut out = vec![];
         loop {
             let mut batch = [PWSTR::null(); 64];
@@ -375,9 +377,7 @@ impl Link {
             let added = list.Add(&pv);
             let _ = PropVariantClear(&mut pv);
             added.map_err(|e| werr("Couldn't delete", e))?;
-            self.content
-                .Delete(PORTABLE_DEVICE_DELETE_NO_RECURSION.0 as u32, &list, std::ptr::null_mut())
-                .map_err(|e| werr("The device didn't delete it", e))
+            self.content.Delete(PORTABLE_DEVICE_DELETE_NO_RECURSION.0 as u32, &list, std::ptr::null_mut()).map_err(|e| werr("The device didn't delete it", e))
         }
     }
 
@@ -557,7 +557,13 @@ impl Wpd {
         if storages.is_empty() {
             return err("The device shows no storage. Unlock the phone and choose \"File transfer\".");
         }
-        Ok(Wpd { inner: Arc::new(Mutex::new(Inner { link, cache: HashMap::new(), seek: true })), streamed: Mutex::new(Vec::new()), stop: Arc::default(), storages, model: dev.name })
+        Ok(Wpd {
+            inner: Arc::new(Mutex::new(Inner { link, cache: HashMap::new(), seek: true })),
+            streamed: Mutex::new(Vec::new()),
+            stop: Arc::default(),
+            storages,
+            model: dev.name,
+        })
     }
 
     fn inner(&self) -> std::sync::MutexGuard<'_, Inner> {
@@ -666,9 +672,15 @@ impl Wpd {
 }
 
 impl Transport for Wpd {
-    fn kind(&self) -> &'static str { "mtp" }
-    fn label(&self) -> String { self.model.clone() }
-    fn default_dir(&self) -> String { format!("/{}", self.storages[0].0) }
+    fn kind(&self) -> &'static str {
+        "mtp"
+    }
+    fn label(&self) -> String {
+        self.model.clone()
+    }
+    fn default_dir(&self) -> String {
+        format!("/{}", self.storages[0].0)
+    }
 
     fn quick_dirs(&self) -> Vec<(String, String)> {
         self.storages.iter().map(|(n, _)| (n.clone(), format!("/{n}"))).collect()

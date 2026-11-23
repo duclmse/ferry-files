@@ -75,11 +75,7 @@ fn move_or_merge(old: &Path, new: &Path) -> std::io::Result<()> {
         } else if item.file_name() == "index.tsv" {
             let have = std::fs::read_to_string(&to)?;
             let known: std::collections::HashSet<&str> = have.lines().collect();
-            let missing: String = std::fs::read_to_string(&from)?
-                .lines()
-                .filter(|l| !l.is_empty() && !known.contains(l))
-                .map(|l| format!("{l}\n"))
-                .collect();
+            let missing: String = std::fs::read_to_string(&from)?.lines().filter(|l| !l.is_empty() && !known.contains(l)).map(|l| format!("{l}\n")).collect();
             if !missing.is_empty() {
                 let sep = if have.is_empty() || have.ends_with('\n') { "" } else { "\n" };
                 std::fs::write(&to, format!("{have}{sep}{missing}"))?;

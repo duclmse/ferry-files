@@ -29,7 +29,8 @@ pub(super) fn Crumbs(pane: Pane) -> impl IntoView {
         let width = |e: Option<web_sys::Element>| e.and_then(|e| e.dyn_into::<web_sys::HtmlElement>().ok()).map_or(0, |e| e.offset_width());
         // "…" is shown while measuring; "+ 1" is the gap beside each item.
         let more = width(el.query_selector(".part.more").ok().flatten()) + 1;
-        let parts: Vec<i32> = el.query_selector_all(".part.dir").map_or(vec![], |ps| (0..ps.length()).map(|i| width(ps.item(i).and_then(|n| n.dyn_into().ok())) + 1).collect());
+        let parts: Vec<i32> =
+            el.query_selector_all(".part.dir").map_or(vec![], |ps| (0..ps.length()).map(|i| width(ps.item(i).and_then(|n| n.dyn_into().ok())) + 1).collect());
         let _ = classes.remove_1("measuring");
         let mut k = 0;
         if need - more > room {
@@ -335,21 +336,24 @@ pub(super) fn Name(pane: Pane, entry: Entry, #[prop(optional)] split: bool, #[pr
     let path = e.with_value(|e| e.path.clone());
     // While replacing, the name it would get.
     let new = Memo::new(move |_| p.replace_rows.with(|r| r.as_ref().ok().and_then(|m| m.get(&path).cloned())));
-    move || if editing.get() {
-        view! { <NameEdit pane=p entry=e.get_value()/> }.into_any()
-    } else if let Some((name, problem)) = new.get() {
-        let bad = problem.is_some();
-        view! {
-            <span class="renaming-to" title=problem>
-                <s>{e.with_value(|e| e.name.clone())}</s>" → "<b class:bad=bad>{name}</b>
-            </span>
-        }.into_any()
-    } else if fit {
-        e.with_value(|e| fit_name(&e.name, e.dir))
-    } else if split {
-        e.with_value(|e| split_name(&e.name, e.dir))
-    } else {
-        e.with_value(|e| e.name.clone()).into_any()
+    move || {
+        if editing.get() {
+            view! { <NameEdit pane=p entry=e.get_value()/> }.into_any()
+        } else if let Some((name, problem)) = new.get() {
+            let bad = problem.is_some();
+            view! {
+                <span class="renaming-to" title=problem>
+                    <s>{e.with_value(|e| e.name.clone())}</s>" → "<b class:bad=bad>{name}</b>
+                </span>
+            }
+            .into_any()
+        } else if fit {
+            e.with_value(|e| fit_name(&e.name, e.dir))
+        } else if split {
+            e.with_value(|e| split_name(&e.name, e.dir))
+        } else {
+            e.with_value(|e| e.name.clone()).into_any()
+        }
     }
 }
 
@@ -510,11 +514,7 @@ pub(super) fn drag_end(ctx: Ctx) -> impl Fn(web_sys::DragEvent) + 'static {
 
 /// Lets items dragged from a pane drop into folder `dir` (None: the pane's folder). Dropping moves
 /// within the same device and copies between devices, like Finder; ⌥ always copies, ⌘ always moves.
-pub(super) fn drop_events(
-    ctx: Ctx,
-    p: Pane,
-    dir: Option<String>,
-) -> (impl Fn(web_sys::DragEvent) + 'static, impl Fn(web_sys::DragEvent) + 'static) {
+pub(super) fn drop_events(ctx: Ctx, p: Pane, dir: Option<String>) -> (impl Fn(web_sys::DragEvent) + 'static, impl Fn(web_sys::DragEvent) + 'static) {
     let key = format!("{}:{}", p.id, dir.clone().unwrap_or_default());
     let d = dir.clone();
     let over = move |ev: web_sys::DragEvent| {
@@ -581,9 +581,13 @@ pub(super) fn moves(ev: &web_sys::DragEvent, from: Src, to: Src) -> bool {
 }
 
 pub(super) fn empty_note(p: Pane) -> impl IntoView {
-    move || (p.entries.with(|e| e.is_empty()) && !p.loading.get()).then(|| view! {
-        <div class="empty">"This folder is empty."</div>
-    })
+    move || {
+        (p.entries.with(|e| e.is_empty()) && !p.loading.get()).then(|| {
+            view! {
+                <div class="empty">"This folder is empty."</div>
+            }
+        })
+    }
 }
 
 /// A pane's status bar: what's in the folder, what's selected, and where the files are.
@@ -630,14 +634,16 @@ pub(super) fn ListStatus(pane: Pane) -> impl IntoView {
         Src::Mac => ctx.mac.get().map(|i| i.label).unwrap_or_default(),
         src => ctx.src_info(src).map(|i| format!("{} · {}", i.label, i.transport)).unwrap_or_default(),
     };
-    let search = move || p.found.get().map(|(q, complete)| {
+    let search = move || {
+        p.found.get().map(|(q, complete)| {
         let n = p.all.with(|a| a.len());
         let more = if complete { "" } else { " (stopped early: open a smaller folder to see all)" };
         view! {
             <span class="search">{format!("{n} found for {q}{more}")}</span>
             <button class="btn small back" title="Back to folder" aria-label="Back to folder" on:click=move |_| ctx.reload(p)><svg class="back-icon" viewBox="0 0 16 16" aria-hidden="true"><path d="M13 8H3M7.5 3.5 3 8l4.5 4.5"/></svg></button>
         }
-    });
+    })
+    };
     view! {
         <div class="statusbar">
             {search}

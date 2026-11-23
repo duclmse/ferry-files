@@ -126,9 +126,7 @@ impl Ctx {
             Side::Mac => Ok(Src::Mac),
             Side::Phone { serial, id, label } => self
                 .phones
-                .with_untracked(|ps| {
-                    ps.iter().find(|i| if serial.is_some() { i.serial == *serial } else { i.id == *id }).map(|i| Src::of(&i.id))
-                })
+                .with_untracked(|ps| ps.iter().find(|i| if serial.is_some() { i.serial == *serial } else { i.id == *id }).map(|i| Src::of(&i.id)))
                 .ok_or_else(|| format!("{label} isn't connected. Connect it, then retry.")),
         }
     }
@@ -179,7 +177,13 @@ impl Ctx {
         };
         let r = match &job.work {
             Work::Copy { items, to_dir, moving, replace, .. } => {
-                let mode = if *moving { "move" } else if *replace { "replace" } else { "copy" };
+                let mode = if *moving {
+                    "move"
+                } else if *replace {
+                    "replace"
+                } else {
+                    "copy"
+                };
                 let args = json!({
                     "job": job.id, "from_src": from_src.key(), "paths": items, "to_src": to_src.key(), "to_dir": to_dir,
                     "mode": mode, "resume": job.resume, "verify": self.verify.get_untracked(),
@@ -210,9 +214,7 @@ impl Ctx {
                     }
                     // A move goes back only when it went whole into new places: otherwise moving
                     // back would take files that were there before too.
-                    Work::Copy { moving: true, items, .. }
-                        if !r.cancelled && r.skipped.is_empty() && r.already == 0 && r.made.len() == items.len() =>
-                    {
+                    Work::Copy { moving: true, items, .. } if !r.cancelled && r.skipped.is_empty() && r.already == 0 && r.made.len() == items.len() => {
                         let back = r.made.iter().cloned().zip(items.iter().map(|x| parent(x))).collect();
                         self.log_undo(lines[0].clone(), Undo::Move { from: from_src, to: to_src, back });
                     }
@@ -398,63 +400,65 @@ pub(super) fn TransferBar() -> impl IntoView {
     let ctx = expect_context::<Ctx>();
     move || {
         let jobs = ctx.jobs.get();
-        (!jobs.is_empty()).then(|| view! {
-            <div class="transfers">
-                {jobs.into_iter().map(|j| {
-                    let id = j.id;
-                    let title = job_title(&j.work);
-                    match j.state {
-                        JobState::Running => {
-                            let verb = match &j.work {
-                                Work::Copy { moving: true, .. } => "Moving",
-                                Work::Copy { replace: true, .. } => "Replacing",
-                                Work::Copy { .. } => "Copying",
-                                Work::Sync { .. } => "Syncing",
-                                Work::Import { .. } => "Importing",
-                            };
-                            let (text, pct) = match &j.progress {
-                                None => (format!("{verb}: looking at what to copy…"), 0.0),
-                                Some(pr) => {
-                                    let pct = if pr.bytes_total > 0 { pr.bytes_done as f64 * 100.0 / pr.bytes_total as f64 } else { 0.0 };
-                                    let now = if pr.current.is_empty() { String::new() } else { format!(" {}", pr.current) };
-                                    (format!("{verb}{now} · {} of {} files · {} of {}", pr.files_done, pr.files_total,
-                                        human_size(pr.bytes_done), human_size(pr.bytes_total)), pct)
-                                }
-                            };
-                            view! {
-                                <div class="transfer">
-                                    <span class="spin"></span>
-                                    <span class="text" title=title>{text}</span>
-                                    <div class="meter"><div style=format!("width:{pct:.1}%")></div></div>
-                                    <button class="btn icon-only" title="Cancel: stops after the file being copied now" aria-label="Cancel"
-                                        on:click=move |_| ctx.cancel_job(id)>{ico(Icon::Stop)}</button>
-                                </div>
-                            }.into_any()
+        (!jobs.is_empty()).then(|| {
+            view! {
+                <div class="transfers">
+                    {jobs.into_iter().map(|j| {
+                        let id = j.id;
+                        let title = job_title(&j.work);
+                        match j.state {
+                            JobState::Running => {
+                                let verb = match &j.work {
+                                    Work::Copy { moving: true, .. } => "Moving",
+                                    Work::Copy { replace: true, .. } => "Replacing",
+                                    Work::Copy { .. } => "Copying",
+                                    Work::Sync { .. } => "Syncing",
+                                    Work::Import { .. } => "Importing",
+                                };
+                                let (text, pct) = match &j.progress {
+                                    None => (format!("{verb}: looking at what to copy…"), 0.0),
+                                    Some(pr) => {
+                                        let pct = if pr.bytes_total > 0 { pr.bytes_done as f64 * 100.0 / pr.bytes_total as f64 } else { 0.0 };
+                                        let now = if pr.current.is_empty() { String::new() } else { format!(" {}", pr.current) };
+                                        (format!("{verb}{now} · {} of {} files · {} of {}", pr.files_done, pr.files_total,
+                                            human_size(pr.bytes_done), human_size(pr.bytes_total)), pct)
+                                    }
+                                };
+                                view! {
+                                    <div class="transfer">
+                                        <span class="spin"></span>
+                                        <span class="text" title=title>{text}</span>
+                                        <div class="meter"><div style=format!("width:{pct:.1}%")></div></div>
+                                        <button class="btn icon-only" title="Cancel: stops after the file being copied now" aria-label="Cancel"
+                                            on:click=move |_| ctx.cancel_job(id)>{ico(Icon::Stop)}</button>
+                                    </div>
+                                }.into_any()
+                            }
+                            state => {
+                                let (what, retry) = match state {
+                                    JobState::Queued => ("Waiting".to_string(), None),
+                                    JobState::Paused => ("Not finished when the app quit".to_string(), Some("Resume")),
+                                    JobState::Stopped(why) => (why, Some("Retry")),
+                                    JobState::Failed(why) => (why, Some("Retry")),
+                                    JobState::Running => unreachable!(),
+                                };
+                                let tip = format!("{title}: {what}");
+                                view! {
+                                    <div class="transfer queued">
+                                        <span class="text" title=tip><b>{title}</b>" · "{what}</span>
+                                        {retry.map(|label| view! {
+                                            <button class="btn small" title="Run it again: files already copied are kept, the rest is copied"
+                                                on:click=move |_| ctx.retry_job(id)>{ico(Icon::Refresh)}{label}</button>
+                                        })}
+                                        <button class="btn small" title="Take it off the list" aria-label="Remove"
+                                            on:click=move |_| ctx.cancel_job(id)>{ico(Icon::Close)}</button>
+                                    </div>
+                                }.into_any()
+                            }
                         }
-                        state => {
-                            let (what, retry) = match state {
-                                JobState::Queued => ("Waiting".to_string(), None),
-                                JobState::Paused => ("Not finished when the app quit".to_string(), Some("Resume")),
-                                JobState::Stopped(why) => (why, Some("Retry")),
-                                JobState::Failed(why) => (why, Some("Retry")),
-                                JobState::Running => unreachable!(),
-                            };
-                            let tip = format!("{title}: {what}");
-                            view! {
-                                <div class="transfer queued">
-                                    <span class="text" title=tip><b>{title}</b>" · "{what}</span>
-                                    {retry.map(|label| view! {
-                                        <button class="btn small" title="Run it again: files already copied are kept, the rest is copied"
-                                            on:click=move |_| ctx.retry_job(id)>{ico(Icon::Refresh)}{label}</button>
-                                    })}
-                                    <button class="btn small" title="Take it off the list" aria-label="Remove"
-                                        on:click=move |_| ctx.cancel_job(id)>{ico(Icon::Close)}</button>
-                                </div>
-                            }.into_any()
-                        }
-                    }
-                }).collect_view()}
-            </div>
+                    }).collect_view()}
+                </div>
+            }
         })
     }
 }

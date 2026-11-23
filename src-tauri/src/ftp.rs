@@ -316,11 +316,21 @@ impl ServerCertVerifier for Pinning {
         }
     }
 
-    fn verify_tls12_signature(&self, message: &[u8], cert: &CertificateDer<'_>, dss: &DigitallySignedStruct) -> std::result::Result<HandshakeSignatureValid, rustls::Error> {
+    fn verify_tls12_signature(
+        &self,
+        message: &[u8],
+        cert: &CertificateDer<'_>,
+        dss: &DigitallySignedStruct,
+    ) -> std::result::Result<HandshakeSignatureValid, rustls::Error> {
         self.normal.verify_tls12_signature(message, cert, dss)
     }
 
-    fn verify_tls13_signature(&self, message: &[u8], cert: &CertificateDer<'_>, dss: &DigitallySignedStruct) -> std::result::Result<HandshakeSignatureValid, rustls::Error> {
+    fn verify_tls13_signature(
+        &self,
+        message: &[u8],
+        cert: &CertificateDer<'_>,
+        dss: &DigitallySignedStruct,
+    ) -> std::result::Result<HandshakeSignatureValid, rustls::Error> {
         self.normal.verify_tls13_signature(message, cert, dss)
     }
 
@@ -378,7 +388,13 @@ fn dial_plain(host: &str, port: u16, user: &str, password: &str) -> std::result:
     start(ftp.passive_stream_builder(data_stream), user, password)
 }
 
-fn dial_tls(host: &str, port: u16, user: &str, password: &str, (cfg, why): (Arc<ClientConfig>, Why)) -> std::result::Result<(Session<RustlsStream>, String), String> {
+fn dial_tls(
+    host: &str,
+    port: u16,
+    user: &str,
+    password: &str,
+    (cfg, why): (Arc<ClientConfig>, Why),
+) -> std::result::Result<(Session<RustlsStream>, String), String> {
     let ftp = RustlsFtpStream::connect_with_stream(tcp(host, port)?).map_err(|e| say(&e, ""))?;
     *why.lock().unwrap_or_else(|e| e.into_inner()) = None;
     // The password goes only after the control connection is secured; no fall back to plain.
@@ -577,13 +593,11 @@ impl<T: TlsStream + Send + 'static> Transport for Ftp<T> {
     fn read(&self, path: &str) -> Result<(Vec<u8>, String)> {
         self.with(path, |s| {
             let e = Self::stat_of(s, path)?.ok_or_else(|| Fail::Msg(format!("{path}: no such file.")))?;
-            let data = s
-                .ftp
-                .retr(path, |r| {
-                    let mut buf = Vec::new();
-                    r.read_to_end(&mut buf).map_err(FtpError::ConnectionError)?;
-                    Ok(buf)
-                })?;
+            let data = s.ftp.retr(path, |r| {
+                let mut buf = Vec::new();
+                r.read_to_end(&mut buf).map_err(FtpError::ConnectionError)?;
+                Ok(buf)
+            })?;
             Ok((data, Self::version_of(&e)))
         })
     }
@@ -654,13 +668,7 @@ impl<T: TlsStream + Send + 'static> Transport for Ftp<T> {
     }
 
     fn delete(&self, path: &str, is_dir: bool) -> Result<()> {
-        self.with(path, |s| {
-            if is_dir {
-                Self::remove_tree(s, path)
-            } else {
-                Ok(s.ftp.rm(path)?)
-            }
-        })
+        self.with(path, |s| if is_dir { Self::remove_tree(s, path) } else { Ok(s.ftp.rm(path)?) })
     }
 
     fn make_dir(&self, path: &str) -> Result<()> {
@@ -884,7 +892,15 @@ mod tests {
         out
     }
 
-    fn serve(c: TcpStream, files: Arc<Mutex<BTreeMap<String, Vec<u8>>>>, dirs: Arc<Mutex<Vec<String>>>, drop_next: Arc<AtomicBool>, logins: Arc<AtomicUsize>, knobs: Arc<Knobs>, mlsd: bool) {
+    fn serve(
+        c: TcpStream,
+        files: Arc<Mutex<BTreeMap<String, Vec<u8>>>>,
+        dirs: Arc<Mutex<Vec<String>>>,
+        drop_next: Arc<AtomicBool>,
+        logins: Arc<AtomicUsize>,
+        knobs: Arc<Knobs>,
+        mlsd: bool,
+    ) {
         let w = Arc::new(Mutex::new(c.try_clone().unwrap()));
         let mut r = BufReader::new(c);
         let mut data: Option<TcpListener> = None;
@@ -950,7 +966,9 @@ mod tests {
                     let f = files.lock().unwrap();
                     match f.get(arg) {
                         Some(d) => say_to(&w, &format!("250-Listing\r\n type=file;size={};modify={STAMP}; {arg}\r\n250 End", d.len())),
-                        None if dirs.lock().unwrap().iter().any(|d| d == arg) => say_to(&w, &format!("250-Listing\r\n type=dir;modify={STAMP}; {arg}\r\n250 End")),
+                        None if dirs.lock().unwrap().iter().any(|d| d == arg) => {
+                            say_to(&w, &format!("250-Listing\r\n type=dir;modify={STAMP}; {arg}\r\n250 End"))
+                        }
                         None => say_to(&w, "550 not found"),
                     }
                 }
@@ -1138,10 +1156,7 @@ mod tests {
         f.put("/a.txt", b"old");
         let t = connect(&f);
         t.replace("/a.txt", b"new!", true).unwrap();
-        assert_eq!(
-            *f.knobs.renames.lock().unwrap(),
-            ["/.a.txt.ferry-tmp -> /a.txt", "/a.txt -> /.a.txt.ferry-old", "/.a.txt.ferry-tmp -> /a.txt"]
-        );
+        assert_eq!(*f.knobs.renames.lock().unwrap(), ["/.a.txt.ferry-tmp -> /a.txt", "/a.txt -> /.a.txt.ferry-old", "/.a.txt.ferry-tmp -> /a.txt"]);
         // The backup and the temporary file are gone.
         assert_eq!(f.files.lock().unwrap().iter().map(|(k, v)| (k.as_str(), v.as_slice())).collect::<Vec<_>>(), [("/a.txt", &b"new!"[..])]);
     }

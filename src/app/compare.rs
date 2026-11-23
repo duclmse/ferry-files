@@ -56,7 +56,8 @@ impl Ctx {
     /// The paths of pane `p`'s items marked `mark` (files only, unless `folders`).
     fn with_mark(p: Pane, mark: &str, folders: bool) -> Vec<String> {
         let marks = p.cmp.get_untracked().unwrap_or_default();
-        p.all.with_untracked(|all| all.iter().filter(|e| (folders || !e.dir) && marks.get(&e.name).is_some_and(|m| m == mark)).map(|e| e.path.clone()).collect())
+        p.all
+            .with_untracked(|all| all.iter().filter(|e| (folders || !e.dir) && marks.get(&e.name).is_some_and(|m| m == mark)).map(|e| e.path.clone()).collect())
     }
 
     /// Copies what's only in `p`'s folder to the other pane's.

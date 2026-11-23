@@ -112,7 +112,18 @@ pub(super) fn chord_of(e: &web_sys::KeyboardEvent) -> Option<String> {
     let code = e.code();
     let lone = matches!(
         code.as_str(),
-        "" | "ShiftLeft" | "ShiftRight" | "ControlLeft" | "ControlRight" | "AltLeft" | "AltRight" | "MetaLeft" | "MetaRight" | "CapsLock" | "Fn" | "OSLeft" | "OSRight"
+        "" | "ShiftLeft"
+            | "ShiftRight"
+            | "ControlLeft"
+            | "ControlRight"
+            | "AltLeft"
+            | "AltRight"
+            | "MetaLeft"
+            | "MetaRight"
+            | "CapsLock"
+            | "Fn"
+            | "OSLeft"
+            | "OSRight"
     );
     if lone {
         return None;
@@ -218,9 +229,7 @@ impl Ctx {
 
     /// The command a chord runs, if any.
     pub(super) fn command_for(self, chord: &str) -> Option<&'static Command> {
-        self.keymap.with_untracked(|k| {
-            COMMANDS.iter().find(|c| chords_in(k, c.id).iter().any(|m| m == chord))
-        })
+        self.keymap.with_untracked(|k| COMMANDS.iter().find(|c| chords_in(k, c.id).iter().any(|m| m == chord)))
     }
 
     fn set_keys(self, f: impl FnOnce(&mut HashMap<String, Vec<String>>)) {

@@ -5,7 +5,8 @@ use super::*;
 use crate::api::Dupe;
 
 /// Smallest file looked at: label and bytes.
-const MIN_SIZES: [(&str, u64); 5] = [("Any size", 1), ("100 KB and up", 100_000), ("1 MB and up", 1_000_000), ("10 MB and up", 10_000_000), ("100 MB and up", 100_000_000)];
+const MIN_SIZES: [(&str, u64); 5] =
+    [("Any size", 1), ("100 KB and up", 100_000), ("1 MB and up", 1_000_000), ("10 MB and up", 10_000_000), ("100 MB and up", 100_000_000)];
 
 /// The copy to keep in a group: one on the computer, else the oldest.
 fn keeper(g: &[Dupe], folders: &[(Src, String)]) -> usize {
@@ -84,10 +85,13 @@ pub(super) fn Duplicates(folders: Vec<(Src, String)>) -> impl IntoView {
         chosen.set(set);
     };
     let chosen_bytes = move || {
-        found.with(|d| d.as_ref().map_or(0, |d| d.groups.iter().flatten().filter(|x| chosen.with(|c| c.contains(&(x.at, x.path.clone())))).map(|x| x.size).sum::<u64>()))
+        found.with(|d| {
+            d.as_ref().map_or(0, |d| d.groups.iter().flatten().filter(|x| chosen.with(|c| c.contains(&(x.at, x.path.clone())))).map(|x| x.size).sum::<u64>())
+        })
     };
     // A group with every copy picked would lose the file.
-    let all_of_one = move || found.with(|d| d.as_ref().is_some_and(|d| d.groups.iter().any(|g| chosen.with(|c| g.iter().all(|x| c.contains(&(x.at, x.path.clone())))))));
+    let all_of_one =
+        move || found.with(|d| d.as_ref().is_some_and(|d| d.groups.iter().any(|g| chosen.with(|c| g.iter().all(|x| c.contains(&(x.at, x.path.clone())))))));
 
     let delete = move || {
         confirming.set(false);

@@ -98,12 +98,7 @@ pub(super) fn epub_set_meta(state: State<'_, AppState>, id: u32, meta: epub::Met
 #[tauri::command(rename_all = "snake_case")]
 pub(super) async fn epub_cover(app: AppHandle, state: State<'_, AppState>, id: u32) -> Result<Option<BookView>, String> {
     let picked = blocking(move || {
-        let Some(f) = app
-            .dialog()
-            .file()
-            .add_filter("Images", &["jpg", "jpeg", "png", "gif", "webp", "svg"])
-            .blocking_pick_file()
-        else {
+        let Some(f) = app.dialog().file().add_filter("Images", &["jpg", "jpeg", "png", "gif", "webp", "svg"]).blocking_pick_file() else {
             return Ok(None);
         };
         let local = f.into_path().map_err(|e| e.to_string())?;

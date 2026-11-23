@@ -3,7 +3,6 @@
 use super::*;
 use crate::files::opened_dir;
 
-
 #[derive(Serialize)]
 pub(super) struct Folder {
     path: String,

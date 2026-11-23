@@ -289,10 +289,7 @@ fn drives_here() -> Vec<(String, String)> {
         .map(|d| {
             let root: Vec<u16> = format!("{d}\\").encode_utf16().chain([0]).collect();
             let mut label = [0u16; 261];
-            let ok = unsafe {
-                GetVolumeInformationW(windows::core::PCWSTR(root.as_ptr()), Some(&mut label), None, None, None, None)
-            }
-            .is_ok();
+            let ok = unsafe { GetVolumeInformationW(windows::core::PCWSTR(root.as_ptr()), Some(&mut label), None, None, None, None) }.is_ok();
             let len = label.iter().position(|&c| c == 0).unwrap_or(0);
             let label = if ok { String::from_utf16_lossy(&label[..len]) } else { String::new() };
             let name = if label.is_empty() { format!("Drive ({d})") } else { format!("{label} ({d})") };
@@ -412,7 +409,11 @@ pub fn eject(path: &str) -> Result<(), String> {
     #[cfg(target_os = "macos")]
     {
         let out = command("diskutil").args(["eject", path]).output().map_err(|e| format!("Can't run diskutil: {e}"))?;
-        if out.status.success() { Ok(()) } else { failed(String::from_utf8_lossy(&out.stderr).into_owned()) }
+        if out.status.success() {
+            Ok(())
+        } else {
+            failed(String::from_utf8_lossy(&out.stderr).into_owned())
+        }
     }
     #[cfg(all(unix, not(target_os = "macos")))]
     {
@@ -441,10 +442,8 @@ pub fn eject(path: &str) -> Result<(), String> {
         // File Explorer's own Eject, through the shell.
         let drive = path.trim_start_matches('/');
         let script = format!("(New-Object -ComObject Shell.Application).Namespace(17).ParseName('{drive}').InvokeVerb('Eject')");
-        let out = command("powershell")
-            .args(["-NoProfile", "-NonInteractive", "-Command", &script])
-            .output()
-            .map_err(|e| format!("Can't run PowerShell: {e}"))?;
+        let out =
+            command("powershell").args(["-NoProfile", "-NonInteractive", "-Command", &script]).output().map_err(|e| format!("Can't run PowerShell: {e}"))?;
         if !out.status.success() {
             return failed(String::from_utf8_lossy(&out.stderr).into_owned());
         }
@@ -540,7 +539,11 @@ pub(crate) fn net_in_proc(text: &str) -> Vec<(String, String)> {
 #[cfg(any(all(unix, not(target_os = "macos")), test))]
 pub(crate) fn gvfs_url(name: &str) -> Option<String> {
     let (kind, spec) = name.split_once(':')?;
-    let field = |k: &str| spec.split(',').find_map(|f| f.strip_prefix(k).and_then(|v| v.strip_prefix('='))).map(|v| percent_encoding::percent_decode_str(v).decode_utf8_lossy().into_owned());
+    let field = |k: &str| {
+        spec.split(',')
+            .find_map(|f| f.strip_prefix(k).and_then(|v| v.strip_prefix('=')))
+            .map(|v| percent_encoding::percent_decode_str(v).decode_utf8_lossy().into_owned())
+    };
     let user = field("user").map(|u| format!("{u}@")).unwrap_or_default();
     let port = field("port").map(|p| format!(":{p}")).unwrap_or_default();
     let prefix = field("prefix").unwrap_or_default();
@@ -750,23 +753,27 @@ mod tests {
                      nas:/export/media/ on /Volumes/media (nfs, nodev, nosuid, mounted by me)\n\
                      https://cloud.example.com/dav/ on /Volumes/dav (webdav, nodev, noexec, nosuid, mounted by me)\n\
                      map auto_home on /System/Volumes/Data/home (autofs, automounted, nobrowse)\n";
-        assert_eq!(net_in_mount(mount), vec![
-            ("smb://me@nas._smb._tcp.local/Photos".to_string(), "/Volumes/Photos 1".to_string()),
-            ("nfs://nas/export/media".to_string(), "/Volumes/media".to_string()),
-            ("https://cloud.example.com/dav/".to_string(), "/Volumes/dav".to_string()),
-        ]);
-        let net = "Status       Local     Remote                    Network\n-----\nOK           Z:        \\\\nas\\Photos              Microsoft Windows Network\n\
+        assert_eq!(
+            net_in_mount(mount),
+            vec![
+                ("smb://me@nas._smb._tcp.local/Photos".to_string(), "/Volumes/Photos 1".to_string()),
+                ("nfs://nas/export/media".to_string(), "/Volumes/media".to_string()),
+                ("https://cloud.example.com/dav/".to_string(), "/Volumes/dav".to_string()),
+            ]
+        );
+        let net =
+            "Status       Local     Remote                    Network\n-----\nOK           Z:        \\\\nas\\Photos              Microsoft Windows Network\n\
                    OK           Y:        \\\\nas\\export\\media        NFS Network\nThe command completed successfully.\n";
-        assert_eq!(net_in_net_use(net), vec![
-            ("smb://nas/Photos".to_string(), "/Z:".to_string()),
-            ("nfs://nas/export/media".to_string(), "/Y:".to_string()),
-        ]);
+        assert_eq!(net_in_net_use(net), vec![("smb://nas/Photos".to_string(), "/Z:".to_string()), ("nfs://nas/export/media".to_string(), "/Y:".to_string()),]);
         let proc = "/dev/sdb1 /media/me/STICK vfat rw 0 0\nnas:/export /home/me/nas nfs4 rw 0 0\n//nas/Photos /mnt/photos cifs rw 0 0\nme@box:/srv /home/me/box fuse.sshfs rw 0 0\n";
-        assert_eq!(net_in_proc(proc), vec![
-            ("nfs://nas/export".to_string(), "/home/me/nas".to_string()),
-            ("smb://nas/Photos".to_string(), "/mnt/photos".to_string()),
-            ("sftp://me@box/srv".to_string(), "/home/me/box".to_string()),
-        ]);
+        assert_eq!(
+            net_in_proc(proc),
+            vec![
+                ("nfs://nas/export".to_string(), "/home/me/nas".to_string()),
+                ("smb://nas/Photos".to_string(), "/mnt/photos".to_string()),
+                ("sftp://me@box/srv".to_string(), "/home/me/box".to_string()),
+            ]
+        );
         assert_eq!(gvfs_url("smb-share:server=nas,share=photos,user=me").as_deref(), Some("smb://me@nas/photos"));
         assert_eq!(gvfs_url("nfs:host=nas,prefix=%2Fexport%2Fmedia").as_deref(), Some("nfs://nas/export/media"));
         assert_eq!(gvfs_url("dav:host=cloud,ssl=true,prefix=%2Fdav").as_deref(), Some("https://cloud/dav"));

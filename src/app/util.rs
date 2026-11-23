@@ -3,9 +3,37 @@
 use super::*;
 
 pub(super) const TEXT_EXTS: &[&str] = &[
-    "txt", "md", "markdown", "json", "xml", "html", "htm", "xhtml", "css", "js", "csv", "tsv", "log", "ini",
-    "conf", "cfg", "yaml", "yml", "toml", "properties", "opf", "ncx", "svg", "srt", "vtt", "sh", "py", "kt",
-    "java", "gradle", "env",
+    "txt",
+    "md",
+    "markdown",
+    "json",
+    "xml",
+    "html",
+    "htm",
+    "xhtml",
+    "css",
+    "js",
+    "csv",
+    "tsv",
+    "log",
+    "ini",
+    "conf",
+    "cfg",
+    "yaml",
+    "yml",
+    "toml",
+    "properties",
+    "opf",
+    "ncx",
+    "svg",
+    "srt",
+    "vtt",
+    "sh",
+    "py",
+    "kt",
+    "java",
+    "gradle",
+    "env",
 ];
 pub(super) const TEXT_MAX: u64 = 5 * 1024 * 1024;
 
@@ -79,10 +107,33 @@ const CODE_NAMES: &[(&str, &str)] = &[
 
 /// Text without an extension worth naming: dotfiles (".gitignore") and the usual project files.
 const TEXT_NAMES: &[&str] = &[
-    "readme", "license", "licence", "copying", "authors", "changelog", "notice", "todo", "procfile",
-    ".gitignore", ".gitattributes", ".gitmodules", ".editorconfig", ".npmrc", ".nvmrc", ".prettierrc",
-    ".eslintrc", ".babelrc", ".dockerignore", ".bashrc", ".zshrc", ".profile", ".bash_profile", ".vimrc",
-    ".env", ".flake8", ".clang-format",
+    "readme",
+    "license",
+    "licence",
+    "copying",
+    "authors",
+    "changelog",
+    "notice",
+    "todo",
+    "procfile",
+    ".gitignore",
+    ".gitattributes",
+    ".gitmodules",
+    ".editorconfig",
+    ".npmrc",
+    ".nvmrc",
+    ".prettierrc",
+    ".eslintrc",
+    ".babelrc",
+    ".dockerignore",
+    ".bashrc",
+    ".zshrc",
+    ".profile",
+    ".bash_profile",
+    ".vimrc",
+    ".env",
+    ".flake8",
+    ".clang-format",
 ];
 
 /// The language of a source file, by its name or extension.
@@ -102,10 +153,7 @@ pub(super) fn code_language(name: &str) -> Option<&'static str> {
 /// Whether a file of this name is text the preview and editor can show.
 pub(super) fn is_text_name(name: &str) -> bool {
     let lower = name.to_lowercase();
-    TEXT_EXTS.contains(&ext(name).as_str())
-        || code_language(name).is_some()
-        || TEXT_NAMES.contains(&lower.as_str())
-        || lower.starts_with(".env.")
+    TEXT_EXTS.contains(&ext(name).as_str()) || code_language(name).is_some() || TEXT_NAMES.contains(&lower.as_str()) || lower.starts_with(".env.")
 }
 
 pub(super) fn ext(name: &str) -> String {
@@ -163,14 +211,7 @@ pub(super) fn when(mtime: i64) -> String {
         return String::new();
     }
     let d = js_sys::Date::new(&wasm_bindgen::JsValue::from_f64(mtime as f64 * 1000.0));
-    format!(
-        "{}-{:02}-{:02} {:02}:{:02}",
-        d.get_full_year(),
-        d.get_month() + 1,
-        d.get_date(),
-        d.get_hours(),
-        d.get_minutes()
-    )
+    format!("{}-{:02}-{:02} {:02}:{:02}", d.get_full_year(), d.get_month() + 1, d.get_date(), d.get_hours(), d.get_minutes())
 }
 
 pub(super) fn parent(path: &str) -> String {
@@ -181,7 +222,11 @@ pub(super) fn parent(path: &str) -> String {
 }
 
 pub(super) fn join(dir: &str, name: &str) -> String {
-    if dir.ends_with('/') { format!("{dir}{name}") } else { format!("{dir}/{name}") }
+    if dir.ends_with('/') {
+        format!("{dir}{name}")
+    } else {
+        format!("{dir}/{name}")
+    }
 }
 
 pub(super) fn base(path: &str) -> String {
@@ -373,14 +418,8 @@ pub(super) const SEARCH_SIZES: &[(&str, Option<u64>, Option<u64>)] = &[
     ("Over 1 GB", Some(1024 * MB), None),
 ];
 /// The search's modified filter: (label, days back; negative: older than that).
-pub(super) const SEARCH_TIMES: &[(&str, i64)] = &[
-    ("Any time", 0),
-    ("Today", 1),
-    ("Past week", 7),
-    ("Past month", 30),
-    ("Past year", 365),
-    ("Over a year ago", -365),
-];
+pub(super) const SEARCH_TIMES: &[(&str, i64)] =
+    &[("Any time", 0), ("Today", 1), ("Past week", 7), ("Past month", 30), ("Past year", 365), ("Over a year ago", -365)];
 pub(super) const REGEX_KEY: &str = "ferry-files.filter-regex";
 /// Whether a pane's filter pane shows its kind, size and time choices.
 pub(super) const OPTIONS_KEY: &str = "ferry-files.search-options";

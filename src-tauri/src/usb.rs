@@ -73,13 +73,7 @@ pub(crate) fn parse(text: &str) -> Vec<UsbDev> {
     }
     fn finish(p: Part, out: &mut Vec<UsbDev>) {
         if let (true, Some(loc), Some(address), Some(serial)) = (p.device, p.location, p.address, p.serial) {
-            out.push(UsbDev {
-                bus: loc >> 24,
-                address,
-                vendor: p.vendor.unwrap_or(0),
-                product: p.product.unwrap_or(0),
-                serial,
-            });
+            out.push(UsbDev { bus: loc >> 24, address, vendor: p.vendor.unwrap_or(0), product: p.product.unwrap_or(0), serial });
         }
     }
     let mut out = vec![];
@@ -125,11 +119,7 @@ pub struct Holder {
 /// with this vendor and product id.
 #[cfg(target_os = "macos")]
 pub fn holders(bus: u32, address: u32, vendor: u16, product: u16) -> Option<Vec<Holder>> {
-    let out = crate::platform::command("ioreg")
-        .args(["-r", "-c", "IOUSBHostDevice", "-l", "-w0"])
-        .stdin(std::process::Stdio::null())
-        .output()
-        .ok()?;
+    let out = crate::platform::command("ioreg").args(["-r", "-c", "IOUSBHostDevice", "-l", "-w0"]).stdin(std::process::Stdio::null()).output().ok()?;
     out.status.success().then(|| parse_holders(&String::from_utf8_lossy(&out.stdout), bus, address, vendor, product))
 }
 
@@ -282,4 +272,3 @@ mod tests {
         assert_eq!(serial_of(&devs, 5, 9, 1, 2), None);
     }
 }
-

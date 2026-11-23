@@ -187,16 +187,12 @@ fn lib() -> Result<&'static Lib> {
 }
 
 fn load() -> std::result::Result<Lib, String> {
-    let library = candidates()
-        .iter()
-        .find_map(|p| unsafe { libloading::Library::new(p) }.ok())
-        .ok_or(INSTALL)?;
+    let library = candidates().iter().find_map(|p| unsafe { libloading::Library::new(p) }.ok()).ok_or(INSTALL)?;
     // The library stays loaded for the life of the app.
     let library: &'static libloading::Library = Box::leak(Box::new(library));
     macro_rules! sym {
         ($name:literal) => {
-            *unsafe { library.get(concat!($name, "\0").as_bytes()) }
-                .map_err(|e| format!("libmtp is missing {}: {e}", $name))?
+            *unsafe { library.get(concat!($name, "\0").as_bytes()) }.map_err(|e| format!("libmtp is missing {}: {e}", $name))?
         };
     }
     let lib = Lib {
@@ -224,7 +220,11 @@ fn load() -> std::result::Result<Lib, String> {
 }
 
 fn cstr(p: *const c_char) -> String {
-    if p.is_null() { String::new() } else { unsafe { CStr::from_ptr(p) }.to_string_lossy().into_owned() }
+    if p.is_null() {
+        String::new()
+    } else {
+        unsafe { CStr::from_ptr(p) }.to_string_lossy().into_owned()
+    }
 }
 
 fn raw_devices(lib: &Lib) -> Result<Vec<*mut RawDevice>> {
@@ -267,11 +267,7 @@ pub fn detect() -> Result<Vec<Detected>> {
             let (e, bus, devnum) = unsafe { (&(*r).device_entry, (*r).bus_location, (*r).devnum) };
             let name = format!("{} {}", cstr(e.vendor), cstr(e.product)).trim().to_string();
             let name = if name.is_empty() { format!("{:04x}:{:04x}", e.vendor_id, e.product_id) } else { name };
-            Detected {
-                location: location(r),
-                name,
-                serial: crate::usb::serial_of(&usb, bus, devnum as u32, e.vendor_id, e.product_id),
-            }
+            Detected { location: location(r), name, serial: crate::usb::serial_of(&usb, bus, devnum as u32, e.vendor_id, e.product_id) }
         })
         .collect())
 }
@@ -328,16 +324,7 @@ impl Link {
             // Read everything (including `next`) before freeing the node.
             let (c, next) = unsafe {
                 let r = &*f;
-                (
-                    Child {
-                        id: r.item_id,
-                        name: cstr(r.filename),
-                        dir: r.filetype == FILETYPE_FOLDER,
-                        size: r.filesize,
-                        mtime: r.modificationdate,
-                    },
-                    r.next,
-                )
+                (Child { id: r.item_id, name: cstr(r.filename), dir: r.filetype == FILETYPE_FOLDER, size: r.filesize, mtime: r.modificationdate }, r.next)
             };
             unsafe { (self.lib.destroy_file)(f) };
             out.push(c);
@@ -357,7 +344,11 @@ impl Link {
     fn download_to(&self, id: u32, to: &std::path::Path) -> Result<()> {
         let c = CString::new(to.to_string_lossy().as_bytes()).unwrap();
         let rc = unsafe { (self.lib.get_file_to_file)(self.dev, id, c.as_ptr(), Some(progress), self.stop_flag()) };
-        if rc == 0 { Ok(()) } else { Err(self.error("Reading the file")) }
+        if rc == 0 {
+            Ok(())
+        } else {
+            Err(self.error("Reading the file"))
+        }
     }
 
     /// As `download_to`, also stopping when `cancel` is set.
@@ -366,7 +357,11 @@ impl Link {
         let flags: [&AtomicBool; 2] = [&self.stop, cancel];
         let data: *const [&AtomicBool; 2] = &flags;
         let rc = unsafe { (self.lib.get_file_to_file)(self.dev, id, c.as_ptr(), Some(progress_either), data.cast()) };
-        if rc == 0 { Ok(()) } else { Err(self.error("Reading the file")) }
+        if rc == 0 {
+            Ok(())
+        } else {
+            Err(self.error("Reading the file"))
+        }
     }
 
     /// Part of a file straight from the device, or None when it (or libmtp) can't do that.
@@ -374,9 +369,7 @@ impl Link {
         let f = self.lib.get_partial.filter(|_| self.partial)?;
         let (mut data, mut size) = (std::ptr::null_mut::<u8>(), 0u32);
         let rc = unsafe { f(self.dev, id, start, len, &mut data, &mut size) };
-        let out = (rc == 0).then(|| {
-            if data.is_null() { vec![] } else { unsafe { std::slice::from_raw_parts(data, size as usize) }.to_vec() }
-        });
+        let out = (rc == 0).then(|| if data.is_null() { vec![] } else { unsafe { std::slice::from_raw_parts(data, size as usize) }.to_vec() });
         if !data.is_null() {
             unsafe { free(data.cast()) };
         }
@@ -409,9 +402,7 @@ impl Link {
             filetype: FILETYPE_UNKNOWN,
             next: std::ptr::null_mut(),
         };
-        let rc = unsafe {
-            (self.lib.send_file_from_file)(self.dev, path.as_ptr(), &mut meta, Some(progress), self.stop_flag())
-        };
+        let rc = unsafe { (self.lib.send_file_from_file)(self.dev, path.as_ptr(), &mut meta, Some(progress), self.stop_flag()) };
         if rc != 0 {
             return Err(self.error(&format!("Uploading {name}")));
         }
@@ -731,11 +722,7 @@ impl Mtp {
         if storages.is_empty() {
             return err("The device shows no storage. Unlock the phone and choose \"File transfer\".");
         }
-        let model = [lib.friendlyname, lib.modelname]
-            .iter()
-            .map(|f| cstr(unsafe { f(dev) }))
-            .find(|s| !s.is_empty())
-            .unwrap_or_else(|| "MTP device".into());
+        let model = [lib.friendlyname, lib.modelname].iter().map(|f| cstr(unsafe { f(dev) })).find(|s| !s.is_empty()).unwrap_or_else(|| "MTP device".into());
         Ok(Mtp { inner: Arc::new(Mutex::new(Inner { link, cache: HashMap::new() })), streamed: Mutex::new(Vec::new()), storages, model, stop })
     }
 
@@ -811,9 +798,15 @@ impl Mtp {
 }
 
 impl Transport for Mtp {
-    fn kind(&self) -> &'static str { "mtp" }
-    fn label(&self) -> String { self.model.clone() }
-    fn default_dir(&self) -> String { format!("/{}", self.storages[0].0) }
+    fn kind(&self) -> &'static str {
+        "mtp"
+    }
+    fn label(&self) -> String {
+        self.model.clone()
+    }
+    fn default_dir(&self) -> String {
+        format!("/{}", self.storages[0].0)
+    }
 
     fn quick_dirs(&self) -> Vec<(String, String)> {
         self.storages.iter().map(|(n, _)| (n.clone(), format!("/{n}"))).collect()

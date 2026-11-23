@@ -181,7 +181,11 @@ fn exif_orientation(t: &[u8]) -> Option<u16> {
     let u32_ = |at: usize| {
         t.get(at..at + 4).map(|b| {
             let b = [b[0], b[1], b[2], b[3]];
-            if le { u32::from_le_bytes(b) } else { u32::from_be_bytes(b) }
+            if le {
+                u32::from_le_bytes(b)
+            } else {
+                u32::from_be_bytes(b)
+            }
         })
     };
     let ifd = u32_(4)? as usize;
@@ -335,7 +339,11 @@ fn exif_date(t: &[u8]) -> Option<(i32, u32, u32)> {
     let u32_ = |at: usize| {
         t.get(at..at + 4).map(|b| {
             let b = [b[0], b[1], b[2], b[3]];
-            if le { u32::from_le_bytes(b) } else { u32::from_be_bytes(b) }
+            if le {
+                u32::from_le_bytes(b)
+            } else {
+                u32::from_be_bytes(b)
+            }
         })
     };
     // Where the value of `tag` in the IFD at `ifd` is.

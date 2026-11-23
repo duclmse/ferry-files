@@ -1,11 +1,15 @@
 pub mod adb;
 pub mod archive;
 pub mod books;
+mod connect;
 pub mod device;
+mod dupes;
 pub mod epub;
+mod everything;
+mod ftp;
+pub mod iphone;
 pub mod local;
 pub mod media;
-pub mod pdf;
 mod migrate;
 /// MTP over libmtp on macOS and Linux; on Windows over Windows' own Portable Devices API, since
 /// libmtp would need the phone's USB driver replaced there.
@@ -14,30 +18,26 @@ pub mod mtp;
 #[cfg(windows)]
 #[path = "wpd.rs"]
 pub mod mtp;
+pub mod pdf;
 pub mod platform;
 mod protocol;
-pub mod thumbs;
-pub mod usb;
-pub mod xml;
-mod connect;
-pub mod iphone;
-mod dupes;
-mod everything;
-mod stream;
-mod subs;
+mod s3;
+mod secrets;
 mod sftp;
 mod smb;
-mod webdav;
-mod ftp;
-mod s3;
+mod stream;
+mod subs;
 mod terminal;
-mod secrets;
+pub mod thumbs;
+pub mod usb;
+mod webdav;
+pub mod xml;
 pub use secrets::askpass;
-mod import;
 mod editor;
 mod files;
 mod highlight;
 mod idle;
+mod import;
 mod library;
 mod player;
 mod safety;
@@ -47,8 +47,8 @@ mod watch;
 mod wifi;
 
 use device::{DevError, Device, Entry, WriteResult};
-use serde::Serialize;
 use epub::Book;
+use serde::Serialize;
 use std::collections::{HashMap, HashSet};
 use std::sync::atomic::{AtomicU32, Ordering};
 use std::sync::{Arc, Mutex};
@@ -110,11 +110,7 @@ impl AppState {
     pub fn source(&self, src: Option<&str>) -> Result<Arc<Device>, String> {
         match src {
             Some("mac") => Ok(self.mac.clone()),
-            Some(id) => self
-                .devs()
-                .get(id)
-                .map(|c| c.dev.clone())
-                .ok_or_else(|| "That device isn't connected any more.".to_string()),
+            Some(id) => self.devs().get(id).map(|c| c.dev.clone()).ok_or_else(|| "That device isn't connected any more.".to_string()),
             None => Err("No device given.".into()),
         }
     }

@@ -166,7 +166,9 @@ impl Ep {
             Mode::Visual => {
                 let body = match self.kept.try_update_value(Option::take).flatten() {
                     Some(b) => b,
-                    None => self.visual_body().inspect_err(|_| self.chapter_dirty.set(false))
+                    None => self
+                        .visual_body()
+                        .inspect_err(|_| self.chapter_dirty.set(false))
                         .map_err(|e| format!("The last edits to this chapter were lost. {e}"))?,
                 };
                 call::<Book>("epub_set_body", json!({ "id": id, "path": path, "body": body })).await
@@ -325,10 +327,7 @@ impl Ep {
             let r = call::<Replaced>("epub_replace", json!({ "id": self.id(), "query": q })).await?;
             self.book.set(Some(r.book));
             self.search().await?;
-            self.say(
-                format!("Replaced {}. Save to write the book to {}.", plural(r.count, "match", "matches"), self.place()),
-                "ok",
-            );
+            self.say(format!("Replaced {}. Save to write the book to {}.", plural(r.count, "match", "matches"), self.place()), "ok");
             Ok(())
         });
     }
@@ -424,9 +423,7 @@ pub fn EditBar() -> impl IntoView {
             None if d > 0 => 0,
             None => return,
         };
-        let path = ep.book.with_untracked(|b| {
-            b.as_ref().and_then(|b| usize::try_from(to).ok().and_then(|k| b.chapters.get(k))).map(|c| c.path.clone())
-        });
+        let path = ep.book.with_untracked(|b| b.as_ref().and_then(|b| usize::try_from(to).ok().and_then(|k| b.chapters.get(k))).map(|c| c.path.clone()));
         if let Some(p) = path {
             ep.go(View::Chapter(p));
         }
@@ -513,7 +510,11 @@ fn lines(v: &[String]) -> String {
 
 /// Keeps every line, even empty ones, so typing Enter in the box isn't undone. The backend drops blanks.
 fn split_lines(s: String) -> Vec<String> {
-    if s.is_empty() { vec![] } else { s.split('\n').map(String::from).collect() }
+    if s.is_empty() {
+        vec![]
+    } else {
+        s.split('\n').map(String::from).collect()
+    }
 }
 
 #[component]
