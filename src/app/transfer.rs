@@ -240,7 +240,15 @@ impl Ctx {
                 // Open files that moved on the same side follow them.
                 if *moving && finished && from_src == to_src {
                     for x in items {
-                        self.doc_moved(from_src, x, &join(to_dir, &base(x)));
+                        let to = join(to_dir, &base(x));
+                        self.doc_moved(from_src, x, &to);
+                        // A pane inside a folder that moved (one opened in the column view) stays
+                        // where the folder was: in the folder that held it.
+                        for q in self.panes {
+                            if q.src.get_untracked() == from_src && within(&q.cwd.get_untracked(), x) {
+                                self.navigate(q, parent(x));
+                            }
+                        }
                     }
                 }
                 if *moving {

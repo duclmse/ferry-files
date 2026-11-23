@@ -474,13 +474,20 @@ pub(super) fn row_events(
     )
 }
 
-/// Starts dragging an item: the picked items if it's one of them, otherwise just it.
+/// Starts dragging an item: the picked items if it's one of them, otherwise just it. An item
+/// that isn't in the pane's folder (in a column to the left, in the column view) can't be
+/// picked, so it's dragged alone and the selection stays.
 pub(super) fn drag_start(ctx: Ctx, p: Pane, path: String) -> impl Fn(web_sys::DragEvent) + 'static {
     move |ev: web_sys::DragEvent| {
-        if !p.picked().iter().any(|e| e.path == path) {
-            p.select_only(Some(path.clone()));
-        }
-        let paths: Vec<String> = p.picked().into_iter().map(|e| e.path).collect();
+        let picked: Vec<String> = p.picked().into_iter().map(|e| e.path).collect();
+        let paths = if picked.contains(&path) {
+            picked
+        } else {
+            if p.shown_rows().iter().any(|e| e.path == path) {
+                p.select_only(Some(path.clone()));
+            }
+            vec![path.clone()]
+        };
         if let Some(dt) = ev.data_transfer() {
             let _ = dt.set_data("text/plain", &paths.join("\n"));
             dt.set_effect_allowed("copyMove");
@@ -509,7 +516,12 @@ pub(super) fn drop_events(
         let Some((src, paths)) = ctx.drag.get_value() else { return };
         let target = dir_or_cwd(p, &d);
         // Not into one of the dragged folders, nor into the folder they're already in.
-        if src == p.src.get_untracked() && paths.iter().any(|x| within(&target, x) || parent(x) == target) {
+        if !drop_allowed(src, p.src.get_untracked(), &paths, &target) {
+            // Stop here, so the area behind (the pane, a column) doesn't take it instead.
+            ev.stop_propagation();
+            if let Some(dt) = ev.data_transfer() {
+                dt.set_drop_effect("none");
+            }
             if ctx.drop_at.get_untracked().is_some() {
                 ctx.drop_at.set(None);
             }
@@ -530,14 +542,25 @@ pub(super) fn drop_events(
         ctx.drop_at.set(None);
         let Some((src, paths)) = ctx.drag.write_value().take() else { return };
         let to_src = p.src.get_untracked();
+        let target = dir_or_cwd(p, &dir);
+        if !drop_allowed(src, to_src, &paths, &target) {
+            return;
+        }
         ctx.active.set(p.id);
-        ctx.transfer(p, src, paths, to_src, dir_or_cwd(p, &dir), moves(&ev, src, to_src));
+        ctx.transfer(p, src, paths, to_src, target, moves(&ev, src, to_src));
     };
     (over, drop)
 }
 
 pub(super) fn dir_or_cwd(p: Pane, dir: &Option<String>) -> String {
     dir.clone().unwrap_or_else(|| p.cwd.get_untracked())
+}
+
+fn drop_allowed(from_src: Src, to_src: Src, paths: &[String], target: &str) -> bool {
+    if from_src != to_src {
+        return true;
+    }
+    !paths.iter().any(|path| within(target, path) || parent(path) == target)
 }
 
 pub(super) fn moves(ev: &web_sys::DragEvent, from: Src, to: Src) -> bool {
@@ -708,5 +731,23 @@ fn Tabs(pane: Pane) -> impl IntoView {
                     on:click=move |_| ctx.set_split(false)>{ico(Icon::Close)}</button>
             })}
         </div>
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn drop_rejects_moves_to_the_same_or_nested_folder() {
+        assert!(!drop_allowed(Src::Mac, Src::Mac, &["/A/file.txt".into()], "/A"));
+        assert!(!drop_allowed(Src::Mac, Src::Mac, &["/A".into()], "/A"));
+        assert!(!drop_allowed(Src::Mac, Src::Mac, &["/A".into()], "/A/sub"));
+    }
+
+    #[test]
+    fn drop_accepts_a_different_folder_and_cross_source_copy() {
+        assert!(drop_allowed(Src::Mac, Src::Mac, &["/A/file.txt".into()], "/B"));
+        assert!(drop_allowed(Src::Mac, Src::Dev(1), &["/A".into()], "/B"));
     }
 }
