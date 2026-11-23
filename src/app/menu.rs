@@ -82,6 +82,8 @@ impl Ctx {
         v.extend([
             MenuItem::Sep,
             MenuItem::Do { label: "Show all sections".into(), key: "", act: Act::AllSections, danger: false, enabled: !hidden.is_empty() },
+            MenuItem::Sep,
+            item(format!("{} Show the current folder", if self.follow_folder.get_untracked() { "✓" } else { "\u{2003}" }), "", Act::FollowFolder),
         ]);
         v
     }
@@ -618,6 +620,7 @@ impl Ctx {
             (Act::ListTree, _) => p.set_list_tree(!p.list_tree.get_untracked()),
             (Act::Section(i), _) => self.toggle_section(i),
             (Act::AllSections, _) => self.set_hidden_sections(vec![]),
+            (Act::FollowFolder, _) => self.set_follow_folder(!self.follow_folder.get_untracked()),
             (Act::ShowAs(how), Some(e)) => {
                 p.peek_as.set(Some((e.path, how)));
                 p.preview.set(true);

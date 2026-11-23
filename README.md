@@ -39,7 +39,8 @@ own files and disks, with tools for EPUB books in particular.
   mirror. It lists what it will do first, and pairs can be saved.
 - **Sidebar**: favourites, workspaces, disks (with eject), devices, servers,
   sync pairs, backups and history. Folders show as trees, and sections can be
-  moved and hidden.
+  moved and hidden. "Show the current folder" (right-click the sidebar, or
+  Settings > Sidebar) opens the trees down to the folder shown and scrolls to it.
 - **Connections**: SFTP, SMB, NFS, WebDAV (Nextcloud, NAS boxes), FTP and FTPS,
   S3 buckets (AWS, Cloudflare R2, Backblaze B2, MinIO), and Everything
   (voidtools) over HTTP. Passwords and keys are kept in the system keychain.

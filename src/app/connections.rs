@@ -370,5 +370,9 @@ pub(super) fn SidebarSettings() -> impl IntoView {
         </div>
         <button class="btn" disabled=move || ctx.section_order.with(|o| o.iter().copied().eq(SECTIONS.iter().map(|s| s.0)))
             on:click=move |_| ctx.set_section_order(SECTIONS.iter().map(|s| s.0).collect())>"Put back in the usual order"</button>
+        <label class="check">
+            <input type="checkbox" prop:checked=move || ctx.follow_folder.get() on:change=move |e| ctx.set_follow_folder(event_target_checked(&e))/>
+            "Show the current folder: open the sidebar's folders down to the one shown, and scroll to it"
+        </label>
     }
 }

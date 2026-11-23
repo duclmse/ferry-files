@@ -196,6 +196,18 @@ pub(super) fn Sidebar() -> impl IntoView {
         let open = RwSignal::new(!stored_flag(&fold_key, false));
         let dirs = i.quick_dirs.clone();
         let foldable = !dirs.is_empty();
+        // Showing the current folder: its folders show while the active pane is in one of them
+        // (without changing what's remembered).
+        let roots: Vec<String> = dirs.iter().map(|(_, p)| p.clone()).collect();
+        Effect::new(move |_| {
+            if !ctx.follow_folder.get() {
+                return;
+            }
+            let pane = ctx.panes[ctx.active.get()];
+            if pane.src.get() == src && pane.cwd.with(|c| roots.iter().any(|r| r == c || inside(r, c))) && !open.get_untracked() {
+                open.set(true);
+            }
+        });
         let fold_tip = move || if open.get() { "Hide folders" } else { "Show folders" };
         view! {
             <div class="device">
@@ -537,13 +549,7 @@ fn TreeNode(
     // The folders in it: None until listed. A listing that fails shows nothing under it.
     let kids = RwSignal::new(None::<Vec<(String, String)>>);
     let at = StoredValue::new(path.clone());
-    let toggle = move |ev: web_sys::MouseEvent| {
-        ev.stop_propagation();
-        let now = !open.get_untracked();
-        open.set(now);
-        if !now {
-            return;
-        }
+    let list = move || {
         spawn_local(async move {
             let args = json!({ "src": src.key(), "path": at.get_value(), "current": false });
             let found = match call::<Vec<Entry>>("list", args).await {
@@ -557,10 +563,43 @@ fn TreeNode(
             let _ = kids.try_set(Some(found));
         });
     };
+    let toggle = move |ev: web_sys::MouseEvent| {
+        ev.stop_propagation();
+        let now = !open.get_untracked();
+        open.set(now);
+        if now {
+            list();
+        }
+    };
     let active = move || {
         let pane = ctx.panes[ctx.active.get()];
         pane.src.get() == src && at.with_value(|p| pane.cwd.with(|c| c == p))
     };
+    // Showing the current folder: opened when the active pane is inside it (never closed for
+    // that), and its row scrolled to when it's the one shown.
+    let row = NodeRef::<html::Button>::new();
+    Effect::new(move |_| {
+        if !ctx.follow_folder.get() {
+            return;
+        }
+        let pane = ctx.panes[ctx.active.get()];
+        let here = pane.src.get() == src && at.with_value(|p| pane.cwd.with(|c| inside(p, c)));
+        if here && !open.get_untracked() {
+            open.set(true);
+            list();
+        }
+    });
+    Effect::new(move |_| {
+        if ctx.follow_folder.get() && active() {
+            request_animation_frame(move || {
+                if let Some(el) = row.get_untracked() {
+                    let opts = web_sys::ScrollIntoViewOptions::new();
+                    opts.set_block(web_sys::ScrollLogicalPosition::Nearest);
+                    el.scroll_into_view_with_scroll_into_view_options(&opts);
+                }
+            });
+        }
+    });
     // Nothing to show under it once listed and empty.
     let leaf = move || kids.with(|k| k.as_ref().is_some_and(Vec::is_empty));
     let fold_tip = move || if open.get() { "Hide folders" } else { "Show folders" };
@@ -572,7 +611,7 @@ fn TreeNode(
                 {chev(open.into())}
             </button>
             // A middle click opens it in a new tab; right-click for a menu.
-            <button class="item" class:active=active title=title
+            <button class="item" class:active=active title=title node_ref=row
                 on:click=move |_| ctx.open_place(src, at.get_value())
                 on:mousedown=middle_down on:mouseup=move |ev| if ev.button() == 1 { ev.prevent_default(); ctx.new_tab(ctx.act(), src, at.get_value()) }
                 on:contextmenu=move |ev| ctx.show_place_menu(&ev, src, at.get_value())>{name}</button>
@@ -582,6 +621,12 @@ fn TreeNode(
             view! { <TreeNode src name path depth=depth + 1/> }.into_any()
         }).collect_view()))}
     }
+}
+
+/// Whether `cwd` is inside the folder `dir` (not the folder itself).
+pub(super) fn inside(dir: &str, cwd: &str) -> bool {
+    let dir = dir.trim_end_matches('/');
+    cwd.len() > dir.len() + 1 && cwd.starts_with(dir) && cwd.as_bytes()[dir.len()] == b'/'
 }
 
 /// The arrow that folds or unfolds a row, pointing down when open.
@@ -775,6 +820,16 @@ pub(super) fn Settings() -> impl IntoView {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn knows_what_is_inside_a_folder() {
+        assert!(inside("/", "/sdcard"));
+        assert!(inside("/sdcard", "/sdcard/DCIM/Camera"));
+        assert!(inside("/C:/", "/C:/Users"));
+        assert!(!inside("/sdcard", "/sdcard"));
+        assert!(!inside("/sdcard", "/sdcard2/x"));
+        assert!(!inside("/sdcard/DCIM", "/sdcard"));
+    }
 
     #[test]
     fn moves_sections() {

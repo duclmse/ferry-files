@@ -324,6 +324,8 @@ enum Act {
     Section(usize),
     /// Shows all the sidebar's sections.
     AllSections,
+    /// Turns on or off the sidebar showing the current folder.
+    FollowFolder,
     /// The Editor view's tree: shows this folder at its top.
     SetRoot,
     /// The Editor view's tree: shows the folder above at its top.
@@ -953,6 +955,8 @@ struct Ctx {
     phone_thumbs: RwSignal<bool>,
     /// The sidebar's sections hidden with a right-click on it, by key.
     hidden_sections: RwSignal<Vec<String>>,
+    /// The sidebar's folders open down to the one the active pane shows, which is scrolled to.
+    follow_folder: RwSignal<bool>,
     /// The sidebar's sections, top to bottom (keys of `SECTIONS`).
     section_order: RwSignal<Vec<&'static str>>,
     /// The connections added in Settings > Connections: Everything, SFTP and SMB servers.
@@ -1040,6 +1044,7 @@ impl Ctx {
             wrap_text: RwSignal::new(stored_flag(WRAP_KEY, true)),
             line_numbers: RwSignal::new(stored_flag(LINE_NUMBERS_KEY, true)),
             phone_thumbs: RwSignal::new(stored_flag(PHONE_THUMBS_KEY, true)),
+            follow_folder: RwSignal::new(stored_flag(FOLLOW_FOLDER_KEY, false)),
             section_order: RwSignal::new(sidebar::section_order(
                 &stored(SECTION_ORDER_KEY).and_then(|s| serde_json::from_str::<Vec<String>>(&s).ok()).unwrap_or_default(),
             )),
@@ -1130,6 +1135,11 @@ impl Ctx {
     fn set_section_order(self, order: Vec<&'static str>) {
         store(SECTION_ORDER_KEY, &serde_json::to_string(&order).unwrap_or_default());
         self.section_order.set(order);
+    }
+
+    fn set_follow_folder(self, on: bool) {
+        self.follow_folder.set(on);
+        store(FOLLOW_FOLDER_KEY, if on { "1" } else { "0" });
     }
 
     fn set_phone_thumbs(self, on: bool) {

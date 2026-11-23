@@ -394,6 +394,8 @@ pub(super) const SFTP_KEY: &str = "ferry-files.sftp-servers";
 /// The SMB shares added in the sidebar (a JSON list, like "smb://nas/Photos").
 pub(super) const SMB_KEY: &str = "ferry-files.smb-shares";
 pub(super) const PHONE_THUMBS_KEY: &str = "ferry-files.phone-thumbs";
+/// The sidebar opens its folders down to the one the active pane shows.
+pub(super) const FOLLOW_FOLDER_KEY: &str = "ferry-files.sidebar-follow";
 pub(super) const AUTO_CONNECT_KEY: &str = "ferry-files.auto-connect";
 pub(super) const VERIFY_KEY: &str = "ferry-files.verify";
 
