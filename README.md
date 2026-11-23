@@ -8,7 +8,8 @@ own files and disks, with tools for EPUB books in particular.
 
 - **Panes and views**: one or two panes (⌘\\), each with tabs (⌘T, ⌘W; drag one along, or to the other pane, which a pane's last tab closes), shown as
   a list, thumbnails or columns (names too long to show keep their extension in view). The list can
-  show folders as a tree (right-click its header). Sort, filter (⌘F; Enter searches subfolders), show hidden files (⌘.),
+  show folders as a tree (right-click its header), and group items under headings (right-click
+  the list: Group by name, kind, date or size). Sort (also from the right-click menu), filter (⌘F; Enter searches subfolders), show hidden files (⌘.),
   type a path (⌘L). All edges can be dragged to resize, and sizes are remembered.
 - **Preview** beside the files:
   - pictures that zoom, scroll and turn (the next one is read ahead, and ‹ › keeps the picture shown until the one it goes to is ready), and show full screen (F). Right-click

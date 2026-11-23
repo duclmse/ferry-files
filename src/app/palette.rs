@@ -73,10 +73,22 @@ fn lower(s: &str) -> Vec<char> {
     s.to_lowercase().chars().collect()
 }
 
-/// A menu's items as choices: the enabled ones, with ✓ marks turned into words.
+/// A menu's items as choices: the enabled ones, with ✓ marks turned into words, and those of its
+/// submenus after the submenu's name ("Sort by: Size").
 fn from_menu(group: &'static str, items: Vec<MenuItem>, entry: Option<&Entry>, out: &mut Vec<Choice>) {
+    from_menu_in(group, "", items, entry, out)
+}
+
+fn from_menu_in(group: &'static str, under: &str, items: Vec<MenuItem>, entry: Option<&Entry>, out: &mut Vec<Choice>) {
     for it in items {
-        let MenuItem::Do { label, key, act, enabled: true, .. } = it else { continue };
+        let (label, key, act) = match it {
+            MenuItem::Do { label, key, act, enabled: true, .. } => (label, key, act),
+            MenuItem::Sub { label, items } => {
+                from_menu_in(group, &label, items, entry, out);
+                continue;
+            }
+            _ => continue,
+        };
         let checked = label.starts_with('✓');
         let bare = label.trim_start_matches(['✓', '\u{2003}', ' ']).to_string();
         let label = match act {
@@ -84,6 +96,9 @@ fn from_menu(group: &'static str, items: Vec<MenuItem>, entry: Option<&Entry>, o
             Act::View(_) => format!("View {bare}"),
             Act::Column(_) => format!("{} the {bare} column", if checked { "Hide" } else { "Show" }),
             Act::Go(_) => continue,
+            // In a submenu, what's ticked is already so.
+            _ if checked && !under.is_empty() => continue,
+            _ if !under.is_empty() => format!("{under}: {bare}"),
             _ => bare,
         };
         if out.iter().any(|c| c.label == label) {
@@ -110,6 +125,9 @@ impl Ctx {
             from_menu(group, self.menu_items(p, Some(e)), Some(e), &mut out);
         }
         from_menu("Here", self.menu_items(p, None), None, &mut out);
+        // The views, which the menu leaves to the buttons above the files.
+        let now = p.view.get_untracked();
+        from_menu("Here", ViewMode::ALL.into_iter().filter(|m| *m != now).map(|m| item(m.label(), "", Act::View(m))).collect(), None, &mut out);
         let app: [AppCmd; 8] = [
             ("Settings", "", |c| c.settings.set(true)),
             ("Keyboard shortcuts", "help", |c| c.show_shortcuts()),

@@ -76,7 +76,9 @@ pub(super) fn ListView(pane: Pane) -> impl IntoView {
     let scroller = NodeRef::<html::Div>::new();
     // As a tree: the rows with open folders' items under them, and their depth.
     let tree = Memo::new(move |_| p.tree_on().then(|| p.tree_rows()));
-    let len = Signal::derive(move || tree.with(|t| t.as_ref().map(Vec::len)).unwrap_or_else(|| p.entries.with(Vec::len)));
+    // Its rows: items, and the groups' headings when it's grouped.
+    let rows = Memo::new(move |_| p.list_rows());
+    let len = Signal::derive(move || rows.with(Vec::len));
     let win = rows::Window::new(scroller, len, rows::Rows { h: 29.0, per: 1, top: 30.0 }, rows::list_rows, Signal::derive(move || Some(p.id)));
     top_on_new_folder(p, scroller, win);
     let gap =
@@ -123,11 +125,20 @@ pub(super) fn ListView(pane: Pane) -> impl IntoView {
                 </tr></thead>
                 <tbody>
                     {move || gap(win.gaps().0)}
-                    <For each=move || tree.with(|t| match t {
-                            Some(rows) => win.slice(rows),
-                            None => p.entries.with(|es| win.slice(es)).into_iter().map(|e| (e, 0)).collect(),
-                        }) key=|(e, _)| (e.path.clone(), e.size, e.mtime) let((e, depth))>
+                    <For each=move || rows.with(|r| win.slice(r))
+                        key=|(e, _, head)| e.as_ref().map_or_else(|| (format!("\u{0}{head}"), 0, 0), |e| (e.path.clone(), e.size, e.mtime))
+                        let((e, depth, head))>
                         {
+                            let Some(e) = e else {
+                                // A group's heading, with how many are in it.
+                                return view! {
+                                    <tr class="group-head" data-row="">
+                                        <td colspan=move || (1 + p.list_cols.with(Vec::len)).to_string()>
+                                            <span class="group-name">{head}</span><span class="group-count">{depth}</span>
+                                        </td>
+                                    </tr>
+                                }.into_any();
+                            };
                             // In the tree: a folder's arrow (or room for one), indented by depth.
                             let twisty = {
                                 let path = StoredValue::new(e.path.clone());
@@ -154,7 +165,7 @@ pub(super) fn ListView(pane: Pane) -> impl IntoView {
                             let (over, drop) = drop_events(ctx, p, dir.clone());
                             let cells = [kind_label(&e), when(e.mtime), if e.dir { String::new() } else { human_size(e.size) }];
                             view! {
-                                <tr data-path=e.path.clone() data-cmp={let e = e.clone(); move || cmp_mark(p, &e)} class:selected=move || p.is_picked(&path) class:drop=move || ctx.drop_at.get().as_deref() == Some(key.as_str())
+                                <tr data-path=e.path.clone() data-row="" data-cmp={let e = e.clone(); move || cmp_mark(p, &e)} class:selected=move || p.is_picked(&path) class:drop=move || ctx.drop_at.get().as_deref() == Some(key.as_str())
                                     draggable=move || (!editing()).to_string() data-dir=dir
                                     on:dragstart=drag_start(ctx, p, e.path.clone()) on:dragend=drag_end(ctx)
                                     on:dragover=move |ev| if e.dir { over(ev) } on:drop=move |ev| if e.dir { drop(ev) }
@@ -165,7 +176,7 @@ pub(super) fn ListView(pane: Pane) -> impl IntoView {
                                         view! { <td class=if c == 0 { "kindcol" } else { "num" }>{cells[c].clone()}</td> }
                                     }).collect_view()}
                                 </tr>
-                            }
+                            }.into_any()
                         }
                     </For>
                     {move || gap(win.gaps().1)}

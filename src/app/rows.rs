@@ -170,7 +170,7 @@ fn px(el: &web_sys::Element, prop: &str) -> f64 {
 
 /// The list view: rows under the header.
 pub(super) fn list_rows(el: &web_sys::Element) -> Option<Rows> {
-    Some(Rows { h: pitch(el, "tbody tr[data-path]", 0.0)?, per: 1, top: height_of(el, "thead")? })
+    Some(Rows { h: pitch(el, "tbody tr[data-row]", 0.0)?, per: 1, top: height_of(el, "thead")? })
 }
 
 /// The thumbnail view: rows of tiles in a grid, after the space for the rows above.

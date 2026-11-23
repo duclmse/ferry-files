@@ -465,6 +465,7 @@ impl Ctx {
                 danger: false,
                 enabled: !p.entries.with_untracked(Vec::is_empty) && self.renamable(p),
             });
+            v.extend([MenuItem::Sep, self.sort_menu(p), self.group_menu(p)]);
             v.extend([MenuItem::Sep, item("New tab", "new_tab", Act::NewTab), item(fav, "", Act::Favourite), item("Refresh", "", Act::Refresh)]);
             v.push(MenuItem::Do { label: "Import photos…".into(), key: "", act: Act::Import, danger: false, enabled: !p.cwd.get_untracked().is_empty() });
             v.push(MenuItem::Do { label: "Find duplicates…".into(), key: "", act: Act::Dupes, danger: false, enabled: !p.cwd.get_untracked().is_empty() });
@@ -482,9 +483,7 @@ impl Ctx {
                 danger: false,
                 enabled: split && !p.cwd.get_untracked().is_empty(),
             });
-            v.push(MenuItem::Sep);
             let now = p.view.get_untracked();
-            v.extend(ViewMode::ALL.map(|m| item(format!("{} as {}", if m == now { "✓" } else { "\u{2003}" }, m.label()), "", Act::View(m))));
             if now == ViewMode::List {
                 v.push(MenuItem::Sep);
                 v.extend(self.column_items(p));
@@ -590,6 +589,36 @@ impl Ctx {
         v
     }
 
+    /// Sort by ▸: what by (✓ the one now), then which way.
+    fn sort_menu(self, p: Pane) -> MenuItem {
+        let Sort(now, asc) = p.sort.get_untracked();
+        let tick = |on: bool| if on { "✓" } else { "\u{2003}" };
+        let mut items: Vec<MenuItem> = SortKey::ALL
+            .into_iter()
+            .map(|k| {
+                item(
+                    format!("{} {}", tick(k == now), k.label()),
+                    "",
+                    Act::SortBy(Sort(k, if k == now { asc } else { matches!(k, SortKey::Name | SortKey::Kind) })),
+                )
+            })
+            .collect();
+        items.extend([
+            MenuItem::Sep,
+            item(format!("{} Ascending", tick(asc)), "", Act::SortBy(Sort(now, true))),
+            item(format!("{} Descending", tick(!asc)), "", Act::SortBy(Sort(now, false))),
+        ]);
+        MenuItem::Sub { label: "Sort by".into(), items }
+    }
+
+    /// Group by ▸: nothing, or what the list's headings go by (✓ the one now). Only the list
+    /// shows the headings; the other views keep the groups together.
+    fn group_menu(self, p: Pane) -> MenuItem {
+        let now = p.group.get_untracked();
+        let items = Group::ALL.into_iter().map(|g| item(format!("{} {}", if g == now { "✓" } else { "\u{2003}" }, g.label()), "", Act::GroupBy(g))).collect();
+        MenuItem::Sub { label: "Group by".into(), items }
+    }
+
     /// Delete, and on the computer Delete permanently. `what` is "3 items", or "" for one item;
     /// `dir`: that one item is a folder.
     fn delete_items(self, p: Pane, what: &str, dir: bool) -> Vec<MenuItem> {
@@ -632,6 +661,14 @@ impl Ctx {
             (Act::Compare, _) => self.compare_marks(p),
             (Act::Import, _) => self.ask_import(p),
             (Act::ReplaceNames, _) => self.replace_names(p),
+            (Act::SortBy(s), _) => {
+                p.sort_to(s);
+                // Only part of the folder is here: the server sorts it all and sends the first page again.
+                if p.more.get_untracked() {
+                    self.reload(p);
+                }
+            }
+            (Act::GroupBy(g), _) => p.set_group(g),
             (Act::Dupes, _) => {
                 let mut folders: Vec<(Src, String)> = vec![(p.src.get_untracked(), p.cwd.get_untracked())];
                 let o = self.other(p);
@@ -708,39 +745,69 @@ pub(super) fn ContextMenu() -> impl IntoView {
             };
             let folders = StoredValue::new(m.folders.clone());
             let place = StoredValue::new(m.place.clone());
+            let entry = StoredValue::new(m.entry.clone());
+            let tree = m.tree;
+            let run = Callback::new(move |act: Act| {
+                ctx.menu.set(None);
+                if let Some((src, path)) = place.get_value() {
+                    ctx.run_place(act, src, path);
+                    return;
+                }
+                if tree {
+                    ctx.run_tree(p, act, entry.get_value());
+                    return;
+                }
+                match act {
+                    Act::Go(i) => {
+                        if let Some(f) = folders.with_value(|f| f.get(i).cloned()) {
+                            ctx.navigate(p, f)
+                        }
+                    }
+                    _ => ctx.run(p, act, entry.get_value()),
+                }
+            });
             view! {
                 <div class="menu" role="menu" style=format!("left:{}px;top:{}px", m.x, m.y)
                     on:contextmenu=|e| { e.prevent_default(); e.stop_propagation(); }>
-                    {items.into_iter().map(|it| match it {
-                        MenuItem::Sep => view! { <div class="sep"></div> }.into_any(),
-                        MenuItem::Do { label, key, act, danger, enabled } => {
-                            let entry = m.entry.clone();
-                            view! {
-                                <button role="menuitem" class:danger=danger disabled=!enabled
-                                    on:click=move |_| {
-                                        ctx.menu.set(None);
-                                        if let Some((src, path)) = place.get_value() {
-                                            ctx.run_place(act, src, path);
-                                            return;
-                                        }
-                                        if m.tree {
-                                            ctx.run_tree(p, act, entry.clone());
-                                            return;
-                                        }
-                                        match act {
-                                            Act::Go(i) => if let Some(f) = folders.with_value(|f| f.get(i).cloned()) { ctx.navigate(p, f) },
-                                            _ => ctx.run(p, act, entry.clone()),
-                                        }
-                                    }>
-                                    <span>{label}</span><span class="key">{move || ctx.key_label(key)}</span>
-                                </button>
-                            }.into_any()
-                        }
-                    }).collect_view()}
+                    {rows(ctx, items, run)}
                 </div>
             }
         })
     }
+}
+
+/// A menu's rows. A submenu opens beside its row while the pointer (or the focus) is on it, on
+/// the left when there's no room on the right.
+fn rows(ctx: Ctx, items: Vec<MenuItem>, run: Callback<Act>) -> AnyView {
+    items
+        .into_iter()
+        .map(|it| match it {
+            MenuItem::Sep => view! { <div class="sep"></div> }.into_any(),
+            MenuItem::Do { label, key, act, danger, enabled } => view! {
+                <button role="menuitem" class:danger=danger disabled=!enabled on:click=move |_| run.run(act)>
+                    <span>{label}</span><span class="key">{move || ctx.key_label(key)}</span>
+                </button>
+            }
+            .into_any(),
+            MenuItem::Sub { label, items } => {
+                let left = RwSignal::new(false);
+                let enter = move |ev: web_sys::MouseEvent| {
+                    let Some(row) = ev.current_target().and_then(|t| t.dyn_into::<web_sys::Element>().ok()) else { return };
+                    let r = row.get_bounding_client_rect();
+                    let vw = window().inner_width().ok().and_then(|v| v.as_f64()).unwrap_or(800.0);
+                    left.set(r.right() + 220.0 > vw);
+                };
+                view! {
+                    <div class="sub" class:left=left on:mouseenter=enter>
+                        <button role="menuitem" aria-haspopup="menu"><span>{label}</span><span class="key">"›"</span></button>
+                        <div class="menu submenu" role="menu">{rows(ctx, items, run)}</div>
+                    </div>
+                }
+                .into_any()
+            }
+        })
+        .collect_view()
+        .into_any()
 }
 
 /// `path` from the folder `root`: "src/main.rs" under "/a/b" for "/a/b/src/main.rs".

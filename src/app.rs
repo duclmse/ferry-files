@@ -184,6 +184,103 @@ impl SortKey {
     }
 }
 
+/// What a pane's list is grouped by, under a heading for each group. Stored per pane.
+#[derive(Clone, Copy, PartialEq)]
+enum Group {
+    None,
+    Name,
+    Kind,
+    Date,
+    Size,
+}
+
+impl Group {
+    const ALL: [Group; 5] = [Group::None, Group::Name, Group::Kind, Group::Date, Group::Size];
+
+    fn storage_key(pane: usize) -> String {
+        format!("ferry-files.group.{pane}")
+    }
+
+    fn key(self) -> &'static str {
+        match self {
+            Group::None => "none",
+            Group::Name => "name",
+            Group::Kind => "kind",
+            Group::Date => "date",
+            Group::Size => "size",
+        }
+    }
+
+    fn label(self) -> &'static str {
+        match self {
+            Group::None => "None",
+            Group::Name => "Name",
+            Group::Kind => "Kind",
+            Group::Date => "Modified",
+            Group::Size => "Size",
+        }
+    }
+
+    fn stored(pane: usize) -> Self {
+        let k = stored(&Self::storage_key(pane)).unwrap_or_default();
+        Group::ALL.into_iter().find(|g| g.key() == k).unwrap_or(Group::None)
+    }
+
+    /// The group `e` is in, `now` being the time in seconds: its place among the groups, and its
+    /// heading.
+    fn of(self, e: &Entry, now: i64) -> (u32, String) {
+        match self {
+            Group::None => (0, String::new()),
+            Group::Name => match e.name.chars().next().map(|c| c.to_uppercase().next().unwrap_or(c)) {
+                Some(c) if c.is_alphabetic() => (c as u32 + 1, c.to_string()),
+                _ => (0, "0–9 and others".into()),
+            },
+            Group::Kind if e.dir => (0, "Folders".into()),
+            Group::Kind => (1, kind_label(e)),
+            Group::Date => date_group(e.mtime, now),
+            Group::Size if e.dir => (0, "Folders".into()),
+            Group::Size => {
+                const KB: u64 = 1024;
+                const BOUNDS: [(u64, &str); 6] = [
+                    (1, "Empty"),
+                    (16 * KB, "Tiny (under 16 KB)"),
+                    (KB * KB, "Small (under 1 MB)"),
+                    (128 * KB * KB, "Medium (under 128 MB)"),
+                    (KB * KB * KB, "Large (under 1 GB)"),
+                    (u64::MAX, "Huge (1 GB and over)"),
+                ];
+                let i = BOUNDS.iter().position(|(b, _)| e.size < *b).unwrap_or(BOUNDS.len() - 1);
+                (i as u32 + 1, BOUNDS[i].1.into())
+            }
+        }
+    }
+}
+
+/// The group of a file changed at `mtime` (seconds), `now` being the time: newest first.
+fn date_group(mtime: i64, now: i64) -> (u32, String) {
+    const DAY: i64 = 86_400;
+    if mtime <= 0 {
+        return (9, "No date".into());
+    }
+    // Days back from the start of today, in local time.
+    let d = js_sys::Date::new(&wasm_bindgen::JsValue::from_f64(now as f64 * 1000.0));
+    let midnight = now - (d.get_hours() as i64 * 3600 + d.get_minutes() as i64 * 60 + d.get_seconds() as i64);
+    let year_start = js_sys::Date::new_with_year_month_day(d.get_full_year(), 0, 1).get_time() as i64 / 1000;
+    match mtime {
+        t if t > now => (0, "Later than now".into()),
+        t if t >= midnight => (1, "Today".into()),
+        t if t >= midnight - DAY => (2, "Yesterday".into()),
+        t if t >= midnight - 6 * DAY => (3, "Last 7 days".into()),
+        t if t >= midnight - 29 * DAY => (4, "Last 30 days".into()),
+        t if t >= year_start => (5, "Earlier this year".into()),
+        t => {
+            let y = js_sys::Date::new(&wasm_bindgen::JsValue::from_f64(t as f64 * 1000.0)).get_full_year();
+            // Years newest first.
+            (6 + (3000 - y.min(3000)), y.to_string())
+        }
+    }
+}
+
 /// How a pane sorts: by what, and whether ascending. Stored as e.g. "date:0".
 #[derive(Clone, Copy, PartialEq)]
 struct Sort(SortKey, bool);
@@ -324,6 +421,10 @@ enum Act {
     Section(usize),
     /// Shows all the sidebar's sections.
     AllSections,
+    /// Sorts the list by this, ascending or not.
+    SortBy(Sort),
+    /// Groups the list by this.
+    GroupBy(Group),
     /// Turns on or off the sidebar showing the current folder.
     FollowFolder,
     /// The Editor view's tree: shows this folder at its top.
@@ -346,7 +447,18 @@ enum Act {
 }
 
 enum MenuItem {
-    Do { label: String, key: &'static str, act: Act, danger: bool, enabled: bool },
+    Do {
+        label: String,
+        key: &'static str,
+        act: Act,
+        danger: bool,
+        enabled: bool,
+    },
+    /// A menu of its own, shown beside the item when the pointer is on it.
+    Sub {
+        label: String,
+        items: Vec<MenuItem>,
+    },
     Sep,
 }
 
@@ -447,6 +559,8 @@ struct Pane {
     /// Why the filter isn't a working regular expression.
     bad_filter: RwSignal<Option<String>>,
     sort: RwSignal<Sort>,
+    /// What the list is grouped by.
+    group: RwSignal<Group>,
     /// Set while the pane shows search results instead of the folder: the search and whether it
     /// found everything.
     found: RwSignal<Option<(String, bool)>>,
@@ -630,6 +744,7 @@ impl Pane {
             regex: RwSignal::new(stored_flag(&format!("{REGEX_KEY}.{id}"), false)),
             bad_filter: RwSignal::new(None),
             sort: RwSignal::new(Sort::stored(id)),
+            group: RwSignal::new(Group::stored(id)),
             found: RwSignal::new(None),
             search_kind: RwSignal::new(0),
             search_size: RwSignal::new(0),
@@ -744,6 +859,12 @@ impl Pane {
             })
         });
         self.sort.get_untracked().apply(&mut es);
+        // Grouped: each group together, in the groups' order, sorted within.
+        let group = self.group.get_untracked();
+        if group != Group::None {
+            let now = (js_sys::Date::now() / 1000.0) as i64;
+            es.sort_by_cached_key(|e| group.of(e, now).0);
+        }
         if !self.marked.with_untracked(HashSet::is_empty) {
             // Items in folders open in the tree stay marked too.
             let kids = self.kids.get_untracked();
@@ -753,15 +874,52 @@ impl Pane {
         self.entries.set(es);
     }
 
-    fn set_sort(self, key: SortKey) {
-        let Sort(now, asc) = self.sort.get_untracked();
-        // Clicking the same column again reverses it; dates and sizes start biggest first.
-        let s = if now == key { Sort(key, !asc) } else { Sort(key, matches!(key, SortKey::Name | SortKey::Kind)) };
+    /// Sorts by `s` (remembered for the pane).
+    fn sort_to(self, s: Sort) {
         self.sort.set(s);
         store(&Sort::storage_key(self.id), &format!("{}:{}", s.0.key(), if s.1 { 1 } else { 0 }));
         self.cols.update(|c| c.values_mut().for_each(|es| s.apply(es)));
         self.kids.update(|k| k.values_mut().flatten().for_each(|es| s.apply(es)));
         self.arrange();
+    }
+
+    /// Groups the list by `g`.
+    fn set_group(self, g: Group) {
+        self.group.set(g);
+        store(&Group::storage_key(self.id), g.key());
+        self.arrange();
+    }
+
+    /// The list's rows: its items, each with its depth in the tree (0 when it isn't one), and when
+    /// it's grouped, each group's heading before it (`None`, with the heading and how many are
+    /// in the group). Tracked.
+    fn list_rows(self) -> Vec<(Option<Entry>, usize, String)> {
+        if self.tree_on() {
+            return self.tree_rows().into_iter().map(|(e, d)| (Some(e), d, String::new())).collect();
+        }
+        let group = self.group.get();
+        self.entries.with(|es| {
+            if group == Group::None {
+                return es.iter().map(|e| (Some(e.clone()), 0, String::new())).collect();
+            }
+            let now = (js_sys::Date::now() / 1000.0) as i64;
+            let groups: Vec<(u32, String)> = es.iter().map(|e| group.of(e, now)).collect();
+            let mut out = Vec::with_capacity(es.len() + 8);
+            for (i, e) in es.iter().enumerate() {
+                if i == 0 || groups[i - 1].0 != groups[i].0 {
+                    let n = groups[i..].iter().take_while(|g| g.0 == groups[i].0).count();
+                    out.push((None, n, groups[i].1.clone()));
+                }
+                out.push((Some(e.clone()), 0, String::new()));
+            }
+            out
+        })
+    }
+
+    fn set_sort(self, key: SortKey) {
+        let Sort(now, asc) = self.sort.get_untracked();
+        // Clicking the same column again reverses it; dates and sizes start biggest first.
+        self.sort_to(if now == key { Sort(key, !asc) } else { Sort(key, matches!(key, SortKey::Name | SortKey::Kind)) });
     }
 
     /// Whether `path` is one of the items actions act on (tracked, for highlighting).
@@ -1664,7 +1822,13 @@ pub fn App() -> impl IntoView {
                     el.scroll_into_view_with_scroll_into_view_options(&opts);
                 } else if let Some(sc) = document().query_selector(&format!(".pane[data-pane=\"{i}\"] [data-rows]")).ok().flatten() {
                     // Not rendered, being out of view in a long list: scroll to where it would be.
-                    if let Some(idx) = ctx.panes[i].shown_rows().iter().position(|e| e.path == path) {
+                    let rows = untrack(|| ctx.panes[i].list_rows());
+                    let at = rows.iter().position(|r| r.0.as_ref().is_some_and(|e| e.path == path));
+                    let at = match ctx.panes[i].view.get_untracked() {
+                        ViewMode::List => at,
+                        _ => ctx.panes[i].shown_rows().iter().position(|e| e.path == path),
+                    };
+                    if let Some(idx) = at {
                         rows::reveal(i, &sc, idx);
                     }
                 }
