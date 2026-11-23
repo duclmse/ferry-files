@@ -505,6 +505,14 @@ struct Pane {
     zip_pick: RwSignal<Option<(Src, String, String, u64, bool)>>,
     /// What's in the ZIP whose columns are shown (its side and path), for ‹ › in the preview.
     zip_list: StoredValue<Option<((Src, String), Vec<Packed>)>>,
+    /// The picture ‹ › went to, being read before it's shown (its path, and the URL read), so the
+    /// one shown stays until then.
+    coming: RwSignal<Option<(String, String)>>,
+    /// Pictures read into memory for ‹ › (the last few, and the next one ahead), by the URL read:
+    /// the decoded copy (an object URL) the preview shows them from, None while being read.
+    pics: StoredValue<Vec<(String, Option<String>)>>,
+    /// What to do once `coming` has been read: show it.
+    pending: StoredValue<Option<Box<dyn FnOnce()>>, LocalStorage>,
     /// Whether the path above the files is being typed in.
     editing_path: RwSignal<bool>,
     /// Counts folder listings asked for; a listing that comes back after a newer one was asked
@@ -647,6 +655,9 @@ impl Pane {
             peek_as: RwSignal::new(None),
             zip_pick: RwSignal::new(None),
             zip_list: StoredValue::new(None),
+            coming: RwSignal::new(None),
+            pics: StoredValue::new(vec![]),
+            pending: StoredValue::new_local(None),
             editing_path: RwSignal::new(false),
             load_seq: StoredValue::new(0),
             going_to: StoredValue::new(None),

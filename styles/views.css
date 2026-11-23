@@ -829,6 +829,17 @@ td.name input.rename {
   font-variant-numeric: tabular-nums;
 }
 
+/* The picture ‹ › went to, while it's read (the one shown stays until then). */
+.viewer-bar .coming {
+  flex-basis: 100%;
+  order: -1;
+  color: var(--muted);
+  font-size: 12px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
 .viewer-bar .gap {
   width: 6px;
 }

@@ -612,17 +612,123 @@ fn is_text(e: &Entry) -> bool {
 }
 
 /// Selects the picture, video or sound before (`-1`) or after (`1`) `e` in the pane, skipping
-/// other files.
+/// other files. A picture is read first, and selected once it's here (see `when_read`); a step
+/// meanwhile goes on from it.
 pub(super) fn step_media(p: Pane, e: &Entry, delta: isize) {
     let Some(m) = media(e) else { return };
+    let from = p.coming.with_untracked(|c| c.as_ref().map(|(path, _)| path.clone())).unwrap_or_else(|| e.path.clone());
     let next = p.entries.with_untracked(|es| {
         let same: Vec<&Entry> = es.iter().filter(|x| media(x) == Some(m)).collect();
-        let i = same.iter().position(|x| x.path == e.path)? as isize + delta;
-        (i >= 0).then(|| same.get(i as usize).map(|x| x.path.clone())).flatten()
+        let i = same.iter().position(|x| x.path == from)? as isize + delta;
+        (i >= 0).then(|| same.get(i as usize).map(|&x| x.clone())).flatten()
     });
-    if let Some(path) = next {
-        p.select_only(Some(path));
+    let Some(next) = next else { return };
+    if m != Media::Image {
+        p.coming.set(None);
+        p.select_only(Some(next.path));
+        return;
     }
+    let src = p.src.get_untracked();
+    // What the preview will ask for: the photo shrunk to the preview, or the file.
+    let url = fit_url(src, &next).unwrap_or_else(|| stream_url(src, &next));
+    let was = p.selected.get_untracked();
+    let path = next.path.clone();
+    when_read(p, next.path, url, move || p.selected.get_untracked() == was, move || p.select_only(Some(path)));
+}
+
+/// Shows a picture once it's been read into memory and decoded: `show` puts `path`'s picture
+/// (read from `url`) in the preview, which then draws it at once from that copy. Until then the
+/// picture shown stays, and the bar says what's coming; a picture read ahead is shown at once.
+/// Only the last one asked for is shown, and only if `still()` (nothing else was picked
+/// meanwhile). One that can't be read is shown anyway, to say why.
+pub(super) fn when_read(p: Pane, path: String, url: String, still: impl Fn() -> bool + 'static, show: impl FnOnce() + 'static) {
+    if read_copy(p, &url).is_some() {
+        p.coming.set(None);
+        p.pending.set_value(None);
+        show();
+        return;
+    }
+    p.coming.set(Some((path, url.clone())));
+    p.pending.set_value(Some(Box::new(move || {
+        if still() {
+            show();
+        }
+    })));
+    read_pic(p, url);
+}
+
+/// How many pictures are kept in memory for ‹ ›: the one before, the one shown, the next.
+const PICS_KEPT: usize = 3;
+
+/// Reads the picture at `url` into memory and decodes it, unless that's done or under way; then
+/// shows it if it's what ‹ › is waiting for (`coming`).
+fn read_pic(p: Pane, url: String) {
+    if p.pics.with_value(|v| v.iter().any(|(u, _)| *u == url)) {
+        return;
+    }
+    p.pics.update_value(|v| v.push((url.clone(), None)));
+    spawn_local(async move {
+        let copy = read_decoded(&url).await;
+        let Some(()) = p.pics.try_update_value(|v| {
+            match (v.iter().position(|(u, _)| *u == url), &copy) {
+                (Some(i), Some(c)) => v[i].1 = Some(c.clone()),
+                (Some(i), None) => {
+                    v.remove(i);
+                }
+                _ => {}
+            }
+            // The oldest go, once read: what's drawn from them stays drawn.
+            while v.len() > PICS_KEPT && v.first().is_some_and(|(_, c)| c.is_some()) {
+                if let (_, Some(old)) = v.remove(0) {
+                    let _ = web_sys::Url::revoke_object_url(&old);
+                }
+            }
+        }) else {
+            return;
+        };
+        if p.coming.with_untracked(|c| c.as_ref().is_some_and(|(_, u)| *u == url)) {
+            p.coming.set(None);
+            if let Some(show) = p.pending.try_update_value(Option::take).flatten() {
+                show();
+            }
+        }
+    });
+}
+
+/// Reads the next picture after `e` in the pane ahead of time, so › shows it at once.
+fn read_ahead(p: Pane, e: &Entry) {
+    let next = p.entries.with_untracked(|es| {
+        let same: Vec<&Entry> = es.iter().filter(|x| media(x) == Some(Media::Image)).collect();
+        let i = same.iter().position(|x| x.path == e.path)?;
+        same.get(i + 1).map(|&x| x.clone())
+    });
+    if let Some(next) = next {
+        let src = p.src.get_untracked();
+        read_pic(p, fit_url(src, &next).unwrap_or_else(|| stream_url(src, &next)));
+    }
+}
+
+/// The picture at `url` (one the backend serves) as a copy in memory (an object URL), decoded,
+/// so showing it doesn't hold up the window; None when it can't be read.
+async fn read_decoded(url: &str) -> Option<String> {
+    use wasm_bindgen_futures::JsFuture;
+    let resp: web_sys::Response = JsFuture::from(window().fetch_with_str(url)).await.ok()?.dyn_into().ok()?;
+    if !resp.ok() {
+        return None;
+    }
+    let blob: web_sys::Blob = JsFuture::from(resp.blob().ok()?).await.ok()?.dyn_into().ok()?;
+    let copy = web_sys::Url::create_object_url_with_blob(&blob).ok()?;
+    // Decoded now, off the window's way; a picture the web view can't decode is shown anyway.
+    if let Ok(img) = web_sys::HtmlImageElement::new() {
+        img.set_src(&copy);
+        let _ = JsFuture::from(img.decode()).await;
+    }
+    Some(copy)
+}
+
+/// The copy in memory of the picture at `url`, when it's been read.
+fn read_copy(p: Pane, url: &str) -> Option<String> {
+    p.pics.with_value(|v| v.iter().find(|(u, _)| u == url).and_then(|(_, c)| c.clone()))
 }
 
 /// ‹ and › for the previous and next file of the same kind: `go` steps by -1 or 1.
@@ -759,7 +865,12 @@ fn FullImage(
     let url = url.unwrap_or_else(|| stream_url(src, &entry));
     // Showing the shrunk photo; and how many of the photo's pixels each of its pixels stands for.
     let shrunk = RwSignal::new(shrunk_url.is_some());
-    let shown = RwSignal::new(shrunk_url.unwrap_or_else(|| url.clone()));
+    let first = shrunk_url.unwrap_or_else(|| url.clone());
+    // Already read by ‹ › (`when_read`): shown from memory, with no thumbnail first.
+    let copy = read_copy(pane, &first);
+    let from_memory = copy.is_some();
+    let ahead_of = StoredValue::new(entry.clone());
+    let shown = RwSignal::new(copy.unwrap_or(first));
     let per_px = RwSignal::new(1.0f64);
     let full = StoredValue::new(url.clone());
     // The shown image's own pixels.
@@ -824,6 +935,10 @@ fn FullImage(
             }
         }
         loaded.set(true);
+        // The next picture in the pane is read meanwhile, for ›.
+        if !alone {
+            read_ahead(pane, &ahead_of.get_value());
+        }
         // Measured, zoomed as `fit_mode` says and at its start, then zooms and turns are eased.
         request_animation_frame(move || {
             measure();
@@ -1019,7 +1134,7 @@ fn FullImage(
         <div class="pic stage" class:whole=loaded class:zoomed=move || { zoom.get() > 1.0 } node_ref=stage
             on:mousedown=down on:wheel=wheel
             on:dblclick=move |ev| { ev.stop_propagation(); fit_or_actual(); }>
-            {let e = entry.clone(); move || (!loaded.get() && !alone).then(|| view! { <Thumbnail src entry=e.clone()/> })}
+            {let e = entry.clone(); move || (!loaded.get() && !alone && !from_memory).then(|| view! { <Thumbnail src entry=e.clone()/> })}
             <img class="full" node_ref=img_ref src=move || shown.get() alt="" draggable="false" class:pending=move || !loaded.get()
                 style=style on:load=load on:transitionend=move |_| turn.settle()/>
             // Clicking the picture's left or right side goes to the previous or next one. Zoomed
@@ -1043,6 +1158,7 @@ fn FullImage(
         </div>
         <div class="viewer-bar">
             {step.map(|go| view! { {neighbours(go)} <span class="gap"></span> })}
+            {move || pane.coming.get().map(|(path, _)| view! { <span class="coming" role="status">{format!("Opening {}…", super::util::base(&path))}</span> })}
             <span class="btn-group" role="group">
                 <button class="btn" title="Zoom out" aria-label="Zoom out" on:click=move |_| zoom_by_hand(zoom.get_untracked() / 1.25)>{ico(Icon::ZoomOut)}</button>
                 <button class="btn zoom" aria-haspopup="menu"
@@ -1534,7 +1650,7 @@ fn Zipped(pane: Pane, src: Src, zip: Entry, name: String, size: u64, stored: boo
     let p = pane;
     let short = name.rsplit('/').next().unwrap_or(&name).to_string();
     let e = Entry { name: short.clone(), path: name.clone(), dir: false, size, mtime: 0, hidden: false };
-    let url = crate::os::served(&format!("zipped?src={}&p={}&s={}&m={}&e={}", src.key(), uri_part(&zip.path), zip.size, zip.mtime, uri_part(&name),));
+    let url = super::views::zipped_url(src, &zip, &name);
     // An EPUB in the ZIP shows its cover.
     let cover = crate::os::served(&format!("cover?src={}&p={}&s={}&m={}&e={}", src.key(), uri_part(&zip.path), zip.size, zip.mtime, uri_part(&name),));
     let inner = Inner { name: name.clone(), zip_path: zip.path.clone(), zip_size: zip.size };
@@ -1542,7 +1658,8 @@ fn Zipped(pane: Pane, src: Src, zip: Entry, name: String, size: u64, stored: boo
     let info = RwSignal::new(MediaInfo::default());
     let forced = RwSignal::new(None::<PeekAs>);
     // ‹ › and the picture's sides go through the pictures (or videos, or sounds) in its folder.
-    let step = Callback::new(move |d| super::views::step_zipped(p, d));
+    let zip_entry = StoredValue::new(zip.clone());
+    let step = Callback::new(move |d| super::views::step_zipped(p, d, &zip_entry.get_value()));
     // Whether the body is text (as the match below picks it), for the wrap and line-number toggles.
     let text_e = e.clone();
     let body = move || {

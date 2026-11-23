@@ -465,8 +465,10 @@ fn zip_items(items: &[Packed], prefix: &str) -> Vec<ZipItem> {
 
 /// Picks the picture, video or sound before (`-1`) or after (`1`) the file picked in a ZIP, in
 /// the same folder of the ZIP and as its column lists them, skipping other files.
-pub(super) fn step_zipped(p: Pane, delta: isize) {
+pub(super) fn step_zipped(p: Pane, delta: isize, zip_entry: &Entry) {
     let Some((src, zip, name, _, _)) = p.zip_pick.get_untracked() else { return };
+    // Going on from a picture still being read.
+    let name = p.coming.with_untracked(|c| c.as_ref().map(|(n, _)| n.clone())).unwrap_or(name);
     let entry = |path: &str, size: u64| Entry { name: base(path), path: path.to_string(), dir: false, size, mtime: 0, hidden: false };
     let Some(m) = media(&entry(&name, 0)) else { return };
     let prefix = name.rfind('/').map_or(String::new(), |at| name[..=at].to_string());
@@ -476,9 +478,22 @@ pub(super) fn step_zipped(p: Pane, delta: isize) {
         let i = same.iter().position(|x| x.path == name)? as isize + delta;
         (i >= 0).then(|| same.get(i as usize).cloned()).flatten()
     });
-    if let Some(i) = next {
+    let Some(i) = next else { return };
+    if m != Media::Image {
+        p.coming.set(None);
         p.zip_pick.set(Some((src, zip, i.path, i.size, i.stored)));
+        return;
     }
+    // A picture is read first (as the preview asks for it), and shown once it's here.
+    let url = zipped_url(src, zip_entry, &i.path);
+    let was = p.zip_pick.get_untracked();
+    let pick = (src, zip, i.path.clone(), i.size, i.stored);
+    super::preview::when_read(p, i.path, url, move || p.zip_pick.get_untracked() == was, move || p.zip_pick.set(Some(pick)));
+}
+
+/// Where the backend serves file `name` in the ZIP `zip`.
+pub(super) fn zipped_url(src: Src, zip: &Entry, name: &str) -> String {
+    crate::os::served(&format!("zipped?src={}&p={}&s={}&m={}&e={}", src.key(), uri_part(&zip.path), zip.size, zip.mtime, uri_part(name)))
 }
 
 /// A ZIP's folders as columns after the column view's own: the top, then each folder opened.
