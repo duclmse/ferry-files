@@ -65,6 +65,8 @@ tokio = { version = "1", features = ["rt", "io-util"] }
 # fsd's IPC messages (feature `fsd`).
 postcard = { version = "1", default-features = false, features = ["alloc"], optional = true }
 plist = "1.8"
+# Run script…: Lua 5.4, built from source with the app (needs a C compiler).
+mlua = { version = "0.10", features = ["lua54", "vendored"] }
 
 [target.'cfg(unix)'.dependencies]
 signal-hook = "0.3"

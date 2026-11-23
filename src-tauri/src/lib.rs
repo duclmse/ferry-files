@@ -43,6 +43,7 @@ mod import;
 mod library;
 mod player;
 mod safety;
+mod scripts;
 mod settings;
 mod transfer;
 mod watch;
@@ -248,6 +249,12 @@ pub fn run() {
             settings::app_folders,
             settings::open_folder,
             settings::clear_cache,
+            scripts::scripts,
+            scripts::run_script,
+            scripts::stop_script,
+            scripts::pick_scripts,
+            scripts::new_script,
+            scripts::script_guide,
             everything::everything_connect,
             sftp::sftp_connect,
             webdav::webdav_connect,

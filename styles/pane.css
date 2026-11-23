@@ -312,6 +312,33 @@
   white-space: pre-wrap;
 }
 
+/* Run script…: the scripts, and what one printed. */
+.notice .script-list {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+
+.notice .script-out {
+  flex-basis: 100%;
+  max-height: 220px;
+  margin: 0;
+  padding: 6px 8px;
+  overflow: auto;
+  border: 1px solid var(--line);
+  border-radius: 6px;
+  background: var(--bg);
+  color: var(--ink);
+  font: 12px/1.4 var(--mono, ui-monospace, monospace);
+  white-space: pre-wrap;
+  -webkit-user-select: text;
+  user-select: text;
+}
+
+.notice .script-error {
+  color: var(--danger);
+}
+
 .notice input {
   height: 28px;
   padding: 0 8px;

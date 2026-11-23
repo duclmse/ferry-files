@@ -17,6 +17,7 @@ pub(super) fn app_folder(which: &str) -> Result<std::path::PathBuf, String> {
         "backups" => Ok(device::backup_dir()),
         "thumbs" => Ok(thumbs::cache_dir()),
         "opened" => Ok(opened_dir()),
+        "scripts" => Ok(crate::platform::scripts_dir()),
         other => Err(format!("Unknown folder {other:?}.")),
     }
 }
@@ -45,7 +46,7 @@ pub(super) fn folder_size(dir: &std::path::Path) -> (u64, u64) {
 pub(super) async fn app_folders() -> Result<HashMap<String, Folder>, String> {
     blocking(|| {
         let mut out = HashMap::new();
-        for which in ["backups", "thumbs", "opened"] {
+        for which in ["backups", "thumbs", "opened", "scripts"] {
             let dir = app_folder(which)?;
             let (files, bytes) = folder_size(&dir);
             out.insert(which.to_string(), Folder { path: crate::platform::app_path(&dir), files, bytes });

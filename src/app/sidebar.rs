@@ -727,7 +727,7 @@ pub(super) fn Settings() -> impl IntoView {
                     }}</span>
                 </div>
                 <button class="btn icon-only" title=format!("Open in {}", crate::os::file_manager()) aria-label=format!("Open in {}", crate::os::file_manager()) on:click=move |_| open(which)>{ico(Icon::Folder)}</button>
-                {(which != "backups").then(|| view! { <button class="btn icon-only" title="Clear" aria-label="Clear" on:click=move |_| clear(which)>{ico(Icon::Trash)}</button> })}
+                {(!matches!(which, "backups" | "scripts")).then(|| view! { <button class="btn icon-only" title="Clear" aria-label="Clear" on:click=move |_| clear(which)>{ico(Icon::Trash)}</button> })}
             </div>
         }
     };
@@ -817,11 +817,12 @@ pub(super) fn Settings() -> impl IntoView {
         {folder("backups", "Backups", "Copies of files from before they were replaced or deleted. Kept until you clear them in Backups, which moves them to the Trash.")}
         {folder("thumbs", "Thumbnail cache", "Made again when needed, so it's safe to clear.")}
         {folder("opened", "Opened phone files", "Copies made to open phone files in other apps. Changes to them don't go back to the phone.")}
+        {folder("scripts", "Scripts", "Lua scripts for Run script… in the right-click menu. The example in it says what a script can do.")}
         {move || error.get().map(|e| view! { <p class="error">{e}</p> })}
     }.into_any()
     };
     let storage_name = format!("On {}", crate::os::this_computer());
-    let sections: [(&'static str, String); 8] = [
+    let sections: [(&'static str, String); 9] = [
         ("general", "General".into()),
         ("sidebar", "Sidebar".into()),
         ("connections", "Connections".into()),
@@ -829,6 +830,7 @@ pub(super) fn Settings() -> impl IntoView {
         ("phones", "Phones".into()),
         ("video", "Video".into()),
         ("keys", "Keyboard".into()),
+        ("scripts", "Scripts".into()),
         ("storage", storage_name),
     ];
     let names = StoredValue::new(sections.clone());
@@ -853,6 +855,7 @@ pub(super) fn Settings() -> impl IntoView {
                             "phones" => phones(),
                             "video" => video(),
                             "keys" => view! { <ShortcutsEditor/> }.into_any(),
+                            "scripts" => view! { <super::scripts::ScriptSettings/> }.into_any(),
                             "storage" => storage(),
                             _ => general(),
                         }}

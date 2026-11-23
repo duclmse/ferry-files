@@ -5,7 +5,11 @@ use std::ops::Range;
 
 impl Ctx {
     pub(super) fn open_text(self, p: Pane, path: String) {
-        let src = p.src.get_untracked();
+        self.open_text_on(p, p.src.get_untracked(), path);
+    }
+
+    /// Opens text file `path` on `src` in the editor, from pane `p` (a script, from Settings).
+    pub(super) fn open_text_on(self, p: Pane, src: Src, path: String) {
         self.busy.set(true);
         spawn_local(async move {
             match call::<TextFile>("read_text", json!({ "src": src.key(), "path": path })).await {

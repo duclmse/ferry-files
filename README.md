@@ -38,6 +38,12 @@ own files and disks, with tools for EPUB books in particular.
   when held over). Copies merge folders and never replace a file, with progress
   and Cancel. A file over 4 GB isn't copied to a FAT32 disk (many USB sticks and
   SD cards), which can't hold it; the copy says so and goes on with the rest.
+- **Scripts**: Lua 5.4 scripts run on the files picked, or the folder (right-click, Run
+  script). They're in the app's scripts folder and the files and folders added in
+  Settings > Scripts, where they can be made and edited. A script can list, read, make,
+  write, copy, move, rename and delete files and folders, only through the app, so what it
+  replaces or deletes is backed up; it has no `io` or `os`. Stop ends one that runs too
+  long. [docs/scripting.md](docs/scripting.md) is the guide (Settings > Scripts opens it too).
 - **Sync** a folder to the other pane, with three modes: copy missing, update or
   mirror. It lists what it will do first, and pairs can be saved.
 - **Sidebar** (right-click a folder to open it, paste or make something in it, copy its path, eject a disk): favourites, workspaces, disks (with eject), devices, servers,

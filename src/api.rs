@@ -59,6 +59,23 @@ pub struct Progress {
     pub current: String,
 }
 
+/// One of the user's Lua scripts (Run script…): its name, and what its first comment says.
+#[derive(Clone, Debug, PartialEq, Deserialize)]
+pub struct ScriptInfo {
+    pub name: String,
+    /// The file, as an app path.
+    pub path: String,
+    pub about: String,
+}
+
+/// What a script did: what it printed, why it stopped early, how many items it changed.
+#[derive(Clone, Debug, PartialEq, Deserialize)]
+pub struct ScriptReport {
+    pub output: Vec<String>,
+    pub error: Option<String>,
+    pub changed: u32,
+}
+
 #[derive(Clone, Debug, PartialEq, Deserialize)]
 pub struct TransferReport {
     pub copied: u32,

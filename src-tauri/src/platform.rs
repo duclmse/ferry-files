@@ -63,6 +63,11 @@ pub fn backup_dir() -> PathBuf {
     }
 }
 
+/// Where the user's Lua scripts are (Run script… in the context menu): with the app's data.
+pub fn scripts_dir() -> PathBuf {
+    dirs::data_dir().unwrap_or_else(std::env::temp_dir).join("ferry-files").join("scripts")
+}
+
 /// The thumbnail Windows shows for the file in Explorer (pictures, videos, PDFs, documents and
 /// whatever else has a thumbnail handler), about `px` on its longest side. None when there's
 /// none: Windows' generic icons aren't used.

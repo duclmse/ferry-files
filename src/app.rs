@@ -38,6 +38,7 @@ mod pane;
 mod preview;
 mod rows;
 mod safety;
+mod scripts;
 mod search;
 mod servers;
 mod sidebar;
@@ -444,6 +445,10 @@ enum Act {
     OtherPane,
     /// A sidebar disk: ejects it.
     Eject,
+    /// Runs a Lua script (`Ctx::scripts`' index) on what's picked (or the folder).
+    Script(usize),
+    /// Opens Settings > Scripts.
+    ScriptSettings,
 }
 
 enum MenuItem {
@@ -484,6 +489,14 @@ enum Notice {
     /// Asking for a name; `folder` says whether it's a new folder or a new text file.
     NewItem {
         folder: bool,
+    },
+    /// A script running.
+    ScriptRunning(String),
+    /// What a script did, which can be run again on `items`.
+    ScriptDone {
+        script: crate::api::ScriptInfo,
+        items: Vec<String>,
+        report: crate::api::ScriptReport,
     },
 }
 
@@ -1128,6 +1141,14 @@ struct Ctx {
     phone_thumbs: RwSignal<bool>,
     /// The sidebar's sections hidden with a right-click on it, by key.
     hidden_sections: RwSignal<Vec<String>>,
+    /// The Lua scripts for Run script ▸ (scripts.rs), found in the scripts folder and `script_places`.
+    scripts: RwSignal<Vec<crate::api::ScriptInfo>>,
+    /// Script files and folders added in Settings > Scripts (app paths).
+    script_places: RwSignal<Vec<String>>,
+    /// The scripts folder picked in Settings > Scripts (an app path); empty: the app's own.
+    script_folder: RwSignal<String>,
+    /// Why the scripts couldn't be found (the folder picked is gone).
+    script_error: RwSignal<Option<String>>,
     /// The sidebar's folders open down to the one the active pane shows, which is scrolled to.
     follow_folder: RwSignal<bool>,
     /// The sidebar's sections, top to bottom (keys of `SECTIONS`).
@@ -1222,6 +1243,10 @@ impl Ctx {
             line_numbers: RwSignal::new(stored_flag(LINE_NUMBERS_KEY, true)),
             phone_thumbs: RwSignal::new(stored_flag(PHONE_THUMBS_KEY, true)),
             follow_folder: RwSignal::new(stored_flag(FOLLOW_FOLDER_KEY, false)),
+            scripts: RwSignal::new(vec![]),
+            script_places: RwSignal::new(stored(scripts::PLACES_KEY).and_then(|s| serde_json::from_str(&s).ok()).unwrap_or_default()),
+            script_folder: RwSignal::new(stored(scripts::FOLDER_KEY).unwrap_or_default()),
+            script_error: RwSignal::new(None),
             section_order: RwSignal::new(sidebar::section_order(
                 &stored(SECTION_ORDER_KEY).and_then(|s| serde_json::from_str::<Vec<String>>(&s).ok()).unwrap_or_default(),
             )),
@@ -1425,6 +1450,7 @@ pub fn App() -> impl IntoView {
     ctx.scan();
     ctx.reconnect_wifi();
     ctx.load_jobs();
+    ctx.load_scripts();
     let watching = StoredValue::new(false);
     spawn_local(async move {
         if let Ok(on) = call::<bool>("watch_devices", json!({})).await {

@@ -77,6 +77,52 @@
   user-select: text;
 }
 
+/* Settings > Scripts: where scripts are found, and the ones found. */
+.script-places {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.script-place {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 6px 10px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+}
+
+.script-place .path {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.row-buttons {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+
+.script-place .about {
+  color: var(--muted);
+}
+
+.row-buttons input.script-name {
+  flex: 1;
+  min-width: 160px;
+  height: 28px;
+  padding: 0 8px;
+  border: 1px solid var(--line);
+  border-radius: 7px;
+  background: var(--bg);
+  color: var(--ink);
+  font: inherit;
+}
+
 .dialog label.row {
   display: flex;
   align-items: center;

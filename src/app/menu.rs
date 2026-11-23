@@ -465,6 +465,7 @@ impl Ctx {
                 danger: false,
                 enabled: !p.entries.with_untracked(Vec::is_empty) && self.renamable(p),
             });
+            v.push(self.script_menu());
             v.extend([MenuItem::Sep, self.sort_menu(p), self.group_menu(p)]);
             v.extend([MenuItem::Sep, item("New tab", "new_tab", Act::NewTab), item(fav, "", Act::Favourite), item("Refresh", "", Act::Refresh)]);
             v.push(MenuItem::Do { label: "Import photos…".into(), key: "", act: Act::Import, danger: false, enabled: !p.cwd.get_untracked().is_empty() });
@@ -520,6 +521,7 @@ impl Ctx {
             }
             let renamable = self.renamable(p);
             v.push(MenuItem::Do { label: format!("Rename {picked} items…"), key: "rename", act: Act::Rename, danger: false, enabled: renamable });
+            v.push(self.script_menu());
             v.push(MenuItem::Sep);
             v.extend(self.delete_items(p, &format!("{picked} items"), false));
             return v;
@@ -584,7 +586,7 @@ impl Ctx {
             v.push(item("Show as hex", "", Act::ShowAs(PeekAs::Hex)));
         }
         v.extend([item("Copy name", "", Act::CopyName), item("Copy path", "", Act::CopyPath)]);
-        v.extend([MenuItem::Sep, item("Refresh", "", Act::Refresh), MenuItem::Sep]);
+        v.extend([MenuItem::Sep, self.script_menu(), item("Refresh", "", Act::Refresh), MenuItem::Sep]);
         v.extend(self.delete_items(p, "", e.dir));
         v
     }
@@ -617,6 +619,18 @@ impl Ctx {
         let now = p.group.get_untracked();
         let items = Group::ALL.into_iter().map(|g| item(format!("{} {}", if g == now { "✓" } else { "\u{2003}" }, g.label()), "", Act::GroupBy(g))).collect();
         MenuItem::Sub { label: "Group by".into(), items }
+    }
+
+    /// Run script ▸: the scripts (Settings > Scripts), then a way to add some.
+    fn script_menu(self) -> MenuItem {
+        let mut items: Vec<MenuItem> = self.scripts.with_untracked(|v| v.iter().enumerate().map(|(i, s)| item(s.name.clone(), "", Act::Script(i))).collect());
+        if items.is_empty() {
+            items.push(MenuItem::Do { label: "No scripts yet".into(), key: "", act: Act::ScriptSettings, danger: false, enabled: false });
+        }
+        items.extend([MenuItem::Sep, item("Scripts…", "", Act::ScriptSettings)]);
+        // Found again for the next time, in case the scripts folder changed.
+        self.load_scripts();
+        MenuItem::Sub { label: "Run script".into(), items }
     }
 
     /// Delete, and on the computer Delete permanently. `what` is "3 items", or "" for one item;
@@ -669,6 +683,20 @@ impl Ctx {
                 }
             }
             (Act::GroupBy(g), _) => p.set_group(g),
+            (Act::Script(i), e) => {
+                // The items picked (the one right-clicked among them), or the folder.
+                let items: Vec<String> = match e {
+                    Some(_) => p.picked().into_iter().map(|x| x.path).collect(),
+                    None => vec![],
+                };
+                if let Some(s) = self.scripts.with_untracked(|v| v.get(i).cloned()) {
+                    self.run_script(p, s, items);
+                }
+            }
+            (Act::ScriptSettings, _) => {
+                self.settings_tab.set("scripts");
+                self.settings.set(true);
+            }
             (Act::Dupes, _) => {
                 let mut folders: Vec<(Src, String)> = vec![(p.src.get_untracked(), p.cwd.get_untracked())];
                 let o = self.other(p);
