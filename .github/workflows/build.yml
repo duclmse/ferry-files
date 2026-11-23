@@ -42,9 +42,10 @@ jobs:
         working-directory: src-tauri
         run: cargo test --lib
 
-      - name: Without the fsd feature
+      # The app is built without fsd; its code is still built and tested here.
+      - name: With the fsd feature
         working-directory: src-tauri
-        run: cargo check --lib --no-default-features
+        run: cargo test --lib --features fsd
 
       - name: Bundle
         run: cargo tauri build --debug

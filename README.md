@@ -128,9 +128,11 @@ cd src-tauri && cargo test --lib   # backend tests
 On macOS the build runs `scripts/bundle-libmtp.sh`, which bundles Homebrew's
 libmtp and libusb (LGPL-2.1), so the build machine needs `brew install libmtp`.
 
-Searches through fsd are the `fsd` cargo feature, on by default; build with
-`--no-default-features` to leave them out. They need no fs sources: `fsd/wire.rs`
-carries its own copy of fsd's protocol.
+Searches through fsd are the `fsd` cargo feature, off by default: run
+`cargo tauri dev --features fsd` (or `build`, `cargo test --lib`) to have them. CI builds
+the app without them and tests them separately. They need no fs sources: `fsd/wire.rs`
+carries its own copy of fsd's protocol. Without the feature, searches walk the folders and
+the palette's `:` says fsd isn't in this build.
 
 Tests against a real phone use scratch files only and clean up after
 themselves:

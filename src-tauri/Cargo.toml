@@ -12,8 +12,9 @@ crate-type = ["staticlib", "cdylib", "rlib"]
 tauri-build = { version = "2", features = [] }
 
 [features]
-default = ["fsd"]
+default = []
 # Searches of the computer from the index of fsd (the fs project's search daemon), when it runs.
+# Off unless asked for: `cargo tauri dev --features fsd`.
 fsd = ["dep:postcard", "tokio/net", "tokio/time"]
 
 [dependencies]
