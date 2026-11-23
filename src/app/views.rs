@@ -461,6 +461,24 @@ fn zip_items(items: &[Packed], prefix: &str) -> Vec<ZipItem> {
     out
 }
 
+/// Picks the picture, video or sound before (`-1`) or after (`1`) the file picked in a ZIP, in
+/// the same folder of the ZIP and as its column lists them, skipping other files.
+pub(super) fn step_zipped(p: Pane, delta: isize) {
+    let Some((src, zip, name, _, _)) = p.zip_pick.get_untracked() else { return };
+    let entry = |path: &str, size: u64| Entry { name: base(path), path: path.to_string(), dir: false, size, mtime: 0, hidden: false };
+    let Some(m) = media(&entry(&name, 0)) else { return };
+    let prefix = name.rfind('/').map_or(String::new(), |at| name[..=at].to_string());
+    let next = p.zip_list.with_value(|l| {
+        let (_, items) = l.as_ref().filter(|(at, _)| *at == (src, zip.clone()))?;
+        let same: Vec<ZipItem> = zip_items(items, &prefix).into_iter().filter(|i| !i.dir && media(&entry(&i.path, i.size)) == Some(m)).collect();
+        let i = same.iter().position(|x| x.path == name)? as isize + delta;
+        (i >= 0).then(|| same.get(i as usize).cloned()).flatten()
+    });
+    if let Some(i) = next {
+        p.zip_pick.set(Some((src, zip, i.path, i.size, i.stored)));
+    }
+}
+
 /// A ZIP's folders as columns after the column view's own: the top, then each folder opened.
 /// `open` is the folders opened, deepest last; clicking an item picks it (and opens it, when it's
 /// a folder, or shows it in the preview, when it's a file).
@@ -470,10 +488,22 @@ fn ZipColumns(pane: Pane, src: Src, entry: Entry, open: RwSignal<Vec<String>>) -
     let picked = RwSignal::new(None::<String>);
     open.set(vec![]);
     pane.zip_pick.set(None);
+    pane.zip_list.set_value(None);
     let zip_path = StoredValue::new(entry.path.clone());
+    // The file picked can also change from the preview (‹ ›): it's marked here too.
+    Effect::new(move |_| {
+        if let Some((_, z, name, ..)) = pane.zip_pick.get() {
+            if z == zip_path.get_value() {
+                picked.set(Some(name));
+            }
+        }
+    });
     let args = json!({ "src": src.key(), "path": entry.path, "size": entry.size });
     spawn_local(async move {
         let r = call::<Listing>("zip_list", args).await;
+        if let Ok(l) = &r {
+            let _ = pane.zip_list.try_set_value(Some(((src, zip_path.get_value()), l.items.clone())));
+        }
         let _ = got.try_set(Some(r));
     });
     move || match got.get() {

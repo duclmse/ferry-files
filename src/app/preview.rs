@@ -625,13 +625,12 @@ pub(super) fn step_media(p: Pane, e: &Entry, delta: isize) {
     }
 }
 
-/// ‹ and › for the previous and next file of the same kind.
-fn neighbours(p: Pane, e: &Entry) -> impl IntoView {
-    let a = StoredValue::new(e.clone());
+/// ‹ and › for the previous and next file of the same kind: `go` steps by -1 or 1.
+fn neighbours(go: Callback<isize>) -> impl IntoView {
     view! {
         <span class="btn-group" role="group">
-            <button class="btn" title="Previous (←)" aria-label="Previous" on:click=move |_| step_media(p, &a.get_value(), -1)>{ico(Icon::Prev)}</button>
-            <button class="btn" title="Next (→)" aria-label="Next" on:click=move |_| step_media(p, &a.get_value(), 1)>{ico(Icon::Next)}</button>
+            <button class="btn" title="Previous (←)" aria-label="Previous" on:click=move |_| go.run(-1)>{ico(Icon::Prev)}</button>
+            <button class="btn" title="Next (→)" aria-label="Next" on:click=move |_| go.run(1)>{ico(Icon::Next)}</button>
         </span>
     }
 }
@@ -688,8 +687,21 @@ fn BigCover(src: Src, entry: Entry) -> impl IntoView {
 /// A big photo comes shrunk to about what the preview shows (`fit_url`), and the file itself
 /// replaces it when it's zoomed in. Sizes and zoom levels are always of the photo's own pixels.
 #[component]
-fn FullImage(pane: Pane, src: Src, entry: Entry, info: RwSignal<MediaInfo>, turn: Turn, #[prop(optional)] url: Option<String>) -> impl IntoView {
+fn FullImage(
+    pane: Pane,
+    src: Src,
+    entry: Entry,
+    info: RwSignal<MediaInfo>,
+    turn: Turn,
+    #[prop(optional)] url: Option<String>,
+    #[prop(optional, into)] step: Option<Callback<isize>>,
+) -> impl IntoView {
     let alone = url.is_some();
+    // To the previous or next picture: in the pane's folder, or as `step` says (in a ZIP).
+    let step = step.or_else(|| {
+        let e = StoredValue::new(entry.clone());
+        (!alone).then(|| Callback::new(move |d| step_media(pane, &e.get_value(), d)))
+    });
     let loaded = RwSignal::new(false);
     let natural = RwSignal::new((0u32, 0u32));
     let zoom = RwSignal::new(1.0f64);
@@ -839,9 +851,22 @@ fn FullImage(pane: Pane, src: Src, entry: Entry, info: RwSignal<MediaInfo>, turn
             {let e = entry.clone(); move || (!loaded.get() && !alone).then(|| view! { <Thumbnail src entry=e.clone()/> })}
             <img class="full" node_ref=img_ref src=move || shown.get() alt="" draggable="false" class:pending=move || !loaded.get()
                 style=style on:load=load on:transitionend=move |_| turn.settle()/>
+            // Clicking the picture's left or right side goes to the previous or next one (not
+            // while zoomed in, when dragging moves the picture).
+            {step.map(|go| {
+                let edge = move |d: isize| {
+                    let what = if d < 0 { "Previous (←)" } else { "Next (→)" };
+                    view! {
+                        <button class="pic-edge" class:next={d > 0} class:off=move || { zoom.get() > 1.0 } title=what aria-label=what
+                            on:mousedown=|e: web_sys::MouseEvent| e.stop_propagation() on:dblclick=|e: web_sys::MouseEvent| e.stop_propagation()
+                            on:click=move |e: web_sys::MouseEvent| { e.stop_propagation(); go.run(d) }>{ico(if d < 0 { Icon::Prev } else { Icon::Next })}</button>
+                    }
+                };
+                view! { {edge(-1)} {edge(1)} }
+            })}
         </div>
         <div class="viewer-bar">
-            {(!alone).then(|| view! { {neighbours(pane, &entry)} <span class="gap"></span> })}
+            {step.map(|go| view! { {neighbours(go)} <span class="gap"></span> })}
             <span class="btn-group" role="group">
                 <button class="btn" title="Zoom out" aria-label="Zoom out" on:click=move |_| set_zoom(zoom.get_untracked() / 1.25)>{ico(Icon::ZoomOut)}</button>
                 <button class="btn zoom" title="Of the picture's own size. Click (or double-click the picture) for 100% or to fit."
@@ -863,8 +888,22 @@ fn FullImage(pane: Pane, src: Src, entry: Entry, info: RwSignal<MediaInfo>, turn
 /// the pane's media keys, and goes on from where the file was stopped last time.
 /// `alone`: no ‹ › (a file in a ZIP).
 #[component]
-fn Player(pane: Pane, entry: Entry, url: String, video: bool, info: RwSignal<MediaInfo>, turn: Turn, #[prop(optional)] alone: bool) -> impl IntoView {
+fn Player(
+    pane: Pane,
+    entry: Entry,
+    url: String,
+    video: bool,
+    info: RwSignal<MediaInfo>,
+    turn: Turn,
+    #[prop(optional)] alone: bool,
+    #[prop(optional, into)] step: Option<Callback<isize>>,
+) -> impl IntoView {
     let key = resume_key(&entry);
+    // To the previous or next video or sound: in the pane's folder, or as `step` says (in a ZIP).
+    let step = step.or_else(|| {
+        let e = StoredValue::new(entry.clone());
+        (!alone).then(|| Callback::new(move |d| step_media(pane, &e.get_value(), d)))
+    });
     let player = if video {
         let pop = Callback::new(|video: Popped| {
             spawn_local(async move {
@@ -880,7 +919,7 @@ fn Player(pane: Pane, entry: Entry, url: String, video: bool, info: RwSignal<Med
     };
     view! {
         {player}
-        {(!alone).then(|| view! { <div class="viewer-bar">{neighbours(pane, &entry)}</div> })}
+        {step.map(|go| view! { <div class="viewer-bar">{neighbours(go)}</div> })}
     }
 }
 
@@ -1301,6 +1340,8 @@ fn Zipped(pane: Pane, src: Src, zip: Entry, name: String, size: u64, stored: boo
     let (pic_turn, video_turn) = (Turn::new(), Turn::new());
     let info = RwSignal::new(MediaInfo::default());
     let forced = RwSignal::new(None::<PeekAs>);
+    // ‹ › and the picture's sides go through the pictures (or videos, or sounds) in its folder.
+    let step = Callback::new(move |d| super::views::step_zipped(p, d));
     // Whether the body is text (as the match below picks it), for the wrap and line-number toggles.
     let text_e = e.clone();
     let body = move || {
@@ -1311,13 +1352,13 @@ fn Zipped(pane: Pane, src: Src, zip: Entry, name: String, size: u64, stored: boo
         match (forced.get(), media(&e)) {
             (Some(PeekAs::Text), _) => view! { <TextPeek src entry=e inner/> }.into_any(),
             (Some(PeekAs::Hex), _) => view! { <HexPeek src entry=e inner/> }.into_any(),
-            (Some(PeekAs::Image), _) => view! { <FullImage pane=p src entry=e info turn=pic_turn url/> }.into_any(),
-            (Some(PeekAs::Video), _) => view! { <Player pane=p entry=e url video=true info turn=video_turn alone=true/> }.into_any(),
+            (Some(PeekAs::Image), _) => view! { <FullImage pane=p src entry=e info turn=pic_turn url step/> }.into_any(),
+            (Some(PeekAs::Video), _) => view! { <Player pane=p entry=e url video=true info turn=video_turn alone=true step/> }.into_any(),
             // A ZIP in a ZIP isn't listed.
             (Some(PeekAs::Zip), _) => view! { <span class="hint">"Not shown from inside a ZIP."</span> }.into_any(),
-            (None, Some(Media::Image)) => view! { <FullImage pane=p src entry=e info turn=pic_turn url/> }.into_any(),
-            (None, Some(Media::Video)) => view! { <Player pane=p entry=e url video=true info turn=video_turn alone=true/> }.into_any(),
-            (None, Some(Media::Audio)) => view! { <Player pane=p entry=e url video=false info turn=video_turn alone=true/> }.into_any(),
+            (None, Some(Media::Image)) => view! { <FullImage pane=p src entry=e info turn=pic_turn url step/> }.into_any(),
+            (None, Some(Media::Video)) => view! { <Player pane=p entry=e url video=true info turn=video_turn alone=true step/> }.into_any(),
+            (None, Some(Media::Audio)) => view! { <Player pane=p entry=e url video=false info turn=video_turn alone=true step/> }.into_any(),
             _ if has_ext(&e, PDF_EXTS) => view! { <PdfView pane=p src entry=e url inner/> }.into_any(),
             _ if has_ext(&e, &["epub"]) => view! { <ZippedCover url=cover/> }.into_any(),
             _ if is_text(&e) => view! { <TextPeek src entry=e inner/> }.into_any(),

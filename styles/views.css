@@ -850,6 +850,54 @@ td.name input.rename {
   transition: transform 0.12s ease-out;
 }
 
+/* The picture's left and right sides: a click goes to the previous or next picture. The arrow
+   shows while the pointer is over that side. */
+.preview .pic.stage {
+  position: relative;
+}
+
+.preview .pic.stage .pic-edge {
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  left: 0;
+  width: min(30%, 120px);
+  display: flex;
+  align-items: center;
+  justify-content: flex-start;
+  padding: 0 8px;
+  border: 0;
+  background: none;
+  color: var(--ink);
+  cursor: pointer;
+  opacity: 0;
+  transition: opacity 0.12s;
+}
+
+.preview .pic.stage .pic-edge.next {
+  left: auto;
+  right: 0;
+  justify-content: flex-end;
+}
+
+.preview .pic.stage .pic-edge:hover,
+.preview .pic.stage .pic-edge:focus-visible {
+  opacity: 1;
+}
+
+.preview .pic.stage .pic-edge svg {
+  box-sizing: content-box;
+  padding: 6px;
+  border-radius: 50%;
+  background: var(--bg);
+  box-shadow: 0 1px 4px rgb(0 0 0 / 25%);
+}
+
+/* Zoomed in, dragging moves the picture instead. */
+.preview .pic.stage .pic-edge.off {
+  display: none;
+}
+
 .preview .pic.stage.zoomed {
   cursor: grab;
 }

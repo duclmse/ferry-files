@@ -2,7 +2,7 @@
 //! in a list, thumbnail or column view, with a context menu), and a text editor.
 
 use crate::api::{
-    call, Backup, BookInfo, CompareReport, Devices, DupeProgress, Dupes, Entry, FileDrop, Info, Issue, Marks, Progress, SmbMount, Space, TextFile,
+    call, Backup, BookInfo, CompareReport, Devices, DupeProgress, Dupes, Entry, FileDrop, Info, Issue, Marks, Packed, Progress, SmbMount, Space, TextFile,
     TransferReport, UsbDevice, WriteResult,
 };
 use leptos::ev;
@@ -501,6 +501,8 @@ struct Pane {
     /// A file picked in a ZIP's columns, which the preview shows instead of the ZIP: the side
     /// and the ZIP's path, and the file's name in the ZIP and unpacked size.
     zip_pick: RwSignal<Option<(Src, String, String, u64, bool)>>,
+    /// What's in the ZIP whose columns are shown (its side and path), for ‹ › in the preview.
+    zip_list: StoredValue<Option<((Src, String), Vec<Packed>)>>,
     /// Whether the path above the files is being typed in.
     editing_path: RwSignal<bool>,
     /// Counts folder listings asked for; a listing that comes back after a newer one was asked
@@ -642,6 +644,7 @@ impl Pane {
             kids: RwSignal::new(HashMap::new()),
             peek_as: RwSignal::new(None),
             zip_pick: RwSignal::new(None),
+            zip_list: StoredValue::new(None),
             editing_path: RwSignal::new(false),
             load_seq: StoredValue::new(0),
             going_to: StoredValue::new(None),
