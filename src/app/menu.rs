@@ -44,17 +44,69 @@ impl Ctx {
         self.menu.set(Some(Menu { x, y, pane: p.id, entry: None, columns: false, folders: vec![], place: Some((src, path)), sections: false, tree: false }));
     }
 
+    /// A sidebar folder's menu: ways to open it, what can go in it, where else to see it, its
+    /// path, Favourites, and Eject for a disk that can be taken out.
     pub(super) fn place_items(self, src: Src, path: &str) -> Vec<MenuItem> {
         let fav = if self.is_fav(src, path) { "Remove from Favourites" } else { "Add to Favourites" };
-        vec![item("Open", "", Act::Open), item("Open in new tab", "", Act::NewTab), MenuItem::Sep, item(fav, "", Act::Favourite)]
+        // Nothing goes on an Everything server, nor at the top of an MTP device (its storages).
+        let writable = !self.read_only(src) && (path != "/" || self.src_info(src).is_some_and(|i| i.transport != "mtp"));
+        let mut v = vec![item("Open", "", Act::Open), item("Open in new tab", "", Act::NewTab)];
+        if self.split.get_untracked() {
+            v.push(item("Open in the other pane", "", Act::OtherPane));
+        }
+        v.extend([
+            MenuItem::Sep,
+            MenuItem::Do { label: self.paste_label(), key: "", act: Act::Paste, danger: false, enabled: writable && self.can_paste() },
+            MenuItem::Do { label: "New folder…".into(), key: "", act: Act::NewFolder, danger: false, enabled: writable },
+            MenuItem::Do { label: "New text file…".into(), key: "", act: Act::NewFile, danger: false, enabled: writable },
+            MenuItem::Sep,
+        ]);
+        if src == Src::Mac {
+            v.push(item(format!("Show in {}", crate::os::file_manager()), "", Act::Reveal));
+        }
+        if self.has_shell(src) {
+            v.push(item("Open in terminal", "", Act::Terminal));
+        }
+        v.extend([item("Copy path", "", Act::CopyPath), MenuItem::Sep, item(fav, "", Act::Favourite)]);
+        if src == Src::Mac && self.devices.with_untracked(|d| d.as_ref().is_some_and(|d| d.ejectable.iter().any(|e| e == path))) {
+            v.extend([MenuItem::Sep, item(format!("Eject {}", base(path)), "", Act::Eject)]);
+        }
+        v
     }
 
-    /// What a sidebar menu's item does with its folder.
+    /// What a sidebar menu's item does with its folder. New files and the terminal go through the
+    /// active pane, which opens the folder first.
     fn run_place(self, act: Act, src: Src, path: String) {
+        let p = self.act();
         match act {
             Act::Open => self.open_place(src, path),
-            Act::NewTab => self.new_tab(self.act(), src, path),
+            Act::NewTab => self.new_tab(p, src, path),
+            Act::OtherPane => {
+                let o = self.other(p);
+                self.active.set(o.id);
+                self.open_place(src, path);
+            }
+            Act::Paste => self.paste_to(p, src, path),
+            Act::NewFolder | Act::NewFile => {
+                if p.src.get_untracked() != src || p.cwd.get_untracked() != path {
+                    self.open_place(src, path);
+                }
+                p.notice.set(Notice::NewItem { folder: act == Act::NewFolder });
+            }
+            Act::Reveal => spawn_local(async move {
+                if let Err(e) = call::<()>("reveal", json!({ "path": path })).await {
+                    p.error(e);
+                }
+            }),
+            Act::Terminal => {
+                if p.src.get_untracked() != src {
+                    self.open_place(src, path.clone());
+                }
+                self.cd_in_terminal(p, path);
+            }
+            Act::CopyPath => copy_text(p, if src == Src::Mac { crate::os::native_path(&path) } else { path }),
             Act::Favourite => self.toggle_fav(src, path),
+            Act::Eject => self.eject(path),
             _ => {}
         }
     }
@@ -210,6 +262,12 @@ impl Ctx {
     /// Copies (or, after Cut, moves) what was copied into `dir` (None: the pane's folder): files
     /// copied in Finder since the app's last Copy, else what Copy kept.
     pub(super) fn paste(self, p: Pane, dir: Option<String>) {
+        let dir = dir.unwrap_or_else(|| p.cwd.get_untracked());
+        self.paste_to(p, p.src.get_untracked(), dir);
+    }
+
+    /// Paste into folder `to_dir` on `to_src` (a sidebar folder), with the work shown in pane `p`.
+    pub(super) fn paste_to(self, p: Pane, to_src: Src, to_dir: String) {
         spawn_local(async move {
             let files = call::<Vec<String>>("clip_files", json!({})).await.unwrap_or_default();
             let finder = if files == self.wrote.get_value() { vec![] } else { files };
@@ -223,7 +281,6 @@ impl Ctx {
                 Ok(s) => s,
                 Err(e) => return p.error(e),
             };
-            let (to_src, to_dir) = (p.src.get_untracked(), dir.unwrap_or_else(|| p.cwd.get_untracked()));
             let items = clip.items;
             if from == to_src {
                 if items.iter().any(|x| *x == to_dir || to_dir.starts_with(&format!("{}/", x.trim_end_matches('/')))) {

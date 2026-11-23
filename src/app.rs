@@ -339,6 +339,10 @@ enum Act {
     Reveal,
     /// Shows the terminal, in this folder.
     Terminal,
+    /// A sidebar folder: opens it in the other pane.
+    OtherPane,
+    /// A sidebar disk: ejects it.
+    Eject,
 }
 
 enum MenuItem {

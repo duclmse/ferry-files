@@ -39,7 +39,7 @@ own files and disks, with tools for EPUB books in particular.
   SD cards), which can't hold it; the copy says so and goes on with the rest.
 - **Sync** a folder to the other pane, with three modes: copy missing, update or
   mirror. It lists what it will do first, and pairs can be saved.
-- **Sidebar**: favourites, workspaces, disks (with eject), devices, servers,
+- **Sidebar** (right-click a folder to open it, paste or make something in it, copy its path, eject a disk): favourites, workspaces, disks (with eject), devices, servers,
   sync pairs, backups and history. Folders show as trees, and sections can be
   moved and hidden. "Show the current folder" (right-click the sidebar, or
   Settings > Sidebar) opens the trees down to the folder shown and scrolls to it.
