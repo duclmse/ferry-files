@@ -363,28 +363,49 @@ pub(super) struct Filters {
     before: Option<i64>,
 }
 
+/// The search's kinds of file and the extensions of each.
+const KINDS: [(&str, &[&str]); 6] = [
+    ("picture", &["jpg", "jpeg", "png", "gif", "webp", "bmp", "heic", "heif", "avif", "svg", "tif", "tiff", "dng", "raw"]),
+    ("video", &["mp4", "m4v", "mov", "webm", "3gp", "mkv", "avi"]),
+    ("audio", &["mp3", "m4a", "aac", "wav", "flac", "ogg", "oga", "opus", "amr"]),
+    ("book", &["epub", "mobi", "azw", "azw3", "fb2", "cbz", "cbr"]),
+    ("document", &["pdf", "doc", "docx", "odt", "rtf", "txt", "md", "xls", "xlsx", "ods", "csv", "ppt", "pptx", "odp", "pages", "numbers", "key"]),
+    ("archive", &["zip", "7z", "rar", "tar", "gz", "tgz", "bz2", "xz", "apk"]),
+];
+
 /// What kind of file a name is, by its extension, as the search's kind filter names them.
 pub(super) fn kind_of(name: &str) -> &'static str {
     let x = name.rsplit_once('.').map(|(_, x)| x.to_ascii_lowercase()).unwrap_or_default();
-    let is = |list: &[&str]| list.contains(&x.as_str());
-    if is(&["jpg", "jpeg", "png", "gif", "webp", "bmp", "heic", "heif", "avif", "svg", "tif", "tiff", "dng", "raw"]) {
-        "picture"
-    } else if is(&["mp4", "m4v", "mov", "webm", "3gp", "mkv", "avi"]) {
-        "video"
-    } else if is(&["mp3", "m4a", "aac", "wav", "flac", "ogg", "oga", "opus", "amr"]) {
-        "audio"
-    } else if is(&["epub", "mobi", "azw", "azw3", "fb2", "cbz", "cbr"]) {
-        "book"
-    } else if is(&["pdf", "doc", "docx", "odt", "rtf", "txt", "md", "xls", "xlsx", "ods", "csv", "ppt", "pptx", "odp", "pages", "numbers", "key"]) {
-        "document"
-    } else if is(&["zip", "7z", "rar", "tar", "gz", "tgz", "bz2", "xz", "apk"]) {
-        "archive"
-    } else {
-        ""
-    }
+    KINDS.iter().find(|(_, exts)| exts.contains(&x.as_str())).map_or("", |(k, _)| k)
 }
 
 impl Filters {
+    /// The filters as Everything's search terms, which fsd reads too, so an index search is
+    /// narrowed by them. Dates are left to `accepts`.
+    fn terms(&self) -> String {
+        let mut t = vec![];
+        match self.kind.as_deref() {
+            None | Some("") => {}
+            Some("folder") => t.push("folder:".to_string()),
+            Some(k) => match KINDS.iter().find(|(name, _)| *name == k) {
+                Some((_, exts)) => t.push(format!("file: ext:{}", exts.join(";"))),
+                // Nothing has an unknown kind; `accepts` turns everything down.
+                None => {}
+            },
+        }
+        let file_only = self.min_size.is_some() || self.max_size.is_some() || self.after.is_some() || self.before.is_some();
+        if file_only && !t.iter().any(|x| x.starts_with("file:")) {
+            t.push("file:".into());
+        }
+        if let Some(m) = self.min_size {
+            t.push(format!("size:>={m}"));
+        }
+        if let Some(m) = self.max_size {
+            t.push(format!("size:<{m}"));
+        }
+        t.join(" ")
+    }
+
     fn accepts(&self, e: &device::Entry) -> bool {
         let file_only = self.min_size.is_some() || self.max_size.is_some() || self.after.is_some() || self.before.is_some();
         match self.kind.as_deref() {
@@ -438,12 +459,16 @@ pub(super) async fn find(
     let text = query.clone();
     let query = if regex { Query::regex(&query)? } else { Query::text(&query) };
     blocking(move || {
-        // From the device's own index when it has one (an Everything server), checked again here.
-        if let Some(found) = dev.search(&dir, &text, regex, 1000) {
+        // From the device's own index when it has one (fsd for the computer, an Everything
+        // server), checked again here.
+        let under = device::norm(&dir).map_err(msg)?;
+        let shown = |e: &Entry| hidden || !e.path.get(under.len()..).unwrap_or_default().split('/').any(|p| p.starts_with('.'));
+        let keep = |e: &Entry| shown(e) && query.fits(&e.name) && filters.accepts(e);
+        let terms = filters.terms();
+        let search = device::Search { text: &text, regex, hidden, terms: &terms, keep: &keep, max: 1000 };
+        if let Some(found) = dev.search(&dir, &search) {
             let (entries, all) = found.map_err(msg)?;
-            let under = device::norm(&dir).map_err(msg)?;
-            let shown = |e: &Entry| hidden || !e.path[under.len()..].split('/').any(|p| p.starts_with('.'));
-            let entries: Vec<Entry> = entries.into_iter().filter(|e| shown(e) && query.fits(&e.name) && filters.accepts(e)).collect();
+            let entries: Vec<Entry> = entries.into_iter().filter(|e| keep(e)).collect();
             return Ok(Matches { entries, complete: all });
         }
         Ok(find_in(&dev, &dir, &query, hidden, &filters, 1000, std::time::Duration::from_secs(30)))

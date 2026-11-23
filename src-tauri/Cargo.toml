@@ -56,7 +56,9 @@ suppaftp = { version = "13.0.0", default-features = false, features = ["rustls-r
 webpki-roots = "0.26"
 # iPhone and iPad over USB: Apple's usbmuxd and AFC protocols, in pure Rust (async, on tokio).
 idevice = { version = "0.1.68", default-features = false, features = ["ring", "usbmuxd", "afc", "house_arrest", "installation_proxy"] }
-tokio = { version = "1", features = ["rt", "io-util"] }
+tokio = { version = "1", features = ["rt", "io-util", "net", "time"] }
+# Searches of the computer from fsd's index (the fs project's daemon), over its local socket.
+fs-protocol = { path = "../../_fs_/crates/fs-protocol" }
 plist = "1.8"
 
 [target.'cfg(unix)'.dependencies]

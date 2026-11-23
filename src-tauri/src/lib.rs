@@ -6,6 +6,7 @@ pub mod device;
 mod dupes;
 pub mod epub;
 mod everything;
+mod fsd;
 mod ftp;
 pub mod iphone;
 pub mod local;

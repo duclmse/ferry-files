@@ -82,6 +82,10 @@ impl Transport for Local {
         "mac"
     }
 
+    fn search(&self, dir: &str, s: &crate::device::Search) -> Option<Result<(Vec<Entry>, bool)>> {
+        crate::fsd::search(dir, s).map(Ok)
+    }
+
     fn label(&self) -> String {
         format!("This {}", crate::platform::COMPUTER)
     }

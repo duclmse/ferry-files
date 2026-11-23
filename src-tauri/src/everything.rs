@@ -6,7 +6,7 @@
 //! Paths are the app's ("/C:/Users/me"); "/" holds the drives.
 
 use super::*;
-use crate::device::{basename, dirname, err, Result, Transport};
+use crate::device::{basename, dirname, err, Result, Search, Transport};
 use percent_encoding::{utf8_percent_encode, AsciiSet, NON_ALPHANUMERIC};
 use serde_json::Value;
 use std::io::Read;
@@ -393,8 +393,8 @@ impl Transport for Everything {
         }
     }
 
-    fn search(&self, dir: &str, text: &str, regex: bool, max: usize) -> Option<Result<(Vec<Entry>, bool)>> {
-        Some(Everything::search(self, dir, text, regex, max))
+    fn search(&self, dir: &str, s: &Search) -> Option<Result<(Vec<Entry>, bool)>> {
+        Some(Everything::search(self, dir, s.text, s.regex, s.max))
     }
 }
 

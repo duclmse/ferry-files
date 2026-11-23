@@ -43,6 +43,10 @@ own files and disks, with tools for EPUB books in particular.
   (voidtools) over HTTP. Passwords and keys are kept in the system keychain.
   Shares the system has mounted (SMB, NFS, WebDAV, FTP) show under Servers,
   to unmount, not with the disks.
+- **Fast search of the computer**: when fsd (the search daemon of the
+  [fs](https://github.com/duclmse/fs) project) is running and indexes the
+  folder, a search under it (Enter in the Filter field) comes from fsd's index
+  instead of walking every folder. Otherwise folders are walked as before.
 - **Terminal** in a pane, on this computer, an adb phone or an SFTP server.
 - **Editor view**: a folder tree beside text files in tabs.
 - **Books**: list every EPUB under a folder. Check them, change their info, or
@@ -110,6 +114,9 @@ cd src-tauri && cargo test --lib   # backend tests
 On macOS the build runs `scripts/bundle-libmtp.sh`, which bundles Homebrew's
 libmtp and libusb (LGPL-2.1), so the build machine needs `brew install libmtp`.
 
+The backend reads `fs-protocol` from a checkout of fs next to this one
+(`../_fs_`), for its searches through fsd.
+
 Tests against a real phone use scratch files only and clean up after
 themselves:
 
@@ -129,7 +136,8 @@ cargo run --example epub_smoke [-- adb|mtp]
   - Transports: `device.rs`, `adb.rs`, `mtp.rs` (`wpd.rs` on Windows),
     `iphone.rs` (iPhones and iPads over usbmuxd and AFC),
     `local.rs`, and the servers (`sftp.rs`, `smb.rs` (SMB and NFS), `webdav.rs`, `ftp.rs`,
-    `s3.rs`, `everything.rs`).
+    `s3.rs`, `everything.rs`). `fsd.rs` answers searches of the computer from
+    fsd's index.
   - `platform.rs`: what differs between operating systems.
   - `protocol.rs`: the `ferry://` scheme that serves files to the web view.
   - EPUB: `epub/`, `epub.rs`, `xml.rs`, `books.rs`.
