@@ -43,9 +43,8 @@ own files and disks, with tools for EPUB books in particular.
   (voidtools) over HTTP. Passwords and keys are kept in the system keychain.
   Shares the system has mounted (SMB, NFS, WebDAV, FTP) show under Servers,
   to unmount, not with the disks.
-- **Fast search of the computer**: when fsd (the search daemon of the
-  [fs](https://github.com/duclmse/fs) project) is running and indexes the
-  folder, a search under it (Enter in the Filter field) comes from fsd's index
+- **Fast search of the computer**: when fsd (the search daemon of the fs
+  project) is running and indexes the folder, a search under it (Enter in the Filter field) comes from fsd's index
   instead of walking every folder. Otherwise folders are walked as before.
 - **Terminal** in a pane, on this computer, an adb phone or an SFTP server.
 - **Editor view**: a folder tree beside text files in tabs.
@@ -114,8 +113,9 @@ cd src-tauri && cargo test --lib   # backend tests
 On macOS the build runs `scripts/bundle-libmtp.sh`, which bundles Homebrew's
 libmtp and libusb (LGPL-2.1), so the build machine needs `brew install libmtp`.
 
-The backend reads `fs-protocol` from a checkout of fs next to this one
-(`../_fs_`), for its searches through fsd.
+Searches through fsd are the `fsd` cargo feature, on by default; build with
+`--no-default-features` to leave them out. They need no fs sources: `fsd/wire.rs`
+carries its own copy of fsd's protocol.
 
 Tests against a real phone use scratch files only and clean up after
 themselves:

@@ -1,6 +1,6 @@
 //! Searches of the computer's own files from fsd's index. fsd is the file-search daemon of the
-//! fs project (usually run as a service); Ferry asks it over its local socket or named pipe,
-//! with the `fs-protocol` crate, instead of walking every folder.
+//! fs project (usually run as a service); Ferry asks it over its local socket or named pipe
+//! (`wire`), instead of walking every folder. Built with the `fsd` feature, on by default.
 //!
 //! Whenever fsd can't answer for certain, `search` gives None and the folders are walked as
 //! before: fsd isn't running, speaks another protocol version, doesn't index the folder, or
@@ -8,12 +8,10 @@
 
 use crate::device::{Entry, Search};
 use crate::platform::{app_path, native};
-use fs_protocol::attrib;
-use fs_protocol::ipc_client::IpcClient;
-use fs_protocol::ipc_protocol::{IpcRequest, IpcResponse, SearchHitDto};
 use std::collections::HashSet;
 use std::path::Path;
 use std::time::{Duration, Instant};
+use wire::{Client, Request, Response, SearchHit};
 
 /// Results asked for at a time. Filters fsd can't apply (dates, hidden folders) are applied
 /// here, so it can take several pages to find enough.
@@ -23,6 +21,8 @@ const PAGE: u32 = 2000;
 const TIME: Duration = Duration::from_secs(5);
 /// Hidden folders looked up to leave out what's in them.
 const HIDDEN_DIRS: u32 = 20_000;
+
+mod wire;
 
 /// Up to `s.max` entries under `dir` (an app path) that `s.keep` accepts, and whether that's
 /// all of them.
@@ -41,13 +41,13 @@ pub fn search(dir: &str, s: &Search) -> Option<(Vec<Entry>, bool)> {
 }
 
 async fn ask(dir: &str, s: &Search<'_>) -> Result<Option<(Vec<Entry>, bool)>, String> {
-    let mut fsd = match IpcClient::connect(&fs_protocol::default_ipc_path()).await {
+    let mut fsd = match Client::connect().await {
         Ok(c) => c,
         // Not running: the usual case, nothing to say.
         Err(_) => return Ok(None),
     };
-    let roots = match fsd.request(IpcRequest::Roots).await.map_err(|e| e.to_string())? {
-        IpcResponse::Roots(r) => r,
+    let roots = match fsd.request(Request::Roots).await? {
+        Response::Roots(r) => r,
         _ => return Err("fsd answered something else".into()),
     };
     let native_dir = native(dir).to_string_lossy().into_owned();
@@ -81,7 +81,7 @@ async fn ask(dir: &str, s: &Search<'_>) -> Result<Option<(Vec<Entry>, bool)>, St
         let got = hits.len() as u32;
         for hit in hits {
             let Some(path) = within(&hit, under) else { continue };
-            let e = Entry { name: hit.name, hidden: hit.attrib_bitmask & attrib::HIDDEN != 0, path, dir: hit.is_dir, size: hit.size_bytes, mtime: hit.mtime };
+            let e = Entry { name: hit.name, hidden: hit.attrib_bitmask & wire::HIDDEN != 0, path, dir: hit.is_dir, size: hit.size_bytes, mtime: hit.mtime };
             if !s.hidden && (e.hidden || in_hidden(&e.path, under, &hidden_dirs)) {
                 continue;
             }
@@ -102,9 +102,9 @@ async fn ask(dir: &str, s: &Search<'_>) -> Result<Option<(Vec<Entry>, bool)>, St
     }
 }
 
-async fn page(fsd: &mut IpcClient, query: &str, offset: u32, limit: u32) -> Result<(Vec<SearchHitDto>, u64), String> {
-    match fsd.request(IpcRequest::Search { query: query.to_string(), limit, offset }).await.map_err(|e| e.to_string())? {
-        IpcResponse::Search(r) => Ok((r.hits, r.total_hits)),
+async fn page(fsd: &mut Client, query: &str, offset: u32, limit: u32) -> Result<(Vec<SearchHit>, u64), String> {
+    match fsd.request(Request::Search { query: query.to_string(), limit, offset }).await? {
+        Response::Search(r) => Ok((r.hits, r.total_hits)),
         _ => Err("fsd answered something else".into()),
     }
 }
@@ -137,7 +137,7 @@ fn covers(root: &str, dir: &str) -> bool {
 
 /// The app path of what fsd found, spelled from `under` as Ferry has it, when it's in `under`
 /// and is a file or folder (not something inside a zip).
-fn within(hit: &SearchHitDto, under: &str) -> Option<String> {
+fn within(hit: &SearchHit, under: &str) -> Option<String> {
     if hit.archive_path.is_some() {
         return None;
     }
@@ -201,8 +201,8 @@ fn nearest_first(mut out: Vec<Entry>) -> Vec<Entry> {
 mod tests {
     use super::*;
 
-    fn hit(path: &str, archive: bool) -> SearchHitDto {
-        SearchHitDto {
+    fn hit(path: &str, archive: bool) -> SearchHit {
+        SearchHit {
             path: path.into(),
             name: path.rsplit(['/', '\\']).next().unwrap_or_default().into(),
             extension: None,

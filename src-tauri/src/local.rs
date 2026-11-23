@@ -82,6 +82,7 @@ impl Transport for Local {
         "mac"
     }
 
+    #[cfg(feature = "fsd")]
     fn search(&self, dir: &str, s: &crate::device::Search) -> Option<Result<(Vec<Entry>, bool)>> {
         crate::fsd::search(dir, s).map(Ok)
     }

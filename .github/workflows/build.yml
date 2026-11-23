@@ -42,6 +42,10 @@ jobs:
         working-directory: src-tauri
         run: cargo test --lib
 
+      - name: Without the fsd feature
+        working-directory: src-tauri
+        run: cargo check --lib --no-default-features
+
       - name: Bundle
         run: cargo tauri build --debug
 
