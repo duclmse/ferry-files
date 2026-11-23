@@ -325,6 +325,22 @@ pub(super) async fn open_file(state: State<'_, AppState>, src: Option<String>, p
     .await
 }
 
+/// Files and folders on the computer whose names have `text` in them, from fsd's index (the
+/// palette's `:`): up to 200, in fsd's order. Err says why not (fsd isn't running, still indexing,
+/// or this build has no fsd).
+#[tauri::command(rename_all = "snake_case")]
+pub(super) async fn find_files(text: String) -> Result<Vec<Entry>, String> {
+    #[cfg(feature = "fsd")]
+    {
+        blocking(move || crate::fsd::find(&text, 200)).await
+    }
+    #[cfg(not(feature = "fsd"))]
+    {
+        let _ = text;
+        Err("This build of the app has no fsd searches.".into())
+    }
+}
+
 /// Shows a file or folder on this computer in its folder, in Finder (File Explorer, Files).
 #[tauri::command(rename_all = "snake_case")]
 pub(super) async fn reveal(path: String) -> Result<(), String> {

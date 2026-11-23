@@ -59,6 +59,7 @@
     "allow-rename",
     "allow-space",
     "allow-open-file",
+    "allow-find-files",
     "allow-app-folders",
     "allow-open-folder",
     "allow-clear-cache",

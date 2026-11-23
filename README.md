@@ -65,7 +65,8 @@ own files and disks, with tools for EPUB books in particular.
   preview's EPUB editor: info, cover, find and replace, a visual or XHTML view
   (in colour), and saving back to the phone. Unedited parts of an EPUB keep their exact bytes.
 
-Press ? for the keyboard shortcuts.
+Press ? for the keyboard shortcuts. ⌘K opens the commands: type `>` first for actions only, or `:`
+to find files and folders on the computer by name, from fsd's index.
 
 ## Connecting a phone
 

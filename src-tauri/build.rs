@@ -55,6 +55,7 @@ fn main() {
         "rename",
         "space",
         "open_file",
+        "find_files",
         "app_folders",
         "open_folder",
         "clear_cache",

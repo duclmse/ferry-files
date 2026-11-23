@@ -1,5 +1,7 @@
 //! The command palette (⌘K): every action the menus offer for the active pane, and the places to
-//! go (favourites, devices, recent folders, sync pairs), found by typing a few letters.
+//! go (favourites, devices, recent folders, sync pairs), found by typing a few letters. Typing `>`
+//! first keeps to the actions; `:` finds files and folders on the computer by name, from fsd's
+//! index.
 
 use super::*;
 
@@ -37,7 +39,12 @@ enum Cmd {
     Pair(SyncPair),
     Workspace(Workspace),
     Do(fn(Ctx)),
+    /// A file or folder on the computer that `:` found: a folder opens, a file is shown in its.
+    Found(Entry),
 }
+
+/// How long typing after `:` pauses before fsd is asked.
+const FIND_WAIT_MS: u64 = 200;
 
 /// An app-wide command: its label, its shortcut's command (keymap.rs), and what it does.
 type AppCmd = (&'static str, &'static str, fn(Ctx));
@@ -188,6 +195,8 @@ impl Ctx {
             Cmd::Pair(pair) => self.open_pair(&pair),
             Cmd::Workspace(w) => self.open_workspace(w),
             Cmd::Do(f) => f(self),
+            Cmd::Found(e) if e.dir => self.open_place(Src::Mac, e.path),
+            Cmd::Found(e) => self.navigate_select(p, Src::Mac, parent(&e.path), Some(e.path)),
         }
     }
 }
@@ -200,18 +209,83 @@ pub(super) fn Palette() -> impl IntoView {
     let hay = StoredValue::new(choices.with_value(|cs| cs.iter().map(|c| (lower(&c.label), lower(&format!("{} {}", c.group, c.label)))).collect::<Vec<_>>()));
     let query = RwSignal::new(String::new());
     let at = RwSignal::new(0usize);
-    // Indices of the choices that match, best first; all of them, in order, before typing.
-    let shown = Memo::new(move |_| {
-        let q: Vec<char> = query.with(|q| q.to_lowercase().chars().filter(|c| !c.is_whitespace()).collect());
-        hay.with_value(|hs| {
-            if q.is_empty() {
-                return (0..hs.len()).collect::<Vec<_>>();
-            }
-            let mut hits: Vec<(i32, usize)> =
-                hs.iter().enumerate().filter_map(|(i, (own, with_group))| score(&q, own).max(score(&q, with_group).map(|s| s - 2)).map(|s| (s, i))).collect();
-            hits.sort_by_key(|&(s, i)| (std::cmp::Reverse(s), i));
-            hits.into_iter().map(|(_, i)| i).collect()
+    // After `:`, what fsd found for the text (or why it couldn't look), and the text asked last.
+    let found = RwSignal::new(None::<Result<Vec<Entry>, String>>);
+    let asked = StoredValue::new(String::new());
+    let finding = move || query.with(|q| q.trim_start().starts_with(':'));
+    // The choices that match, best first; all of them, in order, before typing. After `>` only
+    // the actions; after `:` what fsd found.
+    let shown = Signal::derive(move || {
+        let q = query.get();
+        let q = q.trim_start();
+        if let Some(text) = q.strip_prefix(':') {
+            let _ = text;
+            return found.with(|f| match f {
+                Some(Ok(es)) => es
+                    .iter()
+                    .map(|e| Choice {
+                        group: if e.dir { "Folder" } else { "File" },
+                        label: format!("{} — {}", e.name, crate::os::native_path(&parent(&e.path))),
+                        key: "",
+                        cmd: Cmd::Found(e.clone()),
+                    })
+                    .collect(),
+                _ => vec![],
+            });
+        }
+        let (only_acts, q) = match q.strip_prefix('>') {
+            Some(rest) => (true, rest),
+            None => (false, q),
+        };
+        let q: Vec<char> = q.to_lowercase().chars().filter(|c| !c.is_whitespace()).collect();
+        choices.with_value(|cs| {
+            hay.with_value(|hs| {
+                let act = |i: usize| !only_acts || matches!(cs[i].cmd, Cmd::Act(..) | Cmd::Do(_));
+                let mut hits: Vec<(i32, usize)> = hs
+                    .iter()
+                    .enumerate()
+                    .filter(|(i, _)| act(*i))
+                    .filter_map(|(i, (own, with_group))| {
+                        if q.is_empty() {
+                            return Some((0, i));
+                        }
+                        score(&q, own).max(score(&q, with_group).map(|s| s - 2)).map(|s| (s, i))
+                    })
+                    .collect();
+                hits.sort_by_key(|&(s, i)| (std::cmp::Reverse(s), i));
+                hits.into_iter().map(|(_, i)| cs[i].clone()).collect::<Vec<_>>()
+            })
         })
+    });
+    // Asks fsd once typing after `:` pauses.
+    let timer = StoredValue::new_local(None::<TimeoutHandle>);
+    Effect::new(move |_| {
+        let q = query.get();
+        let Some(text) = q.trim_start().strip_prefix(':').map(|t| t.trim().to_string()) else { return };
+        if let Some(t) = timer.try_update_value(Option::take).flatten() {
+            t.clear();
+        }
+        if text.is_empty() {
+            asked.set_value(String::new());
+            found.set(None);
+            return;
+        }
+        let t = set_timeout_with_handle(
+            move || {
+                asked.set_value(text.clone());
+                spawn_local(async move {
+                    let r = call::<Vec<Entry>>("find_files", json!({ "text": text })).await;
+                    // Only the last text typed counts.
+                    if asked.try_with_value(|a| *a == text).unwrap_or(false) {
+                        let _ = found.try_set(Some(r));
+                        let _ = at.try_set(0);
+                    }
+                });
+            },
+            std::time::Duration::from_millis(FIND_WAIT_MS),
+        )
+        .ok();
+        timer.set_value(t);
     });
     let input = NodeRef::<html::Input>::new();
     input.on_load(move |el| {
@@ -219,11 +293,7 @@ pub(super) fn Palette() -> impl IntoView {
             let _ = el.focus();
         });
     });
-    let run = move |i: usize| {
-        if let Some(c) = choices.with_value(|cs| cs.get(i).cloned()) {
-            ctx.run_choice(c);
-        }
-    };
+    let run = move |c: Choice| ctx.run_choice(c);
     let reveal = move || {
         request_animation_frame(|| {
             if let Some(el) = document().query_selector(".palette .choice.on").ok().flatten() {
@@ -232,7 +302,7 @@ pub(super) fn Palette() -> impl IntoView {
         });
     };
     let keys = move |e: web_sys::KeyboardEvent| {
-        let n = shown.with_untracked(Vec::len);
+        let n = shown.with_untracked(|s| s.len());
         match e.key().as_str() {
             "ArrowDown" if n > 0 => {
                 e.prevent_default();
@@ -246,8 +316,8 @@ pub(super) fn Palette() -> impl IntoView {
             }
             "Enter" => {
                 e.prevent_default();
-                if let Some(i) = shown.with_untracked(|s| s.get(at.get_untracked()).copied()) {
-                    run(i);
+                if let Some(c) = shown.with_untracked(|s| s.get(at.get_untracked()).cloned()) {
+                    run(c);
                 }
             }
             _ if chord_of(&e).and_then(|c| ctx.command_for(&c)).is_some_and(|c| c.id == "palette") => {
@@ -262,7 +332,7 @@ pub(super) fn Palette() -> impl IntoView {
     view! {
         <div class="overlay palette-overlay" on:click=move |_| ctx.panel.set(None)>
             <div class="dialog palette" role="dialog" aria-label="Commands" on:click=|e| e.stop_propagation()>
-                <input node_ref=input class="palette-q" type="text" placeholder="Type an action, folder or device"
+                <input node_ref=input class="palette-q" type="text" placeholder="An action, folder or device; > for actions only, : to find files"
                     aria-label="Search actions and places" spellcheck="false" autocomplete="off"
                     prop:value=move || query.get() on:keydown=keys
                     on:input=move |ev| { query.set(event_target_value(&ev)); at.set(0); }/>
@@ -270,14 +340,24 @@ pub(super) fn Palette() -> impl IntoView {
                     {move || {
                         let list = shown.get();
                         if list.is_empty() {
-                            return view! { <p class="hint">"Nothing matches."</p> }.into_any();
+                            let note = if !finding() {
+                                "Nothing matches.".to_string()
+                            } else {
+                                match found.get() {
+                                    _ if query.with(|q| q.trim_start()[1..].trim().is_empty()) => "Type part of a file's name to find it on the computer.".to_string(),
+                                    None => "Looking…".to_string(),
+                                    Some(Err(e)) => e,
+                                    Some(Ok(_)) => "No file or folder has that in its name.".to_string(),
+                                }
+                            };
+                            return view! { <p class="hint">{note}</p> }.into_any();
                         }
-                        list.into_iter().enumerate().map(|(row, i)| {
-                            let c = choices.with_value(|cs| cs[i].clone());
+                        list.into_iter().enumerate().map(|(row, c)| {
+                            let chosen = c.clone();
                             view! {
                                 <button class="choice" role="option" class:on=move || at.get() == row aria-selected=move || (at.get() == row).to_string()
                                     on:mousemove=move |_| if at.get_untracked() != row { at.set(row) }
-                                    on:click=move |_| run(i)>
+                                    on:click=move |_| run(chosen.clone())>
                                     <span class="group">{c.group}</span>
                                     <span class="label">{c.label}</span>
                                     <span class="key">{move || ctx.key_label(c.key)}</span>
@@ -286,7 +366,11 @@ pub(super) fn Palette() -> impl IntoView {
                         }).collect_view().into_any()
                     }}
                 </div>
-                <p class="hint">"↑ ↓ to choose · ↵ to run · Esc to close. Actions work on the active pane and what's picked in it."</p>
+                <p class="hint">{move || if finding() {
+                    "↑ ↓ to choose · ↵ to open · Esc to close. Files and folders on the computer, by name, from fsd's index."
+                } else {
+                    "↑ ↓ to choose · ↵ to run · Esc to close. > for actions only, : to find files. Actions work on the active pane and what's picked in it."
+                }}</p>
             </div>
         </div>
     }

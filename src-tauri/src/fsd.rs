@@ -102,6 +102,45 @@ async fn ask(dir: &str, s: &Search<'_>) -> Result<Option<(Vec<Entry>, bool)>, St
     }
 }
 
+/// Up to `max` files and folders anywhere fsd indexes whose names have `text` in them (any case,
+/// or a pattern with * and ?), in fsd's order: the palette's `:`. Err says why there's nothing
+/// to search: fsd isn't running, or hasn't finished indexing.
+pub fn find(text: &str, max: u32) -> Result<Vec<Entry>, String> {
+    let rt = tokio::runtime::Builder::new_current_thread().enable_all().build().map_err(|e| e.to_string())?;
+    rt.block_on(async {
+        match tokio::time::timeout(TIME, find_in(text, max)).await {
+            Ok(r) => r,
+            Err(_) => Err("fsd took too long to answer.".into()),
+        }
+    })
+}
+
+async fn find_in(text: &str, max: u32) -> Result<Vec<Entry>, String> {
+    let mut fsd = Client::connect().await.map_err(|_| "fsd isn't running. Start it to find files by name here.".to_string())?;
+    match fsd.request(Request::Roots).await? {
+        Response::Roots(r) if !r.crawled => return Err("fsd is still indexing. Try again in a while.".into()),
+        Response::Roots(_) => {}
+        _ => return Err("fsd answered something else.".into()),
+    }
+    let name = name_term(text, false).ok_or("Leave the \" out of the name.")?;
+    if name.is_empty() {
+        return Ok(vec![]);
+    }
+    let (hits, _) = page(&mut fsd, &name, 0, max).await?;
+    Ok(hits
+        .into_iter()
+        .filter(|h| h.archive_path.is_none())
+        .map(|h| Entry {
+            path: app_path(Path::new(&h.path)),
+            name: h.name,
+            hidden: h.attrib_bitmask & wire::HIDDEN != 0,
+            dir: h.is_dir,
+            size: h.size_bytes,
+            mtime: h.mtime,
+        })
+        .collect())
+}
+
 async fn page(fsd: &mut Client, query: &str, offset: u32, limit: u32) -> Result<(Vec<SearchHit>, u64), String> {
     match fsd.request(Request::Search { query: query.to_string(), limit, offset }).await? {
         Response::Search(r) => Ok((r.hits, r.total_hits)),
@@ -286,6 +325,17 @@ mod tests {
             println!("found {}{} {}", e.path, if e.dir { "/" } else { "" }, e.size);
         }
         println!("complete {all}");
+    }
+
+    /// The palette's `:` against a running fsd:
+    /// FERRY_FSD_TEXT=<part of a name> cargo test --lib fsd::tests::find_live -- --ignored --nocapture
+    #[test]
+    #[ignore]
+    fn find_live() {
+        match find(&std::env::var("FERRY_FSD_TEXT").unwrap_or_else(|_| "readme".into()), 20) {
+            Ok(found) => found.iter().for_each(|e| println!("found {}{}", e.path, if e.dir { "/" } else { "" })),
+            Err(e) => println!("no: {e}"),
+        }
     }
 
     #[test]
