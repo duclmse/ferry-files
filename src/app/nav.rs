@@ -330,8 +330,44 @@ impl Ctx {
     }
 
     /// Lists again every shown pane that's in folder `dir` on `src`, after something changed there.
+    /// A folder renamed from the sidebar: its folder is listed again, and panes and Favourites
+    /// in it follow the new name.
+    pub(super) fn place_renamed(self, src: Src, old: &str, new: &str) {
+        let moved = |p: &str| (p == old || p.starts_with(&format!("{old}/"))).then(|| format!("{new}{}", &p[old.len()..]));
+        self.log(format!("Renamed {} to {}", base(old), base(new)));
+        for q in self.panes {
+            if q.src.get_untracked() == src {
+                if let Some(to) = moved(&q.cwd.get_untracked()) {
+                    self.navigate(q, to);
+                }
+            }
+        }
+        let place = self.place_key(src);
+        let favs = self.favs.get_untracked();
+        if favs.iter().any(|f| f.place == place && moved(&f.path).is_some()) {
+            self.set_favs(
+                favs.into_iter()
+                    .map(|mut f| {
+                        if f.place == place {
+                            if let Some(to) = moved(&f.path) {
+                                f.path = to;
+                            }
+                        }
+                        f
+                    })
+                    .collect(),
+            );
+        }
+        self.changed(src, &parent(old));
+    }
+
     pub(super) fn changed(self, src: Src, dir: &str) {
         self.load_space(src);
+        self.side_changed.update(|(n, s, d)| {
+            *n += 1;
+            *s = src;
+            *d = dir.to_string();
+        });
         for p in self.panes {
             if p.src.get_untracked() == src {
                 p.tree_gen.update(|g| *g += 1);

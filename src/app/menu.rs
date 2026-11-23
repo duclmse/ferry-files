@@ -68,10 +68,32 @@ impl Ctx {
             v.push(item("Open in terminal", "", Act::Terminal));
         }
         v.extend([item("Copy path", "", Act::CopyPath), MenuItem::Sep, item(fav, "", Act::Favourite)]);
+        // The folder itself: not a device's top, a disk, or a folder the device names (Home, Storage).
+        if !self.fixed_place(src, path) {
+            let writable = !self.read_only(src);
+            v.push(MenuItem::Sep);
+            v.push(MenuItem::Do { label: "Rename".into(), key: "", act: Act::Rename, danger: false, enabled: writable });
+            if src == Src::Mac {
+                let trash = crate::os::trash();
+                v.push(MenuItem::Do { label: format!("Move to {trash}…"), key: "", act: Act::DeletePlace(false), danger: true, enabled: writable });
+                v.push(MenuItem::Do { label: "Delete permanently…".into(), key: "", act: Act::DeletePlace(true), danger: true, enabled: writable });
+            } else {
+                v.push(MenuItem::Do { label: "Delete folder if empty…".into(), key: "", act: Act::DeletePlace(false), danger: true, enabled: writable });
+            }
+        }
         if src == Src::Mac && self.devices.with_untracked(|d| d.as_ref().is_some_and(|d| d.ejectable.iter().any(|e| e == path))) {
             v.extend([MenuItem::Sep, item(format!("Eject {}", base(path)), "", Act::Eject)]);
         }
         v
+    }
+
+    /// Whether a sidebar folder is one that stays put: a device's top, a disk, or one of the
+    /// folders a device names (Home, Desktop, Storage): these aren't renamed, deleted or dragged.
+    pub(super) fn fixed_place(self, src: Src, path: &str) -> bool {
+        let top = path == "/" || parent(path) == "/";
+        let named = self.src_info(src).is_some_and(|i| i.default_dir == path || i.quick_dirs.iter().any(|(_, d)| d == path));
+        let drive = self.devices.with_untracked(|d| d.as_ref().is_some_and(|d| d.drives.iter().any(|(_, p)| p == path)));
+        top || named || drive
     }
 
     /// What a sidebar menu's item does with its folder. New files and the terminal go through the
@@ -107,6 +129,11 @@ impl Ctx {
             Act::CopyPath => copy_text(p, if src == Src::Mac { crate::os::native_path(&path) } else { path }),
             Act::Favourite => self.toggle_fav(src, path),
             Act::Eject => self.eject(path),
+            Act::Rename => self.side_renaming.set(Some((src, path))),
+            Act::DeletePlace(forever) => {
+                let e = Entry { name: base(&path), path, dir: true, size: 0, mtime: 0, hidden: false };
+                p.notice.set(Notice::ConfirmDelete(src, vec![e], forever));
+            }
             _ => {}
         }
     }

@@ -445,6 +445,8 @@ enum Act {
     OtherPane,
     /// A sidebar disk: ejects it.
     Eject,
+    /// A sidebar folder: deletes it, `true` permanently (asked first).
+    DeletePlace(bool),
     /// Runs a Lua script (`Ctx::scripts`' index) on what's picked (or the folder).
     Script(usize),
     /// Opens Settings > Scripts.
@@ -477,7 +479,7 @@ enum Notice {
     Error(String),
     Ok(String),
     /// Asks before deleting these, `forever` (no backup) or with a backup.
-    ConfirmDelete(Vec<Entry>, bool),
+    ConfirmDelete(Src, Vec<Entry>, bool),
     /// The result of comparing this pane's folder with the other pane's, before syncing.
     /// `mode` is the one picked at first: "copy", "update" or "mirror".
     Sync {
@@ -1163,6 +1165,11 @@ struct Ctx {
     jobs: RwSignal<Vec<Job>>,
     next_job: StoredValue<u32>,
     favs: RwSignal<Vec<Fav>>,
+    /// The sidebar folder being renamed in place.
+    side_renaming: RwSignal<Option<(Src, String)>>,
+    /// The last folder whose contents changed (and a count, so the same one again is a change):
+    /// the sidebar lists it again where it's open.
+    side_changed: RwSignal<(u32, Src, String)>,
     sync_pairs: RwSignal<Vec<SyncPair>>,
     /// Named workspaces, in the sidebar.
     workspaces: RwSignal<Vec<Workspace>>,
@@ -1275,6 +1282,8 @@ impl Ctx {
             history: RwSignal::new(vec![]),
             panel: RwSignal::new(None),
             favs: RwSignal::new(stored(FAVS_KEY).and_then(|s| serde_json::from_str(&s).ok()).unwrap_or_default()),
+            side_renaming: RwSignal::new(None),
+            side_changed: RwSignal::new((0, Src::Mac, String::new())),
             sync_pairs: RwSignal::new(stored(SYNC_PAIRS_KEY).and_then(|s| serde_json::from_str(&s).ok()).unwrap_or_default()),
             workspaces: RwSignal::new(saved_workspaces()),
             drag: StoredValue::new(None),

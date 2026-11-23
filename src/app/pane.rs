@@ -164,10 +164,12 @@ pub(super) fn Notices(pane: Pane) -> impl IntoView {
                 <div class="notice ok"><span class="text">{m}</span>
                     <button class="btn icon-only" title="Dismiss" aria-label="Dismiss" on:click=dismiss>{ico(Icon::Close)}</button></div>
             }.into_any(),
-            Notice::ConfirmDelete(items, forever) => {
-                let place = ctx.place(p.src.get_untracked());
+            Notice::ConfirmDelete(src, items, forever) => {
+                let place = ctx.place(src);
                 let trash = crate::os::trash();
                 let label = match (items.as_slice(), forever) {
+                    // A sidebar folder on the computer: to the Trash, asked first.
+                    ([e], false) if src == Src::Mac => format!("Move the folder {} and everything in it to the {trash}?", e.name),
                     ([e], true) if e.dir => format!("Delete the folder {} and everything in it permanently? It won't go to the {trash} and no backup is kept. This can't be undone.", e.name),
                     ([e], true) => format!("Delete {} permanently? It won't go to the {trash} and no backup is kept. This can't be undone.", e.name),
                     (_, true) => format!("Delete {} items permanently, folders with everything in them? They won't go to the {trash} and no backup is kept. This can't be undone.", items.len()),
@@ -178,7 +180,7 @@ pub(super) fn Notices(pane: Pane) -> impl IntoView {
                 let button = if forever { "Delete permanently" } else { "Delete" };
                 view! {
                     <div class="notice"><span class="text">{label}</span>
-                        <button class="btn danger solid" on:click=move |_| ctx.delete(p, items.clone(), forever)>{ico(Icon::Trash)}{button}</button>
+                        <button class="btn danger solid" on:click=move |_| ctx.delete_on(p, src, items.clone(), forever)>{ico(Icon::Trash)}{button}</button>
                         <button class="btn" on:click=dismiss>"Cancel"</button></div>
                 }.into_any()
             }

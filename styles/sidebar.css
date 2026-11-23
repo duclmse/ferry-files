@@ -247,6 +247,19 @@
   white-space: nowrap;
 }
 
+/* A sidebar folder being renamed in place. */
+.tree-row input.item.rename {
+  height: calc(var(--row) - 4px);
+  margin: 2px 6px 2px 0;
+  padding: 0 4px;
+  border: 1px solid var(--accent);
+  border-radius: 4px;
+  background: var(--bg);
+  color: var(--ink);
+  font: inherit;
+  line-height: normal;
+}
+
 .tree-row .item.active {
   font-weight: 600;
 }

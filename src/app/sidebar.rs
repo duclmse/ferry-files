@@ -575,6 +575,17 @@ fn TreeNode(
             let _ = kids.try_set(Some(found));
         });
     };
+    // Listed again when what's in it changed (a copy, a delete, a rename), if it's open.
+    Effect::new(move |prev: Option<u32>| {
+        let n = ctx.side_changed.with(|(n, s, d)| (*s == src && at.with_value(|p| p == d)).then_some(*n));
+        if let (Some(n), Some(_)) = (n, prev) {
+            if open.get_untracked() {
+                list();
+            }
+            return n;
+        }
+        n.or(prev).unwrap_or(0)
+    });
     let toggle = move |ev: web_sys::MouseEvent| {
         ev.stop_propagation();
         let now = !open.get_untracked();
@@ -646,6 +657,24 @@ fn TreeNode(
         opening.set_value(t);
     };
     let title = tip.unwrap_or_else(|| path.clone());
+    // Renamed in place (from its menu): Enter renames, Escape or clicking away doesn't.
+    let renaming = move || ctx.side_renaming.with(|r| r.as_ref().is_some_and(|(s, p)| *s == src && at.with_value(|a| a == p)));
+    let rename = move |name: String| {
+        ctx.side_renaming.set(None);
+        let old = at.get_value();
+        let name = name.trim().to_string();
+        if name.is_empty() || name == base(&old) {
+            return;
+        }
+        spawn_local(async move {
+            match call::<String>("rename", json!({ "src": src.key(), "path": old, "name": name })).await {
+                Ok(new) => ctx.place_renamed(src, &old, &new),
+                Err(e) => ctx.act().error(e),
+            }
+        });
+    };
+    // Dragged to a pane or another sidebar folder, it's copied or moved there (not the fixed ones).
+    let draggable = !ctx.fixed_place(src, &path);
     view! {
         <div class=format!("tree-row {class}") style=format!("--depth: {depth}")
             class:drop=move || key.with_value(|k| ctx.drop_at.with(|d| d.as_deref() == Some(k.as_str())))
@@ -655,10 +684,40 @@ fn TreeNode(
                 {chev(open.into())}
             </button>
             // A middle click opens it in a new tab; right-click for a menu.
-            <button class="item" class:active=active title=title node_ref=row
-                on:click=move |_| ctx.open_place(src, at.get_value())
-                on:mousedown=middle_down on:mouseup=move |ev| if ev.button() == 1 { ev.prevent_default(); ctx.new_tab(ctx.act(), src, at.get_value()) }
-                on:contextmenu=move |ev| ctx.show_place_menu(&ev, src, at.get_value())>{name}</button>
+            {move || if renaming() {
+                view! {
+                    <input class="item rename" value=base(&at.get_value()) spellcheck="false" autocomplete="off"
+                        on:keydown=move |ev| match ev.key().as_str() {
+                            "Enter" => { ev.prevent_default(); rename(event_target_value(&ev)) }
+                            "Escape" => { ev.prevent_default(); ev.stop_propagation(); ctx.side_renaming.set(None) }
+                            _ => {}
+                        }
+                        on:blur=move |_| ctx.side_renaming.set(None)
+                        on:click=|ev| ev.stop_propagation()
+                        node_ref={
+                            let r = NodeRef::<html::Input>::new();
+                            r.on_load(|el| request_animation_frame(move || { let _ = el.focus(); el.select(); }));
+                            r
+                        }/>
+                }.into_any()
+            } else {
+                let title = title.clone();
+                let name = name.clone();
+                view! {
+                    <button class="item" class:active=active title=title node_ref=row draggable=draggable.to_string()
+                        on:dragstart=move |ev: web_sys::DragEvent| {
+                            if let Some(dt) = ev.data_transfer() {
+                                let _ = dt.set_data("text/plain", &at.get_value());
+                                dt.set_effect_allowed("copyMove");
+                            }
+                            ctx.drag.set_value(Some((src, vec![at.get_value()])));
+                        }
+                        on:dragend=drag_end(ctx)
+                        on:click=move |_| ctx.open_place(src, at.get_value())
+                        on:mousedown=middle_down on:mouseup=move |ev| if ev.button() == 1 { ev.prevent_default(); ctx.new_tab(ctx.act(), src, at.get_value()) }
+                        on:contextmenu=move |ev| ctx.show_place_menu(&ev, src, at.get_value())>{name}</button>
+                }.into_any()
+            }}
             {extra.map(|f| f.run())}
         </div>
         {move || open.get().then(|| kids.get().map(|k| k.into_iter().map(|(name, path)| {

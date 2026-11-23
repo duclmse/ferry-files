@@ -113,7 +113,7 @@ impl Ctx {
         if src == Src::Mac && !forever {
             self.delete(p, items, false);
         } else {
-            p.notice.set(Notice::ConfirmDelete(items, forever));
+            p.notice.set(Notice::ConfirmDelete(src, items, forever));
         }
     }
 
@@ -122,7 +122,12 @@ impl Ctx {
     /// Trash, or, on a disk with none, is deleted as on a phone: files backed up first, folders
     /// only when empty.
     pub(super) fn delete(self, p: Pane, items: Vec<Entry>, forever: bool) {
-        let src = p.src.get_untracked();
+        self.delete_on(p, p.src.get_untracked(), items, forever);
+    }
+
+    /// As `delete`, for items on `src` (a sidebar folder's side), reported in pane `p`. Panes
+    /// inside what's deleted go to the folder it was in.
+    pub(super) fn delete_on(self, p: Pane, src: Src, items: Vec<Entry>, forever: bool) {
         p.notice.set(Notice::None);
         let trash = crate::os::trash();
         spawn_local(async move {
@@ -202,6 +207,15 @@ impl Ctx {
             }
             if let Some(e) = items.first() {
                 self.changed(src, &parent(&e.path));
+            }
+            // A pane in what was deleted goes to the folder it was in.
+            for q in self.panes {
+                let cwd = q.cwd.get_untracked();
+                if q.src.get_untracked() == src {
+                    if let Some(e) = items[..done.min(items.len())].iter().find(|e| within(&cwd, &e.path)) {
+                        self.navigate(q, parent(&e.path));
+                    }
+                }
             }
         });
     }
