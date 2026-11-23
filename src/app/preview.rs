@@ -638,7 +638,7 @@ pub(super) fn step_media(p: Pane, e: &Entry, delta: isize) {
 
 /// Shows a picture once it's been read into memory and decoded: `show` puts `path`'s picture
 /// (read from `url`) in the preview, which then draws it at once from that copy. Until then the
-/// picture shown stays, and the bar says what's coming; a picture read ahead is shown at once.
+/// picture shown stays; a picture read ahead is shown at once.
 /// Only the last one asked for is shown, and only if `still()` (nothing else was picked
 /// meanwhile). One that can't be read is shown anyway, to say why.
 pub(super) fn when_read(p: Pane, path: String, url: String, still: impl Fn() -> bool + 'static, show: impl FnOnce() + 'static) {
@@ -1158,7 +1158,6 @@ fn FullImage(
         </div>
         <div class="viewer-bar">
             {step.map(|go| view! { {neighbours(go)} <span class="gap"></span> })}
-            {move || pane.coming.get().map(|(path, _)| view! { <span class="coming" role="status">{format!("Opening {}…", super::util::base(&path))}</span> })}
             <span class="btn-group" role="group">
                 <button class="btn" title="Zoom out" aria-label="Zoom out" on:click=move |_| zoom_by_hand(zoom.get_untracked() / 1.25)>{ico(Icon::ZoomOut)}</button>
                 <button class="btn zoom" aria-haspopup="menu"
