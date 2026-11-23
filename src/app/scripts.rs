@@ -109,6 +109,13 @@ pub(super) fn ScriptSettings() -> impl IntoView {
     let ctx = expect_context::<Ctx>();
     ctx.load_scripts();
     let error = RwSignal::new(None::<String>);
+    // Where the app's own scripts folder is: the one the guide is in.
+    let own = RwSignal::new(String::new());
+    spawn_local(async move {
+        if let Ok(guide) = call::<String>("script_guide", json!({})).await {
+            let _ = own.try_set(parent(&guide));
+        }
+    });
     let add = move |folder: bool| {
         spawn_local(async move {
             match call::<Vec<String>>("pick_scripts", json!({ "folder": folder })).await {
@@ -172,10 +179,11 @@ pub(super) fn ScriptSettings() -> impl IntoView {
         <p class="hint flush">"Lua scripts to run on the files picked (or the folder), from Run script in the right-click menu. They're found in the scripts folder and in the files and folders added here. The scripting guide says what a script can do."</p>
         <div class="script-places">
             <div class="script-place">
-                <span class="path">{move || match ctx.script_folder.get() {
-                    f if f.is_empty() => "The scripts folder (the app's)".to_string(),
-                    f => format!("The scripts folder: {}", shown(&f)),
-                }}</span>
+                <span class="path" title=move || { let f = ctx.script_folder.get(); shown(&if f.is_empty() { own.get() } else { f }) }>
+                    <b>{move || if ctx.script_folder.with(String::is_empty) { "The scripts folder (the app's)" } else { "The scripts folder (picked)" }}</b>
+                    <br/>
+                    <span class="about">{move || { let f = ctx.script_folder.get(); shown(&if f.is_empty() { own.get() } else { f }) }}</span>
+                </span>
                 <button class="btn icon-only" title=format!("Open in {}", crate::os::file_manager()) aria-label=format!("Open in {}", crate::os::file_manager())
                     on:click=open_folder>{ico(Icon::Folder)}</button>
                 <button class="btn" title="Use another folder as the scripts folder (new scripts go there)" on:click=move |_| pick_folder()>"Change…"</button>

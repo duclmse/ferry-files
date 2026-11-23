@@ -101,6 +101,12 @@
   white-space: nowrap;
 }
 
+.script-place .path .about {
+  font-size: 12px;
+  -webkit-user-select: text;
+  user-select: text;
+}
+
 .row-buttons {
   display: flex;
   flex-wrap: wrap;
