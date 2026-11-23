@@ -299,9 +299,10 @@ fn PdfView(pane: Pane, src: Src, entry: Entry, url: String, #[prop(optional)] in
 const EPUB_READ_KEY: &str = "ferry-files.epub-read";
 
 /// An EPUB: its cover, or its chapters one at a time. Only the book's contents list and the
-/// chapter shown are read (and its pictures, as they show), not the whole book.
+/// chapter shown are read (and its pictures, as they show), not the whole book. `line` is the
+/// name and facts; the book's buttons go at the end of that line.
 #[component]
-fn EpubView(pane: Pane, src: Src, entry: Entry) -> impl IntoView {
+fn EpubView(pane: Pane, src: Src, entry: Entry, line: AnyView) -> impl IntoView {
     let ctx = expect_context::<Ctx>();
     let ep = ctx.ep;
     // Editing reads the whole book into the app; reading takes a chapter at a time.
@@ -400,46 +401,51 @@ fn EpubView(pane: Pane, src: Src, entry: Entry) -> impl IntoView {
         })
     };
     view! {
-        <div class="viewer-bar epub-bar">
-            <span class="btn-group" role="group">
-                <button class="btn" class:active=move || reading.get() && !editing.get() title="Read the book here" aria-label="Read the book here" on:click=toggle>{ico(Icon::Book)}</button>
-                <button class="btn" class:active=editing title="Edit the book" aria-label="Edit the book" disabled=opening on:click=edit>{ico(Icon::Edit)}</button>
-            </span>
-            {move || opening.get().then(|| view! { <span class="spin"></span> })}
-            {move || editing.get().then(|| view! { <crate::epub::EditBar/> })}
-            {move || (reading.get() && !editing.get()).then(|| view! {
-                <span class="gap"></span>
+        <div class="meta">
+            <div class="info">{line}</div>
+            <div class="viewer-bar epub-bar meta-tools">
                 <span class="btn-group" role="group">
-                    <button class="btn" title="Previous chapter" aria-label="Previous chapter" disabled=move || {at.get() == 0} on:click=move |_| go(-1)>{ico(Icon::Prev)}</button>
-                    <button class="btn" title="Next chapter" aria-label="Next chapter" disabled=move || {at.get() + 1 >= count()} on:click=move |_| go(1)>{ico(Icon::Next)}</button>
+                    <button class="btn" class:active=move || reading.get() && !editing.get() title="Read the book here" aria-label="Read the book here" on:click=toggle>{ico(Icon::Book)}</button>
+                    <button class="btn" class:active=editing title="Edit the book" aria-label="Edit the book" disabled=opening on:click=edit>{ico(Icon::Edit)}</button>
                 </span>
-                <select class="epub-chapters" aria-label="Chapter" prop:value=move || at.get().to_string()
-                    on:keydown=|ev| ev.stop_propagation()
-                    on:change=move |ev| at.set(event_target_value(&ev).parse().unwrap_or(0))>{chapter_list}</select>
-                <span class="epub-of">{move || match count() { 0 => String::new(), n => format!("{} of {n}", at.get() + 1) }}</span>
-            })}
-        </div>
-        {move || edit_error.get().map(|e| view! {
-            <div class="notice error">
-                <span class="text">{e}</span>
-                <button class="btn" title="Dismiss" aria-label="Dismiss" on:click=move |_| edit_error.set(None)>{ico(Icon::Close)}</button>
+                {move || opening.get().then(|| view! { <span class="spin"></span> })}
+                {move || editing.get().then(|| view! { <crate::epub::EditBar/> })}
+                {move || (reading.get() && !editing.get()).then(|| view! {
+                    <span class="gap"></span>
+                    <span class="btn-group" role="group">
+                        <button class="btn" title="Previous chapter" aria-label="Previous chapter" disabled=move || {at.get() == 0} on:click=move |_| go(-1)>{ico(Icon::Prev)}</button>
+                        <button class="btn" title="Next chapter" aria-label="Next chapter" disabled=move || {at.get() + 1 >= count()} on:click=move |_| go(1)>{ico(Icon::Next)}</button>
+                    </span>
+                    <select class="epub-chapters" aria-label="Chapter" prop:value=move || at.get().to_string()
+                        on:keydown=|ev| ev.stop_propagation()
+                        on:change=move |ev| at.set(event_target_value(&ev).parse().unwrap_or(0))>{chapter_list}</select>
+                    <span class="epub-of">{move || match count() { 0 => String::new(), n => format!("{} of {n}", at.get() + 1) }}</span>
+                })}
             </div>
-        })}
-        {move || if editing.get() {
-            view! { <crate::epub::EditBody/> }.into_any()
-        } else if !reading.get() {
-            view! { <BigCover src entry=entry.clone()/> }.into_any()
-        } else {
-            match (contents.get(), page.get()) {
-                (Some(Err(e)), _) | (_, Some(Err(e))) => view! { <p class="hint">{e}</p> }.into_any(),
-                (Some(Ok(c)), _) if c.chapters.is_empty() => view! { <p class="hint">"This book lists no chapters."</p> }.into_any(),
-                (Some(Ok(_)), Some(Ok(_))) => view! {
-                    // No allow-scripts: a book's scripts must never run next to the app's commands.
-                    <iframe class="epub-page" sandbox="allow-same-origin" srcdoc=doc title="Chapter"></iframe>
-                }.into_any(),
-                _ => view! { <p class="hint">"Opening…"</p> }.into_any(),
-            }
-        }}
+        </div>
+        <div class="view">
+            {move || edit_error.get().map(|e| view! {
+                <div class="notice error">
+                    <span class="text">{e}</span>
+                    <button class="btn" title="Dismiss" aria-label="Dismiss" on:click=move |_| edit_error.set(None)>{ico(Icon::Close)}</button>
+                </div>
+            })}
+            {move || if editing.get() {
+                view! { <crate::epub::EditBody/> }.into_any()
+            } else if !reading.get() {
+                view! { <BigCover src entry=entry.clone()/> }.into_any()
+            } else {
+                match (contents.get(), page.get()) {
+                    (Some(Err(e)), _) | (_, Some(Err(e))) => view! { <p class="hint">{e}</p> }.into_any(),
+                    (Some(Ok(c)), _) if c.chapters.is_empty() => view! { <p class="hint">"This book lists no chapters."</p> }.into_any(),
+                    (Some(Ok(_)), Some(Ok(_))) => view! {
+                        // No allow-scripts: a book's scripts must never run next to the app's commands.
+                        <iframe class="epub-page" sandbox="allow-same-origin" srcdoc=doc title="Chapter"></iframe>
+                    }.into_any(),
+                    _ => view! { <p class="hint">"Opening…"</p> }.into_any(),
+                }
+            }}
+        </div>
     }
 }
 
@@ -544,37 +550,6 @@ pub(super) fn Preview(
                             }
                         });
                     }
-                    let thumb = |e: &Entry| view! { <div class="pic"><Thumbnail src=src entry=e.clone()/></div> };
-                    let body = match (forced, media(&e)) {
-                        (Some(PeekAs::Text), _) => view! { <TextPeek src entry=e.clone()/> }.into_any(),
-                        (Some(PeekAs::Hex), _) => view! { <HexPeek src entry=e.clone()/> }.into_any(),
-                        (Some(PeekAs::Image), _) => view! { <FullImage pane=p src entry=e.clone() info turn=pic_turn url=stream_url(src, &e)/> }.into_any(),
-                        (Some(PeekAs::Video), _) => view! { <Player pane=p entry=e.clone() url=stream_url(src, &e) video=true info turn=video_turn alone/> }.into_any(),
-                        (Some(PeekAs::Zip), _) => view! { <ZipList src entry=e.clone()/> }.into_any(),
-                        (None, Some(Media::Image)) if alone => view! { <FullImage pane=p src entry=e.clone() info turn=pic_turn url=stream_url(src, &e)/> }.into_any(),
-                        (None, Some(Media::Image)) => view! { <FullImage pane=p src entry=e.clone() info turn=pic_turn/> }.into_any(),
-                        (None, Some(Media::Video)) => view! { <Player pane=p entry=e.clone() url=stream_url(src, &e) video=true info turn=video_turn alone/> }.into_any(),
-                        (None, Some(Media::Audio)) => view! {
-                            {thumb(&e)}
-                            <Player pane=p entry=e.clone() url=stream_url(src, &e) video=false info turn=video_turn alone/>
-                        }.into_any(),
-                        _ if has_ext(&e, PDF_EXTS) && e.size <= WHOLE_MAX => view! { <PdfView pane=p src entry=e.clone() url=stream_url(src, &e)/> }.into_any(),
-                        _ if has_ext(&e, FONT_EXTS) && e.size <= WHOLE_MAX => view! { <FontSample src entry=e.clone()/> }.into_any(),
-                        _ if has_ext(&e, &["epub"]) => view! { <EpubView pane=p src entry=e.clone()/> }.into_any(),
-                        _ if has_ext(&e, ZIP_EXTS) => view! { <ZipList src entry=e.clone()/> }.into_any(),
-                        _ if is_text(&e) => view! { <TextPeek src entry=e.clone()/> }.into_any(),
-                        _ if e.dir => thumb(&e).into_any(),
-                        // A type the preview doesn't know: offer to look inside anyway.
-                        _ => {
-                            let path = e.path.clone();
-                            view! {
-                                {thumb(&e)}
-                                <div class="viewer-bar">
-                                    <OpenAs zip=true pick=move |h| p.peek_as.set(Some((path.clone(), h)))/>
-                                </div>
-                            }.into_any()
-                        }
-                    };
                     // Name with its size, width × height and length beside it, then kind, date
                     // and folder, on one line above.
                     let size = (!e.dir).then(|| human_size(e.size));
@@ -588,20 +563,64 @@ pub(super) fn Preview(
                         v.join(" · ")
                     };
                     let facts = Signal::derive(facts);
-                    view! {
-                        <div class="meta">
-                            <span class="head">
-                                <b class="name" title=e.path.clone()>{e.name.clone()}</b>
-                                <span class="measures">{move || measures.get()}</span>
-                            </span>
-                            <span class="sub" title=move || facts.get()>{move || facts.get()}</span>
-                            {forced.map(|now| {
-                                let path = e.path.clone();
-                                peek_as_buttons(now, true, move |how| p.peek_as.set(how.map(|h| (path.clone(), h))))
-                            })}
-                        </div>
-                        <div class="view">{body}</div>
-                    }.into_any()
+                    // The name and facts as a view, for the line above what's shown. An EPUB puts
+                    // its own buttons at the end of it, so it takes the line (None here after).
+                    let path = e.path.clone();
+                    let mut line = Some(view! {
+                        <span class="head">
+                            <b class="name" title=e.path.clone()>{e.name.clone()}</b>
+                            <span class="measures">{move || measures.get()}</span>
+                        </span>
+                        <span class="sub" title=move || facts.get()>{move || facts.get()}</span>
+                        {forced.map(|now| peek_as_buttons(now, true, move |how| p.peek_as.set(how.map(|h| (path.clone(), h)))))}
+                    }.into_any());
+                    let thumb = |e: &Entry| view! { <div class="pic"><Thumbnail src=src entry=e.clone()/></div> };
+                    // Set when the body is text, which puts the wrap and line-number toggles in the line.
+                    let mut text = false;
+                    let body = match (forced, media(&e)) {
+                        (Some(PeekAs::Text), _) => { text = true; view! { <TextPeek src entry=e.clone()/> }.into_any() }
+                        (Some(PeekAs::Hex), _) => view! { <HexPeek src entry=e.clone()/> }.into_any(),
+                        (Some(PeekAs::Image), _) => view! { <FullImage pane=p src entry=e.clone() info turn=pic_turn url=stream_url(src, &e)/> }.into_any(),
+                        (Some(PeekAs::Video), _) => view! { <Player pane=p entry=e.clone() url=stream_url(src, &e) video=true info turn=video_turn alone/> }.into_any(),
+                        (Some(PeekAs::Zip), _) => view! { <ZipList src entry=e.clone()/> }.into_any(),
+                        (None, Some(Media::Image)) if alone => view! { <FullImage pane=p src entry=e.clone() info turn=pic_turn url=stream_url(src, &e)/> }.into_any(),
+                        (None, Some(Media::Image)) => view! { <FullImage pane=p src entry=e.clone() info turn=pic_turn/> }.into_any(),
+                        (None, Some(Media::Video)) => view! { <Player pane=p entry=e.clone() url=stream_url(src, &e) video=true info turn=video_turn alone/> }.into_any(),
+                        (None, Some(Media::Audio)) => view! {
+                            {thumb(&e)}
+                            <Player pane=p entry=e.clone() url=stream_url(src, &e) video=false info turn=video_turn alone/>
+                        }.into_any(),
+                        _ if has_ext(&e, PDF_EXTS) && e.size <= WHOLE_MAX => view! { <PdfView pane=p src entry=e.clone() url=stream_url(src, &e)/> }.into_any(),
+                        _ if has_ext(&e, FONT_EXTS) && e.size <= WHOLE_MAX => view! { <FontSample src entry=e.clone()/> }.into_any(),
+                        _ if has_ext(&e, &["epub"]) => {
+                            let line = line.take().unwrap_or_else(|| ().into_any());
+                            view! { <EpubView pane=p src entry=e.clone() line/> }.into_any()
+                        }
+                        _ if has_ext(&e, ZIP_EXTS) => view! { <ZipList src entry=e.clone()/> }.into_any(),
+                        _ if is_text(&e) => { text = true; view! { <TextPeek src entry=e.clone()/> }.into_any() }
+                        _ if e.dir => thumb(&e).into_any(),
+                        // A type the preview doesn't know: offer to look inside anyway.
+                        _ => {
+                            let path = e.path.clone();
+                            view! {
+                                {thumb(&e)}
+                                <div class="viewer-bar">
+                                    <OpenAs zip=true pick=move |h| p.peek_as.set(Some((path.clone(), h)))/>
+                                </div>
+                            }.into_any()
+                        }
+                    };
+                    match line {
+                        Some(line) => view! {
+                            <div class="meta">
+                                <div class="info">{line}</div>
+                                {text.then(text_tools)}
+                            </div>
+                            <div class="view">{body}</div>
+                        }.into_any(),
+                        // The EPUB drew the line itself.
+                        None => body,
+                    }
                 }
             }}
         </div>
@@ -1286,6 +1305,22 @@ fn retry_line(e: String, nothing_yet: bool, again: impl Fn() + 'static) -> impl 
     }
 }
 
+/// The wrap and line-number toggles for text, at the end of the line above the preview.
+fn text_tools() -> impl IntoView {
+    let ctx = expect_context::<Ctx>();
+    let (wrap, numbers) = (ctx.wrap_text, ctx.line_numbers);
+    view! {
+        <div class="meta-tools">
+            <button class="filter-opt" class:on=move || wrap.get() aria-pressed=move || wrap.get().to_string()
+                aria-label="Wrap long lines" title=move || if wrap.get() { "Wrap long lines: on" } else { "Wrap long lines: off" }
+                on:click=move |_| ctx.set_wrap_text(!wrap.get_untracked())>{ico(Icon::Wrap)}</button>
+            <button class="filter-opt" class:on=move || numbers.get() aria-pressed=move || numbers.get().to_string()
+                aria-label="Line numbers" title=move || if numbers.get() { "Line numbers: on" } else { "Line numbers: off" }
+                on:click=move |_| ctx.set_line_numbers(!numbers.get_untracked())>{ico(Icon::LineNumbers)}</button>
+        </div>
+    }
+}
+
 /// The pieces in a `<pre>`, with a line under it saying what's going on.
 fn piece_view(
     pieces: RwSignal<Vec<Piece>>,
@@ -1309,19 +1344,8 @@ fn piece_view(
         })
     };
     let (wrap, numbers) = (ctx.wrap_text, ctx.line_numbers);
-    let tools = view! {
-        <div class="peek-tools">
-            <button class="filter-opt" class:on=move || wrap.get() aria-pressed=move || wrap.get().to_string()
-                aria-label="Wrap long lines" title=move || if wrap.get() { "Wrap long lines: on" } else { "Wrap long lines: off" }
-                on:click=move |_| ctx.set_wrap_text(!wrap.get_untracked())>{ico(Icon::Wrap)}</button>
-            <button class="filter-opt" class:on=move || numbers.get() aria-pressed=move || numbers.get().to_string()
-                aria-label="Line numbers" title=move || if numbers.get() { "Line numbers: on" } else { "Line numbers: off" }
-                on:click=move |_| ctx.set_line_numbers(!numbers.get_untracked())>{ico(Icon::LineNumbers)}</button>
-        </div>
-    };
     view! {
         <div class="peek">
-            {tools}
             {move || if pieces.with(Vec::is_empty) {
                 match error.get() {
                     Some(e) => retry_line(e, true, retry).into_any(),
@@ -1404,6 +1428,8 @@ fn Zipped(pane: Pane, src: Src, zip: Entry, name: String, size: u64, stored: boo
     let (pic_turn, video_turn) = (Turn::new(), Turn::new());
     let info = RwSignal::new(MediaInfo::default());
     let forced = RwSignal::new(None::<PeekAs>);
+    // Whether the body is text (as the match below picks it), for the wrap and line-number toggles.
+    let text_e = e.clone();
     let body = move || {
         let (e, url, inner, cover) = (e.clone(), url.clone(), inner.clone(), cover.clone());
         if size > UNPACK_MAX && !stored {
@@ -1448,6 +1474,15 @@ fn Zipped(pane: Pane, src: Src, zip: Entry, name: String, size: u64, stored: boo
             .into_any(),
         }
     };
+    let text = Memo::new(move |_| {
+        if size > UNPACK_MAX && !stored {
+            return false;
+        }
+        match forced.get() {
+            Some(how) => how == PeekAs::Text,
+            None => media(&text_e).is_none() && !has_ext(&text_e, PDF_EXTS) && !has_ext(&text_e, &["epub"]) && is_text(&text_e),
+        }
+    });
     let folder = match name.rfind('/') {
         Some(at) => format!("{}/{}", zip.name, &name[..at]),
         None => zip.name.clone(),
@@ -1456,12 +1491,15 @@ fn Zipped(pane: Pane, src: Src, zip: Entry, name: String, size: u64, stored: boo
     let facts = Signal::derive(move || format!("In a ZIP · {folder}"));
     view! {
         <div class="meta">
-            <span class="head">
-                <b class="name" title=format!("{}/{name}", zip.path)>{short.clone()}</b>
-                <span class="measures">{move || measures.get()}</span>
-            </span>
-            <span class="sub" title=move || facts.get()>{move || facts.get()}</span>
-            {move || forced.get().map(|now| peek_as_buttons(now, false, move |how| forced.set(how)))}
+            <div class="info">
+                <span class="head">
+                    <b class="name" title=format!("{}/{name}", zip.path)>{short.clone()}</b>
+                    <span class="measures">{move || measures.get()}</span>
+                </span>
+                <span class="sub" title=move || facts.get()>{move || facts.get()}</span>
+                {move || forced.get().map(|now| peek_as_buttons(now, false, move |how| forced.set(how)))}
+            </div>
+            {move || text.get().then(text_tools)}
         </div>
         <div class="view">{body}</div>
     }

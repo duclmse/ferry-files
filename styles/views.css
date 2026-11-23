@@ -297,19 +297,42 @@
   gap: 6px;
 }
 
-/* Above what's shown: the name, then the facts, on a second line when they don't fit beside it,
-   each cut off with … when too long. */
+/* Above what's shown: the name and facts, then any buttons for what's shown, which stay at the end
+   of the line: the name and facts give way to them, never the other way round. */
 .preview > .meta {
   flex: none;
   width: 100%;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 12px;
+  line-height: 1.35;
+  text-align: left;
+}
+
+/* The name, then the facts, on a second line when they don't fit beside it, each cut off with …
+   when too long. */
+.preview .meta > .info {
+  flex: 1 1 0;
+  min-width: 6em;
   display: flex;
   flex-wrap: wrap;
   align-items: baseline;
   column-gap: 8px;
   row-gap: 2px;
-  font-size: 12px;
-  line-height: 1.35;
-  text-align: left;
+}
+
+/* Buttons at the end of the line: when there's no room, they wrap among themselves, still at the
+   end, rather than going under the name. */
+.preview .meta > .meta-tools {
+  flex: 0 1 auto;
+  min-width: 0;
+  width: auto;
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: flex-end;
+  align-items: center;
+  gap: 2px;
 }
 
 /* The name and, kept beside it, the size and width × height; the name gives way first. */
@@ -486,13 +509,6 @@
   border-radius: 3px;
 }
 
-/* Wrap and line-number toggles, above the text. */
-.preview .peek .peek-tools {
-  align-self: stretch;
-  display: flex;
-  justify-content: flex-end;
-  gap: 2px;
-}
 
 .preview .peek pre.nowrap {
   white-space: pre;
@@ -890,6 +906,9 @@ td.name input.rename {
 }
 
 .preview .peek.hex .peek-tools {
+  align-self: stretch;
+  display: flex;
+  justify-content: flex-end;
   align-items: center;
   gap: 8px;
 }
@@ -1028,9 +1047,9 @@ td.name input.rename {
   background: #fff;
 }
 
-/* An EPUB read in the preview, a chapter at a time. */
-.viewer-bar.epub-bar {
-  flex: none;
+/* An EPUB read in the preview, a chapter at a time: its buttons are at the end of the line above. */
+.preview .meta > .viewer-bar.epub-bar {
+  gap: 4px;
 }
 
 .epub-bar .btn.active {
