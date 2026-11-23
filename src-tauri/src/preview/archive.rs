@@ -1,7 +1,7 @@
 //! What's in a ZIP file (and APK, JAR…), from its central directory at the end: only the end of
 //! the file and that directory are read, never the files packed in it.
 
-use crate::media::Read;
+use crate::preview::media::Read;
 use serde::Serialize;
 
 #[derive(Serialize, Debug, PartialEq)]

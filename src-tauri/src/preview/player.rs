@@ -7,7 +7,7 @@ use tauri::{AppHandle, WebviewUrl, WebviewWindowBuilder};
 
 /// What the frontend's player hands over (video.rs, `Popped`): passed back to it as is.
 #[derive(Serialize, Deserialize)]
-pub(super) struct Popped {
+pub(crate) struct Popped {
     url: String,
     key: String,
     title: String,
@@ -26,7 +26,7 @@ pub(super) struct Popped {
 static NEXT: AtomicU32 = AtomicU32::new(1);
 
 #[tauri::command(rename_all = "snake_case")]
-pub(super) async fn pop_out(app: AppHandle, video: Popped) -> Result<(), String> {
+pub(crate) async fn pop_out(app: AppHandle, video: Popped) -> Result<(), String> {
     let label = format!("player-{}", NEXT.fetch_add(1, Ordering::Relaxed));
     let (w, h) = (video.width.clamp(240.0, 1600.0), video.height.clamp(180.0, 1200.0));
     let title = video.title.clone();

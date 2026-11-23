@@ -2,13 +2,14 @@
 //! finding phones on the network. Once connected, a phone shows up in `adb devices` like a USB
 //! one, with its address as the serial, and is used through `Adb` as usual.
 
-use super::*;
+use super::adb;
+use crate::*;
 use std::process::Stdio;
 use std::time::{Duration, Instant};
 
 /// A phone with Wireless debugging open, found on the network (`adb mdns services`).
 #[derive(Serialize, Debug, PartialEq)]
-pub(super) struct Service {
+pub(crate) struct Service {
     /// adb's name for the phone ("adb-R5CT…-AbCdEf"): the same for its pair and connect services.
     name: String,
     /// "pair": waiting for a pairing code; "connect": paired, ready to connect.
@@ -18,7 +19,7 @@ pub(super) struct Service {
 }
 
 /// Checks an address typed by hand: "host:port", nothing adb would take as an option.
-pub(super) fn check_address(a: &str) -> Result<String, String> {
+pub(crate) fn check_address(a: &str) -> Result<String, String> {
     let a = a.trim();
     let bad = || Err(format!("“{a}” isn't an address. Type it as shown on the phone, like 192.168.1.20:37000."));
     let Some((host, port)) = a.rsplit_once(':') else { return bad() };
@@ -59,7 +60,7 @@ fn run(args: &[&str], limit: Duration) -> Result<String, String> {
 }
 
 /// What `adb pair` said: Ok when paired, else its reason in plain words.
-pub(super) fn pair_result(out: &str) -> Result<(), String> {
+pub(crate) fn pair_result(out: &str) -> Result<(), String> {
     if out.contains("Successfully paired") {
         return Ok(());
     }
@@ -74,7 +75,7 @@ pub(super) fn pair_result(out: &str) -> Result<(), String> {
 
 /// What `adb connect` said: Ok when connected (or already), else its reason. adb can report a
 /// failure with exit status 0, so the words decide.
-pub(super) fn connect_result(out: &str) -> Result<(), String> {
+pub(crate) fn connect_result(out: &str) -> Result<(), String> {
     let text = out.trim();
     if text.lines().any(|l| l.starts_with("connected to") || l.starts_with("already connected to")) {
         return Ok(());
@@ -90,7 +91,7 @@ pub(super) fn connect_result(out: &str) -> Result<(), String> {
 }
 
 /// Parses `adb mdns services`: a header line, then "name  service  host:port" per line.
-pub(super) fn parse_services(out: &str) -> Vec<Service> {
+pub(crate) fn parse_services(out: &str) -> Vec<Service> {
     out.lines()
         .filter_map(|l| {
             let mut w = l.split_whitespace();
@@ -109,7 +110,7 @@ pub(super) fn parse_services(out: &str) -> Vec<Service> {
 
 /// Pairs with a phone showing a pairing code ("Pair device with pairing code").
 #[tauri::command(rename_all = "snake_case")]
-pub(super) async fn adb_pair(address: String, code: String) -> Result<(), String> {
+pub(crate) async fn adb_pair(address: String, code: String) -> Result<(), String> {
     let address = check_address(&address)?;
     let code = code.trim().to_string();
     if code.is_empty() || !code.chars().all(|c| c.is_ascii_alphanumeric()) {
@@ -120,7 +121,7 @@ pub(super) async fn adb_pair(address: String, code: String) -> Result<(), String
 
 /// Connects adb to a paired phone; it then shows up in `devices` with the address as serial.
 #[tauri::command(rename_all = "snake_case")]
-pub(super) async fn adb_connect(address: String) -> Result<String, String> {
+pub(crate) async fn adb_connect(address: String) -> Result<String, String> {
     let address = check_address(&address)?;
     blocking(move || {
         connect_result(&run(&["connect", &address], Duration::from_secs(10))?)?;
@@ -132,7 +133,7 @@ pub(super) async fn adb_connect(address: String) -> Result<String, String> {
 /// Phones on the network with Wireless debugging open. Empty when adb can't look (older adb, or
 /// the network doesn't pass mDNS): addresses can still be typed.
 #[tauri::command(rename_all = "snake_case")]
-pub(super) async fn adb_discover() -> Result<Vec<Service>, String> {
+pub(crate) async fn adb_discover() -> Result<Vec<Service>, String> {
     blocking(|| Ok(run(&["mdns", "services"], Duration::from_secs(5)).map(|o| parse_services(&o)).unwrap_or_default())).await
 }
 

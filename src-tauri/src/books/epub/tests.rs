@@ -71,8 +71,8 @@ fn checks_change_and_shrink_books() {
     image::codecs::jpeg::JpegEncoder::new_with_quality(&mut jpg, 98).encode_image(&img).unwrap();
     b.put_file("OEBPS/images/photo.jpg", jpg);
     let bytes = b.to_bytes().unwrap();
-    assert!(crate::books::check(&bytes, "b.epub").iter().all(|i| !i.text.contains("mimetype")));
-    let (small, s) = crate::books::shrink(&bytes, "b.epub", 1200, 75).unwrap();
+    assert!(crate::books::batch::check(&bytes, "b.epub").iter().all(|i| !i.text.contains("mimetype")));
+    let (small, s) = crate::books::batch::shrink(&bytes, "b.epub", 1200, 75).unwrap();
     assert_eq!(s.images, 1);
     assert!(s.after < s.before / 2, "{s:?}");
     let sb = Book::open(&small, "x".into(), "".into()).unwrap();
@@ -80,12 +80,12 @@ fn checks_change_and_shrink_books() {
     assert_eq!((photo.width(), photo.height()), (1200, 600));
     assert_eq!(sb.file("OEBPS/images/pic.png").unwrap(), b"PNG", "not an image: left alone");
     // Changing info in bulk: only the given fields.
-    let c = crate::books::Change { language: Some("fr".into()), add_subjects: vec!["Poetry".into()], ..Default::default() };
-    let changed = crate::books::change(&small, "x", &c).unwrap().unwrap();
+    let c = crate::books::batch::Change { language: Some("fr".into()), add_subjects: vec!["Poetry".into()], ..Default::default() };
+    let changed = crate::books::batch::change(&small, "x", &c).unwrap().unwrap();
     let m = Book::open(&changed, "x".into(), "".into()).unwrap().meta().unwrap();
     assert_eq!((m.language.as_str(), m.subjects.as_slice(), m.creators.len()), ("fr", &["Poetry".to_string()][..], 2));
-    assert!(crate::books::change(&changed, "x", &c).unwrap().is_none(), "nothing left to change");
-    assert_eq!(crate::books::smaller_name("A.b.epub"), "A.b (smaller).epub");
+    assert!(crate::books::batch::change(&changed, "x", &c).unwrap().is_none(), "nothing left to change");
+    assert_eq!(crate::books::batch::smaller_name("A.b.epub"), "A.b (smaller).epub");
 }
 
 #[test]
@@ -185,7 +185,7 @@ fn lists_chapters_from_a_few_files() {
     let bytes = sample_bytes();
     let mut asked = vec![];
     let mut read = |at: u64, len: u64| Ok(bytes.iter().skip(at as usize).take(len as usize).copied().collect());
-    let b = crate::archive::unpack_each(bytes.len() as u64, &mut read, 1 << 20, |get| {
+    let b = crate::preview::archive::unpack_each(bytes.len() as u64, &mut read, 1 << 20, |get| {
         Book::contents_only(&mut |name: &str| {
             asked.push(name.to_string());
             get(name)

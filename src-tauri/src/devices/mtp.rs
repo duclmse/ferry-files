@@ -260,14 +260,14 @@ pub fn detect() -> Result<Vec<Detected>> {
     let lib = lib()?;
     let _lib = lib_lock();
     let raws = raw_devices(lib)?;
-    let usb = if raws.is_empty() { vec![] } else { crate::usb::list() };
+    let usb = if raws.is_empty() { vec![] } else { crate::devices::usb::list() };
     Ok(raws
         .into_iter()
         .map(|r| {
             let (e, bus, devnum) = unsafe { (&(*r).device_entry, (*r).bus_location, (*r).devnum) };
             let name = format!("{} {}", cstr(e.vendor), cstr(e.product)).trim().to_string();
             let name = if name.is_empty() { format!("{:04x}:{:04x}", e.vendor_id, e.product_id) } else { name };
-            Detected { location: location(r), name, serial: crate::usb::serial_of(&usb, bus, devnum as u32, e.vendor_id, e.product_id) }
+            Detected { location: location(r), name, serial: crate::devices::usb::serial_of(&usb, bus, devnum as u32, e.vendor_id, e.product_id) }
         })
         .collect())
 }
@@ -472,7 +472,7 @@ fn camera_apps_open() -> Vec<&'static str> {
 
 /// What to tell someone about another program holding the phone.
 #[cfg(target_os = "macos")]
-fn held_message(h: &crate::usb::Holder) -> String {
+fn held_message(h: &crate::devices::usb::Holder) -> String {
     if CAMERA_HELPERS.contains(&h.name.as_str()) {
         match camera_apps_open().as_slice() {
             [] => format!("Image Capture's helper ({}) keeps taking the phone: quit Image Capture and Photos, then connect again.", h.name),
@@ -493,7 +493,7 @@ fn held_message(h: &crate::usb::Holder) -> String {
 fn make_way(bus: u32, address: u32, vendor: u16, product: u16) -> Result<()> {
     let me = std::process::id();
     for _ in 0..15 {
-        let Some(held) = crate::usb::holders(bus, address, vendor, product) else { return Ok(()) };
+        let Some(held) = crate::devices::usb::holders(bus, address, vendor, product) else { return Ok(()) };
         let others: Vec<_> = held.into_iter().filter(|h| h.pid != me).collect();
         if others.is_empty() {
             return Ok(());
@@ -524,7 +524,7 @@ fn make_way(_bus: u32, _address: u32, _vendor: u16, _product: u16) -> Result<()>
 /// after libmtp failed to open it.
 #[cfg(target_os = "macos")]
 fn why_not_open(bus: u32, address: u32, vendor: u16, product: u16) -> Option<String> {
-    let held = crate::usb::holders(bus, address, vendor, product)?;
+    let held = crate::devices::usb::holders(bus, address, vendor, product)?;
     let me = std::process::id();
     if let Some(h) = held.iter().find(|h| h.pid != me) {
         return Some(held_message(h));
@@ -610,7 +610,7 @@ impl Inner {
     }
 }
 
-/// A file copied whole to be played (see `crate::stream`), as the device can't send part
+/// A file copied whole to be played (see `crate::preview::stream`), as the device can't send part
 /// of a file: its parts are read from the copy without waiting for the device, which the copy
 /// holds.
 #[derive(Clone)]
@@ -624,7 +624,7 @@ struct Streamed {
 
 pub struct Mtp {
     inner: Arc<Mutex<Inner>>,
-    /// The last few files copied to be played (see `crate::stream`).
+    /// The last few files copied to be played (see `crate::preview::stream`).
     streamed: Mutex<Vec<Streamed>>,
     storages: Vec<(String, u32)>,
     model: String,
@@ -736,7 +736,7 @@ impl Mtp {
         let inner = self.inner.clone();
         let fill = move |to: &std::path::Path, cancel: &AtomicBool| lock(&inner).link.download_until(s.id, to, cancel).map_err(|e| e.to_string());
         let (key, ext, size) = (s.key.clone(), s.ext.clone(), s.size);
-        crate::stream::read(&key, &ext, size, start, len, fill).map_err(DevError::Msg)
+        crate::preview::stream::read(&key, &ext, size, start, len, fill).map_err(DevError::Msg)
     }
 
     /// Writes change what's on the device: a copy being played is let go of.
@@ -881,7 +881,7 @@ impl Transport for Mtp {
             let mut all = self.streamed.lock().unwrap_or_else(|e| e.into_inner());
             all.retain(|o| o.path != path);
             all.push(s.clone());
-            // As many as `crate::stream` keeps copies of.
+            // As many as `crate::preview::stream` keeps copies of.
             let extra = all.len().saturating_sub(3);
             all.drain(..extra);
         }

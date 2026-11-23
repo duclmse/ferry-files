@@ -15,7 +15,7 @@ pub(super) struct Folder {
 pub(super) fn app_folder(which: &str) -> Result<std::path::PathBuf, String> {
     match which {
         "backups" => Ok(device::backup_dir()),
-        "thumbs" => Ok(thumbs::cache_dir()),
+        "thumbs" => Ok(preview::thumbs::cache_dir()),
         "opened" => Ok(opened_dir()),
         "scripts" => Ok(crate::platform::scripts_dir()),
         other => Err(format!("Unknown folder {other:?}.")),

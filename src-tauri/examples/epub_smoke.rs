@@ -3,8 +3,8 @@
 //! copy, never to the original. Then it edits the info, finds and replaces, round-trips every
 //! chapter through the visual view's body, saves with the version check, reads the file back,
 //! and deletes the copy and the backups it made.
+use ferry_files_lib::books::epub::{Book, Query};
 use ferry_files_lib::device::{self, join, Device, Entry};
-use ferry_files_lib::epub::{Book, Query};
 
 fn find_epub(dev: &Device, dir: &str, depth: u32) -> Option<Entry> {
     let entries = dev.listdir(dir).ok()?;

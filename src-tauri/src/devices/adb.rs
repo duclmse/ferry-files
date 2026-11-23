@@ -196,7 +196,7 @@ impl Transport for Adb {
         if let Some(s) = &self.serial {
             c.args(["-s", s]);
         }
-        c.args(["shell", "-t", &format!("cd {}; exec sh", crate::sftp::sh_quote(dir))]);
+        c.args(["shell", "-t", &format!("cd {}; exec sh", crate::servers::sftp::sh_quote(dir))]);
         Some(c)
     }
 

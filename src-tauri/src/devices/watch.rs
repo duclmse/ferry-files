@@ -111,10 +111,10 @@ fn watch_usb(tx: mpsc::Sender<()>) -> bool {
         return false;
     }
     std::thread::spawn(move || {
-        let mut was = crate::usb::snapshot();
+        let mut was = crate::devices::usb::snapshot();
         loop {
             std::thread::sleep(Duration::from_secs(1));
-            let now = crate::usb::snapshot();
+            let now = crate::devices::usb::snapshot();
             if now != was {
                 was = now;
                 if tx.send(()).is_err() {

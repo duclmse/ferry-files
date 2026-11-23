@@ -7,8 +7,9 @@
 //! On macOS and Linux the connection is shared (ControlMaster), so the terminal's commands don't
 //! log in again.
 
-use super::*;
 use crate::device::{basename, dirname, err, join, Result, Transport};
+use crate::devices::connect;
+use crate::*;
 use std::collections::HashMap;
 use std::io::{Read, Write};
 use std::process::{Child, ChildStdin, ChildStdout, Stdio};
@@ -98,7 +99,7 @@ impl Address {
         match &self.secret {
             Some(id) => {
                 c.args(["-o", "NumberOfPasswordPrompts=1"]);
-                crate::secrets::ssh_asks(&mut c, id);
+                crate::servers::secrets::ssh_asks(&mut c, id);
             }
             None => {
                 c.args(["-o", "BatchMode=yes"]);
@@ -819,7 +820,7 @@ impl Transport for Sftp {
 }
 
 #[tauri::command(rename_all = "snake_case")]
-pub(super) async fn sftp_connect(
+pub(crate) async fn sftp_connect(
     state: State<'_, AppState>,
     server: String,
     key_file: Option<String>,

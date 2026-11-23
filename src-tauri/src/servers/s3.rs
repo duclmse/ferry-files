@@ -4,8 +4,9 @@
 //! Paths are the app's: "/" is the bucket's top, "/a/b.txt" is the key "a/b.txt". S3 has no
 //! folders: a folder is a prefix, and one made empty is kept as a zero-byte key "a/b/".
 
-use super::*;
 use crate::device::{basename, dirname, err, Result, Transport};
+use crate::devices::connect;
+use crate::*;
 use hmac::{Hmac, Mac};
 use percent_encoding::{utf8_percent_encode, AsciiSet, NON_ALPHANUMERIC};
 use sha2::{Digest, Sha256};
@@ -131,7 +132,7 @@ type Res<T> = std::result::Result<T, Fail>;
 
 /// The text of each element that has some, with its path ("ListBucketResult/Contents/Key").
 fn leaves(xml: &str) -> std::result::Result<Vec<(String, String)>, String> {
-    use crate::xml::{tokenize, Kind};
+    use crate::books::xml::{tokenize, Kind};
     let mut stack: Vec<String> = vec![];
     let mut out = vec![];
     for t in tokenize(xml)? {
@@ -143,7 +144,7 @@ fn leaves(xml: &str) -> std::result::Result<Vec<(String, String)>, String> {
             Kind::Text | Kind::CData => {
                 let raw = &xml[t.start..t.end];
                 if !stack.is_empty() && !raw.trim().is_empty() {
-                    let text = if t.kind == Kind::CData { raw[9..raw.len() - 3].to_string() } else { crate::xml::unescape(raw) };
+                    let text = if t.kind == Kind::CData { raw[9..raw.len() - 3].to_string() } else { crate::books::xml::unescape(raw) };
                     out.push((stack.join("/"), text));
                 }
             }
@@ -682,7 +683,7 @@ impl Transport for S3 {
 
 /// Connects the S3 bucket as a drive.
 #[tauri::command(rename_all = "snake_case")]
-pub(super) async fn s3_connect(
+pub(crate) async fn s3_connect(
     state: State<'_, AppState>,
     endpoint: String,
     region: String,
@@ -691,7 +692,7 @@ pub(super) async fn s3_connect(
     secret: Option<String>,
 ) -> std::result::Result<connect::Info, String> {
     let s3 = blocking(move || {
-        let secret = secret.as_deref().and_then(crate::secrets::get).unwrap_or_default();
+        let secret = secret.as_deref().and_then(crate::servers::secrets::get).unwrap_or_default();
         S3::open(&endpoint, &region, &bucket, &access_key, &secret)
     })
     .await?;

@@ -1,10 +1,11 @@
 //! Devices: finding them on USB and the computer’s disks, connecting and disconnecting.
 
-use super::*;
+use super::{adb, mtp};
+use crate::*;
 
 /// A device on USB that isn't connected yet.
 #[derive(Serialize)]
-pub(super) struct Found {
+pub(crate) struct Found {
     /// "adb:SERIAL", "mtp:BUS-DEV" or "iphone:UDID".
     usb: String,
     transport: &'static str,
@@ -17,7 +18,7 @@ pub(super) struct Found {
 }
 
 #[derive(Serialize)]
-pub(super) struct Devices {
+pub(crate) struct Devices {
     found: Vec<Found>,
     adb_found: bool,
     mtp_error: Option<String>,
@@ -35,7 +36,7 @@ pub(super) struct Devices {
 }
 
 #[derive(Serialize)]
-pub(super) struct Info {
+pub(crate) struct Info {
     /// "mac", or the id ("d1", ...) that commands take as `src`.
     id: String,
     usb: Option<String>,
@@ -47,7 +48,7 @@ pub(super) struct Info {
     backup_dir: String,
 }
 
-pub(super) fn info_of(id: &str, c: Option<&Conn>, d: &Device) -> Info {
+pub(crate) fn info_of(id: &str, c: Option<&Conn>, d: &Device) -> Info {
     Info {
         id: id.to_string(),
         usb: c.and_then(|c| c.usb.clone()),
@@ -61,7 +62,7 @@ pub(super) fn info_of(id: &str, c: Option<&Conn>, d: &Device) -> Info {
 }
 
 /// Disks other than the one the system is on.
-pub(super) fn drives() -> Vec<(String, String)> {
+pub(crate) fn drives() -> Vec<(String, String)> {
     crate::platform::drives()
 }
 
@@ -69,7 +70,7 @@ pub(super) fn drives() -> Vec<(String, String)> {
 /// over Wi-Fi too), an MTP one while its serial number is on USB, an iPhone while usbmuxd lists
 /// it. `None` when that can't be told (adb or usbmuxd didn't answer, the USB devices couldn't be
 /// listed, or the device has no serial number).
-fn still_there(c: &Conn, adb: &Option<Vec<String>>, usb: &Option<Vec<crate::usb::UsbDev>>, iphones: &Option<Vec<String>>) -> Option<bool> {
+fn still_there(c: &Conn, adb: &Option<Vec<String>>, usb: &Option<Vec<crate::devices::usb::UsbDev>>, iphones: &Option<Vec<String>>) -> Option<bool> {
     let place = c.usb.as_deref()?;
     if let Some(serial) = place.strip_prefix("adb:") {
         return adb.as_ref().map(|l| l.iter().any(|s| s == serial));
@@ -89,9 +90,9 @@ fn still_there(c: &Conn, adb: &Option<Vec<String>>, usb: &Option<Vec<crate::usb:
 /// since adb loses a phone for a moment now and then. Returns them as (id, name).
 fn drop_gone(app: &AppHandle) -> Vec<(String, String)> {
     let st = state(app);
-    let (adb, usb) = (adb::listed(), crate::usb::try_list());
+    let (adb, usb) = (adb::listed(), crate::devices::usb::try_list());
     let any_iphone = st.devs().values().any(|c| c.usb.as_deref().is_some_and(|u| u.starts_with("iphone:")));
-    let iphones = if any_iphone { crate::iphone::listed() } else { None };
+    let iphones = if any_iphone { crate::devices::iphone::listed() } else { None };
     // Named after the locks are let go of: a name may take asking the device.
     let looked: Vec<(String, Option<bool>, Arc<Device>)> =
         st.devs().iter().map(|(id, c)| (id.clone(), still_there(c, &adb, &usb, &iphones), c.dev.clone())).collect();
@@ -120,7 +121,7 @@ fn drop_gone(app: &AppHandle) -> Vec<(String, String)> {
 /// Devices on USB that aren't connected yet, and the computer's mounted disks. Connected devices
 /// no longer on USB are disconnected (`gone`).
 #[tauri::command(rename_all = "snake_case")]
-pub(super) async fn devices(app: AppHandle, state: State<'_, AppState>) -> Result<Devices, String> {
+pub(crate) async fn devices(app: AppHandle, state: State<'_, AppState>) -> Result<Devices, String> {
     // A connected phone can still show here the other way (same serial), so the app can offer to
     // switch; `connect` refuses to connect it twice.
     let taken: Vec<Option<String>> = state.devs().values().map(|c| c.usb.clone()).collect();
@@ -143,7 +144,7 @@ pub(super) async fn devices(app: AppHandle, state: State<'_, AppState>) -> Resul
             }
             Err(e) => Some(e.to_string()),
         };
-        let iphone_error = match crate::iphone::detect() {
+        let iphone_error = match crate::devices::iphone::detect() {
             Ok(v) => {
                 found.extend(v.into_iter().map(|d| Found {
                     usb: format!("iphone:{}", d.udid),
@@ -168,7 +169,7 @@ pub(super) async fn devices(app: AppHandle, state: State<'_, AppState>) -> Resul
 /// Connects a device found by `devices` (`which` is its adb serial or MTP location, `serial` its
 /// USB serial number when known), alongside any already connected.
 #[tauri::command(rename_all = "snake_case")]
-pub(super) async fn connect(state: State<'_, AppState>, transport: String, which: Option<String>, serial: Option<String>) -> Result<Info, String> {
+pub(crate) async fn connect(state: State<'_, AppState>, transport: String, which: Option<String>, serial: Option<String>) -> Result<Info, String> {
     let usb = which.as_ref().map(|w| format!("{transport}:{w}"));
     let serial = serial.or_else(|| which.clone().filter(|_| transport == "adb"));
     let same = |c: &Conn| (usb.is_some() && c.usb == usb) || (serial.is_some() && c.serial == serial);
@@ -186,7 +187,7 @@ pub(super) async fn connect(state: State<'_, AppState>, transport: String, which
 /// Returns once the device is let go of, so connecting it again (the other way too) right after
 /// finds it free.
 #[tauri::command(rename_all = "snake_case")]
-pub(super) async fn disconnect(app: AppHandle, src: String) -> Result<(), String> {
+pub(crate) async fn disconnect(app: AppHandle, src: String) -> Result<(), String> {
     blocking(move || {
         state(&app).close(&[src]);
         Ok(())
@@ -196,7 +197,7 @@ pub(super) async fn disconnect(app: AppHandle, src: String) -> Result<(), String
 
 /// The connected devices, oldest first (a reloaded window picks them up from here).
 #[tauri::command(rename_all = "snake_case")]
-pub(super) fn connections(state: State<'_, AppState>) -> Vec<Info> {
+pub(crate) fn connections(state: State<'_, AppState>) -> Vec<Info> {
     let devs = state.devs();
     let mut out: Vec<Info> = devs.iter().map(|(id, c)| info_of(id, Some(c), &c.dev)).collect();
     out.sort_by_key(|i| i.id[1..].parse::<u32>().unwrap_or(0));
@@ -206,13 +207,13 @@ pub(super) fn connections(state: State<'_, AppState>) -> Vec<Info> {
 /// Starts telling the window ("devices-changed") when a USB device or disk comes or goes. Whether
 /// USB devices are watched; if not, the window keeps looking every few seconds.
 #[tauri::command(rename_all = "snake_case")]
-pub(super) fn watch_devices(app: AppHandle) -> bool {
-    crate::watch::start(&app)
+pub(crate) fn watch_devices(app: AppHandle) -> bool {
+    crate::devices::watch::start(&app)
 }
 
 /// A connected device, or with `src: "mac"`, the Mac's own files.
 #[tauri::command(rename_all = "snake_case")]
-pub(super) fn info(state: State<'_, AppState>, src: Option<String>) -> Option<Info> {
+pub(crate) fn info(state: State<'_, AppState>, src: Option<String>) -> Option<Info> {
     match src.as_deref() {
         Some("mac") => Some(info_of("mac", None, &state.mac)),
         Some(id) => state.devs().get(id).map(|c| info_of(id, Some(c), &c.dev)),
@@ -226,7 +227,7 @@ mod tests {
 
     #[test]
     fn tells_when_a_connected_device_is_gone() {
-        use crate::usb::UsbDev;
+        use crate::devices::usb::UsbDev;
         let conn = |usb: &str, serial: Option<&str>| Conn {
             dev: Arc::new(Device::new(Box::new(crate::local::Local))),
             usb: Some(usb.into()),

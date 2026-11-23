@@ -1,11 +1,12 @@
 //! The EPUB editor: an open book is kept in memory by id until it’s saved or closed.
 
-use super::*;
+use super::epub;
+use crate::*;
 
 // A book is read from the device once, edited in memory, and written back by epub_save.
 
 #[derive(Serialize)]
-pub(super) struct BookView {
+pub(crate) struct BookView {
     id: u32,
     /// "mac" or a device id: where the book is saved back to.
     src: String,
@@ -18,7 +19,7 @@ pub(super) struct BookView {
     stats: epub::Stats,
 }
 
-pub(super) fn book_view(id: u32, src: &str, b: &Book) -> Result<BookView, String> {
+pub(crate) fn book_view(id: u32, src: &str, b: &Book) -> Result<BookView, String> {
     Ok(BookView {
         id,
         src: src.to_string(),
@@ -33,7 +34,7 @@ pub(super) fn book_view(id: u32, src: &str, b: &Book) -> Result<BookView, String
 }
 
 /// Runs `f` on open book `id`, then returns the refreshed view of the book.
-pub(super) fn with_book<T>(state: &AppState, id: u32, f: impl FnOnce(&mut Book) -> Result<T, String>) -> Result<(T, BookView), String> {
+pub(crate) fn with_book<T>(state: &AppState, id: u32, f: impl FnOnce(&mut Book) -> Result<T, String>) -> Result<(T, BookView), String> {
     let src = state.book_src.lock().unwrap_or_else(|e| e.into_inner()).get(&id).cloned().unwrap_or_default();
     let mut books = state.books.lock().unwrap_or_else(|e| e.into_inner());
     let book = books.get_mut(&id).ok_or("This book is no longer open.")?;
@@ -42,7 +43,7 @@ pub(super) fn with_book<T>(state: &AppState, id: u32, f: impl FnOnce(&mut Book) 
 }
 
 #[tauri::command(rename_all = "snake_case")]
-pub(super) async fn epub_open(state: State<'_, AppState>, src: Option<String>, path: String) -> Result<BookView, String> {
+pub(crate) async fn epub_open(state: State<'_, AppState>, src: Option<String>, path: String) -> Result<BookView, String> {
     let dev = state.source(src.as_deref())?;
     let book = blocking(move || {
         let (data, version) = dev.read(&path).map_err(msg)?;
@@ -59,7 +60,7 @@ pub(super) async fn epub_open(state: State<'_, AppState>, src: Option<String>, p
 }
 
 #[derive(Serialize)]
-pub(super) struct ChapterDoc {
+pub(crate) struct ChapterDoc {
     source: String,
     /// The chapter as HTML for the visual editor, or None when its XHTML is broken.
     html: Option<String>,
@@ -67,7 +68,7 @@ pub(super) struct ChapterDoc {
 }
 
 #[tauri::command(rename_all = "snake_case")]
-pub(super) fn epub_chapter(state: State<'_, AppState>, id: u32, path: String) -> Result<ChapterDoc, String> {
+pub(crate) fn epub_chapter(state: State<'_, AppState>, id: u32, path: String) -> Result<ChapterDoc, String> {
     let (doc, _) = with_book(&state, id, |b| {
         let source = b.text(&path)?;
         let (html, problem) = match b.visual_html(&path, &protocol::book_base(id, &path)) {
@@ -80,23 +81,23 @@ pub(super) fn epub_chapter(state: State<'_, AppState>, id: u32, path: String) ->
 }
 
 #[tauri::command(rename_all = "snake_case")]
-pub(super) fn epub_set_source(state: State<'_, AppState>, id: u32, path: String, source: String) -> Result<BookView, String> {
+pub(crate) fn epub_set_source(state: State<'_, AppState>, id: u32, path: String, source: String) -> Result<BookView, String> {
     Ok(with_book(&state, id, |b| b.set_source(&path, &source))?.1)
 }
 
 #[tauri::command(rename_all = "snake_case")]
-pub(super) fn epub_set_body(state: State<'_, AppState>, id: u32, path: String, body: String) -> Result<BookView, String> {
+pub(crate) fn epub_set_body(state: State<'_, AppState>, id: u32, path: String, body: String) -> Result<BookView, String> {
     Ok(with_book(&state, id, |b| b.set_body(&path, &body))?.1)
 }
 
 #[tauri::command(rename_all = "snake_case")]
-pub(super) fn epub_set_meta(state: State<'_, AppState>, id: u32, meta: epub::Meta) -> Result<BookView, String> {
+pub(crate) fn epub_set_meta(state: State<'_, AppState>, id: u32, meta: epub::Meta) -> Result<BookView, String> {
     Ok(with_book(&state, id, |b| b.set_meta(&meta))?.1)
 }
 
 /// Asks for an image on the Mac and makes it the cover. None if cancelled.
 #[tauri::command(rename_all = "snake_case")]
-pub(super) async fn epub_cover(app: AppHandle, state: State<'_, AppState>, id: u32) -> Result<Option<BookView>, String> {
+pub(crate) async fn epub_cover(app: AppHandle, state: State<'_, AppState>, id: u32) -> Result<Option<BookView>, String> {
     let picked = blocking(move || {
         let Some(f) = app.dialog().file().add_filter("Images", &["jpg", "jpeg", "png", "gif", "webp", "svg"]).blocking_pick_file() else {
             return Ok(None);
@@ -112,31 +113,31 @@ pub(super) async fn epub_cover(app: AppHandle, state: State<'_, AppState>, id: u
 }
 
 #[tauri::command(rename_all = "snake_case")]
-pub(super) fn epub_find(state: State<'_, AppState>, id: u32, query: epub::Query) -> Result<epub::Found, String> {
+pub(crate) fn epub_find(state: State<'_, AppState>, id: u32, query: epub::Query) -> Result<epub::Found, String> {
     Ok(with_book(&state, id, |b| b.find(&query))?.0)
 }
 
 #[derive(Serialize)]
-pub(super) struct Replaced {
+pub(crate) struct Replaced {
     count: usize,
     book: BookView,
 }
 
 #[tauri::command(rename_all = "snake_case")]
-pub(super) fn epub_replace(state: State<'_, AppState>, id: u32, query: epub::Query) -> Result<Replaced, String> {
+pub(crate) fn epub_replace(state: State<'_, AppState>, id: u32, query: epub::Query) -> Result<Replaced, String> {
     let (count, book) = with_book(&state, id, |b| b.replace_all(&query))?;
     Ok(Replaced { count, book })
 }
 
 #[derive(Serialize)]
-pub(super) struct Saved {
+pub(crate) struct Saved {
     book: BookView,
     backup: bool,
 }
 
 /// Writes the book back where it came from. Refuses if that copy changed since it was opened.
 #[tauri::command(rename_all = "snake_case")]
-pub(super) async fn epub_save(state: State<'_, AppState>, id: u32) -> Result<Saved, String> {
+pub(crate) async fn epub_save(state: State<'_, AppState>, id: u32) -> Result<Saved, String> {
     let src = state.book_src.lock().unwrap_or_else(|e| e.into_inner()).get(&id).cloned();
     let dev = state.source(src.as_deref())?;
     let (bytes, path, version) = with_book(&state, id, |b| {
@@ -155,7 +156,7 @@ pub(super) async fn epub_save(state: State<'_, AppState>, id: u32) -> Result<Sav
 
 /// Saves a copy of the book (with any unsaved edits) on the Mac. Returns its path, or None if cancelled.
 #[tauri::command(rename_all = "snake_case")]
-pub(super) async fn epub_export(app: AppHandle, state: State<'_, AppState>, id: u32) -> Result<Option<String>, String> {
+pub(crate) async fn epub_export(app: AppHandle, state: State<'_, AppState>, id: u32) -> Result<Option<String>, String> {
     let ((bytes, name), _) = with_book(&state, id, |b| Ok((b.to_bytes()?, device::basename(&b.source).to_string())))?;
     blocking(move || {
         let Some(dest) = app.dialog().file().set_file_name(name).blocking_save_file() else { return Ok(None) };
@@ -167,7 +168,7 @@ pub(super) async fn epub_export(app: AppHandle, state: State<'_, AppState>, id: 
 }
 
 #[tauri::command(rename_all = "snake_case")]
-pub(super) fn epub_close(state: State<'_, AppState>, id: u32) {
+pub(crate) fn epub_close(state: State<'_, AppState>, id: u32) {
     state.books.lock().unwrap_or_else(|e| e.into_inner()).remove(&id);
     state.book_src.lock().unwrap_or_else(|e| e.into_inner()).remove(&id);
 }

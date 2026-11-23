@@ -149,16 +149,22 @@ cargo run --example epub_smoke [-- adb|mtp]
   state, and `app/` has one file per part. `api.rs` has the backend calls and
   the types shared with it.
 - `styles/`: the CSS, one file per part. `base.css` has the colour tokens.
-- `src-tauri/`: the backend.
-  - Transports: `device.rs`, `adb.rs`, `mtp.rs` (`wpd.rs` on Windows),
-    `iphone.rs` (iPhones and iPads over usbmuxd and AFC),
-    `local.rs`, and the servers (`sftp.rs`, `smb.rs` (SMB and NFS), `webdav.rs`, `ftp.rs`,
-    `s3.rs`, `everything.rs`). `fsd.rs` answers searches of the computer from
-    fsd's index.
+- `src-tauri/`: the backend, in `src-tauri/src/`:
+  - `device.rs`: the `Device` every read and write goes through, over a transport;
+    `local.rs`: the computer's own files as one.
+  - `devices/`: phones and tablets: `adb.rs` (and `wifi.rs`, adb over Wi-Fi), `mtp.rs`
+    (`wpd.rs` on Windows), `iphone.rs` (iPhones and iPads over usbmuxd and AFC), `usb.rs`,
+    and finding and connecting them (`connect.rs`, `watch.rs`).
+  - `servers/`: `sftp.rs`, `smb.rs` (SMB and NFS), `webdav.rs`, `ftp.rs`, `s3.rs`,
+    `everything.rs`, and `secrets.rs` (passwords in the keychain).
+  - `books/`: EPUB: `epub.rs` and `epub/`, `xml.rs`, `batch.rs` and `library.rs` (many books
+    at once), `editor.rs` (the editor's commands).
+  - `preview/`: `archive.rs` (ZIPs), `pdf.rs`, `media.rs`, `thumbs.rs`, `highlight.rs`,
+    `subs.rs`, `stream.rs` and `player.rs`.
+  - File work: `files.rs`, `transfer.rs`, `dupes.rs`, `import.rs`, `safety.rs`, `scripts.rs`,
+    `terminal.rs`. `fsd.rs` answers searches of the computer from fsd's index.
   - `platform.rs`: what differs between operating systems.
   - `protocol.rs`: the `ferry://` scheme that serves files to the web view.
-  - EPUB: `epub/`, `epub.rs`, `xml.rs`, `books.rs`.
-  - Archives and PDFs: `archive.rs`, `pdf.rs`.
   - `lib.rs`: the app state and the command list.
 
 ## EPUB editor limits

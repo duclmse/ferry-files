@@ -444,7 +444,7 @@ fn lock(inner: &Mutex<Inner>) -> std::sync::MutexGuard<'_, Inner> {
     inner.lock().unwrap_or_else(|e| e.into_inner())
 }
 
-/// A file copied whole to be played (see `crate::stream`), as the device can't send part
+/// A file copied whole to be played (see `crate::preview::stream`), as the device can't send part
 /// of a file: its parts are read from the copy without waiting for the device, which the copy
 /// holds.
 #[derive(Clone)]
@@ -500,7 +500,7 @@ impl Inner {
 
 pub struct Wpd {
     inner: Arc<Mutex<Inner>>,
-    /// The last few files copied to be played (see `crate::stream`).
+    /// The last few files copied to be played (see `crate::preview::stream`).
     streamed: Mutex<Vec<Streamed>>,
     /// Set when the device is let go of: stops a copy being played.
     stop: Arc<AtomicBool>,
@@ -574,7 +574,7 @@ impl Wpd {
     fn read_streamed(&self, s: Streamed, start: u64, len: u64) -> Result<Vec<u8>> {
         let (inner, stop, id) = (self.inner.clone(), self.stop.clone(), s.id.clone());
         let fill = move |to: &std::path::Path, cancel: &AtomicBool| lock(&inner).link.download_until(&id, to, &[&stop, cancel]).map_err(|e| e.to_string());
-        crate::stream::read(&s.key, &s.ext, s.size, start, len, fill).map_err(DevError::Msg)
+        crate::preview::stream::read(&s.key, &s.ext, s.size, start, len, fill).map_err(DevError::Msg)
     }
 
     /// Writes change what's on the device: a copy being played is let go of.
@@ -760,7 +760,7 @@ impl Transport for Wpd {
             let mut all = self.streamed.lock().unwrap_or_else(|e| e.into_inner());
             all.retain(|o| o.path != path);
             all.push(s.clone());
-            // As many as `crate::stream` keeps copies of.
+            // As many as `crate::preview::stream` keeps copies of.
             let extra = all.len().saturating_sub(3);
             all.drain(..extra);
         }

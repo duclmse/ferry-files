@@ -154,7 +154,7 @@ pub(super) async fn peek_text(
         let mut p = peek_of(data, start, more);
         if colour.unwrap_or(false) {
             let key = format!("{}:{}\n{path}\n{}", dev.kind(), dev.label(), inner.as_deref().unwrap_or(""));
-            let c = crate::highlight::colour(&key, inner.as_deref().unwrap_or(&path), start, &p.text, p.next);
+            let c = crate::preview::highlight::colour(&key, inner.as_deref().unwrap_or(&path), start, &p.text, p.next);
             (p.runs, p.colours_stopped) = (c.runs, c.stopped);
         }
         Ok(p)
@@ -174,7 +174,7 @@ pub(super) struct TextColours {
 #[tauri::command(rename_all = "snake_case")]
 pub(super) async fn colour_text(name: String, text: String) -> Result<TextColours, String> {
     blocking(move || {
-        let c = crate::highlight::colour(&format!("edit\n{name}"), &name, 0, &text, None);
+        let c = crate::preview::highlight::colour(&format!("edit\n{name}"), &name, 0, &text, None);
         Ok(TextColours { runs: c.runs, stopped: c.stopped })
     })
     .await
@@ -564,11 +564,11 @@ pub(super) fn opened_dir() -> std::path::PathBuf {
 
 /// Width, height and length of a picture, video or sound file, from its header.
 #[tauri::command(rename_all = "snake_case")]
-pub(super) async fn media_info(state: State<'_, AppState>, src: Option<String>, path: String) -> Result<crate::media::MediaInfo, String> {
+pub(super) async fn media_info(state: State<'_, AppState>, src: Option<String>, path: String) -> Result<crate::preview::media::MediaInfo, String> {
     let dev = state.source(src.as_deref())?;
     blocking(move || {
         let name = path.rsplit('/').next().unwrap_or_default().to_string();
-        crate::media::info(&name, &mut |at, len| dev.read_range(&path, at, len).map_err(msg))
+        crate::preview::media::info(&name, &mut |at, len| dev.read_range(&path, at, len).map_err(msg))
     })
     .await
 }
@@ -622,7 +622,7 @@ pub(super) async fn subtitles(state: State<'_, AppState>, src: Option<String>, p
             .listdir(dir)
             .map_err(msg)?
             .into_iter()
-            .filter(|e| !e.dir && e.size <= crate::subs::MAX && crate::subs::goes_with(video, &e.name))
+            .filter(|e| !e.dir && e.size <= crate::preview::subs::MAX && crate::preview::subs::goes_with(video, &e.name))
             .map(|e| Subtitle { name: e.name, path: e.path })
             .collect();
         found.sort_by_key(|s| s.name.to_lowercase());
@@ -637,11 +637,11 @@ pub(super) async fn subtitle(state: State<'_, AppState>, src: Option<String>, pa
     let dev = state.source(src.as_deref())?;
     blocking(move || {
         let st = dev.stat(&path).map_err(msg)?.ok_or_else(|| format!("No such file: {path}"))?;
-        if st.dir || st.size > crate::subs::MAX {
+        if st.dir || st.size > crate::preview::subs::MAX {
             return Err(format!("{path} isn't a subtitle file."));
         }
         let data = dev.read_range(&path, 0, st.size).map_err(msg)?;
-        crate::subs::to_vtt(&data, &path)
+        crate::preview::subs::to_vtt(&data, &path)
     })
     .await
 }
@@ -663,7 +663,7 @@ pub(super) fn unpacked(dev: &Device, path: &str, size: u64, name: &str) -> Resul
     }
     let watched = last.is_some();
     *last = None;
-    let data = Arc::new(crate::archive::unpack(size, &mut |at, len| dev.read_range(path, at, len).map_err(msg), name, UNPACK_MAX)?);
+    let data = Arc::new(crate::preview::archive::unpack(size, &mut |at, len| dev.read_range(path, at, len).map_err(msg), name, UNPACK_MAX)?);
     *last = Some(((key, data.clone()), std::time::Instant::now()));
     // Let go of after a minute unused: it can be up to UNPACK_MAX.
     if !watched {
@@ -682,7 +682,7 @@ pub(super) fn stored_span(dev: &Device, path: &str, size: u64, name: &str) -> Re
             return Ok(*span);
         }
     }
-    let span = crate::archive::stored_span(size, &mut |at, len| dev.read_range(path, at, len).map_err(msg), name)?;
+    let span = crate::preview::archive::stored_span(size, &mut |at, len| dev.read_range(path, at, len).map_err(msg), name)?;
     *LAST.lock().unwrap_or_else(|e| e.into_inner()) = Some((key, span));
     Ok(span)
 }
@@ -706,9 +706,9 @@ fn read_part(dev: &Device, path: &str, inner: Option<&str>, zip_size: Option<u64
 
 /// What's in a ZIP file of `size` bytes, read from its end.
 #[tauri::command(rename_all = "snake_case")]
-pub(super) async fn zip_list(state: State<'_, AppState>, src: Option<String>, path: String, size: u64) -> Result<crate::archive::Listing, String> {
+pub(super) async fn zip_list(state: State<'_, AppState>, src: Option<String>, path: String, size: u64) -> Result<crate::preview::archive::Listing, String> {
     let dev = state.source(src.as_deref())?;
-    blocking(move || crate::archive::list(size, &mut |at, len| dev.read_range(&path, at, len).map_err(msg))).await
+    blocking(move || crate::preview::archive::list(size, &mut |at, len| dev.read_range(&path, at, len).map_err(msg))).await
 }
 
 /// A PDF's page count and outline. `inner`, `zip_size`: as for `peek_text`. The PDF is read whole,
@@ -721,18 +721,18 @@ pub(super) async fn pdf_outline(
     size: u64,
     inner: Option<String>,
     zip_size: Option<u64>,
-) -> Result<crate::pdf::Outline, String> {
+) -> Result<crate::preview::pdf::Outline, String> {
     if size > UNPACK_MAX {
         return Err("Too big to read the outline.".into());
     }
     let dev = state.source(src.as_deref())?;
-    blocking(move || crate::pdf::outline(&read_part(&dev, &path, inner.as_deref(), zip_size, 0, size)?)).await
+    blocking(move || crate::preview::pdf::outline(&read_part(&dev, &path, inner.as_deref(), zip_size, 0, size)?)).await
 }
 
 #[derive(serde::Serialize)]
 pub(super) struct EpubContents {
     title: String,
-    chapters: Vec<crate::epub::ChapterRef>,
+    chapters: Vec<crate::books::epub::ChapterRef>,
 }
 
 /// An EPUB's title and chapters, from its ZIP directory, package document and table of contents
@@ -741,8 +741,8 @@ pub(super) struct EpubContents {
 pub(super) async fn epub_contents(state: State<'_, AppState>, src: String, path: String, size: u64) -> Result<EpubContents, String> {
     let dev = state.source(Some(&src))?;
     blocking(move || {
-        let book = crate::archive::unpack_each(size, &mut |at, len| dev.read_range(&path, at, len).map_err(msg), UNPACK_MAX, |get| {
-            crate::epub::Book::contents_only(get)
+        let book = crate::preview::archive::unpack_each(size, &mut |at, len| dev.read_range(&path, at, len).map_err(msg), UNPACK_MAX, |get| {
+            crate::books::epub::Book::contents_only(get)
         })??;
         Ok(EpubContents { title: book.meta().map(|m| m.title).unwrap_or_default(), chapters: book.chapters()? })
     })
@@ -755,8 +755,8 @@ pub(super) async fn epub_contents(state: State<'_, AppState>, src: String, path:
 pub(super) async fn epub_peek(state: State<'_, AppState>, src: String, path: String, size: u64, chapter: String) -> Result<String, String> {
     let dev = state.source(Some(&src))?;
     blocking(move || {
-        let data = crate::archive::unpack(size, &mut |at, len| dev.read_range(&path, at, len).map_err(msg), &chapter, UNPACK_MAX)?;
-        crate::epub::Book::chapter_alone(&chapter, data, &crate::protocol::inzip_base(&src, size, &path, &chapter))
+        let data = crate::preview::archive::unpack(size, &mut |at, len| dev.read_range(&path, at, len).map_err(msg), &chapter, UNPACK_MAX)?;
+        crate::books::epub::Book::chapter_alone(&chapter, data, &crate::protocol::inzip_base(&src, size, &path, &chapter))
     })
     .await
 }

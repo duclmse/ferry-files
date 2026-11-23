@@ -4,7 +4,7 @@
 //! share is a folder on this computer, so everything that works on the computer's files works
 //! on it. The shares the system mounted otherwise (WebDAV, FTP, AFP too) are listed, to unmount.
 
-use super::*;
+use crate::*;
 use percent_encoding::percent_decode_str;
 
 #[derive(Clone, Debug, Serialize, PartialEq)]
@@ -76,7 +76,7 @@ fn mounted_at(share: &str, mounts: &[SmbMount]) -> Option<String> {
 /// All the network shares mounted now, those that are one of `shares` with that address; the
 /// others (mounted outside the app) as the system names them.
 #[tauri::command(rename_all = "snake_case")]
-pub(super) async fn smb_mounts(shares: Vec<String>) -> Result<Vec<SmbMount>, String> {
+pub(crate) async fn smb_mounts(shares: Vec<String>) -> Result<Vec<SmbMount>, String> {
     blocking(move || Ok(name_mounts(&shares, mounted()))).await
 }
 
@@ -97,7 +97,7 @@ fn name_mounts(shares: &[String], mounts: Vec<SmbMount>) -> Vec<SmbMount> {
 /// `user`, logs in to an SMB share as that user (in `domain`, if given) with the password saved
 /// for connection `secret`.
 #[tauri::command(rename_all = "snake_case")]
-pub(super) async fn smb_mount(share: String, user: Option<String>, domain: Option<String>, secret: Option<String>) -> Result<SmbMount, String> {
+pub(crate) async fn smb_mount(share: String, user: Option<String>, domain: Option<String>, secret: Option<String>) -> Result<SmbMount, String> {
     blocking(move || {
         let nfs = is_nfs(&share);
         let share = if nfs { nfs_url(&share)? } else { share_url(&share)? };
@@ -105,7 +105,7 @@ pub(super) async fn smb_mount(share: String, user: Option<String>, domain: Optio
             return Ok(SmbMount { share, path });
         }
         let user = user.map(|u| u.trim().to_string()).filter(|u| !u.is_empty() && !nfs);
-        let password = secret.as_deref().and_then(crate::secrets::get).unwrap_or_default();
+        let password = secret.as_deref().and_then(crate::servers::secrets::get).unwrap_or_default();
         let domain = domain.unwrap_or_default();
         let login = user.as_deref().map(|user| crate::platform::SmbLogin { user, domain: domain.trim(), password: &password });
         crate::platform::smb_mount(&share, login.as_ref())?;
@@ -123,7 +123,7 @@ pub(super) async fn smb_mount(share: String, user: Option<String>, domain: Optio
 
 /// Unmounts the network share mounted at `path`.
 #[tauri::command(rename_all = "snake_case")]
-pub(super) async fn smb_unmount(path: String) -> Result<(), String> {
+pub(crate) async fn smb_unmount(path: String) -> Result<(), String> {
     blocking(move || {
         if !mounted().iter().any(|m| m.path == path) {
             return Err(format!("{path} isn't a network share."));

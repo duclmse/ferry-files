@@ -2,7 +2,7 @@
 //! Every edit splices the original XML text (see xml.rs), so files and parts the user didn't change
 //! keep their exact bytes.
 
-use crate::xml::{self, Kind, Tok};
+use crate::books::xml::{self, Kind, Tok};
 use serde::{Deserialize, Serialize};
 use std::collections::{BTreeMap, HashMap};
 use std::io::{Cursor, Read, Write};

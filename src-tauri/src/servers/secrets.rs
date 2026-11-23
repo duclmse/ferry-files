@@ -6,7 +6,7 @@
 //! the connection's id, and `askpass` prints the saved password and exits. So the password is
 //! never in a command line or the environment.
 
-use super::*;
+use crate::*;
 use std::process::Command;
 
 const SERVICE: &str = "Ferry Files";
@@ -27,13 +27,13 @@ pub fn get(id: &str) -> Option<String> {
 
 /// Saves `secret` as connection `id`'s password, replacing one saved before.
 #[tauri::command(rename_all = "snake_case")]
-pub(super) async fn secret_set(id: String, secret: String) -> Result<(), String> {
+pub(crate) async fn secret_set(id: String, secret: String) -> Result<(), String> {
     blocking(move || entry(&id)?.set_password(&secret).map_err(|e| format!("Couldn't save the password in the keychain: {e}"))).await
 }
 
 /// Forgets connection `id`'s password; fine when there was none.
 #[tauri::command(rename_all = "snake_case")]
-pub(super) async fn secret_clear(id: String) -> Result<(), String> {
+pub(crate) async fn secret_clear(id: String) -> Result<(), String> {
     blocking(move || match entry(&id)?.delete_credential() {
         Ok(()) | Err(keyring::Error::NoEntry) => Ok(()),
         Err(e) => Err(format!("Couldn't remove the password from the keychain: {e}")),

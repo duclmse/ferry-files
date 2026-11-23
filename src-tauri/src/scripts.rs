@@ -449,7 +449,7 @@ fn api(lua: &Lua, dev: Arc<Device>, dir: &str, items: &[String], changed: &Chang
             let m = lua.create_table()?;
             m.set("kind", kind)?;
             // Only the header is read; a size that can't be told from it is left out.
-            if let Ok(i) = crate::media::info(&name, &mut |at, len| d.read_range(&path, at, len).map_err(|e| e.to_string())) {
+            if let Ok(i) = crate::preview::media::info(&name, &mut |at, len| d.read_range(&path, at, len).map_err(|e| e.to_string())) {
                 m.set("width", i.width)?;
                 m.set("height", i.height)?;
                 m.set("duration", i.duration)?;

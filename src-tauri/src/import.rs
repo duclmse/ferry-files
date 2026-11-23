@@ -89,7 +89,7 @@ pub(super) fn run_import(
         if i % 20 == 0 {
             emit(Progress::looking(job, format!("reading dates: {} of {}", i, files.len())));
         }
-        let date = crate::media::taken(&e.name, &mut |at, len| a.read_range(&e.path, at, len).map_err(msg)).or_else(|| file_date(e.mtime));
+        let date = crate::preview::media::taken(&e.name, &mut |at, len| a.read_range(&e.path, at, len).map_err(msg)).or_else(|| file_date(e.mtime));
         let sub = folder_for(pattern, date);
         let dir = if sub.is_empty() { to_dir.to_string() } else { device::join(to_dir, &sub) };
         if !made.contains(&dir) {

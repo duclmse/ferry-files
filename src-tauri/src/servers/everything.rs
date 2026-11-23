@@ -5,8 +5,9 @@
 //!
 //! Paths are the app's ("/C:/Users/me"); "/" holds the drives.
 
-use super::*;
 use crate::device::{basename, dirname, err, Result, Search, Transport};
+use crate::devices::connect;
+use crate::*;
 use percent_encoding::{utf8_percent_encode, AsciiSet, NON_ALPHANUMERIC};
 use serde_json::Value;
 use std::io::Read;
@@ -348,8 +349,8 @@ impl Transport for Everything {
             let key = format!("everything|{}|{path}|{size}", self.srv.base);
             let ext = path.rsplit_once('.').filter(|(_, x)| !x.contains('/')).map_or(String::new(), |(_, x)| format!(".{x}"));
             let mut body = res.into_reader();
-            let fill = move |to: &std::path::Path, stop: &std::sync::atomic::AtomicBool| crate::stream::copy_until(&mut body, to, stop);
-            return crate::stream::read(&key, &ext, size, start, len, fill).map_err(DevError::Msg);
+            let fill = move |to: &std::path::Path, stop: &std::sync::atomic::AtomicBool| crate::preview::stream::copy_until(&mut body, to, stop);
+            return crate::preview::stream::read(&key, &ext, size, start, len, fill).map_err(DevError::Msg);
         }
         let skip = if res.status() == 206 { 0 } else { start };
         let mut reader = res.into_reader();
@@ -404,7 +405,7 @@ fn read_only<T>() -> Result<T> {
 
 /// Connects the Everything server at `server` as a drive.
 #[tauri::command(rename_all = "snake_case")]
-pub(super) async fn everything_connect(
+pub(crate) async fn everything_connect(
     state: State<'_, AppState>,
     server: String,
     user: Option<String>,
@@ -412,7 +413,7 @@ pub(super) async fn everything_connect(
 ) -> std::result::Result<connect::Info, String> {
     let ev = blocking(move || {
         let user = user.filter(|u| !u.trim().is_empty());
-        let password = secret.as_deref().and_then(crate::secrets::get).unwrap_or_default();
+        let password = secret.as_deref().and_then(crate::servers::secrets::get).unwrap_or_default();
         Everything::open(&server, user.as_deref().map(|u| (u.trim(), password.as_str())))
     })
     .await?;

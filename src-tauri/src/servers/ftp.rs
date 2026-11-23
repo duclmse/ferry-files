@@ -2,8 +2,9 @@
 //! is kept and started again when the server has dropped it. Listings use MLSD where the server
 //! has it and LIST otherwise. Paths are the server's own ("/pub/a.txt").
 
-use super::*;
 use crate::device::{basename, dirname, join, Result, Transport};
+use crate::devices::connect;
+use crate::*;
 use std::io::{Cursor, Read};
 use std::net::{TcpStream, ToSocketAddrs};
 use std::sync::Arc;
@@ -682,7 +683,7 @@ impl<T: TlsStream + Send + 'static> Transport for Ftp<T> {
 }
 
 #[tauri::command(rename_all = "snake_case")]
-pub(super) async fn ftp_connect(
+pub(crate) async fn ftp_connect(
     state: State<'_, AppState>,
     server: String,
     tls: bool,
@@ -699,7 +700,7 @@ pub(super) async fn ftp_connect(
     }
     let dev = blocking(move || {
         let password = match &user {
-            Some(_) => secret.as_deref().and_then(crate::secrets::get).unwrap_or_default(),
+            Some(_) => secret.as_deref().and_then(crate::servers::secrets::get).unwrap_or_default(),
             None => "anonymous@".to_string(),
         };
         let user = user.unwrap_or_else(|| "anonymous".into());

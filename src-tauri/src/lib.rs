@@ -1,56 +1,27 @@
-pub mod adb;
-pub mod archive;
 pub mod books;
-mod connect;
 pub mod device;
+pub mod devices;
 mod dupes;
-pub mod epub;
-mod everything;
+mod files;
 #[cfg(feature = "fsd")]
 mod fsd;
-mod ftp;
-pub mod iphone;
-pub mod local;
-pub mod media;
-mod migrate;
-/// MTP over libmtp on macOS and Linux; on Windows over Windows' own Portable Devices API, since
-/// libmtp would need the phone's USB driver replaced there.
-#[cfg(not(windows))]
-pub mod mtp;
-#[cfg(windows)]
-#[path = "wpd.rs"]
-pub mod mtp;
-pub mod pdf;
-pub mod platform;
-mod protocol;
-mod s3;
-mod secrets;
-mod sftp;
-mod smb;
-mod stream;
-mod subs;
-mod terminal;
-pub mod thumbs;
-pub mod usb;
-mod webdav;
-pub mod xml;
-pub use secrets::askpass;
-mod editor;
-mod files;
-mod highlight;
 mod idle;
 mod import;
-mod library;
-mod player;
+pub mod local;
+mod migrate;
+pub mod platform;
+pub mod preview;
+mod protocol;
 mod safety;
 mod scripts;
+mod servers;
 mod settings;
+mod terminal;
 mod transfer;
-mod watch;
-mod wifi;
+pub use servers::secrets::askpass;
 
+use books::epub::Book;
 use device::{DevError, Device, Entry, WriteResult};
-use epub::Book;
 use serde::Serialize;
 use std::collections::{HashMap, HashSet};
 use std::sync::atomic::{AtomicU32, Ordering};
@@ -127,7 +98,7 @@ impl AppState {
     /// cancelled too, and what still uses a device gets up to 10 seconds to let go of it (a phone
     /// that stopped answering may never let go).
     fn close_all(&self) {
-        mtp::stop_copies();
+        devices::mtp::stop_copies();
         for cancel in self.jobs.lock().unwrap_or_else(|e| e.into_inner()).values() {
             cancel.store(true, std::sync::atomic::Ordering::Relaxed);
         }
@@ -179,7 +150,7 @@ async fn blocking<T: Send + 'static>(f: impl FnOnce() -> Result<T, String> + Sen
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     migrate::run();
-    std::thread::spawn(thumbs::trim_caches);
+    std::thread::spawn(preview::thumbs::trim_caches);
     let app = tauri::Builder::default()
         .plugin(tauri_plugin_dialog::init())
         .plugin(tauri_plugin_clipboard_manager::init())
@@ -189,16 +160,16 @@ pub fn run() {
             std::thread::spawn(move || responder.respond(protocol::handle(&app, request)));
         })
         .invoke_handler(tauri::generate_handler![
-            player::pop_out,
-            connect::devices,
-            connect::connect,
-            connect::disconnect,
-            connect::connections,
-            connect::info,
-            connect::watch_devices,
-            wifi::adb_pair,
-            wifi::adb_connect,
-            wifi::adb_discover,
+            preview::player::pop_out,
+            devices::connect::devices,
+            devices::connect::connect,
+            devices::connect::disconnect,
+            devices::connect::connections,
+            devices::connect::info,
+            devices::connect::watch_devices,
+            devices::wifi::adb_pair,
+            devices::wifi::adb_connect,
+            devices::wifi::adb_discover,
             files::list,
             files::list_page,
             files::refresh,
@@ -237,11 +208,11 @@ pub fn run() {
             dupes::duplicates,
             import::import_photos,
             transfer::sync,
-            library::library,
-            library::book_info,
-            library::book_check,
-            library::book_change,
-            library::book_shrink,
+            books::library::library,
+            books::library::book_info,
+            books::library::book_check,
+            books::library::book_change,
+            books::library::book_shrink,
             files::rename,
             safety::space,
             files::open_file,
@@ -256,31 +227,31 @@ pub fn run() {
             scripts::pick_scripts,
             scripts::new_script,
             scripts::script_guide,
-            everything::everything_connect,
-            sftp::sftp_connect,
-            webdav::webdav_connect,
-            ftp::ftp_connect,
-            s3::s3_connect,
-            smb::smb_mount,
-            smb::smb_mounts,
-            smb::smb_unmount,
-            secrets::secret_set,
-            secrets::secret_clear,
+            servers::everything::everything_connect,
+            servers::sftp::sftp_connect,
+            servers::webdav::webdav_connect,
+            servers::ftp::ftp_connect,
+            servers::s3::s3_connect,
+            servers::smb::smb_mount,
+            servers::smb::smb_mounts,
+            servers::smb::smb_unmount,
+            servers::secrets::secret_set,
+            servers::secrets::secret_clear,
             terminal::term_open,
             terminal::term_write,
             terminal::term_resize,
             terminal::term_close,
-            editor::epub_open,
-            editor::epub_chapter,
-            editor::epub_set_source,
-            editor::epub_set_body,
-            editor::epub_set_meta,
-            editor::epub_cover,
-            editor::epub_find,
-            editor::epub_replace,
-            editor::epub_save,
-            editor::epub_export,
-            editor::epub_close,
+            books::editor::epub_open,
+            books::editor::epub_chapter,
+            books::editor::epub_set_source,
+            books::editor::epub_set_body,
+            books::editor::epub_set_meta,
+            books::editor::epub_cover,
+            books::editor::epub_find,
+            books::editor::epub_replace,
+            books::editor::epub_save,
+            books::editor::epub_export,
+            books::editor::epub_close,
         ])
         .build(tauri::generate_context!())
         .expect("error while running Ferry Files");

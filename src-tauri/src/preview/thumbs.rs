@@ -9,8 +9,8 @@
 //!
 //! Both caches are trimmed (least recently used first) when the app starts.
 
+use crate::books::epub::Book;
 use crate::device::Device;
-use crate::epub::Book;
 use image::codecs::jpeg::JpegEncoder;
 use image::imageops::FilterType;
 use image::metadata::Orientation;

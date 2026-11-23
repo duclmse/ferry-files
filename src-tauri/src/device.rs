@@ -585,17 +585,17 @@ impl Device {
 /// device: an adb serial, or an MTP location from `mtp::detect`; None takes the first one.
 pub fn connect(transport: &str, which: Option<String>) -> Result<Device> {
     let serial = which;
-    let use_adb = transport == "adb" || (transport == "auto" && (serial.is_some() || !crate::adb::ready_serials().is_empty()));
+    let use_adb = transport == "adb" || (transport == "auto" && (serial.is_some() || !crate::devices::adb::ready_serials().is_empty()));
     if use_adb {
-        return Ok(Device::new(Box::new(crate::adb::Adb::open(serial)?)));
+        return Ok(Device::new(Box::new(crate::devices::adb::Adb::open(serial)?)));
     }
     match transport {
         "iphone" => match serial {
-            Some(udid) => Ok(Device::new(Box::new(crate::iphone::IPhone::open(&udid)?))),
+            Some(udid) => Ok(Device::new(Box::new(crate::devices::iphone::IPhone::open(&udid)?))),
             None => err("Which iPhone?"),
         },
-        "mtp" => Ok(Device::new(Box::new(crate::mtp::Mtp::open(serial.as_deref())?))),
-        "auto" => crate::mtp::Mtp::open(None)
+        "mtp" => Ok(Device::new(Box::new(crate::devices::mtp::Mtp::open(serial.as_deref())?))),
+        "auto" => crate::devices::mtp::Mtp::open(None)
             .map(|d| Device::new(Box::new(d)))
             .map_err(|e| DevError::Msg(format!("No device found. For adb: turn on USB debugging. For MTP: {e}"))),
         other => err(format!("Unknown transport {other:?}.")),
