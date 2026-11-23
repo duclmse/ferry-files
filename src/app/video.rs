@@ -93,7 +93,7 @@ impl Turn {
         self.count.get()
     }
 
-    fn get_untracked(self) -> i32 {
+    pub(super) fn get_untracked(self) -> i32 {
         self.count.get_untracked()
     }
 
@@ -137,6 +137,34 @@ const RESUME_EDGE: f64 = 5.0;
 
 /// What a file is remembered by: its path, size and date (not the device's number, which
 /// changes from one connection to the next).
+/// What's shown full screen, if anything (WebKit names it with a prefix).
+pub(super) fn full_screen_element() -> Option<JsValue> {
+    let doc: JsValue = document().into();
+    let get = |k: &str| js_sys::Reflect::get(&doc, &k.into()).ok().filter(|v| !v.is_undefined() && !v.is_null());
+    get("fullscreenElement").or_else(|| get("webkitFullscreenElement"))
+}
+
+/// Calls the method `k` of `o`, if it has one; whether it did.
+fn call_method(o: &JsValue, k: &str) -> bool {
+    js_sys::Reflect::get(o, &k.into()).ok().and_then(|f| f.dyn_into::<js_sys::Function>().ok()).is_some_and(|f| f.call0(o).is_ok())
+}
+
+/// Leaves full screen.
+pub(super) fn exit_full_screen() {
+    let doc: JsValue = document().into();
+    let _ = call_method(&doc, "exitFullscreen") || call_method(&doc, "webkitExitFullscreen");
+}
+
+/// Shows `el` full screen; false when the web view can't.
+pub(super) fn enter_full_screen(el: &JsValue) -> bool {
+    let doc: JsValue = document().into();
+    let enabled = ["fullscreenEnabled", "webkitFullscreenEnabled"]
+        .iter()
+        .find_map(|k| js_sys::Reflect::get(&doc, &(*k).into()).ok().and_then(|v| v.as_bool()))
+        .unwrap_or(false);
+    enabled && (call_method(el, "requestFullscreen") || call_method(el, "webkitRequestFullscreen"))
+}
+
 pub(super) fn resume_key(e: &Entry) -> String {
     format!("{}|{}|{}", e.path, e.size, e.mtime)
 }
@@ -863,11 +891,7 @@ pub(super) fn VideoPlayer(
     let full_change = StoredValue::new_local(None::<Closure<dyn Fn()>>);
     player_ref.on_load(move |p| {
         let cb = Closure::<dyn Fn()>::new(move || {
-            let doc: JsValue = document().into();
-            let get = |k: &str| js_sys::Reflect::get(&doc, &k.into()).ok().filter(|v| !v.is_undefined() && !v.is_null());
-            let on = get("fullscreenElement")
-                .or_else(|| get("webkitFullscreenElement"))
-                .is_some_and(|el| player_ref.try_get_untracked().flatten().is_some_and(|p| JsValue::from(p) == el));
+            let on = full_screen_element().is_some_and(|el| player_ref.try_get_untracked().flatten().is_some_and(|p| JsValue::from(p) == el));
             let _ = full.try_set(on);
             wake();
         });
@@ -877,23 +901,15 @@ pub(super) fn VideoPlayer(
         full_change.set_value(Some(cb));
     });
     let full_screen = move || {
-        let doc = document();
-        let get = |o: &JsValue, k: &str| js_sys::Reflect::get(o, &k.into()).ok().filter(|v| !v.is_undefined() && !v.is_null());
-        let call0 = |o: &JsValue, k: &str| get(o, k).and_then(|f| f.dyn_into::<js_sys::Function>().ok()).is_some_and(|f| f.call0(o).is_ok());
-        let doc: JsValue = doc.into();
-        if get(&doc, "fullscreenElement").or_else(|| get(&doc, "webkitFullscreenElement")).is_some() {
-            let _ = call0(&doc, "exitFullscreen") || call0(&doc, "webkitExitFullscreen");
+        if full_screen_element().is_some() {
+            exit_full_screen();
             return;
         }
-        let enabled = get(&doc, "fullscreenEnabled").or_else(|| get(&doc, "webkitFullscreenEnabled")).and_then(|v| v.as_bool()).unwrap_or(false);
-        if let Some(p) = player_ref.get_untracked() {
-            let p: JsValue = p.into();
-            if enabled && (call0(&p, "requestFullscreen") || call0(&p, "webkitRequestFullscreen")) {
-                return;
-            }
+        if player_ref.get_untracked().is_some_and(|p| enter_full_screen(&p.into())) {
+            return;
         }
         if let Some(m) = media() {
-            call0(&m.into(), "webkitEnterFullscreen");
+            call_method(&m.into(), "webkitEnterFullscreen");
         }
     };
 

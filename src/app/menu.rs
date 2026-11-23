@@ -3,7 +3,7 @@
 use super::*;
 
 /// Where a menu of `rows` rows opens for a click at `ev`, kept whole on screen.
-fn menu_at(ev: &web_sys::MouseEvent, w: f64, rows: usize) -> (f64, f64) {
+pub(super) fn menu_at(ev: &web_sys::MouseEvent, w: f64, rows: usize) -> (f64, f64) {
     let h = rows as f64 * 28.0 + 12.0;
     let size = |v: Result<wasm_bindgen::JsValue, _>| v.ok().and_then(|v| v.as_f64()).unwrap_or(800.0);
     let (vw, vh) = (size(window().inner_width()), size(window().inner_height()));

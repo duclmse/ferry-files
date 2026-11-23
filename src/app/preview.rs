@@ -644,6 +644,45 @@ fn turn_fit(turn: i32, w: u32, h: u32) -> f64 {
     }
 }
 
+/// How a picture is zoomed when it's opened, picked by right-clicking the zoom level: all of it
+/// in view, as wide as the preview, or at its own size. Kept for the next pictures.
+#[derive(Clone, Copy, PartialEq)]
+enum PicFit {
+    Whole,
+    Width,
+    Actual,
+}
+
+const PIC_FIT_KEY: &str = "ferry-files.picture-fit";
+
+impl PicFit {
+    const ALL: [PicFit; 3] = [PicFit::Whole, PicFit::Width, PicFit::Actual];
+
+    fn stored() -> Self {
+        match stored(PIC_FIT_KEY).as_deref() {
+            Some("width") => PicFit::Width,
+            Some("actual") => PicFit::Actual,
+            _ => PicFit::Whole,
+        }
+    }
+
+    fn key(self) -> &'static str {
+        match self {
+            PicFit::Whole => "whole",
+            PicFit::Width => "width",
+            PicFit::Actual => "actual",
+        }
+    }
+
+    fn label(self) -> &'static str {
+        match self {
+            PicFit::Whole => "Fit whole picture",
+            PicFit::Width => "Fit width",
+            PicFit::Actual => "Actual size",
+        }
+    }
+}
+
 /// The thumbnail's size, in pixels (the backend makes them this big at most).
 const THUMB_PX: f64 = 320.0;
 
@@ -703,9 +742,19 @@ fn FullImage(
         (!alone).then(|| Callback::new(move |d| step_media(pane, &e.get_value(), d)))
     });
     let loaded = RwSignal::new(false);
+    // Until the picture first shows, it's zoomed and moved at once (not eased in from the middle).
+    let settled = RwSignal::new(false);
     let natural = RwSignal::new((0u32, 0u32));
     let zoom = RwSignal::new(1.0f64);
     let pan = RwSignal::new((0.0f64, 0.0f64));
+    // How the picture is zoomed until it's zoomed by hand (`manual`), and the list to change it
+    // (where it is; None while closed).
+    let fit_mode = RwSignal::new(PicFit::stored());
+    let manual = StoredValue::new(false);
+    let fit_menu = RwSignal::new(None::<(f64, f64)>);
+    let stage = NodeRef::<html::Div>::new();
+    let viewer = NodeRef::<html::Div>::new();
+    let full_screen = RwSignal::new(false);
     let shrunk_url = if alone { None } else { fit_url(src, &entry) };
     let url = url.unwrap_or_else(|| stream_url(src, &entry));
     // Showing the shrunk photo; and how many of the photo's pixels each of its pixels stands for.
@@ -775,12 +824,34 @@ fn FullImage(
             }
         }
         loaded.set(true);
-        request_animation_frame(measure);
+        // Measured, zoomed as `fit_mode` says and at its start, then zooms and turns are eased.
+        request_animation_frame(move || {
+            measure();
+            request_animation_frame(move || {
+                let _ = settled.try_set(true);
+            });
+        });
     };
     // How much of its own size the picture shows at `zoom` 1 (fitted), turn included.
     let base = move || {
         let (w, h) = natural.get();
         fit.get() * turn_fit(turn.get(), w, h)
+    };
+    // The picture's size on screen at zoom `z`, turn included, and the stage's.
+    let sizes = move |z: f64| {
+        let (Some(img), Some(st)) = (img_ref.try_get_untracked().flatten(), stage.try_get_untracked().flatten()) else { return None };
+        let (w, h) = natural.get_untracked();
+        let t = turn.get_untracked();
+        let s = z * turn_fit(t, w, h);
+        let (iw, ih) = (img.offset_width() as f64 * s, img.offset_height() as f64 * s);
+        let shown = if t.rem_euclid(2) == 0 { (iw, ih) } else { (ih, iw) };
+        Some((shown, (st.client_width() as f64, st.client_height() as f64)))
+    };
+    // How far the picture can be moved: until its edge reaches the stage's.
+    let reach = move || sizes(zoom.get_untracked()).map_or((0.0, 0.0), |((w, h), (sw, sh))| (((w - sw) / 2.0).max(0.0), ((h - sh) / 2.0).max(0.0)));
+    let move_to = move |(x, y): (f64, f64)| {
+        let (rx, ry) = reach();
+        pan.set((x.clamp(-rx, rx), y.clamp(-ry, ry)));
     };
     // Up to 800% of its pixels, and at least fitted.
     let set_zoom = move |z: f64| {
@@ -792,15 +863,92 @@ fn FullImage(
             shrunk.set(false);
             shown.set(full.get_value());
         }
-        if z == 1.0 {
-            pan.set((0.0, 0.0));
+        move_to(pan.get_untracked());
+    };
+    let zoom_by_hand = move |z: f64| {
+        manual.set_value(true);
+        set_zoom(z);
+    };
+    // The zoom for `fit_mode`, applied again when the picture or the preview's size changes,
+    // until the picture is zoomed by hand. A picture bigger than the preview starts at its top
+    // left.
+    let apply_fit = move |m: PicFit| {
+        let z = match m {
+            PicFit::Whole => 1.0,
+            PicFit::Actual => 1.0 / base(),
+            PicFit::Width => sizes(1.0).map_or(1.0, |((w, _), (sw, _))| if w > 0.0 { sw / w } else { 1.0 }),
+        };
+        set_zoom(z);
+        move_to((f64::INFINITY, f64::INFINITY));
+    };
+    Effect::new(move || {
+        let m = fit_mode.get();
+        fit.track();
+        natural.track();
+        turn.get();
+        if !manual.get_value() {
+            apply_fit(m);
+        }
+    });
+    let pick_fit = move |m: PicFit| {
+        fit_menu.set(None);
+        store(PIC_FIT_KEY, m.key());
+        manual.set_value(false);
+        fit_mode.set(m);
+        apply_fit(m);
+    };
+    // Full screen: the picture and its buttons, on black.
+    viewer.on_load(move |v| {
+        let cb = Closure::<dyn Fn()>::new(move || {
+            let on = super::video::full_screen_element()
+                .is_some_and(|el| viewer.try_get_untracked().flatten().is_some_and(|v| wasm_bindgen::JsValue::from(v) == el));
+            let _ = full_screen.try_set(on);
+        });
+        for name in ["fullscreenchange", "webkitfullscreenchange"] {
+            let _ = v.add_event_listener_with_callback(name, cb.as_ref().unchecked_ref());
+        }
+        cb.forget();
+    });
+    let toggle_full = move || {
+        if full_screen.get_untracked() {
+            super::video::exit_full_screen();
+        } else if let Some(v) = viewer.get_untracked() {
+            let _ = v.focus();
+            super::video::enter_full_screen(&v.into());
+        }
+    };
+    // Keys while the picture has the focus (it's been clicked, or it's full screen): ← → for the
+    // previous and next, F for full screen.
+    let keydown = move |ev: web_sys::KeyboardEvent| {
+        if ev.meta_key() || ev.ctrl_key() || ev.alt_key() || ev.repeat() && ev.code() == "KeyF" {
+            return;
+        }
+        let done = match (ev.code().as_str(), step) {
+            ("ArrowLeft", Some(go)) => {
+                go.run(-1);
+                true
+            }
+            ("ArrowRight", Some(go)) => {
+                go.run(1);
+                true
+            }
+            ("KeyF", _) => {
+                toggle_full();
+                true
+            }
+            _ => false,
+        };
+        if done {
+            ev.prevent_default();
+            ev.stop_propagation();
         }
     };
     let style = move || {
         let (x, y) = pan.get();
         let (w, h) = natural.get();
         let s = zoom.get() * turn_fit(turn.get(), w, h);
-        format!("transform: translate({x}px, {y}px) scale({s}) rotate({}deg){}", turn.get() * 90, turn.css())
+        let instant = if settled.get() { turn.css() } else { "; transition: none" };
+        format!("transform: translate({x}px, {y}px) scale({s}) rotate({}deg){instant}", turn.get() * 90)
     };
     // Dragging a zoomed picture around.
     let listeners = StoredValue::new_local(None::<(WindowListenerHandle, WindowListenerHandle)>);
@@ -811,7 +959,10 @@ fn FullImage(
         }
     };
     on_cleanup(stop);
+    // Whether the last press moved the picture, so letting go on a side doesn't change pictures.
+    let dragged = StoredValue::new(false);
     let down = move |ev: web_sys::MouseEvent| {
+        dragged.set_value(false);
         if ev.button() != 0 || zoom.get_untracked() <= 1.0 {
             return;
         }
@@ -819,24 +970,43 @@ fn FullImage(
         let (x0, y0) = (ev.client_x() as f64, ev.client_y() as f64);
         let (px, py) = pan.get_untracked();
         let moved = window_event_listener(ev::mousemove, move |e| {
-            pan.set((px + e.client_x() as f64 - x0, py + e.client_y() as f64 - y0));
+            let (dx, dy) = (e.client_x() as f64 - x0, e.client_y() as f64 - y0);
+            if dx.abs() + dy.abs() > 3.0 {
+                dragged.set_value(true);
+            }
+            move_to((px + dx, py + dy));
         });
         let up = window_event_listener(ev::mouseup, move |_| stop());
         stop();
         listeners.set_value(Some((moved, up)));
     };
-    // A pinch on the trackpad comes as a wheel event with Ctrl down.
+    // A pinch on the trackpad comes as a wheel event with Ctrl down. Otherwise scrolling moves a
+    // zoomed picture (sideways with Shift, for a mouse wheel).
     let wheel = move |ev: web_sys::WheelEvent| {
         if ev.ctrl_key() || ev.meta_key() {
             ev.prevent_default();
-            set_zoom(zoom.get_untracked() * (-ev.delta_y() * 0.01).exp());
+            zoom_by_hand(zoom.get_untracked() * (-ev.delta_y() * 0.01).exp());
+        } else if zoom.get_untracked() > 1.0 {
+            ev.prevent_default();
+            // In lines or pages rather than pixels on some mice.
+            let k = match ev.delta_mode() {
+                1 => 40.0,
+                2 => 400.0,
+                _ => 1.0,
+            };
+            let (mut dx, mut dy) = (ev.delta_x() * k, ev.delta_y() * k);
+            if ev.shift_key() && dx == 0.0 {
+                (dx, dy) = (dy, 0.0);
+            }
+            let (x, y) = pan.get_untracked();
+            move_to((x - dx, y - dy));
         }
     };
     // Fitted, or its actual size (100%): whichever it isn't. A picture that fits at its actual
     // size goes to 200%.
     let fit_or_actual = move || {
         let actual = 1.0 / base();
-        set_zoom(if zoom.get_untracked() > 1.0 {
+        zoom_by_hand(if zoom.get_untracked() > 1.0 {
             1.0
         } else if actual > 1.001 {
             actual
@@ -845,21 +1015,27 @@ fn FullImage(
         });
     };
     view! {
-        <div class="pic stage" class:whole=loaded class:zoomed=move || { zoom.get() > 1.0 }
+        <div class="picview" class:full-screen=full_screen node_ref=viewer tabindex="-1" on:keydown=keydown>
+        <div class="pic stage" class:whole=loaded class:zoomed=move || { zoom.get() > 1.0 } node_ref=stage
             on:mousedown=down on:wheel=wheel
             on:dblclick=move |ev| { ev.stop_propagation(); fit_or_actual(); }>
             {let e = entry.clone(); move || (!loaded.get() && !alone).then(|| view! { <Thumbnail src entry=e.clone()/> })}
             <img class="full" node_ref=img_ref src=move || shown.get() alt="" draggable="false" class:pending=move || !loaded.get()
                 style=style on:load=load on:transitionend=move |_| turn.settle()/>
-            // Clicking the picture's left or right side goes to the previous or next one (not
-            // while zoomed in, when dragging moves the picture).
+            // Clicking the picture's left or right side goes to the previous or next one. Zoomed
+            // in, a press there can also drag the picture, and then doesn't change pictures.
             {step.map(|go| {
                 let edge = move |d: isize| {
                     let what = if d < 0 { "Previous (←)" } else { "Next (→)" };
                     view! {
-                        <button class="pic-edge" class:next={d > 0} class:off=move || { zoom.get() > 1.0 } title=what aria-label=what
-                            on:mousedown=|e: web_sys::MouseEvent| e.stop_propagation() on:dblclick=|e: web_sys::MouseEvent| e.stop_propagation()
-                            on:click=move |e: web_sys::MouseEvent| { e.stop_propagation(); go.run(d) }>{ico(if d < 0 { Icon::Prev } else { Icon::Next })}</button>
+                        <button class="pic-edge" class:next={d > 0} title=what aria-label=what
+                            on:dblclick=|e: web_sys::MouseEvent| e.stop_propagation()
+                            on:click=move |e: web_sys::MouseEvent| {
+                                e.stop_propagation();
+                                if !dragged.get_value() {
+                                    go.run(d)
+                                }
+                            }>{ico(if d < 0 { Icon::Prev } else { Icon::Next })}</button>
                     }
                 };
                 view! { {edge(-1)} {edge(1)} }
@@ -868,18 +1044,43 @@ fn FullImage(
         <div class="viewer-bar">
             {step.map(|go| view! { {neighbours(go)} <span class="gap"></span> })}
             <span class="btn-group" role="group">
-                <button class="btn" title="Zoom out" aria-label="Zoom out" on:click=move |_| set_zoom(zoom.get_untracked() / 1.25)>{ico(Icon::ZoomOut)}</button>
-                <button class="btn zoom" title="Of the picture's own size. Click (or double-click the picture) for 100% or to fit."
-                    on:click=move |_| fit_or_actual()>
+                <button class="btn" title="Zoom out" aria-label="Zoom out" on:click=move |_| zoom_by_hand(zoom.get_untracked() / 1.25)>{ico(Icon::ZoomOut)}</button>
+                <button class="btn zoom" aria-haspopup="menu"
+                    title="Of the picture's own size. Click (or double-click the picture) for 100% or to fit. Right-click to fit the whole picture, its width, or show its actual size."
+                    on:click=move |_| fit_or_actual()
+                    on:contextmenu=move |ev: web_sys::MouseEvent| {
+                        ev.prevent_default();
+                        ev.stop_propagation();
+                        fit_menu.set(Some(super::menu::menu_at(&ev, 170.0, PicFit::ALL.len())));
+                    }>
                     {move || format!("{:.0}%", zoom.get() * base() * 100.0)}
                 </button>
-                <button class="btn" title="Zoom in (or pinch)" aria-label="Zoom in" on:click=move |_| set_zoom(zoom.get_untracked() * 1.25)>{ico(Icon::ZoomIn)}</button>
+                <button class="btn" title="Zoom in (or pinch)" aria-label="Zoom in" on:click=move |_| zoom_by_hand(zoom.get_untracked() * 1.25)>{ico(Icon::ZoomIn)}</button>
             </span>
             <span class="gap"></span>
             <span class="btn-group" role="group">
                 <button class="btn" title="Turn left" aria-label="Turn left" on:click=move |_| turn.by(-1)>{ico(Icon::TurnLeft)}</button>
                 <button class="btn" title="Turn right" aria-label="Turn right" on:click=move |_| turn.by(1)>{ico(Icon::TurnRight)}</button>
             </span>
+            <span class="gap"></span>
+            <button class="btn" title=move || if full_screen.get() { "Leave full screen (F or Esc)" } else { "Full screen (F)" }
+                aria-label=move || if full_screen.get() { "Leave full screen" } else { "Full screen" }
+                on:click=move |_| toggle_full()>{ico(Icon::FullScreen)}</button>
+            {move || fit_menu.get().map(|(x, y)| {
+                let now = fit_mode.get();
+                view! {
+                    <div class="menu-backdrop" on:click=move |_| fit_menu.set(None)
+                        on:contextmenu=move |ev: web_sys::MouseEvent| { ev.prevent_default(); fit_menu.set(None) }></div>
+                    <div class="menu open-as-list" role="menu" style=format!("left: {x}px; top: {y}px")
+                        on:keydown=move |ev: web_sys::KeyboardEvent| if ev.key() == "Escape" { ev.stop_propagation(); fit_menu.set(None) }>
+                        {PicFit::ALL.into_iter().map(|m| view! {
+                            <button role="menuitemradio" aria-checked=(now == m).to_string() class:on=now == m
+                                on:click=move |_| pick_fit(m)>{m.label()}</button>
+                        }).collect_view()}
+                    </div>
+                }
+            })}
+        </div>
         </div>
     }
 }

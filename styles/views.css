@@ -838,6 +838,29 @@ td.name input.rename {
   color: var(--ink);
 }
 
+/* A picture with its buttons, which go full screen together (on black). */
+.preview .picview {
+  flex: 1 1 auto;
+  min-height: 0;
+  width: 100%;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  outline: none;
+}
+
+.preview .picview.full-screen {
+  padding: 8px;
+  background: #000;
+  color-scheme: dark;
+}
+
+.preview .picview.full-screen .pic.stage .pic-edge {
+  color: #fff;
+}
+
 /* A picture that can be zoomed and turned: what goes past the edges is cut off. */
 .preview .pic.stage {
   overflow: hidden;
@@ -861,7 +884,8 @@ td.name input.rename {
   top: 0;
   bottom: 0;
   left: 0;
-  width: min(30%, 120px);
+  /* Each side takes half but 25px, leaving a 50px strip in the middle for a double-click. */
+  width: calc(50% - 25px);
   display: flex;
   align-items: center;
   justify-content: flex-start;
@@ -893,16 +917,14 @@ td.name input.rename {
   box-shadow: 0 1px 4px rgb(0 0 0 / 25%);
 }
 
-/* Zoomed in, dragging moves the picture instead. */
-.preview .pic.stage .pic-edge.off {
-  display: none;
-}
-
-.preview .pic.stage.zoomed {
+/* Zoomed in, the picture can also be dragged from its sides. */
+.preview .pic.stage.zoomed,
+.preview .pic.stage.zoomed .pic-edge {
   cursor: grab;
 }
 
-.preview .pic.stage.zoomed:active {
+.preview .pic.stage.zoomed:active,
+.preview .pic.stage.zoomed .pic-edge:active {
   cursor: grabbing;
 }
 

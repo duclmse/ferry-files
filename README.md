@@ -11,7 +11,9 @@ own files and disks, with tools for EPUB books in particular.
   show folders as a tree (right-click its header). Sort, filter (⌘F; Enter searches subfolders), show hidden files (⌘.),
   type a path (⌘L). All edges can be dragged to resize, and sizes are remembered.
 - **Preview** beside the files:
-  - pictures that zoom and turn;
+  - pictures that zoom, scroll and turn, and show full screen (F). Right-click
+    the zoom level to fit the whole picture, its width, or show it at actual
+    size; the choice is kept for the next pictures;
   - video and audio streamed from the device, with their own controls, full
     screen and a pop-out window. Subtitles (.srt, .sub, .vtt) named like the
     video in its folder are shown, and more can be dropped on the video, from
