@@ -3,8 +3,10 @@
 // Tonic fixes the interceptor signature, so its large error type is unavoidable.
 #![allow(clippy::result_large_err)]
 
+#[cfg(feature = "grpc")]
 use std::sync::Arc;
 
+#[cfg(feature = "rest")]
 use axum::{
     extract::{Request, State},
     http::{header::AUTHORIZATION, StatusCode},
@@ -12,10 +14,14 @@ use axum::{
     response::{IntoResponse, Response},
     Json,
 };
+#[cfg(feature = "grpc")]
 use tokio::sync::RwLock;
 
+#[cfg(feature = "rest")]
 use crate::api::rest::{AppState, ErrorResponse};
-use crate::config::{ApiConfig, AuthMode, Config};
+use crate::config::AuthMode;
+#[cfg(feature = "grpc")]
+use crate::config::{ApiConfig, Config};
 
 #[derive(Debug, PartialEq, Eq)]
 enum Denied {
@@ -36,6 +42,7 @@ fn check(token_hash: Option<&str>, header: Option<&str>) -> Result<(), Denied> {
     }
 }
 
+#[cfg(feature = "rest")]
 async fn authorize_rest(state: &AppState, request: Request, next: Next) -> Response {
     let token_hash = state.config.read().await.api.auth_token_hash.clone();
     let header = request
@@ -57,6 +64,7 @@ async fn authorize_rest(state: &AppState, request: Request, next: Next) -> Respo
 }
 
 /// Guards routes that change files, whatever `api.auth_mode` is.
+#[cfg(feature = "rest")]
 pub async fn require_token(
     State(state): State<AppState>,
     request: Request,
@@ -66,6 +74,7 @@ pub async fn require_token(
 }
 
 /// Guards every other route, but only under `auth_mode = "all"`.
+#[cfg(feature = "rest")]
 pub async fn require_token_in_all_mode(
     State(state): State<AppState>,
     request: Request,
@@ -78,6 +87,7 @@ pub async fn require_token_in_all_mode(
     }
 }
 
+#[cfg(feature = "grpc")]
 fn check_grpc(api: &ApiConfig, header: Option<&str>) -> Result<(), tonic::Status> {
     if api.auth_mode != AuthMode::All {
         return Ok(());
@@ -90,6 +100,7 @@ fn check_grpc(api: &ApiConfig, header: Option<&str>) -> Result<(), tonic::Status
 ///
 /// Interceptors are synchronous, so the config lock can only be tried. It is
 /// held just for the swap during a hot reload, and clients retry `UNAVAILABLE`.
+#[cfg(feature = "grpc")]
 pub fn grpc_interceptor(
     config: Arc<RwLock<Config>>,
 ) -> impl Fn(tonic::Request<()>) -> Result<tonic::Request<()>, tonic::Status> + Clone {
@@ -110,6 +121,7 @@ pub fn grpc_interceptor(
 mod tests {
     use super::*;
 
+    #[cfg(feature = "grpc")]
     fn api(mode: AuthMode) -> ApiConfig {
         ApiConfig {
             auth_mode: mode,
@@ -138,6 +150,7 @@ mod tests {
         );
     }
 
+    #[cfg(feature = "grpc")]
     #[test]
     fn grpc_needs_a_token_only_in_all_mode() {
         assert!(check_grpc(&api(AuthMode::Writes), None).is_ok());

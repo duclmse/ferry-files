@@ -13,18 +13,24 @@ use tokio_util::sync::CancellationToken;
 use tracing_subscriber::{fmt, layer::SubscriberExt, util::SubscriberInitExt, EnvFilter};
 
 use crate::api::archive::ArchiveRegistry;
+#[cfg(feature = "grpc")]
 use crate::api::grpc::{self, FileSearchService};
+#[cfg(feature = "ipc")]
 use crate::api::ipc_server::run_ipc_server;
+#[cfg(feature = "rest")]
 use crate::api::rest::AppState;
 use crate::config;
+#[cfg(any(feature = "rest", feature = "grpc"))]
 use crate::config::AuthMode;
 use crate::error::AppError;
 use crate::indexer::crawler::{full_crawl, process_events, IndexEvent, IndexMetrics};
 use crate::indexer::exclusions::ExclusionEngine;
+#[cfg(feature = "rest")]
 use crate::scheduler::{ArchiveSemaphores, ClientRateLimiter, SchedulerMetrics};
 use crate::store::{tantivy_store::TantivyStore, FileStore};
 use crate::watcher;
 use crate::zidx::zidx_path_for;
+#[cfg(feature = "grpc")]
 use tonic::codegen::InterceptedService;
 
 // ---------------------------------------------------------------------------
@@ -98,8 +104,16 @@ const EXTENSION_DRAIN: Duration = Duration::from_secs(35);
 // Public entry point
 // ---------------------------------------------------------------------------
 
-pub async fn run(config_path: PathBuf) -> Result<(), AppError> {
-    run_with_shutdown(config_path, CancellationToken::new()).await
+pub async fn run(config_path: PathBuf, opts: RunOptions) -> Result<(), AppError> {
+    run_with_options(config_path, CancellationToken::new(), opts).await
+}
+
+/// How the daemon was started, beyond what the config says.
+#[derive(Debug, Clone, Copy, Default)]
+pub struct RunOptions {
+    /// Started by the system's service manager for every user of the
+    /// computer, rather than for the user who runs it.
+    pub system_service: bool,
 }
 
 /// Like [`run`] but accepts an external shutdown token so tests (and
@@ -107,6 +121,24 @@ pub async fn run(config_path: PathBuf) -> Result<(), AppError> {
 pub async fn run_with_shutdown(
     config_path: PathBuf,
     shutdown: CancellationToken,
+) -> Result<(), AppError> {
+    run_with_options(config_path, shutdown, RunOptions::default()).await
+}
+
+/// A server the config turns on but this build of fsd left out.
+#[cfg(not(all(feature = "rest", feature = "grpc", feature = "ipc")))]
+fn not_built(name: &str, feature: &str, enabled: bool, _opts: RunOptions) {
+    if enabled {
+        tracing::warn!(
+            "{name} is enabled in the config, but this fsd was built without the `{feature}` feature"
+        );
+    }
+}
+
+pub async fn run_with_options(
+    config_path: PathBuf,
+    shutdown: CancellationToken,
+    opts: RunOptions,
 ) -> Result<(), AppError> {
     // ── 1. Load & validate config ──────────────────────────────────────────
     let cfg = config::load(&config_path)?;
@@ -316,6 +348,9 @@ pub async fn run_with_shutdown(
     }
 
     // ── 14. IPC server ─────────────────────────────────────────────────────
+    #[cfg(not(feature = "ipc"))]
+    not_built("IPC", "ipc", shared_cfg.read().await.api.ipc_enabled, opts);
+    #[cfg(feature = "ipc")]
     {
         let api_cfg = shared_cfg.read().await.api.clone();
         if api_cfg.ipc_enabled {
@@ -334,6 +369,7 @@ pub async fn run_with_shutdown(
                     metrics_c,
                     reindex_ipc,
                     extensions_c,
+                    opts.system_service,
                     shutdown_c,
                 )
                 .await;
@@ -344,6 +380,14 @@ pub async fn run_with_shutdown(
     }
 
     // ── 15. REST server ────────────────────────────────────────────────────
+    #[cfg(not(feature = "rest"))]
+    not_built(
+        "REST",
+        "rest",
+        shared_cfg.read().await.api.rest_enabled,
+        opts,
+    );
+    #[cfg(feature = "rest")]
     {
         let api_cfg = shared_cfg.read().await.api.clone();
         if api_cfg.rest_enabled {
@@ -403,6 +447,14 @@ pub async fn run_with_shutdown(
     }
 
     // ── 16. gRPC server ────────────────────────────────────────────────────
+    #[cfg(not(feature = "grpc"))]
+    not_built(
+        "gRPC",
+        "grpc",
+        shared_cfg.read().await.api.grpc_enabled,
+        opts,
+    );
+    #[cfg(feature = "grpc")]
     {
         let api_cfg = shared_cfg.read().await.api.clone();
         if api_cfg.grpc_enabled {

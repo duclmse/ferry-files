@@ -29,10 +29,14 @@ pub enum AppError {
     #[error("Content extraction error: {0}")]
     Content(String),
 
+    #[error("Service error: {0}")]
+    Service(String),
+
     #[error("Common error: {0}")]
     Common(#[from] CommonError),
 }
 
+#[cfg(feature = "grpc")]
 impl From<AppError> for tonic::Status {
     fn from(e: AppError) -> Self {
         tonic::Status::internal(e.to_string())

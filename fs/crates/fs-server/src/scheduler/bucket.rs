@@ -2,8 +2,11 @@ use std::net::IpAddr;
 use std::sync::{Arc, Mutex};
 use std::time::Instant;
 
-use axum::http::StatusCode;
 use dashmap::DashMap;
+
+/// A client spent its tokens; HTTP answers 429.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct OverLimit;
 
 // ---------------------------------------------------------------------------
 // TokenBucket
@@ -70,8 +73,8 @@ impl ClientRateLimiter {
         }
     }
 
-    /// Returns `Err(StatusCode::TOO_MANY_REQUESTS)` if the client is over limit.
-    pub fn check(&self, ip: IpAddr, cost: i64) -> Result<(), StatusCode> {
+    /// Returns `Err(OverLimit)` if the client is over limit.
+    pub fn check(&self, ip: IpAddr, cost: i64) -> Result<(), OverLimit> {
         let now = now_ns();
 
         // Evict stale entries (inactive > 5 min) on a best-effort basis.
@@ -91,7 +94,7 @@ impl ClientRateLimiter {
         if bucket.try_consume(cost, now) {
             Ok(())
         } else {
-            Err(StatusCode::TOO_MANY_REQUESTS)
+            Err(OverLimit)
         }
     }
 
@@ -166,6 +169,6 @@ mod tests {
         // Consume entire burst.
         assert!(rl.check(ip, 200).is_ok());
         // Next request should fail.
-        assert_eq!(rl.check(ip, 1), Err(StatusCode::TOO_MANY_REQUESTS));
+        assert_eq!(rl.check(ip, 1), Err(OverLimit));
     }
 }

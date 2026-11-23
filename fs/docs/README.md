@@ -16,7 +16,9 @@ All phases (1–13) and both plans are implemented, and every checklist item
 in `phases/` is ticked. CI (`.github/workflows/ci.yml`) builds, lints and
 tests the workspace on Windows Server 2025, Ubuntu and macOS on every push,
 and on Windows also runs the benchmark with and without the file table crawl
-and installs, starts, searches through and stops the Windows Service.
+and installs, starts, searches through and stops the Windows Service. On
+Ubuntu and macOS it does the same with a systemd system unit and a
+LaunchDaemon, searched over IPC by an unprivileged user.
 
 | Area | State |
 | ---- | ----- |
@@ -24,7 +26,7 @@ and installs, starts, searches through and stops the Windows Service.
 | Archive service (`.zidx`, `.dzx`, scheduler, SIMD inflate) | Done |
 | Restart catch-up | FSEvents (macOS), USN journal (Windows), timestamp scan (Linux, Windows fallback); 9/9 change checks on Windows |
 | NTFS file table crawl (`indexer.use_mft`) | Works on real volumes; 33 s against 650 s for the walk over all of `C:\` (1.43M entries); slower for a small root; `auto` (default) uses it for whole-drive roots |
-| Windows Service | Installs, starts, stops; runs the extensions |
+| Services | Windows Service, systemd unit, launchd job (`install-service`, `--user` or `--system`); runs the extensions. User units and LaunchAgents are not tested in CI |
 | `rar2zip` extension | Done; host keys checked (`strict` by default); moved-in and pre-existing archives picked up |
 | `sftpd` extension | Done; public-key SFTP server confined to one folder |
 
@@ -68,9 +70,8 @@ cargo test --workspace
 # Crawl, query load and restart catch-up; add -UseMft for the file table crawl.
 .\scripts\bench-windows.ps1 -TargetDir C:\Windows\System32
 .\scripts\bench-windows.ps1 -TargetDir C:\Windows\System32 -UseMft
-# Windows Service (FsDaemon), with a config whose paths are absolute.
+# Windows Service (FsDaemon): installs and starts it, then stops and removes it.
 .\target\release\fsd.exe --config C:\path\config.toml install-service
-Start-Service FsDaemon; Stop-Service FsDaemon
 .\target\release\fsd.exe uninstall-service
 ```
 

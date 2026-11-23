@@ -30,6 +30,7 @@ pub(super) struct RegistryEntry {
     pub(super) zidx_path: PathBuf,
     /// Weak validator for `ETag:` - derived from file mtime+size at register
     /// time, O(1) stat only.  Stale after rebuild but that also re-registers.
+    #[cfg_attr(not(feature = "rest"), allow(dead_code))]
     pub(super) etag: String,
 }
 

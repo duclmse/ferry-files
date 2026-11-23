@@ -28,6 +28,13 @@ jobs:
         run: cargo fmt --all -- --check
       - name: Clippy
         run: cargo clippy --workspace --all-targets -- -D warnings
+      - name: Clippy (fsd with only one API, or none)
+        shell: bash
+        run: |
+          cargo clippy -p fs-server --all-targets --no-default-features -- -D warnings
+          for api in rest grpc ipc; do
+            cargo clippy -p fs-server --all-targets --no-default-features --features "$api" -- -D warnings
+          done
       - name: Clippy (rar2zip integration feature)
         run: cargo clippy -p fs-ext-rar2zip --all-targets --features integration -- -D warnings
       - name: Test
@@ -87,7 +94,7 @@ jobs:
           & $fsd --config "$dir\config.toml" install-service
           if ($LASTEXITCODE -ne 0) { exit 1 }
           try {
-            Start-Service FsDaemon
+            # install-service has started it.
             $deadline = (Get-Date).AddSeconds(120)
             $hits = 0
             while ((Get-Date) -lt $deadline) {
@@ -134,6 +141,68 @@ jobs:
           path: |
             target/bench-walk
             target/bench-mft
+
+  # fsd as a system service (systemd, launchd), searched over IPC by the
+  # runner's own unprivileged user, as a desktop app would.
+  unix-service:
+    name: service (${{ matrix.os }})
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, macos-latest]
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+      - name: Build fsd and fs
+        run: cargo build --release -p fs-server -p fs-cli
+      - name: Run as a system service
+        timeout-minutes: 10
+        run: |
+          set -eu
+          dir="$RUNNER_TEMP/fs-service"
+          mkdir -p "$dir/watch"
+          echo x > "$dir/watch/hello-service.txt"
+          cat > "$dir/config.toml" <<EOF
+          watch_paths = ["$dir/watch"]
+          data_dir    = "$dir/data"
+          log_dir     = "$dir/logs"
+
+          [api]
+          rest_port    = 17700
+          grpc_enabled = false
+          EOF
+          fsd="$PWD/target/release/fsd"
+          fs="$PWD/target/release/fs"
+          sudo "$fsd" --config "$dir/config.toml" install-service --system
+          status=0
+          found=""
+          for _ in $(seq 120); do
+            if "$fs" --config "$dir/config.toml" search hello-service 2>/dev/null | grep -q hello-service.txt; then
+              found=yes
+              break
+            fi
+            sleep 1
+          done
+          if [ -z "$found" ]; then
+            echo "an unprivileged user could not search the service within 120 s"
+            status=1
+          elif "$fs" --config "$dir/config.toml" open "$dir/watch/hello-service.txt" 2>&1 | grep -q NOT_ALLOWED; then
+            echo "Searched the service as $(id -un); opening files was refused"
+          else
+            echo "the system service opened a file for a client"
+            status=1
+          fi
+          ls -l /tmp/fs.sock || true
+          if [ "$RUNNER_OS" = Linux ]; then
+            sudo journalctl -u fsd --no-pager | tail -30 || true
+          else
+            sudo tail -30 /Library/Logs/fsd.log || true
+          fi
+          sudo sh -c "tail -30 '$dir'/logs/*" || true
+          sudo "$fsd" uninstall-service --system
+          exit $status
 
   # The file table pays off only for a root that is most of a volume, so
   # this crawls all of C:\, both ways, with content indexing off so the two

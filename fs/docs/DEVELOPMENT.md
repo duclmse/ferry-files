@@ -122,14 +122,19 @@ Exactly what CI (`.github/workflows/ci.yml`) runs on Ubuntu, macOS and Windows:
 ```sh
 cargo fmt --all -- --check
 cargo clippy --workspace --all-targets -- -D warnings
+for api in "" rest grpc ipc; do  # fsd with one API, or none
+  cargo clippy -p fs-server --all-targets --no-default-features ${api:+--features $api} -- -D warnings
+done
 cargo clippy -p fs-ext-rar2zip --all-targets --features integration -- -D warnings
 cargo test --workspace
 cargo build --release --workspace
 ```
 
 The Windows job additionally runs `scripts/bench-windows.ps1` against
-`C:\Windows\System32` with and without `-UseMft`, and installs, starts, queries
-and stops the Windows Service.
+`C:\Windows\System32` with and without `-UseMft`, and installs, queries and
+removes the Windows Service. `unix-service` does the same with a systemd
+system unit (Ubuntu) and a LaunchDaemon (macOS), searching as the runner's
+unprivileged user.
 
 ## 7. Change checklists
 

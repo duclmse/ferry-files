@@ -99,9 +99,35 @@ fs --config config.toml reindex
 fs --config config.toml tui
 ```
 
-On Windows, `fsd --config C:/ProgramData/fs/config.toml install-service`
-runs it as a service. On macOS, read the notes at the top of
-`config.macos.toml` first (Full Disk Access, stopping it cleanly).
+### Running as a service
+
+`install-service` registers fsd with the system's service manager and starts
+it; `uninstall-service` stops and removes it. Relative paths in the config
+are read from the config's folder.
+
+```sh
+# Windows (administrator): the FsDaemon service, as LocalSystem, from boot
+fsd --config C:/ProgramData/fs/config.toml install-service
+
+# Linux: a systemd user unit (~/.config/systemd/user/fsd.service) ...
+fsd --config ~/.config/fs/config.toml install-service
+# ... or a system unit (/etc/systemd/system/fsd.service), as root, from boot
+sudo fsd --config /etc/fs/config.toml install-service --system
+
+# macOS: a LaunchAgent (~/Library/LaunchAgents/fs.fsd.plist) ...
+fsd --config ~/.config/fs/config.toml install-service
+# ... or a LaunchDaemon (/Library/LaunchDaemons/fs.fsd.plist), from boot
+sudo fsd --config /etc/fs/config.toml install-service --system
+
+fsd uninstall-service            # add --system for a system service
+```
+
+A system service (every Windows service, and `--system` elsewhere) serves
+all local users: any of them can search its index over IPC, so watch only
+folders they may all see. It refuses `fs open` and extension commands from
+clients, which would otherwise run as LocalSystem or root. A user service
+serves only its user. On macOS, read the notes at the top of
+`config.macos.toml` first (Full Disk Access).
 
 ### Everything file lists (.efu)
 

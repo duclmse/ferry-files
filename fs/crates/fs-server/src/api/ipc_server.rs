@@ -6,6 +6,11 @@
 //! Each connection is handled in its own task. Requests are decoded from
 //! length-prefixed postcard frames, dispatched to query/metrics helpers, and
 //! the response is written back as a single length-prefixed frame.
+//!
+//! A daemon run as a system service (`shared`) serves every local user: the
+//! socket or pipe lets them all connect, and requests that would act as the
+//! daemon's own account on their behalf (`Open`, extension commands) are
+//! refused.
 
 use std::sync::{atomic::Ordering, Arc};
 
@@ -21,7 +26,7 @@ use crate::store::{tantivy_store::TantivyStore, FileRecord, FileStore};
 
 use fs_protocol::ipc_protocol::{
     decode_payload, encode_frame, DecodeError, IpcEnvelope, IpcMessage, IpcRequest, IpcResponse,
-    SearchHitDto, SearchResponse, StatsResponse, MAX_FRAME_BYTES,
+    RootsResponse, SearchHitDto, SearchResponse, StatsResponse, MAX_FRAME_BYTES,
 };
 
 // ---------------------------------------------------------------------------
@@ -29,6 +34,7 @@ use fs_protocol::ipc_protocol::{
 // ---------------------------------------------------------------------------
 
 /// Run the IPC listener until `shutdown` is cancelled.
+#[allow(clippy::too_many_arguments)]
 pub async fn run_ipc_server(
     cfg: Arc<RwLock<Config>>,
     sqlite: Arc<FileStore>,
@@ -36,6 +42,7 @@ pub async fn run_ipc_server(
     metrics: Arc<IndexMetrics>,
     reindex_tx: watch::Sender<bool>,
     extensions: Arc<Extensions>,
+    shared: bool,
     shutdown: CancellationToken,
 ) {
     let ipc_path = cfg.read().await.api.ipc_path.clone();
@@ -54,6 +61,16 @@ pub async fn run_ipc_server(
                 return;
             }
         };
+        if shared {
+            use std::os::unix::fs::PermissionsExt;
+            // The daemon runs as root here and its umask leaves the socket
+            // unwritable for others, so no user could connect.
+            if let Err(e) =
+                std::fs::set_permissions(&ipc_path, std::fs::Permissions::from_mode(0o666))
+            {
+                tracing::error!("ipc: cannot open {} to all users: {e}", ipc_path.display());
+            }
+        }
         tracing::info!("ipc: listening on {}", ipc_path.display());
 
         loop {
@@ -73,6 +90,7 @@ pub async fn run_ipc_server(
                                 metrics:    Arc::clone(&metrics),
                                 reindex_tx: reindex_tx.clone(),
                                 extensions: Arc::clone(&extensions),
+                                shared,
                             };
                             tokio::spawn(handle_connection(stream, ctx));
                         }
@@ -88,12 +106,31 @@ pub async fn run_ipc_server(
         use tokio::net::windows::named_pipe::{PipeMode, ServerOptions};
 
         let pipe_name: String = ipc_path.to_string_lossy().into_owned();
+        let security = if shared {
+            match pipe_security::AllUsers::new() {
+                Ok(s) => Some(s),
+                Err(e) => {
+                    tracing::error!("ipc: cannot build the pipe's access list: {e}");
+                    return;
+                }
+            }
+        } else {
+            None
+        };
+        let mut first = true;
 
         loop {
-            let server = match ServerOptions::new()
-                .pipe_mode(PipeMode::Byte)
-                .create(&pipe_name)
-            {
+            let mut options = ServerOptions::new();
+            options.pipe_mode(PipeMode::Byte);
+            // Fails if someone else already made a pipe of this name, which
+            // could otherwise answer the daemon's clients.
+            options.first_pipe_instance(first && shared);
+            let created = match &security {
+                Some(sec) => sec.create(&options, &pipe_name),
+                None => options.create(&pipe_name),
+            };
+            first = false;
+            let server = match created {
                 Ok(s) => s,
                 Err(e) => {
                     tracing::error!("ipc: failed to create named pipe: {e}");
@@ -116,6 +153,7 @@ pub async fn run_ipc_server(
                                 metrics:    Arc::clone(&metrics),
                                 reindex_tx: reindex_tx.clone(),
                                 extensions: Arc::clone(&extensions),
+                                shared,
                             };
                             tokio::spawn(handle_connection(server, ctx));
                         }
@@ -141,6 +179,7 @@ struct ConnCtx {
     metrics: Arc<IndexMetrics>,
     reindex_tx: watch::Sender<bool>,
     extensions: Arc<Extensions>,
+    shared: bool,
 }
 
 // ---------------------------------------------------------------------------
@@ -236,11 +275,33 @@ async fn dispatch(req: IpcRequest, request_id: u128, ctx: &ConnCtx) -> IpcEnvelo
         } => search_handler(request_id, query, limit, offset, ctx).await,
         IpcRequest::Stats => stats_handler(request_id, ctx),
         IpcRequest::Reindex { full } => reindex_handler(request_id, full, ctx),
+        IpcRequest::Open { .. } | IpcRequest::Extension { .. } if ctx.shared => {
+            error_response(request_id, "NOT_ALLOWED", SHARED_REFUSAL)
+        }
         IpcRequest::Open { path } => open_handler(request_id, path, ctx).await,
         IpcRequest::Extension { name, command } => {
             extension_handler(request_id, &name, command, &ctx.extensions).await
         }
+        IpcRequest::Roots => roots_handler(request_id, ctx).await,
     }
+}
+
+const SHARED_REFUSAL: &str = "fsd runs as a system service for all users, so it does not open files or run extension commands for a client; open the file yourself";
+
+async fn roots_handler(request_id: u128, ctx: &ConnCtx) -> IpcEnvelope {
+    let roots = ctx
+        .cfg
+        .read()
+        .await
+        .watch_paths
+        .iter()
+        .map(|p| p.to_string_lossy().into_owned())
+        .collect();
+    let crawled = ctx.metrics.last_crawl_secs.load(Ordering::Relaxed) != 0;
+    IpcEnvelope::new(
+        request_id,
+        IpcMessage::Response(IpcResponse::Roots(RootsResponse { roots, crawled })),
+    )
 }
 
 async fn search_handler(
@@ -321,7 +382,7 @@ async fn open_handler(request_id: u128, path: String, ctx: &ConnCtx) -> IpcEnvel
     }
 
     if path.contains("!/") {
-        match super::rest::extract_and_open(&path).await {
+        match super::open::extract_and_open(&path).await {
             Ok(temp) => IpcEnvelope::new(
                 request_id,
                 IpcMessage::Response(IpcResponse::Open {
@@ -332,7 +393,7 @@ async fn open_handler(request_id: u128, path: String, ctx: &ConnCtx) -> IpcEnvel
             Err(e) => error_response(request_id, "OPEN_ERROR", e),
         }
     } else {
-        match super::rest::open_with_os(&path).await {
+        match super::open::open_with_os(&path).await {
             Ok(()) => IpcEnvelope::new(
                 request_id,
                 IpcMessage::Response(IpcResponse::Open {
@@ -365,6 +426,72 @@ async fn extension_handler(
         ),
         Ok(Err(e)) => error_response(request_id, "EXTENSION_ERROR", format!("{e:#}")),
         Err(e) => error_response(request_id, "EXTENSION_ERROR", e.to_string()),
+    }
+}
+
+/// The named pipe's access list when the daemon serves every user. Without
+/// one, a pipe made by a service gets the default list, which lets other
+/// users read but not write, so they could not send a request.
+#[cfg(windows)]
+mod pipe_security {
+    use tokio::net::windows::named_pipe::{NamedPipeServer, ServerOptions};
+    use windows::core::w;
+    use windows::Win32::Foundation::{LocalFree, HLOCAL};
+    use windows::Win32::Security::Authorization::{
+        ConvertStringSecurityDescriptorToSecurityDescriptorW, SDDL_REVISION_1,
+    };
+    use windows::Win32::Security::{PSECURITY_DESCRIPTOR, SECURITY_ATTRIBUTES};
+
+    /// SYSTEM and administrators: full control. Signed-in users: read and
+    /// write, which is what a client's open asks for.
+    const SDDL: windows::core::PCWSTR = w!("D:P(A;;GA;;;SY)(A;;GA;;;BA)(A;;GRGW;;;AU)");
+
+    pub(super) struct AllUsers(PSECURITY_DESCRIPTOR);
+
+    // The descriptor is only read after it is built.
+    unsafe impl Send for AllUsers {}
+    unsafe impl Sync for AllUsers {}
+
+    impl AllUsers {
+        pub(super) fn new() -> windows::core::Result<Self> {
+            let mut sd = PSECURITY_DESCRIPTOR::default();
+            unsafe {
+                ConvertStringSecurityDescriptorToSecurityDescriptorW(
+                    SDDL,
+                    SDDL_REVISION_1,
+                    &mut sd,
+                    None,
+                )?;
+            }
+            Ok(Self(sd))
+        }
+
+        pub(super) fn create(
+            &self,
+            options: &ServerOptions,
+            name: &str,
+        ) -> std::io::Result<NamedPipeServer> {
+            let mut attrs = SECURITY_ATTRIBUTES {
+                nLength: std::mem::size_of::<SECURITY_ATTRIBUTES>() as u32,
+                lpSecurityDescriptor: self.0 .0,
+                bInheritHandle: false.into(),
+            };
+            // SAFETY: `attrs` and the descriptor it points to outlive the call.
+            unsafe {
+                options.create_with_security_attributes_raw(
+                    name,
+                    &mut attrs as *mut SECURITY_ATTRIBUTES as *mut std::ffi::c_void,
+                )
+            }
+        }
+    }
+
+    impl Drop for AllUsers {
+        fn drop(&mut self) {
+            unsafe {
+                let _ = LocalFree(HLOCAL(self.0 .0 as _));
+            }
+        }
     }
 }
 

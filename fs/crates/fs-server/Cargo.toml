@@ -7,6 +7,14 @@ edition = "2021"
 name = "fsd"
 path = "src/main.rs"
 
+# The APIs fsd serves. A build without one ignores its `[api]` switch and says
+# so at startup; `grpc` also drops tonic and the bundled protoc from the build.
+[features]
+default = ["rest", "grpc", "ipc"]
+rest    = ["dep:axum", "dep:tower", "dep:tower-http", "dep:hyper"]
+grpc    = ["dep:tonic", "dep:tonic-reflection", "dep:prost", "dep:tonic-build", "dep:protoc-bin-vendored"]
+ipc     = []
+
 [dependencies]
 # Workspace shared
 tokio              = { workspace = true }
@@ -38,15 +46,15 @@ notify-debouncer-full = "0.3"
 tantivy = "0.22"
 
 # gRPC
-tonic            = "0.11"
-tonic-reflection = "0.11"
-prost            = "0.12"
+tonic            = { version = "0.11", optional = true }
+tonic-reflection = { version = "0.11", optional = true }
+prost            = { version = "0.12", optional = true }
 
 # REST
-axum       = { version = "0.7", features = ["macros"] }
-tower      = "0.4"
-tower-http = { version = "0.5", features = ["cors", "trace"] }
-hyper      = { version = "1", features = ["full"] }
+axum       = { version = "0.7", features = ["macros"], optional = true }
+tower      = { version = "0.4", features = ["util"], optional = true }
+tower-http = { version = "0.5", features = ["cors", "trace"], optional = true }
+hyper      = { version = "1", features = ["full"], optional = true }
 
 # Fuzzy matching
 nucleo = "0.5"
@@ -102,6 +110,7 @@ windows-service = "0.6"
 windows = { version = "0.54", features = [
     "Win32_Foundation",
     "Win32_Security",
+    "Win32_Security_Authorization",
     "Win32_Storage_FileSystem",
     "Win32_System_IO",
     "Win32_System_Ioctl",
@@ -110,8 +119,8 @@ windows = { version = "0.54", features = [
 ] }
 
 [build-dependencies]
-tonic-build         = "0.11"
-protoc-bin-vendored = "3"
+tonic-build         = { version = "0.11", optional = true }
+protoc-bin-vendored = { version = "3", optional = true }
 
 [dev-dependencies]
 tempfile   = "3"
@@ -127,6 +136,11 @@ harness = false
 [[bench]]
 name    = "memory_search"
 harness = false
+required-features = ["rest", "ipc"]
+
+[[test]]
+name = "integration"
+required-features = ["rest"]
 
 [[bench]]
 name    = "archive"

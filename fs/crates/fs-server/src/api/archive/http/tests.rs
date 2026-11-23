@@ -1,4 +1,5 @@
 use super::*;
+use crate::api::archive::{archive_id, ArchiveRegistry};
 use std::io::Write as _;
 use std::path::PathBuf;
 use std::sync::Arc;

@@ -18,13 +18,15 @@ cargo check --workspace
 
 # Lint (must pass clean)
 cargo clippy --workspace -- -D warnings
+cargo clippy -p fs-server --all-targets --no-default-features -- -D warnings
 
 # Docs
 cargo doc --no-deps --workspace
 ```
 
-All crates build on Windows, Linux and macOS. Only the Windows Service
-integration in `fs-server` (`service.rs`, `windows-service`) is Windows-only.
+All crates build on Windows, Linux and macOS. `fsd install-service` registers
+with the Windows SCM (`windows-service`), systemd or launchd (`service.rs`).
+The systemd and launchd code compiles on every OS, so a Windows check covers it.
 rar2zip and sftpd are executable extensions that `fsd` discovers under
 `extensions_dir` and configures from `[extensions.<name>]`. RAR extraction uses the `unrar`
 crate, which compiles the bundled RARLAB UnRAR C++ source, so building
@@ -74,6 +76,7 @@ crates/
   fs-server/src/
     main.rs       daemon and offline commands (binary `fsd`)
     daemon.rs     startup orchestration, graceful shutdown
+    service.rs    install-service: Windows SCM, systemd, launchd
     config.rs     TOML config, hot-reload
     watcher/      notify wrapper; live/ native backends (ReadDirectoryChangesW, USN)
     indexer/      crawler, archive (ZIP), content, exclusions
@@ -150,6 +153,10 @@ disk. The commit loop in `daemon.rs` runs every `commit_interval_secs`.
   (`#[cfg(target_os = "windows")]`).
 - `tonic` / `prost` - gRPC. Uses a bundled `protoc`; stubs
   regenerate during `cargo build` via `build.rs`.
+- fs-server's APIs are cargo features, all on by default: `rest` (axum,
+  also the archive routes and `/fs/*`), `grpc` (tonic, protoc) and `ipc`.
+  Code for one goes behind `#[cfg(feature = "...")]`; the indexer, stores
+  and `ArchiveRegistry` must build with none. CI lints each alone and none.
 
 ## Gotchas
 
@@ -162,6 +169,10 @@ disk. The commit loop in `daemon.rs` runs every `commit_interval_secs`.
 - `rar2zip` job recovery runs on startup: any job stuck in `converting` or
   `transferring` is reset to `pending`. If you add a new non-terminal state,
   update `queue::recover_stale`.
+- A system service (`daemon --service`: every Windows service, `--system`
+  units elsewhere) opens its IPC socket or pipe to all local users, and
+  `ipc_server` refuses requests that act as the daemon's account (`Open`,
+  extension commands). A new IPC request that does that must be refused too.
 - Config hot-reload is additive for watch paths. Removed paths are not
   un-watched until restart.
 - Extension executables must keep stdout for the protocol and log to stderr.

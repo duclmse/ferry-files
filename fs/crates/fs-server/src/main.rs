@@ -1,6 +1,7 @@
 use fs_server::config;
 use fs_server::daemon;
 use fs_server::extensions;
+use fs_server::service;
 use fs_server::zidx::{ZidxBuilder, ZidxIndex};
 
 use clap::{Parser, Subcommand};
@@ -19,7 +20,8 @@ struct Cli {
 enum Command {
     /// Start the search daemon
     Daemon {
-        /// Run as a Windows Service (called by the SCM, not directly)
+        /// Started by the system's service manager for every user (set by
+        /// install-service --system; on Windows the SCM starts it this way)
         #[arg(long)]
         service: bool,
     },
@@ -30,17 +32,47 @@ enum Command {
     /// Generate a token for the REST file-change routes
     GenerateToken,
 
-    /// Install fsd as a Windows Service (Windows only)
-    InstallService,
+    /// Run fsd as a service: Windows service, systemd unit or launchd job.
+    /// Starts it now and at every boot (--system) or sign-in (--user)
+    InstallService {
+        #[command(flatten)]
+        scope: ScopeArgs,
+    },
 
-    /// Uninstall the fsd Windows Service (Windows only)
-    UninstallService,
+    /// Stop the service and remove it
+    UninstallService {
+        #[command(flatten)]
+        scope: ScopeArgs,
+    },
 
     /// Create or inspect .zidx index files
     Zidx {
         #[command(subcommand)]
         action: ZidxAction,
     },
+}
+
+#[derive(clap::Args)]
+struct ScopeArgs {
+    /// For your user only, while you are signed in (default on Linux and macOS)
+    #[arg(long, conflicts_with = "system")]
+    user: bool,
+    /// For the whole computer, from boot; needs root or an administrator
+    /// (default and only choice on Windows)
+    #[arg(long)]
+    system: bool,
+}
+
+impl ScopeArgs {
+    fn scope(&self) -> service::Scope {
+        if self.system {
+            service::Scope::System
+        } else if self.user {
+            service::Scope::User
+        } else {
+            service::Scope::default_for_os()
+        }
+    }
 }
 
 #[derive(Subcommand)]
@@ -120,74 +152,47 @@ async fn main() {
             }
         },
         Command::Daemon { service } => {
+            if service {
+                // A service starts in `/` or System32; relative paths in the
+                // config mean the config's own folder.
+                if let Some(dir) = cli
+                    .config
+                    .canonicalize()
+                    .ok()
+                    .and_then(|c| c.parent().map(|d| d.to_path_buf()))
+                {
+                    let _ = std::env::set_current_dir(dir);
+                }
+            }
             #[cfg(target_os = "windows")]
             if service {
-                if let Err(e) = fs_server::service::windows::run_as_service(cli.config) {
+                if let Err(e) = service::windows::run_as_service(cli.config) {
                     eprintln!("service dispatcher error: {e}");
                     std::process::exit(1);
                 }
                 return;
             }
-            #[cfg(not(target_os = "windows"))]
-            if service {
-                eprintln!("--service is only supported on Windows");
-                std::process::exit(1);
-            }
-            if let Err(e) = daemon::run(cli.config).await {
+            let opts = daemon::RunOptions {
+                system_service: service,
+            };
+            if let Err(e) = daemon::run(cli.config, opts).await {
                 eprintln!("daemon error: {e}");
                 std::process::exit(1);
             }
         }
-        Command::InstallService => {
-            #[cfg(target_os = "windows")]
-            {
-                let exe_path = match std::env::current_exe() {
-                    Ok(p) => p,
-                    Err(e) => {
-                        eprintln!("cannot determine exe path: {e}");
-                        std::process::exit(1);
-                    }
-                };
-                let config_path = match cli.config.canonicalize() {
-                    Ok(p) => p,
-                    Err(e) => {
-                        eprintln!("cannot resolve config path: {e}");
-                        std::process::exit(1);
-                    }
-                };
-                if let Err(e) = fs_server::service::windows::install(&exe_path, &config_path) {
-                    eprintln!("install-service error: {e}");
-                    std::process::exit(1);
-                }
-                println!(
-                    "Service '{}' installed.",
-                    fs_server::service::windows::SERVICE_NAME
-                );
-            }
-            #[cfg(not(target_os = "windows"))]
-            {
-                eprintln!("install-service is only supported on Windows");
+        Command::InstallService { scope } => {
+            if let Err(e) = install_service(&cli.config, scope.scope()) {
+                eprintln!("install-service: {e}");
                 std::process::exit(1);
             }
         }
-        Command::UninstallService => {
-            #[cfg(target_os = "windows")]
-            {
-                if let Err(e) = fs_server::service::windows::uninstall() {
-                    eprintln!("uninstall-service error: {e}");
-                    std::process::exit(1);
-                }
-                println!(
-                    "Service '{}' uninstalled.",
-                    fs_server::service::windows::SERVICE_NAME
-                );
-            }
-            #[cfg(not(target_os = "windows"))]
-            {
-                eprintln!("uninstall-service is only supported on Windows");
+        Command::UninstallService { scope } => match service::uninstall(scope.scope()) {
+            Ok(()) => println!("Service '{}' stopped and removed.", service::SERVICE_NAME),
+            Err(e) => {
+                eprintln!("uninstall-service: {e}");
                 std::process::exit(1);
             }
-        }
+        },
         Command::Zidx { action } => {
             let result = match action {
                 ZidxAction::Build { zip, out } => run_zidx_build(zip, out),
@@ -200,6 +205,38 @@ async fn main() {
             }
         }
     }
+}
+
+/// Checks the config before handing it to a service manager, which would
+/// otherwise only show a service that keeps failing to start.
+fn install_service(config_path: &std::path::Path, scope: service::Scope) -> anyhow::Result<()> {
+    let exe = std::env::current_exe()?;
+    let config_path = config_path
+        .canonicalize()
+        .map_err(|e| anyhow::anyhow!("cannot find the config {}: {e}", config_path.display()))?;
+    #[cfg(windows)]
+    let config_path = config::without_verbatim(config_path);
+    let cfg = config::load(&config_path)?;
+    let errors = config::validate(&cfg);
+    if !errors.is_empty() {
+        anyhow::bail!("the config has errors:\n  {}", errors.join("\n  "));
+    }
+    let installed = service::install(&exe, &config_path, scope)?;
+    let how = match scope {
+        service::Scope::User => "for this user",
+        service::Scope::System => "for all users",
+    };
+    println!(
+        "Service '{}' installed {how} and started.",
+        service::SERVICE_NAME
+    );
+    if let Some(file) = installed.file {
+        println!("  {}", file.display());
+    }
+    for note in installed.notes {
+        println!("  {note}");
+    }
+    Ok(())
 }
 
 // ---------------------------------------------------------------------------

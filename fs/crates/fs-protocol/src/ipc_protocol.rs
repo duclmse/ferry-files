@@ -11,7 +11,7 @@ use serde::{Deserialize, Serialize};
 // ---------------------------------------------------------------------------
 
 pub const MAGIC: [u8; 4] = *b"ZFS1";
-pub const PROTOCOL_VERSION: u16 = 3;
+pub const PROTOCOL_VERSION: u16 = 4;
 pub const MAX_FRAME_BYTES: u32 = 16 * 1024 * 1024; // 16 MiB
 
 // ---------------------------------------------------------------------------
@@ -65,6 +65,9 @@ pub enum IpcRequest {
         name: String,
         command: String,
     },
+    /// The folders the daemon indexes, so a client can tell whether a search
+    /// under some folder can be answered from the index.
+    Roots,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -85,6 +88,7 @@ pub enum IpcResponse {
     Extension {
         output: String,
     },
+    Roots(RootsResponse),
 }
 
 // ---------------------------------------------------------------------------
@@ -114,6 +118,15 @@ pub struct SearchResponse {
     pub limit: u32,
     pub offset: u32,
     pub capped: bool,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct RootsResponse {
+    /// Watch paths as the index stores them (native separators).
+    pub roots: Vec<String>,
+    /// False until a full crawl has finished once; until then the index
+    /// misses files and a client should not trust an empty result.
+    pub crawled: bool,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -218,6 +231,52 @@ mod tests {
             env.message,
             IpcMessage::Request(IpcRequest::Stats)
         ));
+    }
+
+    /// Ferry Files speaks this protocol with its own copy of the types
+    /// (`src-tauri/src/fsd/wire.rs`) and checks the same bytes; change both.
+    #[test]
+    fn bytes_other_clients_rely_on() {
+        let frame = |m| encode_frame(&IpcEnvelope::new(1, m)).unwrap();
+        assert_eq!(
+            frame(IpcMessage::Request(IpcRequest::Roots)),
+            b"\x08\0\0\0ZFS1\x04\x01\x00\x05"
+        );
+        assert_eq!(
+            frame(IpcMessage::Request(IpcRequest::Search {
+                query: "a".into(),
+                limit: 2,
+                offset: 3,
+            })),
+            b"\x0c\0\0\0ZFS1\x04\x01\x00\x00\x01a\x02\x03"
+        );
+        assert_eq!(
+            frame(IpcMessage::Response(IpcResponse::Roots(RootsResponse {
+                roots: vec!["C".into()],
+                crawled: true,
+            }))),
+            b"\x0c\0\0\0ZFS1\x04\x01\x01\x06\x01\x01C\x01"
+        );
+    }
+
+    #[test]
+    fn round_trip_roots() {
+        let env = round_trip(IpcMessage::Request(IpcRequest::Roots));
+        assert!(matches!(
+            env.message,
+            IpcMessage::Request(IpcRequest::Roots)
+        ));
+        let env = round_trip(IpcMessage::Response(IpcResponse::Roots(RootsResponse {
+            roots: vec![r"C:\Users".into()],
+            crawled: true,
+        })));
+        match env.message {
+            IpcMessage::Response(IpcResponse::Roots(r)) => {
+                assert_eq!(r.roots, [r"C:\Users"]);
+                assert!(r.crawled);
+            }
+            other => panic!("unexpected {other:?}"),
+        }
     }
 
     #[test]
