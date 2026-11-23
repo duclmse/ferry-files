@@ -301,6 +301,35 @@ fn drives_here() -> Vec<(String, String)> {
         .collect()
 }
 
+/// Moves `from` to `to` on one disk, never over something already at `to`: on Windows the
+/// system refuses (MoveFileExW without MOVEFILE_REPLACE_EXISTING); elsewhere the caller has just
+/// checked that `to` is free, under the device's lock. Fails across disks; see `other_disk`.
+pub fn move_no_replace(from: &Path, to: &Path) -> std::io::Result<()> {
+    #[cfg(windows)]
+    {
+        use windows::Win32::Storage::FileSystem::{MoveFileExW, MOVE_FILE_FLAGS};
+        let wide = |p: &Path| -> Vec<u16> { p.as_os_str().to_string_lossy().encode_utf16().chain([0]).collect() };
+        let (f, t) = (wide(from), wide(to));
+        unsafe { MoveFileExW(windows::core::PCWSTR(f.as_ptr()), windows::core::PCWSTR(t.as_ptr()), MOVE_FILE_FLAGS(0)) }
+            // The Win32 error code is the HRESULT's low 16 bits.
+            .map_err(|e| std::io::Error::from_raw_os_error((e.code().0 as u32 & 0xFFFF) as i32))
+    }
+    #[cfg(not(windows))]
+    {
+        std::fs::rename(from, to)
+    }
+}
+
+/// Whether a move failed only because the two places are on different disks, so the files have
+/// to be copied instead: EXDEV on macOS and Linux, ERROR_NOT_SAME_DEVICE on Windows.
+pub fn other_disk(e: &std::io::Error) -> bool {
+    #[cfg(windows)]
+    const CODE: i32 = 17;
+    #[cfg(not(windows))]
+    const CODE: i32 = 18;
+    e.kind() == std::io::ErrorKind::CrossesDevices || e.raw_os_error() == Some(CODE)
+}
+
 /// The system's Trash, as used here: on the Mac through NSFileManager, since the default asks
 /// the Finder through AppleScript, which can bring up a permission prompt.
 pub fn trash_context() -> trash::TrashContext {

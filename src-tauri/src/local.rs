@@ -181,6 +181,14 @@ impl Transport for Local {
         r.map_err(|e| io(path, e))
     }
 
+    fn move_to(&self, from: &str, to: &str) -> Result<bool> {
+        match crate::platform::move_no_replace(&native(from), &native(to)) {
+            Ok(()) => Ok(true),
+            Err(e) if crate::platform::other_disk(&e) => Ok(false),
+            Err(e) => Err(io(from, e)),
+        }
+    }
+
     fn to_trash(&self, path: &str) -> Result<bool> {
         crate::platform::to_trash(&native(path)).map_err(DevError::Msg)
     }

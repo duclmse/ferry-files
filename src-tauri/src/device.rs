@@ -94,6 +94,12 @@ pub trait Transport: Send + Sync {
         Ok(false)
     }
     fn make_dir(&self, path: &str) -> Result<()>;
+    /// Moves a file or folder to `to`, a path that isn't taken, in one step, as a file system does
+    /// on one disk: nothing is copied. Ok(false) when it can't (another disk, or a transport with
+    /// no such move), and nothing changed: the caller copies and removes instead.
+    fn move_to(&self, _from: &str, _to: &str) -> Result<bool> {
+        Ok(false)
+    }
     /// Renames a file or folder within its folder. The caller has checked the new name is free.
     fn rename(&self, path: &str, new_name: &str) -> Result<()>;
     /// Each storage's free and total bytes, when the transport can tell.
@@ -409,6 +415,32 @@ impl Device {
         let backup = self.backup(&path, "deleted")?;
         self.t.delete(&path, false)?;
         Ok(Some(backup.display().to_string()))
+    }
+
+    /// Moves a file or folder to `to` in one step where the transport can (on one of the
+    /// computer's disks). Nothing is copied or removed, so there's nothing to back up. Refuses
+    /// when `to` is taken. Ok(false): it can't be done that way here, and nothing changed.
+    pub fn move_to(&self, from: &str, to: &str) -> Result<bool> {
+        let (from, to) = (norm(from)?, norm(to)?);
+        if to == from || to.starts_with(&format!("{from}/")) {
+            return err("A folder can't go inside itself.");
+        }
+        let _g = self.lock();
+        if self.t.stat(&from)?.is_none() {
+            return err(format!("No such file or folder: {from}"));
+        }
+        if self.t.stat(&to)?.is_some() {
+            return Err(DevError::Conflict(format!("{} already exists there.", basename(&to))));
+        }
+        let parent = dirname(&to);
+        if !self.t.stat(&parent)?.is_some_and(|e| e.dir) {
+            return err(format!("Folder doesn't exist: {parent}"));
+        }
+        let moved = self.t.move_to(&from, &to)?;
+        if moved {
+            self.t.refresh();
+        }
+        Ok(moved)
     }
 
     /// Moves a file or folder to the Trash; see `Transport::to_trash`. Ok(false): there's no Trash

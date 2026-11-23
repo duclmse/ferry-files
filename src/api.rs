@@ -74,6 +74,9 @@ pub struct TransferReport {
     /// What the copy made at the target's top level that wasn't there before.
     #[serde(default)]
     pub made: Vec<String>,
+    /// Items moved whole in one step on one disk (not counted in `copied`).
+    #[serde(default)]
+    pub moved: u32,
 }
 
 /// A book's info, for the library.

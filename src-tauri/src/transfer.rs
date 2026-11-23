@@ -28,6 +28,8 @@ pub(super) struct TransferReport {
     pub(super) already: u32,
     /// Syncing as a mirror: items removed from the target (each file backed up first).
     removed: u32,
+    /// Items moved whole in one step, on one of the computer's disks (not counted in `copied`).
+    moved: u32,
     /// What the transfer made at the target's top level that wasn't there before (a file, or a
     /// folder with everything in it): what undoing the copy removes, or the move moves back.
     made: Vec<String>,
@@ -188,8 +190,24 @@ pub(super) fn run_transfer(
             continue;
         }
         let target = device::join(to_dir, device::basename(p));
-        if b.stat(&target).map_err(msg)?.is_none() {
-            new.push(target);
+        let free = b.stat(&target).map_err(msg)?.is_none();
+        if free {
+            new.push(target.clone());
+        }
+        // Moving to a free place on the same disk: the file system moves it whole, at once, as
+        // Finder and File Explorer do. Otherwise (another disk, a phone) it's copied, then removed.
+        if same && opts.moving && free && !stop.load(Ordering::Relaxed) {
+            match a.move_to(p, &target) {
+                Ok(true) => {
+                    report.moved += 1;
+                    continue;
+                }
+                Ok(false) => {}
+                Err(e) => {
+                    report.skipped.push((device::basename(p).to_string(), e.to_string()));
+                    continue;
+                }
+            }
         }
         walk(a, p, to_dir, &mut items)?;
     }
@@ -715,12 +733,20 @@ mod tests {
         // Into itself is refused.
         let r = super::run_transfer(&mac, &mac, true, 1, &paths, &s(&src.join("book/inner")), super::Opts { moving: false, resume: false, verify: true, replace: false }, &stop, |_| {}).unwrap();
         assert_eq!((r.copied, r.skipped.len()), (0, 1));
-        // Move to a fresh folder: originals go (backed up), emptied folders too.
+        // Move to a fresh folder on the same disk: moved whole, nothing copied or backed up.
         fs::create_dir(root.join("moved")).unwrap();
         let r = super::run_transfer(&mac, &mac, true, 1, &paths, &s(&root.join("moved")), super::Opts { moving: true, resume: false, verify: true, replace: false }, &stop, |_| {}).unwrap();
-        assert_eq!((r.copied, r.skipped.len(), r.backups.len()), (2, 0, 2));
+        assert_eq!((r.moved, r.copied, r.skipped.len(), r.backups.len()), (1, 0, 0, 0));
+        assert_eq!(r.made, vec![s(&root.join("moved/book"))]);
         assert!(!src.join("book").exists());
         assert_eq!(fs::read(root.join("moved/book/inner/b.txt")).unwrap(), b"bb");
+        // Into a folder that has one by that name: merged file by file (a.txt is there, skipped).
+        fs::create_dir_all(root.join("merge/book")).unwrap();
+        fs::write(root.join("merge/book/a.txt"), b"there").unwrap();
+        let r = super::run_transfer(&mac, &mac, true, 1, &[s(&root.join("moved/book"))], &s(&root.join("merge")), super::Opts { moving: true, ..Default::default() }, &stop, |_| {}).unwrap();
+        assert_eq!((r.moved, r.copied, r.skipped.len()), (0, 1, 1));
+        assert_eq!(fs::read(root.join("merge/book/a.txt")).unwrap(), b"there");
+        assert_eq!(fs::read(root.join("moved/book/a.txt")).unwrap(), b"a", "the skipped original stays");
         for b in r.backups {
             fs::remove_file(b).unwrap();
         }

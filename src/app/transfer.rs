@@ -331,6 +331,11 @@ fn report_lines(work: &Work, r: &TransferReport) -> Vec<String> {
     let n = |c: u32| format!("{c} {}", if c == 1 { "file" } else { "files" });
     let mut lines = vec![match work {
         Work::Copy { replace: true, to_dir, .. } => format!("Replaced {} in {}. The files that were there are in Backups.", n(r.copied), to_dir),
+        Work::Copy { moving: true, to_dir, .. } if r.moved > 0 => {
+            let items = format!("{} {}", r.moved, if r.moved == 1 { "item" } else { "items" });
+            let files = if r.copied > 0 { format!(" and {}", n(r.copied)) } else { String::new() };
+            format!("Moved {items}{files} to {to_dir}.")
+        }
         Work::Copy { moving, to_dir, .. } => format!("{} {} to {}.", if *moving { "Moved" } else { "Copied" }, n(r.copied), to_dir),
         Work::Sync { from_dir, to_dir, .. } => {
             let removed = if r.removed > 0 { format!(", removed {} {}", r.removed, if r.removed == 1 { "item" } else { "items" }) } else { String::new() };
