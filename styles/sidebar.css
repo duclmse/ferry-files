@@ -193,6 +193,21 @@
   visibility: hidden;
 }
 
+/* Drag and drop: the folder a drop from a pane would go into. */
+.device.drop,
+.device.drop:hover,
+.tree-row.drop,
+.tree-row.drop:hover {
+  background: var(--accent);
+}
+
+.device.drop .name,
+.device.drop .kind,
+.tree-row.drop .item,
+.tree-row.drop .chev {
+  color: var(--accent-ink);
+}
+
 /* The whole row highlights, not only its name. */
 .device:hover,
 .tree-row:hover {

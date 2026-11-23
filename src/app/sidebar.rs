@@ -209,8 +209,12 @@ pub(super) fn Sidebar() -> impl IntoView {
             }
         });
         let fold_tip = move || if open.get() { "Hide folders" } else { "Show folders" };
+        // Items dragged from a pane drop at the top of its storage.
+        let (drag_over, drop) = place_drop_events(ctx, src, "/".into());
+        let key = place_key(src, "/");
         view! {
-            <div class="device">
+            <div class="device" class:drop=move || ctx.drop_at.with(|d| d.as_deref() == Some(key.as_str()))
+                on:dragover=drag_over on:drop=drop>
                 <button class="fold" class:none=!foldable disabled=!foldable title=fold_tip aria-label=fold_tip
                     aria-expanded=move || open.get().to_string()
                     on:click=move |_| {
@@ -603,9 +607,41 @@ fn TreeNode(
     // Nothing to show under it once listed and empty.
     let leaf = move || kids.with(|k| k.as_ref().is_some_and(Vec::is_empty));
     let fold_tip = move || if open.get() { "Hide folders" } else { "Show folders" };
+    // Items dragged from a pane drop into it; held over it a moment, a closed folder opens.
+    let (drag_over, drop) = place_drop_events(ctx, src, path.clone());
+    let key = StoredValue::new(place_key(src, &path));
+    let opening = StoredValue::new_local(None::<TimeoutHandle>);
+    let stop_opening = move || {
+        if let Some(t) = opening.try_update_value(Option::take).flatten() {
+            t.clear();
+        }
+    };
+    on_cleanup(stop_opening);
+    let drag_over = move |ev: web_sys::DragEvent| {
+        drag_over(ev);
+        let here = key.with_value(|k| ctx.drop_at.with_untracked(|d| d.as_deref() == Some(k.as_str())));
+        if !here || open.get_untracked() || opening.with_value(Option::is_some) {
+            return;
+        }
+        let t = set_timeout_with_handle(
+            move || {
+                let _ = opening.try_set_value(None);
+                let still = key.try_with_value(|k| ctx.drop_at.with_untracked(|d| d.as_deref() == Some(k.as_str()))).unwrap_or(false);
+                if still && !open.get_untracked() {
+                    open.set(true);
+                    list();
+                }
+            },
+            std::time::Duration::from_millis(700),
+        )
+        .ok();
+        opening.set_value(t);
+    };
     let title = tip.unwrap_or_else(|| path.clone());
     view! {
-        <div class=format!("tree-row {class}") style=format!("--depth: {depth}")>
+        <div class=format!("tree-row {class}") style=format!("--depth: {depth}")
+            class:drop=move || key.with_value(|k| ctx.drop_at.with(|d| d.as_deref() == Some(k.as_str())))
+            on:dragover=drag_over on:drop=drop on:dragleave=move |_| stop_opening()>
             <button class="twisty" class:none=leaf title=fold_tip aria-label=fold_tip
                 aria-expanded=move || open.get().to_string() on:click=toggle>
                 {chev(open.into())}

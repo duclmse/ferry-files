@@ -516,12 +516,33 @@ pub(super) fn drag_end(ctx: Ctx) -> impl Fn(web_sys::DragEvent) + 'static {
 /// within the same device and copies between devices, like Finder; ⌥ always copies, ⌘ always moves.
 pub(super) fn drop_events(ctx: Ctx, p: Pane, dir: Option<String>) -> (impl Fn(web_sys::DragEvent) + 'static, impl Fn(web_sys::DragEvent) + 'static) {
     let key = format!("{}:{}", p.id, dir.clone().unwrap_or_default());
-    let d = dir.clone();
+    drop_into(ctx, key, move || (p, p.src.get_untracked(), dir_or_cwd(p, &dir)))
+}
+
+/// Lets items dragged from a pane drop into a folder in the sidebar: `path` on `src`. The work
+/// shows in the active pane. Its key in `ctx.drop_at` is `place_key`'s.
+pub(super) fn place_drop_events(ctx: Ctx, src: Src, path: String) -> (impl Fn(web_sys::DragEvent) + 'static, impl Fn(web_sys::DragEvent) + 'static) {
+    drop_into(ctx, place_key(src, &path), move || (ctx.act(), src, path.clone()))
+}
+
+/// What `ctx.drop_at` holds while a drop would go into a sidebar folder.
+pub(super) fn place_key(src: Src, path: &str) -> String {
+    format!("side:{}:{path}", src.key())
+}
+
+/// Dragover and drop for a place to drop into, named `key` in `ctx.drop_at`. `to` says where the
+/// items would go: the pane that shows the work, the side and the folder.
+fn drop_into(
+    ctx: Ctx,
+    key: String,
+    to: impl Fn() -> (Pane, Src, String) + Clone + 'static,
+) -> (impl Fn(web_sys::DragEvent) + 'static, impl Fn(web_sys::DragEvent) + 'static) {
+    let to2 = to.clone();
     let over = move |ev: web_sys::DragEvent| {
         let Some((src, paths)) = ctx.drag.get_value() else { return };
-        let target = dir_or_cwd(p, &d);
+        let (_, to_src, target) = to2();
         // Not into one of the dragged folders, nor into the folder they're already in.
-        if !drop_allowed(src, p.src.get_untracked(), &paths, &target) {
+        if !drop_allowed(src, to_src, &paths, &target) {
             // Stop here, so the area behind (the pane, a column) doesn't take it instead.
             ev.stop_propagation();
             if let Some(dt) = ev.data_transfer() {
@@ -535,7 +556,7 @@ pub(super) fn drop_events(ctx: Ctx, p: Pane, dir: Option<String>) -> (impl Fn(we
         ev.prevent_default();
         ev.stop_propagation();
         if let Some(dt) = ev.data_transfer() {
-            dt.set_drop_effect(if moves(&ev, src, p.src.get_untracked()) { "move" } else { "copy" });
+            dt.set_drop_effect(if moves(&ev, src, to_src) { "move" } else { "copy" });
         }
         if ctx.drop_at.get_untracked().as_deref() != Some(key.as_str()) {
             ctx.drop_at.set(Some(key.clone()));
@@ -546,8 +567,7 @@ pub(super) fn drop_events(ctx: Ctx, p: Pane, dir: Option<String>) -> (impl Fn(we
         ev.stop_propagation();
         ctx.drop_at.set(None);
         let Some((src, paths)) = ctx.drag.write_value().take() else { return };
-        let to_src = p.src.get_untracked();
-        let target = dir_or_cwd(p, &dir);
+        let (p, to_src, target) = to();
         if !drop_allowed(src, to_src, &paths, &target) {
             return;
         }

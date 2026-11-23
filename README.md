@@ -33,7 +33,8 @@ own files and disks, with tools for EPUB books in particular.
     unpacked, up to 64 MB.
 - **Files**: copy, move, rename, delete, new file or folder, upload and
   download. Use the right-click menu, F5/F6, ⌘C/⌘X/⌘V (shared with Finder) or
-  drag and drop. Copies merge folders and never replace a file, with progress
+  drag and drop (onto a pane, or a folder or device in the sidebar, which opens
+  when held over). Copies merge folders and never replace a file, with progress
   and Cancel.
 - **Sync** a folder to the other pane, with three modes: copy missing, update or
   mirror. It lists what it will do first, and pairs can be saved.
