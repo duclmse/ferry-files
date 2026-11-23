@@ -129,11 +129,11 @@ pub(super) async fn term_close(id: u32) -> Result<(), String> {
     Ok(())
 }
 
-#[cfg(test)]
+// The test runs `sh`.
+#[cfg(all(test, unix))]
 mod tests {
     use super::*;
 
-    #[cfg(unix)]
     #[test]
     fn runs_a_shell_in_a_terminal() {
         let mut c = std::process::Command::new("sh");
