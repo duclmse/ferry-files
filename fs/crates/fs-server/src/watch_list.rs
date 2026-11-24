@@ -88,10 +88,15 @@ impl WatchList {
         paths.push(path.clone());
         if let Some(file) = source {
             let gone = absorbed.clone();
-            edit_file(file, move |entries| {
-                entries.retain(|e| !gone.contains(&resolved(Path::new(e))));
-                entries.push(path.to_string_lossy().into_owned());
-            })
+            let tables = absorbed.clone();
+            edit_file(
+                file,
+                move |entries| {
+                    entries.retain(|e| !gone.contains(&resolved(Path::new(e))));
+                    entries.push(path.to_string_lossy().into_owned());
+                },
+                tables,
+            )
             .await?;
         }
         let mut outcome = self.store(paths).await;
@@ -110,9 +115,14 @@ impl WatchList {
         };
         let gone = paths.remove(at);
         if let Some(file) = source {
-            edit_file(file, move |entries| {
-                entries.retain(|e| resolved(Path::new(e)) != target);
-            })
+            let tables = vec![target.clone()];
+            edit_file(
+                file,
+                move |entries| {
+                    entries.retain(|e| resolved(Path::new(e)) != target);
+                },
+                tables,
+            )
             .await?;
         }
         if forget {
@@ -138,7 +148,10 @@ impl WatchList {
     }
 
     async fn store(&self, paths: Vec<PathBuf>) -> Outcome {
-        self.config.write().await.watch_paths = paths.clone();
+        let mut cfg = self.config.write().await;
+        cfg.watch.retain(|r| paths.contains(&r.path));
+        cfg.watch_paths = paths.clone();
+        drop(cfg);
         Outcome {
             watch_paths: paths,
             changed: true,
@@ -169,14 +182,16 @@ fn folder(path: &str) -> Result<PathBuf, WatchListError> {
     Ok(resolved(p))
 }
 
-/// Rewrites `watch_paths` in `file` with `change`, leaving the rest as it is.
+/// Rewrites `watch_paths` in `file` with `change`, and drops the `[[watch]]`
+/// tables of `drop_tables`, leaving the rest as it is.
 async fn edit_file(
     file: PathBuf,
     change: impl FnOnce(&mut Vec<String>) + Send + 'static,
+    drop_tables: Vec<PathBuf>,
 ) -> Result<(), WatchListError> {
     tokio::task::spawn_blocking(move || {
         let text = std::fs::read_to_string(&file).map_err(|e| err(&file, e))?;
-        let edited = edit_text(&text, change).map_err(|e| err(&file, e))?;
+        let edited = edit_text(&text, change, &drop_tables).map_err(|e| err(&file, e))?;
         std::fs::write(&file, edited).map_err(|e| err(&file, e))
     })
     .await
@@ -187,8 +202,21 @@ fn err(file: &Path, e: impl std::fmt::Display) -> WatchListError {
     WatchListError::Config(format!("{}: {e}", file.display()))
 }
 
-fn edit_text(text: &str, change: impl FnOnce(&mut Vec<String>)) -> Result<String, String> {
+fn edit_text(
+    text: &str,
+    change: impl FnOnce(&mut Vec<String>),
+    drop_tables: &[PathBuf],
+) -> Result<String, String> {
     let mut doc: toml_edit::DocumentMut = text.parse().map_err(|e| format!("{e}"))?;
+    if let Some(tables) = doc
+        .get_mut("watch")
+        .and_then(|i| i.as_array_of_tables_mut())
+    {
+        tables.retain(|t| {
+            let path = t.get("path").and_then(|v| v.as_str());
+            !path.is_some_and(|p| drop_tables.contains(&resolved(Path::new(p))))
+        });
+    }
     let mut entries: Vec<String> = match doc.get("watch_paths") {
         None => Vec::new(),
         Some(item) => item
@@ -260,12 +288,12 @@ mod tests {
     #[test]
     fn the_edit_keeps_the_rest_of_the_file() {
         let text = "# top\nwatch_paths = ['/a'] # mine\ndata_dir = \"d\"\n\n[api]\n# port\nrest_port = 1\n";
-        let out = edit_text(text, |e| e.push(r"C:\x y".into())).unwrap();
+        let out = edit_text(text, |e| e.push(r"C:\x y".into()), &[]).unwrap();
         assert_eq!(
             out,
             "# top\nwatch_paths = [\n    '/a',\n    'C:\\x y',\n] # mine\ndata_dir = \"d\"\n\n[api]\n# port\nrest_port = 1\n"
         );
-        let back = edit_text(&out, |e| e.retain(|p| p == "/a")).unwrap();
+        let back = edit_text(&out, |e| e.retain(|p| p == "/a"), &[]).unwrap();
         assert_eq!(
             back,
             "# top\nwatch_paths = ['/a'] # mine\ndata_dir = \"d\"\n\n[api]\n# port\nrest_port = 1\n"
@@ -276,13 +304,22 @@ mod tests {
 
     #[test]
     fn a_file_without_watch_paths_gets_them() {
-        let out = edit_text("data_dir = \"d\"\n[api]\nrest_port = 1\n", |e| {
-            e.push("/w".into())
-        })
+        let out = edit_text(
+            "data_dir = \"d\"\n[api]\nrest_port = 1\n",
+            |e| e.push("/w".into()),
+            &[],
+        )
         .unwrap();
         let parsed: toml::Table = toml::from_str(&out).unwrap();
         assert_eq!(parsed["watch_paths"][0].as_str(), Some("/w"));
         assert_eq!(parsed["api"]["rest_port"].as_integer(), Some(1));
+    }
+
+    #[test]
+    fn removing_a_path_drops_its_watch_table() {
+        let text = "watch_paths = []\n\n[[watch]]\npath = '/nas'\nmode = 'poll'\n\n[[watch]]\npath = '/usb'\n";
+        let out = edit_text(text, |_| {}, &[PathBuf::from("/nas")]).unwrap();
+        assert_eq!(out, "watch_paths = []\n\n[[watch]]\npath = '/usb'\n");
     }
 
     #[tokio::test]

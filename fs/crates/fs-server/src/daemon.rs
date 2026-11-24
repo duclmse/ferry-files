@@ -1020,20 +1020,36 @@ async fn follow_watch_paths(
         });
         Some(stop)
     };
-    let mut roots = crawler.cfg.read().await.watch_paths.clone();
+    // Polled roots get no watcher: a timestamp scan every `poll_secs` finds
+    // their changes instead.
+    let watched = |online: &[PathBuf], polled: &[(PathBuf, u64)]| -> Vec<PathBuf> {
+        online
+            .iter()
+            .filter(|r| !polled.iter().any(|(p, _)| p == *r))
+            .cloned()
+            .collect()
+    };
+    let (mut roots, polled) = {
+        let c = crawler.cfg.read().await;
+        (c.watch_paths.clone(), c.polled())
+    };
     let mut online = present(&roots, &roots).await;
-    let mut running = start(&online);
+    let mut following = watched(&online, &polled);
+    let mut running = start(&following);
+    let mut polls = Polls::default();
     loop {
         tokio::select! {
             _ = shutdown.cancelled() => return,
             _ = tokio::time::sleep(WATCH_PATHS_POLL) => {}
         }
-        let (now, debounce_ms) = {
+        let (now, debounce_ms, polled) = {
             let c = crawler.cfg.read().await;
-            (c.watch_paths.clone(), c.watcher.debounce_ms)
+            (c.watch_paths.clone(), c.watcher.debounce_ms, c.polled())
         };
         let available = present(&now, &online).await;
-        if now == roots && available == online {
+        polls.run(&crawler, &polled, &available, &tx, &shutdown);
+        let follow = watched(&available, &polled);
+        if now == roots && available == online && follow == following {
             continue;
         }
         let added: Vec<PathBuf> = now.iter().filter(|p| !roots.contains(p)).cloned().collect();
@@ -1089,9 +1105,10 @@ async fn follow_watch_paths(
             .filter(|p| removed.contains(p))
             .collect();
         roots = now;
-        if available != online {
-            online = available;
-            if let Some(old) = std::mem::replace(&mut running, start(&online)) {
+        online = available;
+        if follow != following {
+            following = follow;
+            if let Some(old) = std::mem::replace(&mut running, start(&following)) {
                 tokio::spawn(async move {
                     tokio::time::sleep(Duration::from_millis(2 * debounce_ms + 500)).await;
                     old.cancel();
@@ -1140,6 +1157,135 @@ async fn follow_watch_paths(
         } else {
             crawler.spawn(Some(crawl), shutdown.clone());
         }
+    }
+}
+
+/// When each polled root was last scanned, from when, and whether a scan of
+/// it is running.
+#[derive(Default)]
+struct Polls {
+    roots: std::collections::HashMap<PathBuf, Poll>,
+}
+
+struct Poll {
+    last: std::time::Instant,
+    /// Unix seconds the next scan looks for changes after.
+    since: u64,
+    busy: Arc<AtomicBool>,
+}
+
+fn unix_secs() -> u64 {
+    std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map_or(0, |d| d.as_secs())
+}
+
+impl Polls {
+    /// Starts a scan of each polled root that is online, due and not
+    /// already being scanned. A root starts its clock when first seen:
+    /// catch-up or its crawl covered what came before.
+    fn run(
+        &mut self,
+        c: &Crawler,
+        polled: &[(PathBuf, u64)],
+        online: &[PathBuf],
+        tx: &mpsc::Sender<IndexEvent>,
+        shutdown: &CancellationToken,
+    ) {
+        self.roots.retain(|r, _| polled.iter().any(|(p, _)| p == r));
+        for (root, secs) in polled.iter().filter(|(r, _)| online.contains(r)) {
+            let poll = self.roots.entry(root.clone()).or_insert_with(|| Poll {
+                last: std::time::Instant::now(),
+                since: unix_secs(),
+                busy: Arc::new(AtomicBool::new(false)),
+            });
+            if poll.last.elapsed() < Duration::from_secs(*secs)
+                || poll.busy.swap(true, Ordering::AcqRel)
+            {
+                continue;
+            }
+            // A second's overlap: a change in the second the last scan
+            // started may not have shown in it.
+            let since = std::mem::replace(&mut poll.since, unix_secs().saturating_sub(1));
+            poll.last = std::time::Instant::now();
+            let (c, root, tx, busy, shutdown) = (
+                c.clone(),
+                root.clone(),
+                tx.clone(),
+                Arc::clone(&poll.busy),
+                shutdown.clone(),
+            );
+            tokio::spawn(async move {
+                poll_root(&c, &root, since, &tx, &shutdown).await;
+                busy.store(false, Ordering::Release);
+            });
+        }
+    }
+}
+
+/// One scan of a polled root for what changed since `since`.
+async fn poll_root(
+    c: &Crawler,
+    root: &std::path::Path,
+    since: u64,
+    tx: &mpsc::Sender<IndexEvent>,
+    shutdown: &CancellationToken,
+) {
+    use watcher::journal::CatchUp;
+    let (formats, exclusions) = {
+        let cfg = c.cfg.read().await;
+        (
+            cfg.archive_index.formats.clone(),
+            ExclusionEngine::for_config(&cfg),
+        )
+    };
+    let excl = match exclusions {
+        Ok(e) => e,
+        Err(e) => {
+            tracing::warn!("poll {}: exclusions: {e}", root.display());
+            return;
+        }
+    };
+    let (store, scan_root, start) = (
+        Arc::clone(&c.sqlite),
+        root.to_path_buf(),
+        std::time::Instant::now(),
+    );
+    let plan = tokio::task::spawn_blocking(move || {
+        let skip = |p: &std::path::Path, hidden: bool| excl.should_exclude(p, hidden);
+        watcher::journal::changes_since(&[scan_root], since, &formats, &skip, &*store)
+    })
+    .await;
+    match plan {
+        Ok(CatchUp::UpToDate) => {}
+        Ok(CatchUp::Events(found)) => {
+            tracing::info!(
+                "poll {}: {} changes ({:.1}s)",
+                root.display(),
+                found.len(),
+                start.elapsed().as_secs_f64()
+            );
+            for ev in found {
+                if tx.send(ev).await.is_err() {
+                    return;
+                }
+            }
+        }
+        Ok(CatchUp::FullCrawl(why)) => {
+            tracing::info!("poll {}: {why}; crawling it", root.display());
+            while c
+                .active
+                .compare_exchange(false, true, Ordering::AcqRel, Ordering::Relaxed)
+                .is_err()
+            {
+                tokio::select! {
+                    _ = shutdown.cancelled() => return,
+                    _ = tokio::time::sleep(JOURNAL_CRAWL_POLL) => {}
+                }
+            }
+            c.spawn(Some(vec![root.to_path_buf()]), shutdown.clone());
+        }
+        Err(e) => tracing::warn!("poll {} failed: {e}", root.display()),
     }
 }
 

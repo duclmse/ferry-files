@@ -182,6 +182,10 @@ disk. The commit loop in `daemon.rs` runs every `commit_interval_secs`.
   path is offline, not an error: the watcher follows only present ones,
   `crawl_roots` skips missing ones (a walk would sweep their rows away), and
   one that returns is caught up (`catch_up_roots`).
+- `[[watch]]` tables (`config::RootConfig`) join `watch_paths` in `load`,
+  so code that walks the roots sees them; look settings up with
+  `Config::root_config` / `content_under` / `polled`. Polled roots get no
+  watcher; `daemon::Polls` scans them.
 - Change-log positions are per watch path (`journal::root_key`); an older
   fsd's shared `journal_position` is split once (`split_shared`).
 - Extension executables must keep stdout for the protocol and log to stderr.

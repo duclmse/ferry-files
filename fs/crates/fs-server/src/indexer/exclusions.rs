@@ -15,6 +15,24 @@ pub struct ExclusionEngine {
     exclude_hidden: bool,
     /// fsd's own folders (`own_dirs`), resolved.
     own: Vec<PathBuf>,
+    /// Watch paths' own patterns (`[[watch]] exclude`), each applied only
+    /// under its path.
+    roots: Vec<(PathBuf, GlobSet)>,
+}
+
+fn glob_set(patterns: &[String]) -> Result<GlobSet> {
+    let mut builder = GlobSetBuilder::new();
+    for pattern in patterns {
+        // globset compares Windows paths with `/` separators and reads
+        // `\` there as a literal; the glob crate let `\` match either.
+        let pattern = if cfg!(windows) {
+            pattern.replace('\\', "/")
+        } else {
+            pattern.clone()
+        };
+        builder.add(Glob::new(&pattern).map_err(|e| AppError::Config(e.to_string()))?);
+    }
+    builder.build().map_err(|e| AppError::Config(e.to_string()))
 }
 
 /// The folders fsd writes to all the time: its index, logs and archive
@@ -53,44 +71,38 @@ fn resolve_own(dirs: &[PathBuf]) -> Vec<PathBuf> {
 
 impl ExclusionEngine {
     pub fn new(cfg: &ExclusionConfig) -> Result<Self> {
-        let mut builder = GlobSetBuilder::new();
-        for pattern in &cfg.path_patterns {
-            // globset compares Windows paths with `/` separators and reads
-            // `\` there as a literal; the glob crate let `\` match either.
-            let pattern = if cfg!(windows) {
-                pattern.replace('\\', "/")
-            } else {
-                pattern.clone()
-            };
-            let glob = Glob::new(&pattern).map_err(|e| AppError::Config(e.to_string()))?;
-            builder.add(glob);
-        }
         Ok(Self {
-            set: builder
-                .build()
-                .map_err(|e| AppError::Config(e.to_string()))?,
+            set: glob_set(&cfg.path_patterns)?,
             exclude_hidden: cfg.exclude_hidden,
             own: Vec::new(),
+            roots: Vec::new(),
         })
     }
 
-    /// The engine for the daemon's config: its patterns, and its own folders
-    /// (`own_dirs`) kept out.
+    /// The engine for the daemon's config: its patterns, each watch path's
+    /// own patterns under it, and fsd's own folders (`own_dirs`) kept out.
     pub fn for_config(cfg: &Config) -> Result<Self> {
         let mut engine = Self::new(&cfg.exclusions)?;
         engine.own = resolve_own(&own_dirs(cfg));
+        for r in cfg.watch.iter().filter(|r| !r.exclude.is_empty()) {
+            engine.roots.push((r.path.clone(), glob_set(&r.exclude)?));
+        }
         Ok(engine)
     }
 
     /// `for_config`, built once and reused until the patterns or folders
     /// change; watcher events ask for it per batch.
     pub fn shared(cfg: &Config) -> Result<Arc<Self>> {
-        type Key = (Vec<String>, bool, Vec<PathBuf>);
+        type Key = (Vec<String>, bool, Vec<PathBuf>, Vec<(PathBuf, Vec<String>)>);
         static CACHE: Mutex<Option<(Key, Arc<ExclusionEngine>)>> = Mutex::new(None);
         let key = (
             cfg.exclusions.path_patterns.clone(),
             cfg.exclusions.exclude_hidden,
             own_dirs(cfg),
+            cfg.watch
+                .iter()
+                .map(|r| (r.path.clone(), r.exclude.clone()))
+                .collect(),
         );
         let mut cache = CACHE
             .lock()
@@ -110,6 +122,10 @@ impl ExclusionEngine {
         (self.exclude_hidden && is_hidden)
             || self.own.iter().any(|d| path.starts_with(d))
             || self.set.is_match(path)
+            || self
+                .roots
+                .iter()
+                .any(|(root, set)| path.starts_with(root) && set.is_match(path))
     }
 }
 
@@ -264,6 +280,22 @@ log_dir = '{data_dir}/logs'"
         let eng = ExclusionEngine::shared(&b).unwrap();
         assert!(!eng.should_exclude(Path::new("/x/a/f"), false));
         assert!(eng.should_exclude(Path::new("/x/b/f"), false));
+    }
+
+    #[test]
+    fn a_watch_paths_own_patterns_apply_only_under_it() {
+        let mut cfg = config(&[], "/d");
+        cfg.watch.push(crate::config::RootConfig {
+            path: PathBuf::from("/nas"),
+            mode: Default::default(),
+            poll_secs: 900,
+            content: true,
+            exclude: vec!["**/@eaDir/**".into()],
+        });
+        let eng = ExclusionEngine::shared(&cfg).unwrap();
+        assert!(eng.should_exclude(Path::new("/nas/photos/@eaDir/thumb.jpg"), false));
+        assert!(!eng.should_exclude(Path::new("/home/@eaDir/thumb.jpg"), false));
+        assert!(!eng.should_exclude(Path::new("/nas/photos/a.jpg"), false));
     }
 
     #[test]

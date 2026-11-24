@@ -798,6 +798,45 @@ async fn test_subscribers_hear_what_changes() {
     assert!(!text.contains("applied"), "{text}");
 }
 
+/// A `[[watch]]` table added to the config: a polled watch path, with no
+/// full text and an exclusion of its own, found by its scans.
+#[tokio::test]
+async fn test_a_polled_watch_path_with_its_own_settings() {
+    let dir = TempDir::new().unwrap();
+    let watch_dir = TempDir::new().unwrap();
+    let share = TempDir::new().unwrap();
+    std::fs::write(share.path().join("on_share.txt"), b"zebrapoll").unwrap();
+    std::fs::create_dir(share.path().join("@eaDir")).unwrap();
+    std::fs::write(share.path().join("@eaDir").join("thumb.txt"), b"x").unwrap();
+    std::fs::write(watch_dir.path().join("local.txt"), b"zebrapoll").unwrap();
+
+    let daemon = TestDaemon::start(watch_dir.path(), dir).await;
+    daemon
+        .wait_until(Duration::from_secs(30), |s| s.last_crawl_secs > 0)
+        .await;
+    let share_path = share.path().to_string_lossy().replace('\\', "/");
+    let mut text = std::fs::read_to_string(&daemon.config_path).unwrap();
+    text.push_str(&format!(
+        "\n[[watch]]\npath = \"{share_path}\"\nmode = \"poll\"\npoll_secs = 1\n\
+         content = false\nexclude = [\"**/@eaDir/**\"]\n"
+    ));
+    std::fs::write(&daemon.config_path, text).unwrap();
+
+    wait_for_hits(&daemon, "on_share.txt", 30, |p| p.len() == 1).await;
+    std::fs::write(share.path().join("polled_in.txt"), b"y").unwrap();
+    wait_for_hits(&daemon, "polled_in.txt", 15, |p| p.len() == 1).await;
+    assert_eq!(
+        daemon.search("thumb.txt").await.total,
+        0,
+        "its own exclusion"
+    );
+    // Commits run every second here; the share's text is never indexed.
+    wait_for_hits(&daemon, "content:zebrapoll", 15, |p| p.len() == 1).await;
+    tokio::time::sleep(Duration::from_secs(2)).await;
+    let hits = wait_for_hits(&daemon, "content:zebrapoll", 5, |p| p.len() == 1).await;
+    assert!(hits[0].ends_with("local.txt"), "{hits:?}");
+}
+
 /// Polls `query` until `ok` holds for its hits, or panics after `secs`.
 async fn wait_for_hits(
     daemon: &TestDaemon,

@@ -34,6 +34,7 @@ fn make_config(watch: &Path) -> Arc<RwLock<Config>> {
         store: StoreConfig::default(),
         file_lists: Default::default(),
         watcher: Default::default(),
+        watch: Vec::new(),
     }))
 }
 
@@ -119,6 +120,7 @@ async fn excluded_pattern_not_indexed() {
         store: StoreConfig::default(),
         file_lists: Default::default(),
         watcher: Default::default(),
+        watch: Vec::new(),
     }));
 
     let tmpdir2 = TempDir::new().unwrap();

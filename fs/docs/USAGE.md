@@ -92,6 +92,7 @@ platform.
 | Section | Holds |
 | ------- | ----- |
 | top level | `watch_paths`, `data_dir`, `log_dir`, `extensions_dir` |
+| `[[watch]]` | one watch path with its own mode, poll interval, content and exclusions (section 4) |
 | `[store]` | memory or SQLite store, SQLite indexes, snapshot interval |
 | `[exclusions]` | path globs to skip, hidden files, content size cap, network content |
 | `[content.extension_limits]` | which extensions get full-text indexing, and how many bytes |
@@ -172,6 +173,23 @@ them later in any of these ways:
   `api.auth_mode` is (section 9.1). A system service refuses changes over
   IPC, since every local user can reach its IPC endpoint; edit its config
   file instead, or use REST or gRPC with the token.
+- **Settings per path.** A `[[watch]]` table gives one watch path settings
+  of its own; its path joins `watch_paths`:
+
+  ```toml
+  [[watch]]
+  path      = "//nas/media"
+  mode      = "poll"            # "watch" (default) or "poll"
+  poll_secs = 900               # poll: seconds between scans
+  content   = false             # no full-text content under it
+  exclude   = ["**/@eaDir/**"]  # globs skipped under it, on top of [exclusions]
+  ```
+
+  A polled path gets no live watcher: every `poll_secs` a timestamp scan
+  finds what changed. Use it for network shares, whose change notifications
+  are missing or unreliable. A scan lists every folder of the path (about
+  3 s for 350k entries), so keep the interval in minutes. Removing the path
+  removes its table.
 - **Progress.** `fs watch` lists each watch path with its state and the
   entries its crawl wrote:
 

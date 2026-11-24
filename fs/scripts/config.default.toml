@@ -12,8 +12,18 @@
 
 # ── Paths ─────────────────────────────────────────────────────────────────────
 
-# Folders to index and watch; each must exist. Empty watches nothing.
+# Folders to index and watch. Empty watches nothing. One that does not exist
+# (an unplugged drive) is offline: its entries stay until it is back.
 watch_paths = []
+
+# A watch path with settings of its own, as a [[watch]] table (it need not be
+# in watch_paths too). Put tables after the top-level fields, e.g.:
+#   [[watch]]
+#   path      = "//nas/media"
+#   mode      = "poll"            # "watch" (default) or "poll": a scan every poll_secs
+#   poll_secs = 900
+#   content   = false             # no full-text content under it
+#   exclude   = ["**/@eaDir/**"]  # globs skipped under it only
 
 # The index (index.bin or index.db, and the Tantivy full-text index). Created
 # on first run.

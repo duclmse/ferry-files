@@ -69,7 +69,11 @@ impl SideWork {
             metrics: Arc::clone(&stores.metrics),
             registry: Arc::clone(&stores.registry),
             arc_cfg: cfg.archive_index.clone(),
-            cnt_cfg: super::content::effective_config(&cfg.content, &cfg.exclusions, under),
+            cnt_cfg: if cfg.content_under(under) {
+                super::content::effective_config(&cfg.content, &cfg.exclusions, under)
+            } else {
+                crate::config::ContentConfig::default()
+            },
             zidx_dir: sidecar_dir(&service.zidx_dir, "zidx"),
             dzx_dir: sidecar_dir(&service.dzx_dir, "dzx"),
             dzx_min_entry_bytes: service.dzx_min_entry_bytes,

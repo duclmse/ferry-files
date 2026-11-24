@@ -115,6 +115,7 @@ fn make_test_app_state(dir: &TempDir, registry: Arc<ArchiveRegistry>) -> AppStat
         store: StoreConfig::default(),
         file_lists: Default::default(),
         watcher: Default::default(),
+        watch: Vec::new(),
     };
     let config = Arc::new(tokio::sync::RwLock::new(config));
 

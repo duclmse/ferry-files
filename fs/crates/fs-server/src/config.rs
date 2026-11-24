@@ -13,8 +13,13 @@ use crate::error::{AppError, Result};
 pub struct Config {
     /// Folders to crawl and watch. None, or an empty list, watches nothing;
     /// paths added while the daemon runs are crawled and watched then.
+    /// `load` adds the paths of `[[watch]]` tables, so this is every root.
     #[serde(default)]
     pub watch_paths: Vec<PathBuf>,
+
+    /// `[[watch]]` tables: watch paths with settings of their own.
+    #[serde(default)]
+    pub watch: Vec<RootConfig>,
     pub data_dir: PathBuf,
     pub log_dir: PathBuf,
 
@@ -58,6 +63,64 @@ pub struct Config {
 
     #[serde(default)]
     pub watcher: WatcherConfig,
+}
+
+/// A `[[watch]]` table: one watch path and how it is followed.
+#[derive(Debug, Clone, Deserialize, PartialEq, Eq)]
+pub struct RootConfig {
+    pub path: PathBuf,
+    #[serde(default)]
+    pub mode: RootMode,
+    /// `mode = "poll"`: seconds between scans.
+    #[serde(default = "default_poll_secs")]
+    pub poll_secs: u64,
+    /// Full-text content for files under it, by `[content]`'s limits.
+    #[serde(default = "default_true")]
+    pub content: bool,
+    /// Globs skipped under this path only, on top of `[exclusions]`.
+    #[serde(default)]
+    pub exclude: Vec<String>,
+}
+
+fn default_poll_secs() -> u64 {
+    900
+}
+
+/// How a watch path's changes reach the index.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum RootMode {
+    /// The live watcher (`[watcher]`).
+    #[default]
+    Watch,
+    /// A timestamp scan every `poll_secs`: for network shares, where change
+    /// notifications are missing or unreliable, at the cost of a scan.
+    Poll,
+}
+
+impl Config {
+    /// The `[[watch]]` settings of the watch path holding `path`, if it has
+    /// a table.
+    pub fn root_config(&self, path: &Path) -> Option<&RootConfig> {
+        self.watch
+            .iter()
+            .filter(|r| path.starts_with(&r.path))
+            .max_by_key(|r| r.path.as_os_str().len())
+    }
+
+    /// Whether files under `path` get full-text content.
+    pub fn content_under(&self, path: &Path) -> bool {
+        self.root_config(path).is_none_or(|r| r.content)
+    }
+
+    /// The watch paths that are polled, with their intervals.
+    pub fn polled(&self) -> Vec<(PathBuf, u64)> {
+        self.watch
+            .iter()
+            .filter(|r| r.mode == RootMode::Poll && self.watch_paths.contains(&r.path))
+            .map(|r| (r.path.clone(), r.poll_secs))
+            .collect()
+    }
 }
 
 /// How live changes reach the index (`watcher/live/`).
@@ -616,13 +679,20 @@ pub fn load(path: &Path) -> Result<Config> {
     // resolved root), producing two distinct `path` strings - and thus two
     // rows - for the same file. Left as-is if the path doesn't exist yet;
     // `validate()` reports that separately.
-    for p in &mut cfg.watch_paths {
+    let resolve = |p: &mut PathBuf| {
         if let Ok(canon) = p.canonicalize() {
             *p = if cfg!(windows) {
                 without_verbatim(canon)
             } else {
                 canon
             };
+        }
+    };
+    cfg.watch_paths.iter_mut().for_each(resolve);
+    cfg.watch.iter_mut().for_each(|r| resolve(&mut r.path));
+    for r in &cfg.watch {
+        if !cfg.watch_paths.contains(&r.path) {
+            cfg.watch_paths.push(r.path.clone());
         }
     }
 
@@ -676,6 +746,23 @@ pub fn validate(cfg: &Config) -> Vec<String> {
     for p in &cfg.watch_paths {
         if p.exists() && !p.is_dir() {
             errors.push(format!("watch_path is not a directory: {}", p.display()));
+        }
+    }
+
+    for r in &cfg.watch {
+        if r.mode == RootMode::Poll && r.poll_secs == 0 {
+            errors.push(format!(
+                "[[watch]] {}: poll_secs must be at least 1",
+                r.path.display()
+            ));
+        }
+        for g in &r.exclude {
+            if let Err(e) = globset::Glob::new(&g.replace('\\', "/")) {
+                errors.push(format!(
+                    "[[watch]] {}: exclude {g:?}: {e}",
+                    r.path.display()
+                ));
+            }
         }
     }
 
@@ -863,6 +950,41 @@ data_dir    = "{dir}/data"
 log_dir     = "{dir}/logs"
 "#
         )
+    }
+
+    #[test]
+    fn watch_tables_join_the_watch_paths_with_their_settings() {
+        let dir = tempfile::tempdir().unwrap();
+        let (a, b) = (dir.path().join("a"), dir.path().join("b"));
+        std::fs::create_dir_all(a.join("deep")).unwrap();
+        std::fs::create_dir(&b).unwrap();
+        let fwd = |p: &Path| p.to_string_lossy().replace('\\', "/");
+        let f = write_config(&format!(
+            "watch_paths = [\"{a}\"]\ndata_dir = \"{d}\"\nlog_dir = \"{d}\"\n\n\
+             [[watch]]\npath = \"{b}\"\nmode = \"poll\"\npoll_secs = 60\ncontent = false\n\
+             exclude = [\"**/@eaDir/**\"]\n\n[[watch]]\npath = \"{a}\"\n",
+            a = fwd(&a),
+            b = fwd(&b),
+            d = fwd(&dir.path().join("d")),
+        ));
+        let cfg = load(f.path()).unwrap();
+        assert!(validate(&cfg).is_empty(), "{:?}", validate(&cfg));
+        let (a, b) = (&cfg.watch_paths[0], &cfg.watch_paths[1]);
+        assert_eq!(cfg.watch_paths.len(), 2, "a listed twice counts once");
+        assert_eq!(cfg.polled(), [(b.clone(), 60)]);
+        assert!(!cfg.content_under(&b.join("x.txt")));
+        assert!(cfg.content_under(&a.join("deep").join("x.txt")));
+        assert_eq!(
+            cfg.root_config(&b.join("x")).unwrap().exclude,
+            ["**/@eaDir/**"]
+        );
+
+        let bad = write_config(&format!(
+            "data_dir = \"{d}\"\nlog_dir = \"{d}\"\n[[watch]]\npath = \"{b}\"\nmode = \"poll\"\npoll_secs = 0\n",
+            b = fwd(b),
+            d = fwd(&dir.path().join("d")),
+        ));
+        assert_eq!(validate(&load(bad.path()).unwrap()).len(), 1);
     }
 
     #[test]

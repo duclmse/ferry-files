@@ -202,6 +202,17 @@ count.
 
 ## 5. Per-root settings
 
+> **Done**, with `[[watch]]` paths merged into `watch_paths` at load rather
+> than a separate `roots()` list: everything that walks the roots sees them.
+> `Config::root_config`, `content_under`, `polled`; per-root globs in
+> `ExclusionEngine` (`roots`); `SideWork` drops content where
+> `content = false`; `daemon::Polls` scans polled roots, which get no
+> watcher; removing a path drops its table. Tests:
+> `watch_tables_join_the_watch_paths_with_their_settings`,
+> `a_watch_paths_own_patterns_apply_only_under_it`,
+> `removing_a_path_drops_its_watch_table`,
+> `test_a_polled_watch_path_with_its_own_settings`.
+
 **Today.** Exclusions, content limits and the watcher backend are global. A
 network share, a USB drive and a source tree all get the same treatment.
 

@@ -769,6 +769,7 @@ fn make_test_state() -> AppState {
         store: StoreConfig::default(),
         file_lists: Default::default(),
         watcher: Default::default(),
+        watch: Vec::new(),
     };
     let config = Arc::new(tokio::sync::RwLock::new(config));
 
