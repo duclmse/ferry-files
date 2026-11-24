@@ -82,6 +82,9 @@ upgrading, because stored watch roots no longer carry the `\\?\` prefix.
 
 ## Overview
 
+- [Usage guide](USAGE.md) - install, configure and run every component:
+  `fsd`, `fs` and the TUI, watch paths, queries, REST/gRPC/IPC, archives,
+  file lists, stores, extensions, scripts
 - [Development guide](DEVELOPMENT.md) - toolchain, build, run, test, lint,
   change checklists, benchmarks, helper scripts
 - [Benchmarks](BENCHMARKS.md) - crawl, memory, query latency, `index.bin`
@@ -139,6 +142,9 @@ upgrading, because stored watch roots no longer carry the `\\?\` prefix.
 
 ## Plans
 
+- [Watch paths: next steps](plans/watch-paths-next.md) - proposed:
+  forgetting removed roots, folding child roots, keeping `data_dir` out,
+  per-root progress and settings, offline roots, notifications, admin IPC
 - [Performance & Memory Update](plans/performance-memory-update.md) -
   implemented, section 7 included; bounded crawl/fuzzy/content search,
   stream fan-out, postcard IPC, content worker pool, single SQLite writer

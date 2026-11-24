@@ -38,9 +38,9 @@ Implements the full
 syntax plus three extensions:
 
 ```
-# Boolean operators
-report AND (pdf OR docx)
-report OR summary NOT draft
+# Boolean operators: space is AND, | is OR, ! is NOT, <> groups
+report <pdf|docx>
+report|summary !draft
 
 # Wildcards
 *.log
@@ -61,6 +61,9 @@ fuzzy:reprot          # typo-tolerant SIMD matching
 archive:*.rs          # scope to ZIP inner files only
 archiveof:/path/a.zip # all entries inside a specific archive
 ```
+
+Every component is covered, with commands and examples, in the
+[usage guide](docs/USAGE.md).
 
 ### Quick start
 
@@ -168,7 +171,7 @@ POST /reindex                      → trigger full re-crawl
 GET  /watch_paths                  → the folders indexed and watched
 POST /watch_paths {"path": ...}    → add a folder (token)
 DELETE /watch_paths?path=<folder>  → stop watching a folder (token)
-POST /open?path=<virtual_path>     → extract inner ZIP entry to temp dir
+POST /open {"path": ...}          → open a file; extracts a ZIP entry first
 GET  /health
 ```
 

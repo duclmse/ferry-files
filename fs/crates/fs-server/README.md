@@ -369,7 +369,7 @@ grpcurl -plaintext -d '{"query":"*.rs","limit":50}' \
   127.0.0.1:7701 fs.FileSearch/Search
 
 # Stats
-grpcurl -plaintext 127.0.0.1:7701 fs.FileSearch/Stats
+grpcurl -plaintext 127.0.0.1:7701 fs.FileSearch/GetStats
 
 # Reindex
 grpcurl -plaintext -d '{"full":false}' \
