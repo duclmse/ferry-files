@@ -57,6 +57,7 @@ and `strip = true`.
 
 1. Copy `crates/fs-server/config.toml` somewhere and set `watch_paths`,
    `data_dir` and `log_dir`. Use a small tree while developing.
+   `scripts/config.default.toml` lists every field with its default.
 2. Validate, then run in the foreground:
 
    ```sh
@@ -219,6 +220,7 @@ kill and the memory store never writes `index.bin`. Latest numbers are in
 | --------------------------------------- | ----------------------------------------------------------------------- |
 | `build`                                 | release build of `fsd` + `fs`; extra args go to cargo                   |
 | `run`                                   | run `fsd daemon` in the foreground with a discovered config             |
+| `start`                                 | start fsd unless it runs: its service if installed, else in the background |
 | `install`                               | install binaries, config, and a systemd/launchd/Windows service         |
 | `db`                                    | read-only SQLite inspection: `tables`, `ddl`, `stats`, `query`, `watch` |
 | `worktree`                              | sibling git worktrees under `../<repo>-worktrees/`                      |

@@ -1127,6 +1127,7 @@ log_dir     = "{dir}/logs"
             root.join("config.toml"),
             root.join("../../config.windows.toml"),
             root.join("../../config.macos.toml"),
+            root.join("../../scripts/config.default.toml"),
         ] {
             let text = std::fs::read_to_string(&file).unwrap();
             let mut cfg: Config =
@@ -1135,5 +1136,67 @@ log_dir     = "{dir}/logs"
             cfg.watch_paths = vec![watch.path().to_path_buf()];
             assert_eq!(validate(&cfg), Vec::<String>::new(), "{}", file.display());
         }
+    }
+
+    /// It says it sets every field to its default; a changed default must
+    /// change it too.
+    #[test]
+    fn the_default_config_holds_the_defaults() {
+        let file = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../scripts/config.default.toml");
+        let cfg: Config = toml::from_str(&std::fs::read_to_string(file).unwrap()).unwrap();
+        let same = |file: String, default: String| assert_eq!(file, default);
+        same(
+            format!("{:?}", cfg.store),
+            format!("{:?}", StoreConfig::default()),
+        );
+        same(
+            format!("{:?}", cfg.exclusions),
+            format!("{:?}", ExclusionConfig::default()),
+        );
+        same(
+            format!("{:?}", cfg.content),
+            format!("{:?}", ContentConfig::default()),
+        );
+        same(
+            format!("{:?}", cfg.archive_index),
+            format!("{:?}", ArchiveIndexConfig::default()),
+        );
+        same(
+            format!("{:?}", cfg.api),
+            format!("{:?}", ApiConfig::default()),
+        );
+        same(
+            format!("{:?}", cfg.search),
+            format!("{:?}", SearchConfig::default()),
+        );
+        same(
+            format!("{:?}", cfg.indexer),
+            format!("{:?}", IndexerConfig::default()),
+        );
+        same(
+            format!("{:?}", cfg.watcher),
+            format!("{:?}", WatcherConfig::default()),
+        );
+        same(
+            format!("{:?}", cfg.file_lists),
+            format!("{:?}", FileListsConfig::default()),
+        );
+        same(
+            format!("{:?}", cfg.macros),
+            format!("{:?}", MacroConfig::default()),
+        );
+        let service = &cfg.archive_service;
+        let default = ArchiveServiceConfig::default();
+        assert!(!service.enabled && service.zidx_dir.is_none() && service.dzx_dir.is_none());
+        assert_eq!(service.index_cache_size, default_index_cache_size());
+        assert_eq!(service.dzx_min_entry_bytes, default_dzx_min_entry_bytes());
+        assert_eq!(
+            service.dzx_max_concurrent_builds,
+            default_dzx_max_concurrent_builds()
+        );
+        same(
+            format!("{:?}", service.scheduler),
+            format!("{:?}", default.scheduler),
+        );
     }
 }

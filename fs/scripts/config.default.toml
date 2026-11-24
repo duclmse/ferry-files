@@ -1,0 +1,210 @@
+# fsd configuration: every field, each set to its default.
+#
+# Copy it, set watch_paths, and check it with:
+#   fsd --config <file> validate-config
+#
+# Relative paths are from the folder fsd starts in. `fsd install-service`
+# starts the service in the folder of its config file.
+# The file is reread when it changes; added watch paths take effect at once,
+# removed ones on restart.
+# Fields left commented out have no fixed default: it depends on the platform
+# or the machine, or the field is unset by default.
+
+# ── Paths ─────────────────────────────────────────────────────────────────────
+
+# Folders to index and watch. At least one; each must exist.
+watch_paths = ["."]
+
+# The index (index.bin or index.db, and the Tantivy full-text index). Created
+# on first run.
+data_dir = "data"
+
+# Daily rolling JSON logs.
+log_dir = "logs"
+
+# Folder of extension executables (fs-ext-rar2zip, fs-ext-sftpd), each with
+# its extension.toml. Unset, no extensions run. fsd refuses a folder others
+# can write to. Each extension reads an [extensions.<name>] section of this
+# file; see crates/fs-ext-rar2zip/config.toml and crates/fs-ext-sftpd/config.toml.
+# extensions_dir = "extensions"
+
+# ── Store ─────────────────────────────────────────────────────────────────────
+
+[store]
+# "auto", "memory" or "sqlite". auto is the memory store, unless data_dir
+# holds only an index.db from before it was the default. The memory store is
+# faster for substring, parent: and dupe: searches and smaller on disk;
+# SQLite keeps less in process memory.
+mode = "auto"
+# SQLite only: optional indexes, from "name", "extension", "mtime", "size",
+# "attrib". Each speeds up queries on its column and slows writes. Applied on
+# restart: missing ones are built, unlisted ones dropped.
+indexes = ["name", "extension", "mtime", "size", "attrib"]
+# Memory store: seconds between saves of index.bin while files change, so a
+# crash costs a catch-up rather than a full crawl. 0 saves only on a clean stop.
+snapshot_interval_secs = 300
+
+# ── Exclusions ────────────────────────────────────────────────────────────────
+
+[exclusions]
+# Globs matched against full paths; matching files and folders are skipped,
+# e.g. ["**/.git/**", "**/node_modules/**", "**/target/**"].
+path_patterns = []
+# Skip hidden files and folders.
+exclude_hidden = false
+# Cap on every [content.extension_limits] value, in bytes. 0 = no cap.
+max_content_size_bytes = 0
+# Extract no content from files on network drives.
+skip_network_content = false
+
+# ── Full-text content ─────────────────────────────────────────────────────────
+
+[content]
+# Extension -> most bytes of a file read for full-text (content:) search.
+# "*" covers unlisted extensions. Empty: no content indexing, names only.
+# Example:
+#   rs  = 524288
+#   md  = 131072
+#   "*" = 32768
+[content.extension_limits]
+
+# ── Files inside archives ─────────────────────────────────────────────────────
+
+[archive_index]
+# Index the files inside ZIPs as archive.zip!/inner/path entries.
+enabled = true
+# Only "zip" is supported.
+formats = ["zip"]
+# Stop listing an archive after this many entries.
+max_entries_per_archive = 10000
+# ZIPs inside ZIPs: 0 = none, at most 2.
+max_nesting_depth = 0
+# Passwords tried on encrypted ZIPs.
+passwords = []
+# Like [content.extension_limits], for files inside archives.
+[archive_index.inner_extension_limits]
+
+# ── APIs ──────────────────────────────────────────────────────────────────────
+# Each needs fsd built with its cargo feature (rest, grpc, ipc; all by default).
+
+[api]
+rest_enabled = true
+grpc_enabled = true
+ipc_enabled  = true
+
+# REST (HTTP). Loopback only unless bound elsewhere.
+rest_port = 7700
+rest_bind = "127.0.0.1"
+# Browser origins allowed to read REST responses. Avoid ["*"]: /fs/read
+# needs no token, so any website could read local files.
+rest_cors_origins = []
+
+# gRPC (with reflection).
+grpc_port = 7701
+grpc_bind = "127.0.0.1"
+
+# Which calls need the bearer token: "writes" (the REST routes that change
+# files) or "all" (every REST route but /health, and every gRPC call). Use
+# "all" when binding to anything but loopback.
+auth_mode = "writes"
+# BLAKE3 digest of the bearer token, from `fsd generate-token`. Unset, the
+# routes that change files are refused and "all" does not start.
+# auth_token_hash = "<64 hex characters>"
+
+# Named pipe (Windows) or Unix socket the `fs` client and the TUI use.
+# Default: \\.\pipe\fs on Windows, /tmp/fs.sock elsewhere.
+# ipc_path = "/tmp/fs.sock"
+
+# ── Search ────────────────────────────────────────────────────────────────────
+
+[search]
+# Results when a request gives no limit.
+default_limit = 100
+# Largest limit a request may ask for.
+max_limit = 10000
+# Lowest similarity (0.0 to 1.0) a fuzzy: match needs.
+fuzzy_threshold = 0.7
+# Most candidates a fuzzy: query scores. 0 = no cap.
+max_fuzzy_candidates = 50000
+# Most rows fetched for a query whose filters run after the fetch (regex:,
+# child:, startwith:, OR/NOT over those). 0 = no cap.
+max_filter_candidates = 200000
+
+# ── Indexer ───────────────────────────────────────────────────────────────────
+
+[indexer]
+# Threads walking folders in a full crawl. Default: one per core, at most 12.
+# crawl_threads = 8
+# Threads extracting content. Default: half the cores, at least 1.
+# content_threads = 4
+# Seconds between commits of the full-text index.
+commit_interval_secs = 5
+# Watcher events applied per batch.
+event_batch_size = 100
+# Windows: crawl from the NTFS file table instead of walking folders. true,
+# false, or "auto": for roots that are a whole drive, and for drives whose
+# table was already read. Needs administrator rights; falls back to the walk.
+use_mft = "auto"
+
+# ── Live changes ──────────────────────────────────────────────────────────────
+
+[watcher]
+# "native": on Windows ReadDirectoryChangesW with a large buffer that reports
+# overflow; elsewhere the same as "notify".
+# "notify": the notify crate (FSEvents, inotify; on Windows it can lose
+# changes in a burst without saying so).
+# "usn": Windows, the NTFS change journal (administrator rights), "native"
+# for roots it cannot read.
+# Whenever changes are lost, a timestamp scan finds them.
+backend = "native"
+# Changes are collected this long, then applied together.
+debounce_ms = 500
+# "native" on Windows: change buffer per watch root, KiB (network shares: at
+# most 64).
+buffer_kib = 1024
+
+# ── Everything file lists ─────────────────────────────────────────────────────
+
+[file_lists]
+# Absolute paths of .efu files (Everything's file lists) whose entries are
+# searchable next to the crawled ones: offline drives, discs, other machines.
+# Write one with `fs search <query> --limit 1000000 --efu out.efu`. Rows
+# under a watch path are left out.
+paths = []
+# Seconds between checks for a changed, added or removed list.
+poll_secs = 30
+
+# ── Archive service (REST /archive routes) ────────────────────────────────────
+
+[archive_service]
+# The /archive routes and .zidx sidecar indexes.
+enabled = false
+# Where .zidx and .dzx sidecars go. Default: data_dir/zidx and data_dir/dzx.
+# zidx_dir = "data/zidx"
+# dzx_dir  = "data/dzx"
+# .zidx indexes kept open.
+index_cache_size = 256
+# Smallest deflated entry, in bytes, that gets a .dzx random-access sidecar.
+# 0 = never build one.
+dzx_min_entry_bytes = 10485760
+# .dzx builds at once.
+dzx_max_concurrent_builds = 2
+
+[archive_service.scheduler]
+# Inflate tasks at once per archive.
+max_per_archive = 4
+# Per-client rate limit (token bucket).
+rate_limit_enabled = false
+rate_per_client = 100
+burst_per_client = 200
+# Fair queueing between clients (deficit round robin); needs rate_limit_enabled.
+drr_enabled = false
+# Tasks queued per client before requests get 429.
+max_queue_depth = 50
+
+# ── Macros ────────────────────────────────────────────────────────────────────
+
+[macros]
+# Shorthands used in queries as <name>: ("work: readme"), e.g.
+# work = "dir:projects size:>1kb"
+# src  = "ext:rs OR ext:py OR ext:go OR ext:ts"
