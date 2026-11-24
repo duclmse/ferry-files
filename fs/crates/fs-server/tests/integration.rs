@@ -487,7 +487,10 @@ async fn test_watch_paths_change_over_the_apis() {
     assert_eq!(refused.status(), reqwest::StatusCode::FORBIDDEN);
 
     let roots = match client
-        .request(IpcRequest::WatchRemove { path })
+        .request(IpcRequest::WatchRemove {
+            path,
+            forget: false,
+        })
         .await
         .unwrap()
     {
@@ -524,6 +527,55 @@ async fn test_own_folders_under_a_watch_path_are_ignored() {
     tokio::time::sleep(Duration::from_secs(4)).await;
     assert_eq!(daemon.stats().await.events_processed, before);
     assert_eq!(daemon.search("index.bin").await.total, 0);
+}
+
+/// A watch path removed with `forget` leaves the index; one removed without
+/// it stays searchable.
+#[tokio::test]
+async fn test_a_forgotten_watch_path_leaves_the_index() {
+    use fs_protocol::ipc_client::IpcClient;
+    use fs_protocol::ipc_protocol::IpcRequest;
+
+    let dir = TempDir::new().unwrap();
+    let watch_dir = TempDir::new().unwrap();
+    let kept = TempDir::new().unwrap();
+    let forgotten = TempDir::new().unwrap();
+    std::fs::write(kept.path().join("stays_listed.txt"), b"x").unwrap();
+    std::fs::create_dir(forgotten.path().join("sub")).unwrap();
+    std::fs::write(forgotten.path().join("sub").join("goes_away.txt"), b"x").unwrap();
+
+    let daemon = TestDaemon::start(watch_dir.path(), dir).await;
+    daemon
+        .wait_until(Duration::from_secs(30), |s| s.last_crawl_secs > 0)
+        .await;
+    let mut client = IpcClient::connect(Path::new(&daemon.ipc)).await.unwrap();
+    for d in [&kept, &forgotten] {
+        client
+            .request(IpcRequest::WatchAdd {
+                path: d.path().to_string_lossy().into_owned(),
+            })
+            .await
+            .unwrap();
+    }
+    wait_for_hits(&daemon, "stays_listed.txt", 30, |p| p.len() == 1).await;
+    wait_for_hits(&daemon, "goes_away.txt", 30, |p| p.len() == 1).await;
+    let before = daemon.stats().await.total_files;
+
+    for (d, forget) in [(&kept, false), (&forgotten, true)] {
+        client
+            .request(IpcRequest::WatchRemove {
+                path: d.path().to_string_lossy().into_owned(),
+                forget,
+            })
+            .await
+            .unwrap();
+    }
+    wait_for_hits(&daemon, "goes_away.txt", 15, |p| p.is_empty()).await;
+    wait_for_hits(&daemon, "sub", 15, |p| p.is_empty()).await;
+    assert_eq!(daemon.search("stays_listed.txt").await.total, 1);
+    daemon
+        .wait_until(Duration::from_secs(10), |s| s.total_files < before)
+        .await;
 }
 
 /// Polls `query` until `ok` holds for its hits, or panics after `secs`.

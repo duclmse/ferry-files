@@ -166,6 +166,7 @@ fn bench_api(
         archive_semaphores: ArchiveSemaphores::new(4),
         scheduler_metrics: SchedulerMetrics::new(),
         rate_limiter: Arc::new(ClientRateLimiter::new(1_000_000, 1_000_000)),
+        watch_list: fs_server::watch_list::WatchList::new(Arc::clone(cfg)),
     };
     let addr = rt.block_on(async {
         let listener = tokio::net::TcpListener::bind("127.0.0.1:0")

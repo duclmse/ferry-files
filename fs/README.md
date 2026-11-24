@@ -170,7 +170,7 @@ GET  /stats                        → index statistics
 POST /reindex                      → trigger full re-crawl
 GET  /watch_paths                  → the folders indexed and watched
 POST /watch_paths {"path": ...}    → add a folder (token)
-DELETE /watch_paths?path=<folder>  → stop watching a folder (token)
+DELETE /watch_paths?path=<folder>  → stop watching a folder (token); &forget=true drops its entries
 POST /open {"path": ...}          → open a file; extracts a ZIP entry first
 GET  /health
 ```

@@ -142,9 +142,9 @@ them later in any of these ways:
 | How | List | Add | Remove |
 | --- | ---- | --- | ------ |
 | Config file | edit `watch_paths` | edit `watch_paths` | edit `watch_paths` |
-| `fs` (IPC) | `fs watch` | `fs watch add <dir>` | `fs watch remove <dir>` |
-| REST | `GET /watch_paths` | `POST /watch_paths {"path": "..."}` | `DELETE /watch_paths?path=...` |
-| gRPC | `ListWatchPaths` | `AddWatchPath` | `RemoveWatchPath` |
+| `fs` (IPC) | `fs watch` | `fs watch add <dir>` | `fs watch remove [--forget] <dir>` |
+| REST | `GET /watch_paths` | `POST /watch_paths {"path": "..."}` | `DELETE /watch_paths?path=...[&forget=true]` |
+| gRPC | `ListWatchPaths` | `AddWatchPath` | `RemoveWatchPath` (`forget`) |
 
 - **Saved to the config.** A change through `fs`, REST or gRPC is also
   written to the config file, so it outlasts a restart. Only the
@@ -156,8 +156,10 @@ them later in any of these ways:
   data in `C:\ProgramData\fs` is fine.
 - **Already covered.** Adding a folder that is already watched, or one inside
   a watched folder, changes nothing or is refused.
-- **Removing.** fsd stops watching the folder, but its entries stay in the
-  index.
+- **Removing.** fsd stops watching the folder. Its entries stay in the
+  index, unless you remove it with `forget`: then they leave the index too,
+  with their full-text documents and archive sidecars. A removed folder inside
+  another watch path keeps its entries, which that path still covers.
 - **Who may change them.** REST and gRPC need the bearer token, whatever
   `api.auth_mode` is (section 9.1). A system service refuses changes over
   IPC, since every local user can reach its IPC endpoint; edit its config
@@ -178,7 +180,7 @@ fs [--config <file>] <command>       # --config defaults to ./config.toml
 | `stats` | Files, folders, content and archive entries indexed, events applied, last crawl |
 | `reindex [--full]` | Crawls every watch path again |
 | `open <path>` | Opens a file with its default app, through the daemon. For a file inside a ZIP, it extracts it to a temp folder first |
-| `watch [list\|add <dir>\|remove <dir>]` | Watch paths (section 4) |
+| `watch [list\|add <dir>\|remove [--forget] <dir>]` | Watch paths (section 4) |
 | `ext <name> <command>` | Sends a command to an extension, e.g. `fs ext rar2zip status` |
 | `tui` | The terminal UI |
 
@@ -346,7 +348,7 @@ for a system service).
 | `POST /open` `{"path": "..."}` | Opens a file on the daemon's machine; for a file inside a ZIP, extracts it first |
 | `GET /watch_paths` | Watch paths, and whether the first crawl has finished |
 | `POST /watch_paths` `{"path": "..."}` | Adds a watch path (token) |
-| `DELETE /watch_paths?path=` | Removes one (token) |
+| `DELETE /watch_paths?path=[&forget=true]` | Removes one (token); `forget` drops its entries too |
 | `GET /metrics` | Archive scheduler metrics, Prometheus text |
 | `GET /health` | `{"status": "ok"}`, never needs a token |
 | `HEAD`, `GET /fs/read?path=` | A file's metadata, or its bytes. `Range:` gets 206 Partial Content |

@@ -116,19 +116,21 @@ fn make_test_app_state(dir: &TempDir, registry: Arc<ArchiveRegistry>) -> AppStat
         file_lists: Default::default(),
         watcher: Default::default(),
     };
+    let config = Arc::new(tokio::sync::RwLock::new(config));
 
     AppState {
         sqlite: Arc::new(FileStore::Sqlite(Arc::new(
             SqliteStore::new(std::path::Path::new(":memory:")).unwrap(),
         ))),
         tantivy: Arc::new(TantivyStore::new(&tantivy_dir).unwrap()),
-        config: Arc::new(tokio::sync::RwLock::new(config)),
+        config: Arc::clone(&config),
         metrics: IndexMetrics::new(),
         reindex_tx: tokio::sync::watch::channel(false).0,
         archive_registry: registry,
         archive_semaphores: crate::scheduler::ArchiveSemaphores::new(4),
         scheduler_metrics: crate::scheduler::SchedulerMetrics::new(),
         rate_limiter: Arc::new(crate::scheduler::ClientRateLimiter::new(100, 200)),
+        watch_list: crate::watch_list::WatchList::new(config),
     }
 }
 

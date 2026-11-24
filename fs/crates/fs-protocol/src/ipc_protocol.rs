@@ -11,7 +11,7 @@ use serde::{Deserialize, Serialize};
 // ---------------------------------------------------------------------------
 
 pub const MAGIC: [u8; 4] = *b"ZFS1";
-pub const PROTOCOL_VERSION: u16 = 5;
+pub const PROTOCOL_VERSION: u16 = 6;
 pub const MAX_FRAME_BYTES: u32 = 16 * 1024 * 1024; // 16 MiB
 
 // ---------------------------------------------------------------------------
@@ -74,10 +74,11 @@ pub enum IpcRequest {
     WatchAdd {
         path: String,
     },
-    /// Removes a watch path, in the config file too. Its entries stay in the
-    /// index. Answered with `Roots`.
+    /// Removes a watch path, in the config file too. With `forget` its
+    /// entries leave the index; otherwise they stay. Answered with `Roots`.
     WatchRemove {
         path: String,
+        forget: bool,
     },
 }
 
@@ -251,7 +252,7 @@ mod tests {
         let frame = |m| encode_frame(&IpcEnvelope::new(1, m)).unwrap();
         assert_eq!(
             frame(IpcMessage::Request(IpcRequest::Roots)),
-            b"\x08\0\0\0ZFS1\x05\x01\x00\x05"
+            b"\x08\0\0\0ZFS1\x06\x01\x00\x05"
         );
         assert_eq!(
             frame(IpcMessage::Request(IpcRequest::Search {
@@ -259,14 +260,14 @@ mod tests {
                 limit: 2,
                 offset: 3,
             })),
-            b"\x0c\0\0\0ZFS1\x05\x01\x00\x00\x01a\x02\x03"
+            b"\x0c\0\0\0ZFS1\x06\x01\x00\x00\x01a\x02\x03"
         );
         assert_eq!(
             frame(IpcMessage::Response(IpcResponse::Roots(RootsResponse {
                 roots: vec!["C".into()],
                 crawled: true,
             }))),
-            b"\x0c\0\0\0ZFS1\x05\x01\x01\x06\x01\x01C\x01"
+            b"\x0c\0\0\0ZFS1\x06\x01\x01\x06\x01\x01C\x01"
         );
     }
 

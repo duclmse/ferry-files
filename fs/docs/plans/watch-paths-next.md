@@ -29,6 +29,15 @@ position format.
 
 ## 1. Forget a removed root's entries
 
+> **Done.** `watch_list::WatchList` (one per daemon, shared by the APIs)
+> queues forgotten roots; `daemon::forget_roots` removes them
+> (`remove_directory`, `TantivyStore::remove_under`, a `RegexQuery`
+> delete, `ArchiveRegistry::unregister_under`) and crawls again any kept root
+> inside one. `process_events` drops events outside every watch path, so a
+> stopping watcher cannot put entries back. Protocol version 6.
+> Tests: `remove_under_takes_a_folder_and_nothing_beside_it`,
+> `test_a_forgotten_watch_path_leaves_the_index`.
+
 **Today.** `watch_list::remove` drops the root from the config and the watcher
 stops, but its rows stay. Nothing removes them later: a full crawl sweeps stale
 rows per root (`remove_stale_for_root`), and a root that is no longer listed is

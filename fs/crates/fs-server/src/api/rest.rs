@@ -9,7 +9,7 @@
 //!   POST /open     { "path": "..." }
 //!   GET    /watch_paths
 //!   POST   /watch_paths         { "path": "..." }  (token)
-//!   DELETE /watch_paths?path=                     (token)
+//!   DELETE /watch_paths?path=[&forget=true]       (token)
 
 use std::sync::{atomic::Ordering, Arc};
 
@@ -51,6 +51,7 @@ pub struct AppState {
     pub archive_semaphores: Arc<ArchiveSemaphores>,
     pub scheduler_metrics: Arc<SchedulerMetrics>,
     pub rate_limiter: Arc<ClientRateLimiter>,
+    pub watch_list: Arc<crate::watch_list::WatchList>,
 }
 
 // ---------------------------------------------------------------------------
@@ -277,6 +278,14 @@ struct WatchPathBody {
     path: String,
 }
 
+#[derive(Deserialize)]
+struct WatchRemoveParams {
+    path: String,
+    /// Remove the path's entries from the index too.
+    #[serde(default)]
+    forget: bool,
+}
+
 async fn watch_paths_handler(State(state): State<AppState>) -> impl IntoResponse {
     let paths = state.config.read().await.watch_paths.clone();
     Json(watch_paths_response(&state, &paths, None))
@@ -301,15 +310,15 @@ async fn watch_add_handler(
     State(state): State<AppState>,
     Json(body): Json<WatchPathBody>,
 ) -> axum::response::Response {
-    let changed = crate::watch_list::add(&state.config, &body.path).await;
+    let changed = state.watch_list.add(&body.path).await;
     watch_change_response(&state, changed)
 }
 
 async fn watch_remove_handler(
     State(state): State<AppState>,
-    Query(body): Query<WatchPathBody>,
+    Query(params): Query<WatchRemoveParams>,
 ) -> axum::response::Response {
-    let changed = crate::watch_list::remove(&state.config, &body.path).await;
+    let changed = state.watch_list.remove(&params.path, params.forget).await;
     watch_change_response(&state, changed)
 }
 

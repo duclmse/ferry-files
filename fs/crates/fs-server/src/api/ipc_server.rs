@@ -42,6 +42,7 @@ pub async fn run_ipc_server(
     metrics: Arc<IndexMetrics>,
     reindex_tx: watch::Sender<bool>,
     extensions: Arc<Extensions>,
+    watch_list: Arc<crate::watch_list::WatchList>,
     shared: bool,
     shutdown: CancellationToken,
 ) {
@@ -90,6 +91,7 @@ pub async fn run_ipc_server(
                                 metrics:    Arc::clone(&metrics),
                                 reindex_tx: reindex_tx.clone(),
                                 extensions: Arc::clone(&extensions),
+                                watch_list: Arc::clone(&watch_list),
                                 shared,
                             };
                             tokio::spawn(handle_connection(stream, ctx));
@@ -153,6 +155,7 @@ pub async fn run_ipc_server(
                                 metrics:    Arc::clone(&metrics),
                                 reindex_tx: reindex_tx.clone(),
                                 extensions: Arc::clone(&extensions),
+                                watch_list: Arc::clone(&watch_list),
                                 shared,
                             };
                             tokio::spawn(handle_connection(server, ctx));
@@ -179,6 +182,7 @@ struct ConnCtx {
     metrics: Arc<IndexMetrics>,
     reindex_tx: watch::Sender<bool>,
     extensions: Arc<Extensions>,
+    watch_list: Arc<crate::watch_list::WatchList>,
     shared: bool,
 }
 
@@ -289,11 +293,11 @@ async fn dispatch(req: IpcRequest, request_id: u128, ctx: &ConnCtx) -> IpcEnvelo
             error_response(request_id, "NOT_ALLOWED", SHARED_WATCH_REFUSAL)
         }
         IpcRequest::WatchAdd { path } => {
-            let changed = crate::watch_list::add(&ctx.cfg, &path).await;
+            let changed = ctx.watch_list.add(&path).await;
             watch_handler(request_id, changed, ctx).await
         }
-        IpcRequest::WatchRemove { path } => {
-            let changed = crate::watch_list::remove(&ctx.cfg, &path).await;
+        IpcRequest::WatchRemove { path, forget } => {
+            let changed = ctx.watch_list.remove(&path, forget).await;
             watch_handler(request_id, changed, ctx).await
         }
     }

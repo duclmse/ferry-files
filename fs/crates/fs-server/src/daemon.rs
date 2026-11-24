@@ -239,6 +239,7 @@ pub async fn run_with_options(
     // ── 6. Shared config ───────────────────────────────────────────────────
     crate::indexer::exclusions::log_own_dirs_under(&cfg);
     let shared_cfg = Arc::new(RwLock::new(cfg));
+    let watch_list = crate::watch_list::WatchList::new(Arc::clone(&shared_cfg));
 
     // ── 7. Crawl-in-progress guard ─────────────────────────────────────────
     // Prevents two concurrent full crawls (initial + API-triggered reindex)
@@ -346,6 +347,7 @@ pub async fn run_with_options(
     };
     tokio::spawn(follow_watch_paths(
         crawler.clone(),
+        Arc::clone(&watch_list),
         ev_tx,
         reindex_tx.clone(),
         shutdown.clone(),
@@ -365,6 +367,7 @@ pub async fn run_with_options(
             let metrics_c = Arc::clone(&metrics);
             let reindex_ipc = reindex_tx.clone();
             let extensions_c = Arc::clone(&extensions);
+            let watch_list_c = Arc::clone(&watch_list);
             tokio::spawn(async move {
                 run_ipc_server(
                     cfg_c,
@@ -373,6 +376,7 @@ pub async fn run_with_options(
                     metrics_c,
                     reindex_ipc,
                     extensions_c,
+                    watch_list_c,
                     opts.system_service,
                     shutdown_c,
                 )
@@ -414,6 +418,7 @@ pub async fn run_with_options(
                 archive_semaphores,
                 scheduler_metrics,
                 rate_limiter,
+                watch_list: Arc::clone(&watch_list),
             };
             let shutdown_c = shutdown.clone();
             let rest_port = api_cfg.rest_port;
@@ -468,6 +473,7 @@ pub async fn run_with_options(
                 config: Arc::clone(&shared_cfg),
                 metrics: Arc::clone(&metrics),
                 reindex_tx: reindex_tx.clone(),
+                watch_list: Arc::clone(&watch_list),
             };
             let reflection = tonic_reflection::server::Builder::configure()
                 .register_encoded_file_descriptor_set(grpc::proto::FILE_DESCRIPTOR_SET)
@@ -925,13 +931,14 @@ struct Crawler {
 
 /// Runs the watcher over the config's watch paths (none when there are no
 /// paths), and starts it again when they change, crawling the added ones.
-/// The rows of a removed path stay.
+/// The rows of a removed path stay, unless it was removed with `forget`.
 ///
 /// The new watcher starts before the old one stops, and the old one gets a
 /// debounce window and more to deliver what it holds: changes in between
 /// are seen twice, which applying them tolerates, rather than not at all.
 async fn follow_watch_paths(
     crawler: Crawler,
+    watch_list: Arc<crate::watch_list::WatchList>,
     tx: mpsc::Sender<IndexEvent>,
     reindex: watch::Sender<bool>,
     shutdown: CancellationToken,
@@ -971,11 +978,17 @@ async fn follow_watch_paths(
             continue;
         }
         let added: Vec<PathBuf> = now.iter().filter(|p| !roots.contains(p)).cloned().collect();
-        let removed = roots.iter().filter(|p| !now.contains(p)).count();
+        let removed: Vec<PathBuf> = roots.iter().filter(|p| !now.contains(p)).cloned().collect();
         tracing::info!(
-            "watch_paths changed: {} added, {removed} removed",
-            added.len()
+            "watch_paths changed: {} added, {} removed",
+            added.len(),
+            removed.len()
         );
+        let forget: Vec<PathBuf> = watch_list
+            .take_forgotten()
+            .into_iter()
+            .filter(|p| removed.contains(p))
+            .collect();
         roots = now;
         if let Some(old) = std::mem::replace(&mut running, start(&roots)) {
             tokio::spawn(async move {
@@ -983,11 +996,12 @@ async fn follow_watch_paths(
                 old.cancel();
             });
         }
-        if added.is_empty() {
+        if added.is_empty() && forget.is_empty() {
             continue;
         }
-        // One crawl at a time. A full crawl already running may have read
-        // the paths before the change, so the added ones are crawled after it.
+        // One crawl or removal at a time. A full crawl already running may
+        // have read the paths before the change, so the added ones are
+        // crawled after it.
         while crawler
             .active
             .compare_exchange(false, true, Ordering::AcqRel, Ordering::Relaxed)
@@ -998,8 +1012,59 @@ async fn follow_watch_paths(
                 _ = tokio::time::sleep(JOURNAL_CRAWL_POLL) => {}
             }
         }
-        crawler.spawn(Some(added), shutdown.clone());
+        let mut crawl = added;
+        if !forget.is_empty() {
+            let (c, kept) = (crawler.clone(), roots.clone());
+            match tokio::task::spawn_blocking(move || forget_roots(&c, &forget, &kept)).await {
+                Ok(again) => crawl.extend(again),
+                Err(e) => tracing::warn!("forgetting removed watch paths failed: {e}"),
+            }
+        }
+        if crawl.is_empty() {
+            crawler.active.store(false, Ordering::Release);
+        } else {
+            crawler.spawn(Some(crawl), shutdown.clone());
+        }
     }
+}
+
+/// Removes the entries of `gone`, removed watch paths, from both stores and
+/// the archive registry. A removed path inside a kept one keeps its entries,
+/// which the kept one still covers. Returns the kept paths inside a removed
+/// one, which lost their entries with it and need crawling again. Blocking.
+fn forget_roots(c: &Crawler, gone: &[PathBuf], kept: &[PathBuf]) -> Vec<PathBuf> {
+    let mut again = Vec::new();
+    for root in gone {
+        if let Some(outer) = kept.iter().find(|k| root.starts_with(k)) {
+            tracing::info!(
+                "{} is inside watch path {}; its entries stay",
+                root.display(),
+                outer.display()
+            );
+            continue;
+        }
+        let start = std::time::Instant::now();
+        let path = root.to_string_lossy();
+        let removed = c.sqlite.remove_directory(&path).unwrap_or_else(|e| {
+            tracing::warn!("forget {path}: {e}");
+            0
+        });
+        if let Err(e) = c.sqlite.remove_file(&path) {
+            tracing::warn!("forget {path}: {e}");
+        }
+        if let Err(e) = c.tantivy.remove_under(&path) {
+            tracing::warn!("forget {path} (full text): {e}");
+        }
+        c.registry.unregister_under(root);
+        crate::indexer::crawler::forget_root_meta(&c.sqlite, &path);
+        tracing::info!(
+            "forgot {path}: {removed} entries ({:.1}s)",
+            start.elapsed().as_secs_f64()
+        );
+        again.extend(kept.iter().filter(|k| k.starts_with(root)).cloned());
+    }
+    c.metrics.recount(&c.sqlite);
+    again
 }
 
 // ---------------------------------------------------------------------------

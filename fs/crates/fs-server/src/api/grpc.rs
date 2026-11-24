@@ -36,6 +36,7 @@ pub struct FileSearchService {
     pub config: Arc<RwLock<Config>>,
     pub metrics: Arc<IndexMetrics>,
     pub reindex_tx: watch::Sender<bool>,
+    pub watch_list: Arc<crate::watch_list::WatchList>,
 }
 
 // ---------------------------------------------------------------------------
@@ -127,8 +128,8 @@ impl FileSearch for FileSearchService {
         &self,
         request: Request<WatchPathRequest>,
     ) -> Result<Response<WatchPathsResponse>, Status> {
-        let path = self.authorized(request).await?;
-        let outcome = crate::watch_list::add(&self.config, &path).await;
+        let req = self.authorized(request).await?;
+        let outcome = self.watch_list.add(&req.path).await;
         self.watch_change(outcome)
     }
 
@@ -136,8 +137,8 @@ impl FileSearch for FileSearchService {
         &self,
         request: Request<WatchPathRequest>,
     ) -> Result<Response<WatchPathsResponse>, Status> {
-        let path = self.authorized(request).await?;
-        let outcome = crate::watch_list::remove(&self.config, &path).await;
+        let req = self.authorized(request).await?;
+        let outcome = self.watch_list.remove(&req.path, req.forget).await;
         self.watch_change(outcome)
     }
 }
@@ -161,15 +162,18 @@ where
 // ---------------------------------------------------------------------------
 
 impl FileSearchService {
-    /// The request's path, once its token is checked.
-    async fn authorized(&self, request: Request<WatchPathRequest>) -> Result<String, Status> {
+    /// The request, once its token is checked.
+    async fn authorized(
+        &self,
+        request: Request<WatchPathRequest>,
+    ) -> Result<WatchPathRequest, Status> {
         let header = request
             .metadata()
             .get("authorization")
             .and_then(|v| v.to_str().ok())
             .map(str::to_owned);
         crate::api::auth::require_grpc_token(&self.config.read().await.api, header.as_deref())?;
-        Ok(request.into_inner().path)
+        Ok(request.into_inner())
     }
 
     fn watch_paths(&self, paths: &[std::path::PathBuf], changed: bool) -> WatchPathsResponse {

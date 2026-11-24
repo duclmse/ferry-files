@@ -144,6 +144,11 @@ fn entries_key(root: &str) -> String {
     format!("root_entries:{root}")
 }
 
+/// Clears what the crawl recorded about `root`, a watch path that left.
+pub fn forget_root_meta(store: &FileStore, root: &str) {
+    let _ = store.set_meta(&entries_key(root), "0");
+}
+
 /// Entries the last full crawl found under `root`; 0 if never crawled.
 fn last_entries(store: &FileStore, root: &str) -> u64 {
     store
@@ -782,7 +787,7 @@ pub async fn process_events(
     let start = std::time::Instant::now();
     let received = events.len();
     let events = match ExclusionEngine::shared(&cfg) {
-        Ok(excl) => without_excluded(events, &excl),
+        Ok(excl) => without_excluded(events, &excl, &cfg.watch_paths),
         Err(e) => {
             tracing::warn!("exclusions: {e}");
             events
@@ -827,8 +832,18 @@ const SLOW: std::time::Duration = std::time::Duration::from_secs(1);
 /// this, a data folder inside a watched tree (`C:\` as a root) fed its own
 /// database and index writes back in as events, each causing more writes.
 /// A rename across the boundary becomes the side that stays visible.
-fn without_excluded(events: Vec<IndexEvent>, excl: &ExclusionEngine) -> Vec<IndexEvent> {
-    let out = |p: &Path| excl.should_exclude(p, is_hidden_name(p));
+///
+/// Paths outside every watch path are dropped the same way: a watcher that
+/// is stopping, after its path was removed, may still deliver some, and they
+/// would put back entries just forgotten.
+fn without_excluded(
+    events: Vec<IndexEvent>,
+    excl: &ExclusionEngine,
+    roots: &[PathBuf],
+) -> Vec<IndexEvent> {
+    let out = |p: &Path| {
+        excl.should_exclude(p, is_hidden_name(p)) || !roots.iter().any(|r| p.starts_with(r))
+    };
     events
         .into_iter()
         .filter_map(|event| match event {

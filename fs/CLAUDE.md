@@ -87,7 +87,7 @@ crates/
     zidx/         .zidx sidecar index
     scheduler/    archive request scheduling and rate limits
     extensions.rs, extensions/  discovery, trust checks, process supervision
-    watch_list.rs add / remove watch paths for the APIs; edits the config file
+    watch_list.rs WatchList: add / remove watch paths for the APIs; edits the config file
   fs-ext-rar2zip/src/
     main.rs       extension executable (`run`, `validate`)
     extension.rs  Extension impl (lifecycle, client commands)
@@ -176,8 +176,9 @@ disk. The commit loop in `daemon.rs` runs every `commit_interval_secs`.
   extension commands). A new IPC request that does that must be refused too.
 - `follow_watch_paths` in `daemon.rs` follows hot-reloaded watch paths: it
   restarts the watcher and crawls only the added roots (`crawl_roots`).
-  A removed root stops being watched, but its rows stay. No watch paths
-  means no watcher.
+  A removed root stops being watched; its rows stay unless it was removed
+  with `forget` (`forget_roots`). No watch paths means no watcher.
+  `process_events` drops events outside every watch path.
 - Extension executables must keep stdout for the protocol and log to stderr.
 - `fsd` runs whatever is in `extensions_dir`. `extensions/trust.rs` and
   `ensure_unprotected` in `api/fs/common.rs` guard it; new file-mutating routes

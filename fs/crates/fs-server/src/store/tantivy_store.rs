@@ -120,6 +120,21 @@ impl TantivyStore {
         Ok(())
     }
 
+    /// Delete the documents of `dir` and everything under it. Does NOT
+    /// commit. One query over the term dictionary, not a delete per path.
+    pub fn remove_under(&self, dir: &str) -> Result<()> {
+        let pattern = format!("{}([/\\\\].*)?", regex::escape(dir));
+        let query = tantivy::query::RegexQuery::from_pattern(&pattern, self.f_path)
+            .map_err(AppError::Tantivy)?;
+        let w = self
+            .writer
+            .read()
+            .map_err(|e| AppError::Index(e.to_string()))?;
+        w.delete_query(Box::new(query)).map_err(AppError::Tantivy)?;
+        self.dirty.store(true, std::sync::atomic::Ordering::Release);
+        Ok(())
+    }
+
     fn lock_path(&self, path: &str) -> Result<std::sync::MutexGuard<'_, ()>> {
         use std::hash::{BuildHasher, BuildHasherDefault, DefaultHasher};
         let slot = BuildHasherDefault::<DefaultHasher>::default().hash_one(path) as usize;
@@ -344,6 +359,41 @@ mod tests {
             .search_fulltext("zebraquartz", 100, &MetaFilters::default())
             .unwrap();
         assert_eq!(hits.len(), 1);
+    }
+
+    #[test]
+    fn remove_under_takes_a_folder_and_nothing_beside_it() {
+        let store = make_store();
+        let dir = r"C:\w (1) #&-~[x]+";
+        let paths = [
+            dir.to_owned(),
+            format!(r"{dir}\a.txt"),
+            format!("{dir}/b.txt"),
+            format!(r"{dir}\c.zip!/inner.txt"),
+            format!("{dir}x/kept.txt"),
+            r"C:\other\kept.txt".to_owned(),
+        ];
+        for p in &paths {
+            store.upsert(&sample_record(p), Some("zebraword")).unwrap();
+        }
+        store.commit().unwrap();
+        store.reload_reader().unwrap();
+
+        store.remove_under(dir).unwrap();
+        store.commit().unwrap();
+        store.reload_reader().unwrap();
+
+        let mut left: Vec<String> = store
+            .search_fulltext("zebraword", 10, &MetaFilters::default())
+            .unwrap()
+            .into_iter()
+            .map(|h| h.path)
+            .collect();
+        left.sort();
+        assert_eq!(
+            left,
+            [r"C:\other\kept.txt".to_owned(), format!("{dir}x/kept.txt")]
+        );
     }
 
     #[test]

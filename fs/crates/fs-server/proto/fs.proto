@@ -54,7 +54,11 @@ message ReindexRequest  { bool full = 1; }
 message ReindexResponse { bool accepted = 1; }
 
 message ListWatchPathsRequest {}
-message WatchPathRequest { string path = 1; }
+message WatchPathRequest {
+  string path = 1;
+  // RemoveWatchPath: remove the path's entries from the index too.
+  bool forget = 2;
+}
 message WatchPathsResponse {
   repeated string watch_paths = 1;
   // False until a full crawl has finished once.

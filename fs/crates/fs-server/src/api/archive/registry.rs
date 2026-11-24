@@ -142,6 +142,26 @@ impl ArchiveRegistry {
         self.source_cache.remove(&id);
     }
 
+    /// Removes every ZIP under `dir`, and its `.zidx` file: `dir` has left
+    /// the index.
+    pub fn unregister_under(&self, dir: &Path) {
+        if !self.enabled {
+            return;
+        }
+        let gone: Vec<(String, PathBuf)> = self
+            .entries
+            .iter()
+            .filter(|e| e.value().zip_path.starts_with(dir))
+            .map(|e| (e.key().clone(), e.value().zidx_path.clone()))
+            .collect();
+        for (id, zidx) in gone {
+            self.entries.remove(&id);
+            self.index_cache.remove(&id);
+            self.source_cache.remove(&id);
+            let _ = std::fs::remove_file(zidx);
+        }
+    }
+
     /// Open (or return a cached) ZidxIndex for the given archive ID.
     /// Returns None if the ID is unknown or the .zidx file is missing/corrupt.
     pub fn index(&self, id: &str) -> Option<Arc<ZidxIndex>> {

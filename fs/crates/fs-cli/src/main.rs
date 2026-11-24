@@ -110,8 +110,13 @@ enum WatchAction {
     List,
     /// Add a folder; the daemon crawls it, then watches it
     Add { path: std::path::PathBuf },
-    /// Remove a watch path; its entries stay in the index
-    Remove { path: std::path::PathBuf },
+    /// Remove a watch path; its entries stay in the index unless --forget
+    Remove {
+        path: std::path::PathBuf,
+        /// Remove its entries from the index too
+        #[arg(long)]
+        forget: bool,
+    },
 }
 
 #[tokio::main]
@@ -489,8 +494,9 @@ async fn run_watch(config_path: std::path::PathBuf, action: WatchAction) -> anyh
         WatchAction::Add { path } => IpcRequest::WatchAdd {
             path: absolute(path)?,
         },
-        WatchAction::Remove { path } => IpcRequest::WatchRemove {
+        WatchAction::Remove { path, forget } => IpcRequest::WatchRemove {
             path: absolute(path)?,
+            forget,
         },
     };
     let mut client = ipc_client_for(config_path).await?;

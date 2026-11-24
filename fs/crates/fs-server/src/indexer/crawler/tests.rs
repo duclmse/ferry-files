@@ -287,8 +287,10 @@ fn excluded_paths_drop_out_of_watcher_events() {
                 to: p("/w/c.txt"),
             },
             IndexEvent::Deleted(p("/w/data/seg.idx")),
+            IndexEvent::Created(p("/elsewhere/d.txt")),
         ],
         &excl,
+        &[p("/w")],
     );
     let shown: Vec<String> = events.iter().map(|e| format!("{e:?}")).collect();
     assert_eq!(

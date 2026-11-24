@@ -1,7 +1,8 @@
 //! Adding and removing watch paths while the daemon runs, for the IPC, REST
 //! and gRPC APIs. A change goes to the config file, so it outlasts a restart,
 //! and to the shared config, which `daemon::follow_watch_paths` follows:
-//! it crawls an added path and starts watching it.
+//! it crawls an added path and starts watching it, and stops watching a
+//! removed one (forgetting its entries when asked to).
 //!
 //! The file is edited in place, keeping its comments and layout, and written
 //! over rather than replaced: the config watcher follows the file itself, and
@@ -31,55 +32,103 @@ pub struct Outcome {
     pub changed: bool,
 }
 
-/// One change at a time: each reads the file the last one wrote.
-static CHANGING: Mutex<()> = Mutex::const_new(());
-
-/// Adds `path`, which must be an absolute path to a folder. A path that is
-/// already watched, or lies inside one that is, changes nothing.
-pub async fn add(config: &Arc<RwLock<Config>>, path: &str) -> Result<Outcome, WatchListError> {
-    let _one = CHANGING.lock().await;
-    let path = folder(path)?;
-    let (mut paths, source) = current(config).await;
-    if let Some(outer) = paths.iter().find(|p| path.starts_with(p)) {
-        if *outer != path {
-            return Err(WatchListError::Invalid(format!(
-                "{} is already watched as part of {}",
-                path.display(),
-                outer.display()
-            )));
-        }
-        return Ok(Outcome {
-            watch_paths: paths,
-            changed: false,
-        });
-    }
-    paths.push(path.clone());
-    if let Some(file) = source {
-        edit_file(file, move |entries| {
-            entries.push(path.to_string_lossy().into_owned());
-        })
-        .await?;
-    }
-    Ok(store(config, paths).await)
+/// The daemon's watch paths, as the APIs change them. One per daemon,
+/// shared by the APIs and `daemon::follow_watch_paths`.
+pub struct WatchList {
+    config: Arc<RwLock<Config>>,
+    /// One change at a time: each reads the file the last one wrote.
+    changing: Mutex<()>,
+    /// Removed roots whose entries are to go, for `follow_watch_paths`.
+    forget: std::sync::Mutex<Vec<PathBuf>>,
 }
 
-/// Removes `path`, as given or as it resolves. Its entries stay in the index.
-pub async fn remove(config: &Arc<RwLock<Config>>, path: &str) -> Result<Outcome, WatchListError> {
-    let _one = CHANGING.lock().await;
-    let target = resolved(Path::new(path));
-    let (mut paths, source) = current(config).await;
-    let before = paths.len();
-    paths.retain(|p| resolved(p) != target);
-    if paths.len() == before {
-        return Err(WatchListError::NotFound(path.to_owned()));
-    }
-    if let Some(file) = source {
-        edit_file(file, move |entries| {
-            entries.retain(|e| resolved(Path::new(e)) != target);
+impl WatchList {
+    pub fn new(config: Arc<RwLock<Config>>) -> Arc<Self> {
+        Arc::new(Self {
+            config,
+            changing: Mutex::new(()),
+            forget: std::sync::Mutex::new(Vec::new()),
         })
-        .await?;
     }
-    Ok(store(config, paths).await)
+
+    pub async fn paths(&self) -> Vec<PathBuf> {
+        self.config.read().await.watch_paths.clone()
+    }
+
+    /// Adds `path`, which must be an absolute path to a folder. A path that
+    /// is already watched, or lies inside one that is, changes nothing.
+    pub async fn add(&self, path: &str) -> Result<Outcome, WatchListError> {
+        let _one = self.changing.lock().await;
+        let path = folder(path)?;
+        let (mut paths, source) = self.current().await;
+        if let Some(outer) = paths.iter().find(|p| path.starts_with(p)) {
+            if *outer != path {
+                return Err(WatchListError::Invalid(format!(
+                    "{} is already watched as part of {}",
+                    path.display(),
+                    outer.display()
+                )));
+            }
+            return Ok(Outcome {
+                watch_paths: paths,
+                changed: false,
+            });
+        }
+        paths.push(path.clone());
+        if let Some(file) = source {
+            edit_file(file, move |entries| {
+                entries.push(path.to_string_lossy().into_owned());
+            })
+            .await?;
+        }
+        Ok(self.store(paths).await)
+    }
+
+    /// Removes `path`, as given or as it resolves. With `forget`, its
+    /// entries leave the index too; otherwise they stay.
+    pub async fn remove(&self, path: &str, forget: bool) -> Result<Outcome, WatchListError> {
+        let _one = self.changing.lock().await;
+        let target = resolved(Path::new(path));
+        let (mut paths, source) = self.current().await;
+        let Some(at) = paths.iter().position(|p| resolved(p) == target) else {
+            return Err(WatchListError::NotFound(path.to_owned()));
+        };
+        let gone = paths.remove(at);
+        if let Some(file) = source {
+            edit_file(file, move |entries| {
+                entries.retain(|e| resolved(Path::new(e)) != target);
+            })
+            .await?;
+        }
+        if forget {
+            if let Ok(mut f) = self.forget.lock() {
+                f.push(gone);
+            }
+        }
+        Ok(self.store(paths).await)
+    }
+
+    /// The removed roots to forget, once: `follow_watch_paths` takes them
+    /// when it sees the removal.
+    pub fn take_forgotten(&self) -> Vec<PathBuf> {
+        self.forget
+            .lock()
+            .map(|mut f| std::mem::take(&mut *f))
+            .unwrap_or_default()
+    }
+
+    async fn current(&self) -> (Vec<PathBuf>, Option<PathBuf>) {
+        let c = self.config.read().await;
+        (c.watch_paths.clone(), c.source_path.clone())
+    }
+
+    async fn store(&self, paths: Vec<PathBuf>) -> Outcome {
+        self.config.write().await.watch_paths = paths.clone();
+        Outcome {
+            watch_paths: paths,
+            changed: true,
+        }
+    }
 }
 
 /// The path as `config::load` keeps a watch path: resolved where it exists.
@@ -102,19 +151,6 @@ fn folder(path: &str) -> Result<PathBuf, WatchListError> {
         return Err(WatchListError::Invalid(format!("not a folder: {path}")));
     }
     Ok(resolved(p))
-}
-
-async fn current(config: &Arc<RwLock<Config>>) -> (Vec<PathBuf>, Option<PathBuf>) {
-    let c = config.read().await;
-    (c.watch_paths.clone(), c.source_path.clone())
-}
-
-async fn store(config: &Arc<RwLock<Config>>, paths: Vec<PathBuf>) -> Outcome {
-    config.write().await.watch_paths = paths.clone();
-    Outcome {
-        watch_paths: paths,
-        changed: true,
-    }
 }
 
 /// Rewrites `watch_paths` in `file` with `change`, leaving the rest as it is.
@@ -198,11 +234,11 @@ fn literal(s: &str) -> toml_edit::Value {
 mod tests {
     use super::*;
 
-    fn shared(dir: &Path, text: &str) -> (Arc<RwLock<Config>>, PathBuf) {
+    fn shared(dir: &Path, text: &str) -> (Arc<RwLock<Config>>, Arc<WatchList>, PathBuf) {
         let file = dir.join("config.toml");
         std::fs::write(&file, text).unwrap();
-        let cfg = crate::config::load(&file).unwrap();
-        (Arc::new(RwLock::new(cfg)), file)
+        let cfg = Arc::new(RwLock::new(crate::config::load(&file).unwrap()));
+        (Arc::clone(&cfg), WatchList::new(cfg), file)
     }
 
     #[test]
@@ -241,7 +277,7 @@ mod tests {
         std::fs::create_dir_all(first.join("inner")).unwrap();
         std::fs::create_dir(&second).unwrap();
         let fwd = |p: &Path| p.to_string_lossy().replace('\\', "/");
-        let (cfg, file) = shared(
+        let (cfg, list, file) = shared(
             dir.path(),
             &format!(
                 "watch_paths = [\"{}\"]\ndata_dir = \"{}\"\nlog_dir = \"{}\"\n",
@@ -252,7 +288,7 @@ mod tests {
         );
         let second_s = second.to_string_lossy().into_owned();
 
-        let added = add(&cfg, &second_s).await.unwrap();
+        let added = list.add(&second_s).await.unwrap();
         assert!(added.changed);
         assert_eq!(added.watch_paths.len(), 2);
         assert_eq!(cfg.read().await.watch_paths, added.watch_paths);
@@ -261,25 +297,27 @@ mod tests {
             added.watch_paths
         );
 
-        assert!(!add(&cfg, &second_s).await.unwrap().changed);
+        assert!(!list.add(&second_s).await.unwrap().changed);
         let inner = first.join("inner").to_string_lossy().into_owned();
         assert!(matches!(
-            add(&cfg, &inner).await,
+            list.add(&inner).await,
             Err(WatchListError::Invalid(_))
         ));
         assert!(matches!(
-            add(&cfg, "relative").await,
+            list.add("relative").await,
             Err(WatchListError::Invalid(_))
         ));
 
-        let removed = remove(&cfg, &first.to_string_lossy()).await.unwrap();
+        let removed = list.remove(&first.to_string_lossy(), true).await.unwrap();
         assert_eq!(removed.watch_paths, [resolved(&second)]);
+        assert_eq!(list.take_forgotten(), [resolved(&first)]);
+        assert!(list.take_forgotten().is_empty());
         assert_eq!(
             crate::config::load(&file).unwrap().watch_paths,
             removed.watch_paths
         );
         assert!(matches!(
-            remove(&cfg, &first.to_string_lossy()).await,
+            list.remove(&first.to_string_lossy(), false).await,
             Err(WatchListError::NotFound(_))
         ));
     }

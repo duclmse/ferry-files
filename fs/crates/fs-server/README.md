@@ -351,7 +351,7 @@ Base URL: `http://127.0.0.1:7700`
 | `POST` | `/open` `{"path":"..."}`    | Open file (extracts ZIP entry to temp) |
 | `GET`  | `/watch_paths`              | Watch paths, and whether a crawl has finished |
 | `POST` | `/watch_paths` `{"path":"..."}` | Add a watch path (token), crawled at once |
-| `DELETE` | `/watch_paths?path=`      | Remove a watch path (token); its entries stay |
+| `DELETE` | `/watch_paths?path=[&forget=true]` | Remove a watch path (token); its entries stay unless `forget` |
 
 Watch path changes also go to the config file, and need the token in every
 `api.auth_mode`. The same calls are gRPC `ListWatchPaths`, `AddWatchPath`
