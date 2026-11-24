@@ -505,6 +505,27 @@ async fn test_watch_paths_change_over_the_apis() {
         .is_err());
 }
 
+/// A watch path holding the daemon's own data and log folders: they are not
+/// indexed, so their writes do not come back as events and the daemon goes
+/// idle.
+#[tokio::test]
+async fn test_own_folders_under_a_watch_path_are_ignored() {
+    let dir = TempDir::new().unwrap();
+    let watch = dir.path().to_path_buf();
+    std::fs::write(watch.join("mine.txt"), b"x").unwrap();
+    let daemon = TestDaemon::start(&watch, dir).await;
+    daemon
+        .wait_until(Duration::from_secs(30), |s| s.last_crawl_secs > 0)
+        .await;
+    wait_for_hits(&daemon, "mine.txt", 15, |p| p.len() == 1).await;
+    // A few commit intervals (1 s here) and snapshot-free idle time.
+    tokio::time::sleep(Duration::from_secs(2)).await;
+    let before = daemon.stats().await.events_processed;
+    tokio::time::sleep(Duration::from_secs(4)).await;
+    assert_eq!(daemon.stats().await.events_processed, before);
+    assert_eq!(daemon.search("index.bin").await.total, 0);
+}
+
 /// Polls `query` until `ok` holds for its hits, or panics after `secs`.
 async fn wait_for_hits(
     daemon: &TestDaemon,

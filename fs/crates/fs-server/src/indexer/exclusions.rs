@@ -1,10 +1,10 @@
-use std::path::Path;
+use std::path::{Path, PathBuf};
 
 use std::sync::{Arc, Mutex};
 
 use globset::{Glob, GlobSet, GlobSetBuilder};
 
-use crate::config::ExclusionConfig;
+use crate::config::{Config, ExclusionConfig};
 use crate::error::{AppError, Result};
 
 /// One automaton for all patterns: matching five `glob::Pattern`s one by
@@ -13,6 +13,42 @@ use crate::error::{AppError, Result};
 pub struct ExclusionEngine {
     set: GlobSet,
     exclude_hidden: bool,
+    /// fsd's own folders (`own_dirs`), resolved.
+    own: Vec<PathBuf>,
+}
+
+/// The folders fsd writes to all the time: its index, logs and archive
+/// sidecars. Indexed, each write would be an event whose indexing writes
+/// again, so an idle daemon would never go idle. Not resolved: see
+/// `resolve_own`.
+pub fn own_dirs(cfg: &Config) -> Vec<PathBuf> {
+    let svc = &cfg.archive_service;
+    [
+        Some(&cfg.data_dir),
+        Some(&cfg.log_dir),
+        svc.zidx_dir.as_ref(),
+        svc.dzx_dir.as_ref(),
+    ]
+    .into_iter()
+    .flatten()
+    .cloned()
+    .collect()
+}
+
+/// `dirs` as the crawler and the watchers spell paths: absolute, links
+/// resolved, and without `\\?\` on Windows, as `config::load` keeps watch
+/// paths.
+fn resolve_own(dirs: &[PathBuf]) -> Vec<PathBuf> {
+    dirs.iter()
+        .filter_map(|d| {
+            let d = std::path::absolute(d).ok()?;
+            Some(match d.canonicalize() {
+                Ok(c) if cfg!(windows) => crate::config::without_verbatim(c),
+                Ok(c) => c,
+                Err(_) => d,
+            })
+        })
+        .collect()
 }
 
 impl ExclusionEngine {
@@ -34,34 +70,60 @@ impl ExclusionEngine {
                 .build()
                 .map_err(|e| AppError::Config(e.to_string()))?,
             exclude_hidden: cfg.exclude_hidden,
+            own: Vec::new(),
         })
     }
 
-    /// The engine for `cfg`, built once and reused until the patterns
-    /// change; watcher events ask for it per event.
-    pub fn shared(cfg: &ExclusionConfig) -> Result<Arc<Self>> {
-        type Cached = Option<(Vec<String>, bool, Arc<ExclusionEngine>)>;
-        static CACHE: Mutex<Cached> = Mutex::new(None);
+    /// The engine for the daemon's config: its patterns, and its own folders
+    /// (`own_dirs`) kept out.
+    pub fn for_config(cfg: &Config) -> Result<Self> {
+        let mut engine = Self::new(&cfg.exclusions)?;
+        engine.own = resolve_own(&own_dirs(cfg));
+        Ok(engine)
+    }
+
+    /// `for_config`, built once and reused until the patterns or folders
+    /// change; watcher events ask for it per batch.
+    pub fn shared(cfg: &Config) -> Result<Arc<Self>> {
+        type Key = (Vec<String>, bool, Vec<PathBuf>);
+        static CACHE: Mutex<Option<(Key, Arc<ExclusionEngine>)>> = Mutex::new(None);
+        let key = (
+            cfg.exclusions.path_patterns.clone(),
+            cfg.exclusions.exclude_hidden,
+            own_dirs(cfg),
+        );
         let mut cache = CACHE
             .lock()
             .map_err(|_| AppError::Config("exclusion cache poisoned".into()))?;
-        if let Some((patterns, hidden, engine)) = cache.as_ref() {
-            if *patterns == cfg.path_patterns && *hidden == cfg.exclude_hidden {
+        if let Some((cached, engine)) = cache.as_ref() {
+            if *cached == key {
                 return Ok(Arc::clone(engine));
             }
         }
-        let engine = Arc::new(Self::new(cfg)?);
-        *cache = Some((
-            cfg.path_patterns.clone(),
-            cfg.exclude_hidden,
-            Arc::clone(&engine),
-        ));
+        let engine = Arc::new(Self::for_config(cfg)?);
+        *cache = Some((key, Arc::clone(&engine)));
         Ok(engine)
     }
 
     /// Returns true if this path should be excluded from indexing.
     pub fn should_exclude(&self, path: &Path, is_hidden: bool) -> bool {
-        (self.exclude_hidden && is_hidden) || self.set.is_match(path)
+        (self.exclude_hidden && is_hidden)
+            || self.own.iter().any(|d| path.starts_with(d))
+            || self.set.is_match(path)
+    }
+}
+
+/// Logs each of fsd's own folders that lies under a watch path, once per
+/// start: it is left out of the index.
+pub fn log_own_dirs_under(cfg: &Config) {
+    for dir in resolve_own(&own_dirs(cfg)) {
+        if let Some(root) = cfg.watch_paths.iter().find(|r| dir.starts_with(r)) {
+            tracing::info!(
+                "{} is under watch path {}; it is not indexed",
+                dir.display(),
+                root.display()
+            );
+        }
     }
 }
 
@@ -182,22 +244,44 @@ mod tests {
         assert!(!eng.should_exclude(Path::new("/p/targets/x"), false));
     }
 
+    fn config(patterns: &[&str], data_dir: &str) -> Config {
+        let mut cfg: Config = toml::from_str(&format!(
+            "data_dir = '{data_dir}'
+log_dir = '{data_dir}/logs'"
+        ))
+        .unwrap();
+        cfg.exclusions.path_patterns = patterns.iter().map(|s| s.to_string()).collect();
+        cfg
+    }
+
     #[test]
     fn shared_engine_follows_pattern_changes() {
-        let a = ExclusionConfig {
-            path_patterns: vec!["**/a/**".into()],
-            ..Default::default()
-        };
-        let b = ExclusionConfig {
-            path_patterns: vec!["**/b/**".into()],
-            ..Default::default()
-        };
+        let a = config(&["**/a/**"], "/d");
+        let b = config(&["**/b/**"], "/d");
         assert!(ExclusionEngine::shared(&a)
             .unwrap()
             .should_exclude(Path::new("/x/a/f"), false));
         let eng = ExclusionEngine::shared(&b).unwrap();
         assert!(!eng.should_exclude(Path::new("/x/a/f"), false));
         assert!(eng.should_exclude(Path::new("/x/b/f"), false));
+    }
+
+    #[test]
+    fn the_daemons_own_folders_are_left_out() {
+        let dir = tempfile::tempdir().unwrap();
+        let root = resolve_own(&[dir.path().to_path_buf()]).remove(0);
+        std::fs::create_dir_all(root.join("data").join("logs")).unwrap();
+        let cfg = config(&[], &root.join("data").to_string_lossy());
+        let eng = ExclusionEngine::for_config(&cfg).unwrap();
+        assert!(eng.should_exclude(&root.join("data"), false));
+        assert!(eng.should_exclude(&root.join("data").join("index.bin"), false));
+        assert!(eng.should_exclude(&root.join("data").join("logs").join("x.log"), false));
+        assert!(!eng.should_exclude(&root.join("database.txt"), false));
+        assert!(!eng.should_exclude(&root.join("src").join("data"), false));
+        // The pattern-only engine leaves them in.
+        assert!(!ExclusionEngine::new(&cfg.exclusions)
+            .unwrap()
+            .should_exclude(&root.join("data").join("index.bin"), false));
     }
 
     #[test]

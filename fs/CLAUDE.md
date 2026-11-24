@@ -201,6 +201,9 @@ disk. The commit loop in `daemon.rs` runs every `commit_interval_secs`.
   reintroduce concurrent per-event tasks, which reorder a path's events.
 - SQLite subtree predicates must stay index ranges (`UNDER_DIR_1`):
   `LIKE` is case-insensitive here and scans the whole table.
+- Exclusions that apply to the index come from `ExclusionEngine::for_config`
+  or `::shared(&cfg)`, which also keep fsd's own folders (`own_dirs`: data,
+  logs, sidecars) out. `ExclusionEngine::new` has the patterns only.
 - Walkers come from `indexer::walk_builder`, which keeps git ignore rules
   out of the crawl.
 - The default store is the memory store (`store.mode = "auto"`). Every

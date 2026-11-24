@@ -151,6 +151,9 @@ them later in any of these ways:
   `watch_paths` list is rewritten; comments and layout stay.
 - **The path.** It must be an existing folder. `fs watch add .` resolves `.`
   against your current folder; REST and gRPC need an absolute path.
+- **fsd's own folders.** `data_dir`, `log_dir` and the archive sidecar
+  folders are never indexed, even under a watch path, so watching `C:\` with
+  data in `C:\ProgramData\fs` is fine.
 - **Already covered.** Adding a folder that is already watched, or one inside
   a watched folder, changes nothing or is refused.
 - **Removing.** fsd stops watching the folder, but its entries stay in the
@@ -692,5 +695,4 @@ noted.
 | REST 403 "this route is disabled" | No `api.auth_token_hash` (section 9.1) |
 | REST 401 | Missing or wrong bearer token |
 | Changes made while stopped are missing | On Windows without administrator rights, catch-up is a timestamp scan; `fs reindex` crawls everything again |
-| fsd never goes idle | A watch path contains `data_dir` or `log_dir`, so fsd indexes its own writes; move them out of the watched tree |
 | rar2zip host key errors | [rar2zip README, troubleshooting](../crates/fs-ext-rar2zip/README.md#8-troubleshooting) |

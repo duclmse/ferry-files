@@ -273,7 +273,7 @@ pub async fn crawl_roots(
 ) -> Result<()> {
     let cfg = config.read().await.clone();
 
-    let exclusions = Arc::new(ExclusionEngine::new(&cfg.exclusions)?);
+    let exclusions = Arc::new(ExclusionEngine::for_config(&cfg)?);
     let whole = roots.is_none();
     let watch_paths = roots.unwrap_or_else(|| cfg.watch_paths.clone());
 
@@ -656,7 +656,7 @@ fn apply_file_events(events: Vec<IndexEvent>, cfg: &Config, stores: &Stores) {
             && matches!(stores.sqlite.get_by_path(&record.path), Ok(None))
             && parent_indexed(cfg, &stores.sqlite, &batch, &path)
         {
-            match ExclusionEngine::shared(&cfg.exclusions) {
+            match ExclusionEngine::shared(cfg) {
                 Ok(excl) => {
                     let start = std::time::Instant::now();
                     for child in records_under(&path, &excl) {
@@ -781,7 +781,7 @@ pub async fn process_events(
     };
     let start = std::time::Instant::now();
     let received = events.len();
-    let events = match ExclusionEngine::shared(&cfg.exclusions) {
+    let events = match ExclusionEngine::shared(&cfg) {
         Ok(excl) => without_excluded(events, &excl),
         Err(e) => {
             tracing::warn!("exclusions: {e}");
@@ -931,7 +931,7 @@ pub async fn process_event(
                 registry: Arc::clone(&registry),
             };
             let side_work = SideWork::new(&cfg, &to, &stores, None);
-            let excl = ExclusionEngine::shared(&cfg.exclusions);
+            let excl = ExclusionEngine::shared(&cfg);
             tokio::task::spawn_blocking(move || {
                 let from_str = from.to_string_lossy().into_owned();
                 // Full-text documents are keyed by path, so everything under

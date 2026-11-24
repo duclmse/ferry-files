@@ -58,6 +58,36 @@ async fn full_crawl_indexes_all_files() {
     assert!(total >= 5, "expected ≥5 files, got {total}");
 }
 
+/// The daemon's own folders under a watch path stay out of the index: its
+/// writes there would otherwise come back as events forever.
+#[tokio::test]
+async fn the_data_and_log_folders_are_not_crawled() {
+    let dir = TempDir::new().unwrap();
+    let root = crate::config::without_verbatim(dir.path().canonicalize().unwrap());
+    std::fs::create_dir_all(root.join("data")).unwrap();
+    std::fs::create_dir_all(root.join("logs")).unwrap();
+    std::fs::write(root.join("data").join("index.bin"), b"x").unwrap();
+    std::fs::write(root.join("logs").join("fs.log"), b"x").unwrap();
+    std::fs::write(root.join("kept.txt"), b"x").unwrap();
+    let store = make_store(&dir);
+    let registry = Arc::new(ArchiveRegistry::disabled());
+    full_crawl(
+        make_config(&root),
+        store.clone(),
+        make_tantivy(&dir),
+        IndexMetrics::new(),
+        registry,
+        CancellationToken::new(),
+    )
+    .await
+    .unwrap();
+    let has = |p: &Path| store.get_by_path(&p.to_string_lossy()).unwrap().is_some();
+    assert!(has(&root.join("kept.txt")));
+    assert!(!has(&root.join("data")));
+    assert!(!has(&root.join("data").join("index.bin")));
+    assert!(!has(&root.join("logs").join("fs.log")));
+}
+
 #[tokio::test]
 async fn excluded_pattern_not_indexed() {
     let dir = TempDir::new().unwrap();

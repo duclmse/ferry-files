@@ -237,6 +237,7 @@ pub async fn run_with_options(
     };
 
     // ── 6. Shared config ───────────────────────────────────────────────────
+    crate::indexer::exclusions::log_own_dirs_under(&cfg);
     let shared_cfg = Arc::new(RwLock::new(cfg));
 
     // ── 7. Crawl-in-progress guard ─────────────────────────────────────────
@@ -532,7 +533,7 @@ pub async fn run_with_options(
                 (
                     c.watch_paths.clone(),
                     c.archive_index.formats.clone(),
-                    c.exclusions.clone(),
+                    ExclusionEngine::for_config(&c),
                 )
             };
             let now = {
@@ -559,7 +560,7 @@ pub async fn run_with_options(
                     let store = Arc::clone(&sqlite);
                     let (now, start) = (now.clone(), std::time::Instant::now());
                     let plan = tokio::task::spawn_blocking(move || {
-                        let excl = match ExclusionEngine::new(&exclusions) {
+                        let excl = match exclusions {
                             Ok(e) => e,
                             Err(e) => {
                                 return watcher::journal::CatchUp::FullCrawl(format!(

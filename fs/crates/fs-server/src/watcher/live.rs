@@ -177,13 +177,13 @@ impl Recovery {
                     (
                         c.watch_paths.clone(),
                         c.archive_index.formats.clone(),
-                        c.exclusions.clone(),
+                        ExclusionEngine::for_config(&c),
                     )
                 };
                 let index = Arc::clone(&index);
                 let start = Instant::now();
                 let plan = tokio::task::spawn_blocking(move || {
-                    let excl = match ExclusionEngine::new(&exclusions) {
+                    let excl = match exclusions {
                         Ok(e) => e,
                         Err(e) => return CatchUp::FullCrawl(format!("exclusions: {e}")),
                     };
