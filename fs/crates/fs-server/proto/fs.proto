@@ -67,4 +67,17 @@ message WatchPathsResponse {
   bool changed = 3;
   // For add: the watch paths inside the added one, which it replaced.
   repeated string absorbed = 4;
+  // Each watch path's crawl, in watch_paths order.
+  repeated RootStatus roots = 5;
+}
+
+message RootStatus {
+  string path = 1;
+  // "pending", "crawling", "ready" or "offline".
+  string state = 2;
+  // Entries its last or running crawl wrote.
+  uint64 entries = 3;
+  // Unix seconds its last crawl started and finished here; 0 if none did.
+  uint64 started = 4;
+  uint64 finished = 5;
 }

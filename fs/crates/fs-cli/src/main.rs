@@ -483,6 +483,36 @@ async fn run_extension(
     Ok(())
 }
 
+/// One line per watch path: the path, its crawl state and entry count,
+/// the paths padded to one width.
+fn watch_table(r: &fs_protocol::ipc_protocol::RootsResponse) -> String {
+    let width = r.roots.iter().map(|p| p.chars().count()).max().unwrap_or(0);
+    let mut out = String::new();
+    for (i, root) in r.roots.iter().enumerate() {
+        match r.status.get(i) {
+            Some(s) => out.push_str(&format!(
+                "{root:<width$}  {:<8}  {} entries\n",
+                s.state.label(),
+                group_thousands(s.entries)
+            )),
+            None => out.push_str(&format!("{root}\n")),
+        }
+    }
+    out
+}
+
+fn group_thousands(n: u64) -> String {
+    let digits = n.to_string();
+    let mut out = String::new();
+    for (i, c) in digits.chars().enumerate() {
+        if i > 0 && (digits.len() - i).is_multiple_of(3) {
+            out.push(',');
+        }
+        out.push(c);
+    }
+    out
+}
+
 async fn run_watch(config_path: std::path::PathBuf, action: WatchAction) -> anyhow::Result<()> {
     // The daemon resolves paths from its own working folder, not this one.
     let absolute = |p: std::path::PathBuf| -> anyhow::Result<String> {
@@ -508,9 +538,7 @@ async fn run_watch(config_path: std::path::PathBuf, action: WatchAction) -> anyh
         if r.roots.is_empty() {
             eprintln!("no watch paths");
         }
-        for root in r.roots {
-            println!("{root}");
-        }
+        print!("{}", watch_table(&r));
     }
     Ok(())
 }
@@ -518,6 +546,29 @@ async fn run_watch(config_path: std::path::PathBuf, action: WatchAction) -> anyh
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn watch_paths_print_as_a_table() {
+        use fs_protocol::ipc_protocol::{RootState, RootStatus, RootsResponse};
+        let r = RootsResponse {
+            roots: vec!["C:/Users".into(), "D:/A".into()],
+            crawled: true,
+            status: vec![
+                RootStatus {
+                    state: RootState::Ready,
+                    entries: 1_204_331,
+                },
+                RootStatus {
+                    state: RootState::Crawling,
+                    entries: 12,
+                },
+            ],
+        };
+        assert_eq!(
+            watch_table(&r),
+            "C:/Users  ready     1,204,331 entries\nD:/A      crawling  12 entries\n"
+        );
+    }
 
     fn hit(path: &str, is_dir: bool) -> SearchHitDto {
         SearchHitDto {

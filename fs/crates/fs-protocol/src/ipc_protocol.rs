@@ -11,7 +11,7 @@ use serde::{Deserialize, Serialize};
 // ---------------------------------------------------------------------------
 
 pub const MAGIC: [u8; 4] = *b"ZFS1";
-pub const PROTOCOL_VERSION: u16 = 6;
+pub const PROTOCOL_VERSION: u16 = 7;
 pub const MAX_FRAME_BYTES: u32 = 16 * 1024 * 1024; // 16 MiB
 
 // ---------------------------------------------------------------------------
@@ -139,6 +139,38 @@ pub struct RootsResponse {
     /// False until a full crawl has finished once; until then the index
     /// misses files and a client should not trust an empty result.
     pub crawled: bool,
+    /// Each of `roots`, in the same order: whether its crawl is done.
+    pub status: Vec<RootStatus>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct RootStatus {
+    pub state: RootState,
+    /// Entries its last or running crawl wrote.
+    pub entries: u64,
+}
+
+/// Where a watch path's crawl is.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+pub enum RootState {
+    /// Added, its crawl not started yet.
+    Pending,
+    Crawling,
+    /// Crawled, and followed live.
+    Ready,
+    /// Not reachable: its entries stay as they were.
+    Offline,
+}
+
+impl RootState {
+    pub fn label(self) -> &'static str {
+        match self {
+            RootState::Pending => "pending",
+            RootState::Crawling => "crawling",
+            RootState::Ready => "ready",
+            RootState::Offline => "offline",
+        }
+    }
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -252,7 +284,7 @@ mod tests {
         let frame = |m| encode_frame(&IpcEnvelope::new(1, m)).unwrap();
         assert_eq!(
             frame(IpcMessage::Request(IpcRequest::Roots)),
-            b"\x08\0\0\0ZFS1\x06\x01\x00\x05"
+            b"\x08\0\0\0ZFS1\x07\x01\x00\x05"
         );
         assert_eq!(
             frame(IpcMessage::Request(IpcRequest::Search {
@@ -260,14 +292,15 @@ mod tests {
                 limit: 2,
                 offset: 3,
             })),
-            b"\x0c\0\0\0ZFS1\x06\x01\x00\x00\x01a\x02\x03"
+            b"\x0c\0\0\0ZFS1\x07\x01\x00\x00\x01a\x02\x03"
         );
         assert_eq!(
             frame(IpcMessage::Response(IpcResponse::Roots(RootsResponse {
                 roots: vec!["C".into()],
                 crawled: true,
+                status: vec![],
             }))),
-            b"\x0c\0\0\0ZFS1\x06\x01\x01\x06\x01\x01C\x01"
+            b"\x0d\0\0\0ZFS1\x07\x01\x01\x06\x01\x01C\x01\x00"
         );
     }
 
@@ -281,11 +314,17 @@ mod tests {
         let env = round_trip(IpcMessage::Response(IpcResponse::Roots(RootsResponse {
             roots: vec![r"C:\Users".into()],
             crawled: true,
+            status: vec![RootStatus {
+                state: RootState::Crawling,
+                entries: 7,
+            }],
         })));
         match env.message {
             IpcMessage::Response(IpcResponse::Roots(r)) => {
                 assert_eq!(r.roots, [r"C:\Users"]);
                 assert!(r.crawled);
+                assert_eq!(r.status[0].state, RootState::Crawling);
+                assert_eq!(r.status[0].entries, 7);
             }
             other => panic!("unexpected {other:?}"),
         }

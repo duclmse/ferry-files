@@ -166,6 +166,17 @@ them later in any of these ways:
   `api.auth_mode` is (section 9.1). A system service refuses changes over
   IPC, since every local user can reach its IPC endpoint; edit its config
   file instead, or use REST or gRPC with the token.
+- **Progress.** `fs watch` lists each watch path with its state and the
+  entries its crawl wrote:
+
+  ```text
+  C:\Users     ready     1,204,331 entries
+  D:\Photos    crawling  48,210 entries
+  ```
+
+  The states are `pending` (added, not crawled yet), `crawling`, `ready`
+  and `offline`. `GET /watch_paths` and `ListWatchPaths` return the same in
+  `roots`, with the Unix times the crawl started and finished.
 - **Inside the daemon.** fsd compares the watch paths with the config once a
   second. On a change it restarts the watcher and crawls only the added
   folders.
@@ -348,7 +359,7 @@ for a system service).
 | `POST /reindex` `{"full": bool}` | Asks for a crawl |
 | `GET /file?path=` | One indexed entry's metadata |
 | `POST /open` `{"path": "..."}` | Opens a file on the daemon's machine; for a file inside a ZIP, extracts it first |
-| `GET /watch_paths` | Watch paths, and whether the first crawl has finished |
+| `GET /watch_paths` | Watch paths, each with its crawl state and entry count |
 | `POST /watch_paths` `{"path": "..."}` | Adds a watch path (token) |
 | `DELETE /watch_paths?path=[&forget=true]` | Removes one (token); `forget` drops its entries too |
 | `GET /metrics` | Archive scheduler metrics, Prometheus text |

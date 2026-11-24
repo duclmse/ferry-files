@@ -442,7 +442,7 @@ async fn test_watch_path_added_while_running() {
 #[tokio::test]
 async fn test_watch_paths_change_over_the_apis() {
     use fs_protocol::ipc_client::IpcClient;
-    use fs_protocol::ipc_protocol::{IpcRequest, IpcResponse};
+    use fs_protocol::ipc_protocol::{IpcRequest, IpcResponse, RootState};
 
     let dir = TempDir::new().unwrap();
     let watch_dir = TempDir::new().unwrap();
@@ -456,16 +456,32 @@ async fn test_watch_paths_change_over_the_apis() {
 
     let mut client = IpcClient::connect(Path::new(&daemon.ipc)).await.unwrap();
     let path = added.path().to_string_lossy().into_owned();
-    let roots = match client
+    let r = match client
         .request(IpcRequest::WatchAdd { path: path.clone() })
         .await
         .unwrap()
     {
-        IpcResponse::Roots(r) => r.roots,
+        IpcResponse::Roots(r) => r,
         other => panic!("unexpected {other:?}"),
     };
-    assert_eq!(roots.len(), 2, "{roots:?}");
+    assert_eq!(r.roots.len(), 2, "{:?}", r.roots);
+    assert_eq!(r.status[0].state, RootState::Ready);
+    assert_ne!(r.status[1].state, RootState::Ready, "not crawled yet");
     wait_for_hits(&daemon, "over_ipc.txt", 30, |p| p.len() == 1).await;
+    // Ready once its crawl ends: the root folder and its file.
+    let deadline = std::time::Instant::now() + Duration::from_secs(15);
+    loop {
+        let r = match client.request(IpcRequest::Roots).await.unwrap() {
+            IpcResponse::Roots(r) => r,
+            other => panic!("unexpected {other:?}"),
+        };
+        if r.status[1].state == RootState::Ready {
+            assert_eq!(r.status[1].entries, 2);
+            break;
+        }
+        assert!(std::time::Instant::now() < deadline, "{:?}", r.status);
+        tokio::time::sleep(Duration::from_millis(100)).await;
+    }
     let file = fs_server::config::load(&daemon.config_path).unwrap();
     assert_eq!(file.watch_paths.len(), 2);
 
@@ -476,6 +492,8 @@ async fn test_watch_paths_change_over_the_apis() {
         .await
         .unwrap();
     assert_eq!(listed["watch_paths"].as_array().unwrap().len(), 2);
+    assert_eq!(listed["roots"][1]["state"], "ready");
+    assert_eq!(listed["roots"][1]["entries"], 2);
 
     // No token is configured, so REST refuses the change.
     let refused = reqwest::Client::new()

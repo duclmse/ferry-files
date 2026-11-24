@@ -21,7 +21,7 @@ mod metrics;
 #[cfg(test)]
 mod tests;
 
-pub use metrics::{IndexEvent, IndexMetrics};
+pub use metrics::{IndexEvent, IndexMetrics, RootProgress, RootState};
 
 use crawl::{crawl_archive_sync, SidecarConfig};
 use fsmeta::{build_file_record, is_hidden_name, record_from_mft, unix_now};
@@ -150,7 +150,7 @@ pub fn forget_root_meta(store: &FileStore, root: &str) {
 }
 
 /// Entries the last full crawl found under `root`; 0 if never crawled.
-fn last_entries(store: &FileStore, root: &str) -> u64 {
+pub(crate) fn last_entries(store: &FileStore, root: &str) -> u64 {
     store
         .get_meta(&entries_key(root))
         .ok()
@@ -281,6 +281,9 @@ pub async fn crawl_roots(
     let exclusions = Arc::new(ExclusionEngine::for_config(&cfg)?);
     let whole = roots.is_none();
     let watch_paths = roots.unwrap_or_else(|| cfg.watch_paths.clone());
+    for root in &watch_paths {
+        metrics.set_root(&root.to_string_lossy(), RootState::Pending, None);
+    }
 
     // One generation per full crawl. Each upserted row is marked with the
     // watch_root it was found under and this generation. After each root
@@ -318,6 +321,7 @@ pub async fn crawl_roots(
             }
 
             let watch_root = watch_path.to_string_lossy().into_owned();
+            let root_count = metrics_w.set_root(&watch_root, RootState::Crawling, None);
 
             let walker = super::walk_builder(watch_path)
                 .threads(crawl_threads)
@@ -360,36 +364,30 @@ pub async fn crawl_roots(
                 std::thread::spawn(move || {
                     let mut buf: Vec<(FileRecord, String)> = Vec::with_capacity(BATCH_SIZE);
                     let mut entries: u64 = 0;
+                    // One add per counter per batch, not per row.
+                    let write = |buf: &mut Vec<(FileRecord, String)>| {
+                        if let Err(e) = sqlite_b.batch_upsert_crawl(buf, gen) {
+                            tracing::warn!("batch_upsert_crawl error: {e}");
+                        } else {
+                            let dirs = buf.iter().filter(|(r, _)| r.is_dir).count() as u64;
+                            let all = buf.len() as u64;
+                            metrics_b.total_dirs.fetch_add(dirs, Ordering::Relaxed);
+                            metrics_b
+                                .total_files
+                                .fetch_add(all - dirs, Ordering::Relaxed);
+                            root_count.fetch_add(all, Ordering::Relaxed);
+                        }
+                        buf.clear();
+                    };
                     for item in rx {
                         entries += 1;
                         buf.push(item);
                         if buf.len() >= BATCH_SIZE {
-                            if let Err(e) = sqlite_b.batch_upsert_crawl(&buf, gen) {
-                                tracing::warn!("batch_upsert_crawl error: {e}");
-                            } else {
-                                for (rec, _) in &buf {
-                                    if rec.is_dir {
-                                        metrics_b.total_dirs.fetch_add(1, Ordering::Relaxed);
-                                    } else {
-                                        metrics_b.total_files.fetch_add(1, Ordering::Relaxed);
-                                    }
-                                }
-                            }
-                            buf.clear();
+                            write(&mut buf);
                         }
                     }
                     if !buf.is_empty() {
-                        if let Err(e) = sqlite_b.batch_upsert_crawl(&buf, gen) {
-                            tracing::warn!("batch_upsert_crawl (final) error: {e}");
-                        } else {
-                            for (rec, _) in &buf {
-                                if rec.is_dir {
-                                    metrics_b.total_dirs.fetch_add(1, Ordering::Relaxed);
-                                } else {
-                                    metrics_b.total_files.fetch_add(1, Ordering::Relaxed);
-                                }
-                            }
-                        }
+                        write(&mut buf);
                     }
                     entries
                 })
@@ -477,7 +475,8 @@ pub async fn crawl_roots(
             // Closing tx signals the writer thread that no more records are coming.
             // Join before removing stale rows so all crawl_generation marks are committed.
             drop(tx);
-            if let Ok(entries) = writer_thread.join() {
+            let entries = writer_thread.join().ok();
+            if let Some(entries) = entries {
                 let _ = sqlite_w.set_meta(&entries_key(&watch_root), &entries.to_string());
             }
 
@@ -485,6 +484,9 @@ pub async fn crawl_roots(
             let removed = sqlite_w.remove_stale_for_root(&watch_root, generation)?;
             if removed > 0 {
                 tracing::info!("reconcile: removed {removed} stale entries under {watch_root}");
+            }
+            if !shutdown_w.is_cancelled() {
+                metrics_w.set_root(&watch_root, RootState::Ready, entries);
             }
         }
         Ok(())

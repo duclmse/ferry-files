@@ -26,7 +26,7 @@ use crate::store::{tantivy_store::TantivyStore, FileRecord, FileStore};
 
 use fs_protocol::ipc_protocol::{
     decode_payload, encode_frame, DecodeError, IpcEnvelope, IpcMessage, IpcRequest, IpcResponse,
-    RootsResponse, SearchHitDto, SearchResponse, StatsResponse, MAX_FRAME_BYTES,
+    RootStatus, RootsResponse, SearchHitDto, SearchResponse, StatsResponse, MAX_FRAME_BYTES,
 };
 
 // ---------------------------------------------------------------------------
@@ -327,18 +327,24 @@ async fn watch_handler(
 }
 
 async fn roots_handler(request_id: u128, ctx: &ConnCtx) -> IpcEnvelope {
-    let roots = ctx
-        .cfg
-        .read()
-        .await
-        .watch_paths
+    let paths = ctx.cfg.read().await.watch_paths.clone();
+    let progress = ctx.metrics.roots(&paths);
+    let roots = progress.iter().map(|r| r.path.clone()).collect();
+    let status = progress
         .iter()
-        .map(|p| p.to_string_lossy().into_owned())
+        .map(|r| RootStatus {
+            state: r.state,
+            entries: r.entries,
+        })
         .collect();
     let crawled = ctx.metrics.last_crawl_secs.load(Ordering::Relaxed) != 0;
     IpcEnvelope::new(
         request_id,
-        IpcMessage::Response(IpcResponse::Roots(RootsResponse { roots, crawled })),
+        IpcMessage::Response(IpcResponse::Roots(RootsResponse {
+            roots,
+            crawled,
+            status,
+        })),
     )
 }
 

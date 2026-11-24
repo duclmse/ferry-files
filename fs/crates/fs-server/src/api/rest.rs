@@ -274,6 +274,20 @@ struct WatchPathsResponse {
     /// For an add: the watch paths inside it, which it replaced.
     #[serde(skip_serializing_if = "Vec::is_empty")]
     absorbed: Vec<String>,
+    /// Each watch path's crawl, in `watch_paths` order.
+    roots: Vec<RootJson>,
+}
+
+#[derive(Serialize)]
+struct RootJson {
+    path: String,
+    /// "pending", "crawling", "ready" or "offline".
+    state: &'static str,
+    /// Entries its last or running crawl wrote.
+    entries: u64,
+    /// Unix seconds its last crawl started and finished here; 0 if none did.
+    started: u64,
+    finished: u64,
 }
 
 #[derive(Deserialize)]
@@ -299,14 +313,24 @@ fn watch_paths_response(
     paths: &[std::path::PathBuf],
     changed: Option<bool>,
 ) -> WatchPathsResponse {
+    let roots: Vec<RootJson> = state
+        .metrics
+        .roots(paths)
+        .into_iter()
+        .map(|r| RootJson {
+            state: r.state.label(),
+            entries: r.entries,
+            started: r.started,
+            finished: r.finished,
+            path: r.path,
+        })
+        .collect();
     WatchPathsResponse {
-        watch_paths: paths
-            .iter()
-            .map(|p| p.to_string_lossy().into_owned())
-            .collect(),
+        watch_paths: roots.iter().map(|r| r.path.clone()).collect(),
         crawled: state.metrics.last_crawl_secs.load(Ordering::Relaxed) != 0,
         changed,
         absorbed: Vec::new(),
+        roots,
     }
 }
 

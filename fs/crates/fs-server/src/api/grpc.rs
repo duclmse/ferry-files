@@ -177,14 +177,24 @@ impl FileSearchService {
     }
 
     fn watch_paths(&self, paths: &[std::path::PathBuf], changed: bool) -> WatchPathsResponse {
+        let roots: Vec<proto::RootStatus> = self
+            .metrics
+            .roots(paths)
+            .into_iter()
+            .map(|r| proto::RootStatus {
+                state: r.state.label().to_owned(),
+                entries: r.entries,
+                started: r.started,
+                finished: r.finished,
+                path: r.path,
+            })
+            .collect();
         WatchPathsResponse {
-            watch_paths: paths
-                .iter()
-                .map(|p| p.to_string_lossy().into_owned())
-                .collect(),
+            watch_paths: roots.iter().map(|r| r.path.clone()).collect(),
             crawled: self.metrics.last_crawl_secs.load(Ordering::Relaxed) != 0,
             changed,
             absorbed: Vec::new(),
+            roots,
         }
     }
 

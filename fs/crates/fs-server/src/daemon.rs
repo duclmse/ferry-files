@@ -524,6 +524,19 @@ pub async fn run_with_options(
             .get_meta("last_crawl_time")
             .map(|v| v.is_none())
             .unwrap_or(true); // on error assume uncrawled
+                              // A crawled index starts with its roots ready, as its last crawl left
+                              // them; a crawl or catch-up that follows moves them on.
+        if !needs_crawl {
+            for root in &shared_cfg.read().await.watch_paths {
+                let root = root.to_string_lossy();
+                let entries = crate::indexer::crawler::last_entries(&sqlite, &root);
+                metrics.set_root(
+                    &root,
+                    crate::indexer::crawler::RootState::Ready,
+                    Some(entries),
+                );
+            }
+        }
         let crawl_active = Arc::clone(&crawl_active);
         let sqlite = Arc::clone(&sqlite);
         let cfg = Arc::clone(&shared_cfg);
@@ -984,6 +997,13 @@ async fn follow_watch_paths(
             added.len(),
             removed.len()
         );
+        crawler.metrics.keep_roots(&now);
+        for root in &added {
+            let root = root.to_string_lossy();
+            crawler
+                .metrics
+                .set_root(&root, crate::indexer::crawler::RootState::Pending, None);
+        }
         let forget: Vec<PathBuf> = watch_list
             .take_forgotten()
             .into_iter()

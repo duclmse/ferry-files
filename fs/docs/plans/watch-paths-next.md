@@ -168,6 +168,13 @@ it. Integration: a watched root containing `data_dir`, idle for 3 ×
 
 ## 4. Crawl progress per root
 
+> **Done.** `IndexMetrics::set_root` / `roots`; `RootsResponse.status`
+> (protocol version 7), REST `roots`, gRPC `RootStatus`; `fs watch` prints a
+> table. The crawl writer adds to the counters once per batch. Tests:
+> `a_root_moves_from_pending_through_crawling_to_ready`,
+> `watch_paths_print_as_a_table`, and the states in
+> `test_watch_paths_change_over_the_apis`.
+
 **Today.** `RootsResponse.crawled` and `/watch_paths` say only whether the first
 full crawl has finished. A root added later shows `crawled: true` while it is
 still being crawled.
