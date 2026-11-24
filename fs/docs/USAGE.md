@@ -149,7 +149,13 @@ them later in any of these ways:
 - **Saved to the config.** A change through `fs`, REST or gRPC is also
   written to the config file, so it outlasts a restart. Only the
   `watch_paths` list is rewritten; comments and layout stay.
-- **The path.** It must be an existing folder. `fs watch add .` resolves `.`
+- **Offline paths.** A watch path that doesn't exist, such as an unplugged
+  drive or an unmounted share, is `offline`. fsd still starts. The path's
+  entries stay searchable, and nothing else is crawled because of it. fsd
+  checks once a second; when the path is back, fsd catches up what changed
+  from its own place in the change log, or crawls it alone if it can't.
+  `validate-config` warns about such paths.
+- **The path.** To add one, it must be an existing folder. `fs watch add .` resolves `.`
   against your current folder; REST and gRPC need an absolute path.
 - **fsd's own folders.** `data_dir`, `log_dir` and the archive sidecar
   folders are never indexed, even under a watch path, so watching `C:\` with
@@ -502,8 +508,10 @@ the next start:
 - FSEvents history on macOS;
 - a timestamp scan on Linux, and on Windows without the journal.
 
-A full crawl happens only on a first start, after the watch paths were
-edited while fsd was stopped, or when the change history can't be trusted.
+Each watch path keeps its own place in the log. Only the paths that need
+it are crawled: paths added while fsd was stopped, paths on a different
+volume than before, and paths whose history can't be trusted. A first start
+crawls everything.
 
 **Live changes** (`[watcher]`). `"native"` (the default) uses
 ReadDirectoryChangesW on Windows and notify elsewhere. `"usn"` reads the NTFS

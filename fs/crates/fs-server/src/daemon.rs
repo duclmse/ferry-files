@@ -518,20 +518,26 @@ pub async fn run_with_options(
     // ── 17. Initial crawl, or catch up on changes made while stopped ───────
     // The live watcher only sees changes from now on; anything that happened
     // while the daemon was down comes from the OS change log or a timestamp
-    // scan (journal.rs).
+    // scan (journal.rs), root by root.
     {
         let needs_crawl = sqlite
             .get_meta("last_crawl_time")
             .map(|v| v.is_none())
             .unwrap_or(true); // on error assume uncrawled
-                              // A crawled index starts with its roots ready, as its last crawl left
-                              // them; a crawl or catch-up that follows moves them on.
-        if !needs_crawl {
-            for root in &shared_cfg.read().await.watch_paths {
-                let root = root.to_string_lossy();
-                let entries = crate::indexer::crawler::last_entries(&sqlite, &root);
+        let roots = shared_cfg.read().await.watch_paths.clone();
+        for p in crate::config::missing_watch_paths(&*shared_cfg.read().await) {
+            tracing::warn!("watch path {} is offline; its entries stay", p.display());
+        }
+        // A crawled index starts with its roots ready, as its last crawl left
+        // them; a crawl or catch-up that follows moves them on.
+        for root in &roots {
+            let path = root.to_string_lossy();
+            if !root.is_dir() {
+                metrics.set_root(&path, crate::indexer::crawler::RootState::Offline, None);
+            } else if !needs_crawl {
+                let entries = crate::indexer::crawler::last_entries(&sqlite, &path);
                 metrics.set_root(
-                    &root,
+                    &path,
                     crate::indexer::crawler::RootState::Ready,
                     Some(entries),
                 );
@@ -543,79 +549,17 @@ pub async fn run_with_options(
         let crawler = crawler.clone();
         let shutdown = shutdown.clone();
         tokio::spawn(async move {
-            let crawl = |reason: &str| {
-                tracing::info!("full crawl: {reason}");
+            if needs_crawl {
+                tracing::info!("full crawl: index has never been built");
                 crawler.spawn(None, shutdown.clone());
-            };
-            let (roots, formats, exclusions) = {
-                let c = cfg.read().await;
-                (
-                    c.watch_paths.clone(),
-                    c.archive_index.formats.clone(),
-                    ExclusionEngine::for_config(&c),
-                )
-            };
-            let now = {
-                let roots = roots.clone();
-                tokio::task::spawn_blocking(move || watcher::journal::current_position(&roots))
-                    .await
-                    .ok()
-                    .flatten()
-            };
-            let stored = sqlite
-                .get_meta(watcher::journal::META_KEY)
-                .ok()
-                .flatten()
-                .and_then(|s| watcher::journal::Position::from_json(&s));
-
-            match (needs_crawl, &now, stored) {
-                (true, _, _) => crawl("index has never been built"),
-                (false, None, _) => tracing::info!(
-                    "index already built; no change log here, so changes made while \
-                     stopped are not picked up (use the Reindex API)"
-                ),
-                (false, Some(_), None) => crawl("no change-log position stored yet"),
-                (false, Some(now), Some(stored)) => {
-                    let store = Arc::clone(&sqlite);
-                    let (now, start) = (now.clone(), std::time::Instant::now());
-                    let plan = tokio::task::spawn_blocking(move || {
-                        let excl = match exclusions {
-                            Ok(e) => e,
-                            Err(e) => {
-                                return watcher::journal::CatchUp::FullCrawl(format!(
-                                    "exclusions: {e}"
-                                ))
-                            }
-                        };
-                        let skip =
-                            |p: &std::path::Path, hidden: bool| excl.should_exclude(p, hidden);
-                        watcher::journal::catch_up(&stored, &now, &formats, &skip, &*store)
-                    })
-                    .await;
-                    match plan {
-                        Ok(watcher::journal::CatchUp::UpToDate) => {
-                            tracing::info!("catch-up: no changes while stopped");
-                        }
-                        Ok(watcher::journal::CatchUp::Events(events)) => {
-                            tracing::info!(
-                                "catch-up: replaying {} changes made while stopped ({:.1}s)",
-                                events.len(),
-                                start.elapsed().as_secs_f64(),
-                            );
-                            for ev in events {
-                                if catchup_tx.send(ev).await.is_err() {
-                                    return;
-                                }
-                            }
-                        }
-                        Ok(watcher::journal::CatchUp::FullCrawl(reason)) => crawl(&reason),
-                        Err(e) => crawl(&format!("catch-up failed: {e}")),
-                    }
+            } else {
+                let present: Vec<PathBuf> = roots.into_iter().filter(|r| r.is_dir()).collect();
+                let crawl = catch_up_roots(&crawler, present, &catchup_tx).await;
+                if !crawl.is_empty() {
+                    crawler.spawn(Some(crawl), shutdown.clone());
                 }
             }
-            if let Some(now) = now {
-                keep_journal_position(sqlite, cfg, now, crawl_active, shutdown).await;
-            }
+            keep_journal_position(sqlite, cfg, crawl_active, shutdown).await;
         });
     }
 
@@ -731,24 +675,44 @@ const JOURNAL_POSITION_INTERVAL: Duration = Duration::from_secs(60);
 /// would otherwise crawl again).
 const JOURNAL_CRAWL_POLL: Duration = Duration::from_secs(2);
 
-/// Periodically stores the position captured one interval earlier. By then
-/// every event before it has passed the debouncer and been applied, so the
-/// stored position is safe even after a crash.
+/// Periodically stores each present root's position captured one interval
+/// earlier. By then every event before it has passed the debouncer and been
+/// applied, so the stored position is safe even after a crash. A root that
+/// is offline keeps the position it had, so it can catch up when it returns.
 ///
 /// Nothing is stored while a crawl runs: changes made before the crawl
 /// started (while the daemon was stopped, say) are only in the index once it
 /// finishes, so an interrupted crawl must leave the old position (or none)
-/// for the next start. The pending position is kept, not discarded: it was
-/// captured before the crawl started, so once the crawl is done everything
-/// before it has been crawled and everything after it is in the log.
+/// for the next start. The pending positions are kept, not discarded: they
+/// were captured before the crawl started, so once the crawl is done
+/// everything before them has been crawled and everything after is in the
+/// log.
 async fn keep_journal_position(
     store: Arc<FileStore>,
     cfg: Arc<RwLock<crate::config::Config>>,
-    first: watcher::journal::Position,
     crawl_active: Arc<AtomicBool>,
     shutdown: CancellationToken,
 ) {
-    let mut prev = Some(first);
+    let capture = |roots: Vec<PathBuf>| async move {
+        tokio::task::spawn_blocking(move || {
+            roots
+                .into_iter()
+                .filter_map(|r| {
+                    let p = watcher::journal::current_position(std::slice::from_ref(&r))?;
+                    Some((r.to_string_lossy().into_owned(), p))
+                })
+                .collect::<Vec<_>>()
+        })
+        .await
+        .unwrap_or_default()
+    };
+    let store_c = Arc::clone(&store);
+    if let Err(e) =
+        tokio::task::spawn_blocking(move || watcher::journal::split_shared(&store_c)).await
+    {
+        tracing::warn!("splitting the stored change-log position: {e}");
+    }
+    let mut pending = capture(cfg.read().await.watch_paths.clone()).await;
     loop {
         let wait = if crawl_active.load(Ordering::Acquire) {
             JOURNAL_CRAWL_POLL
@@ -762,17 +726,95 @@ async fn keep_journal_position(
         if crawl_active.load(Ordering::Acquire) {
             continue;
         }
-        if let Some(p) = prev.take() {
-            if let Err(e) = store.set_meta(watcher::journal::META_KEY, &p.to_json()) {
-                tracing::warn!("store change-log position: {e}");
+        for (root, p) in pending.drain(..) {
+            if let Err(e) = watcher::journal::store_for(&store, &root, &p) {
+                tracing::warn!("store change-log position of {root}: {e}");
             }
         }
-        let roots = cfg.read().await.watch_paths.clone();
-        prev = tokio::task::spawn_blocking(move || watcher::journal::current_position(&roots))
-            .await
-            .ok()
-            .flatten();
+        pending = capture(cfg.read().await.watch_paths.clone()).await;
     }
+}
+
+/// Catches up `roots`, which exist, each from its own stored position:
+/// replays what changed while it was not watched into `tx`, and returns
+/// those that need a crawl instead (no position stored, a different volume,
+/// or history that cannot be replayed).
+async fn catch_up_roots(
+    c: &Crawler,
+    roots: Vec<PathBuf>,
+    tx: &mpsc::Sender<IndexEvent>,
+) -> Vec<PathBuf> {
+    use watcher::journal::CatchUp;
+    if roots.is_empty() {
+        return roots;
+    }
+    let (formats, exclusions) = {
+        let cfg = c.cfg.read().await;
+        (
+            cfg.archive_index.formats.clone(),
+            ExclusionEngine::for_config(&cfg),
+        )
+    };
+    let excl = match exclusions {
+        Ok(e) => e,
+        Err(e) => {
+            tracing::warn!("catch-up: exclusions: {e}; crawling instead");
+            return roots;
+        }
+    };
+    let store = Arc::clone(&c.sqlite);
+    let start = std::time::Instant::now();
+    let plan = tokio::task::spawn_blocking(move || {
+        let skip = |p: &std::path::Path, hidden: bool| excl.should_exclude(p, hidden);
+        let (mut events, mut crawl) = (Vec::new(), Vec::new());
+        for root in roots {
+            let path = root.to_string_lossy().into_owned();
+            let Some(now) = watcher::journal::current_position(std::slice::from_ref(&root)) else {
+                tracing::info!(
+                    "{path}: no change log here, so changes made while it was not \
+                     watched are not picked up (use the Reindex API)"
+                );
+                continue;
+            };
+            let Some(stored) = watcher::journal::stored_for(&store, &path) else {
+                tracing::info!("{path}: no change-log position stored; crawling it");
+                crawl.push(root);
+                continue;
+            };
+            match watcher::journal::catch_up(&stored, &now, &formats, &skip, &*store) {
+                CatchUp::UpToDate => {}
+                CatchUp::Events(found) => events.extend(found),
+                CatchUp::FullCrawl(why) => {
+                    tracing::info!("{path}: {why}; crawling it");
+                    crawl.push(root);
+                }
+            }
+        }
+        (events, crawl)
+    })
+    .await;
+    let (events, crawl) = match plan {
+        Ok(plan) => plan,
+        Err(e) => {
+            tracing::warn!("catch-up failed: {e}");
+            return Vec::new();
+        }
+    };
+    if events.is_empty() {
+        tracing::info!("catch-up: no changes while not watched");
+    } else {
+        tracing::info!(
+            "catch-up: replaying {} changes made while not watched ({:.1}s)",
+            events.len(),
+            start.elapsed().as_secs_f64(),
+        );
+    }
+    for ev in events {
+        if tx.send(ev).await.is_err() {
+            break;
+        }
+    }
+    crawl
 }
 
 /// Saves the memory store periodically so a crash does not cost a full crawl.
@@ -956,28 +998,31 @@ async fn follow_watch_paths(
     reindex: watch::Sender<bool>,
     shutdown: CancellationToken,
 ) {
+    use crate::indexer::crawler::RootState;
     let start = |roots: &[PathBuf]| -> Option<CancellationToken> {
         if roots.is_empty() {
-            tracing::info!("no watch_paths: nothing is watched");
+            tracing::info!("no watch path to follow: nothing is watched");
             return None;
         }
         let stop = shutdown.child_token();
-        let (cfg, tx, index, reindex, token) = (
+        let (cfg, roots, tx, index, reindex, token) = (
             Arc::clone(&crawler.cfg),
+            roots.to_vec(),
             tx.clone(),
             Arc::clone(&crawler.sqlite),
             reindex.clone(),
             stop.clone(),
         );
         tokio::spawn(async move {
-            if let Err(e) = watcher::run_watcher(cfg, tx, index, reindex, token).await {
+            if let Err(e) = watcher::run_watcher(cfg, roots, tx, index, reindex, token).await {
                 tracing::error!("watcher error: {e}");
             }
         });
         Some(stop)
     };
     let mut roots = crawler.cfg.read().await.watch_paths.clone();
-    let mut running = start(&roots);
+    let mut online = present(&roots, &roots).await;
+    let mut running = start(&online);
     loop {
         tokio::select! {
             _ = shutdown.cancelled() => return,
@@ -987,22 +1032,48 @@ async fn follow_watch_paths(
             let c = crawler.cfg.read().await;
             (c.watch_paths.clone(), c.watcher.debounce_ms)
         };
-        if now == roots {
+        let available = present(&now, &online).await;
+        if now == roots && available == online {
             continue;
         }
         let added: Vec<PathBuf> = now.iter().filter(|p| !roots.contains(p)).cloned().collect();
         let removed: Vec<PathBuf> = roots.iter().filter(|p| !now.contains(p)).cloned().collect();
-        tracing::info!(
-            "watch_paths changed: {} added, {} removed",
-            added.len(),
-            removed.len()
-        );
+        // Listed before and after, but not reachable before and after.
+        let back: Vec<PathBuf> = available
+            .iter()
+            .filter(|p| roots.contains(p) && !online.contains(p))
+            .cloned()
+            .collect();
+        let gone: Vec<PathBuf> = now
+            .iter()
+            .filter(|p| !available.contains(p) && (online.contains(p) || added.contains(p)))
+            .cloned()
+            .collect();
+        if !added.is_empty() || !removed.is_empty() {
+            tracing::info!(
+                "watch_paths changed: {} added, {} removed",
+                added.len(),
+                removed.len()
+            );
+        }
         crawler.metrics.keep_roots(&now);
-        for root in &added {
-            let root = root.to_string_lossy();
+        for root in &gone {
+            tracing::warn!("watch path {} is offline; its entries stay", root.display());
             crawler
                 .metrics
-                .set_root(&root, crate::indexer::crawler::RootState::Pending, None);
+                .set_root(&root.to_string_lossy(), RootState::Offline, None);
+        }
+        for root in &back {
+            tracing::info!("watch path {} is back; catching it up", root.display());
+        }
+        let added: Vec<PathBuf> = added
+            .into_iter()
+            .filter(|p| available.contains(p))
+            .collect();
+        for root in &added {
+            crawler
+                .metrics
+                .set_root(&root.to_string_lossy(), RootState::Pending, None);
         }
         let forget: Vec<PathBuf> = watch_list
             .take_forgotten()
@@ -1010,13 +1081,30 @@ async fn follow_watch_paths(
             .filter(|p| removed.contains(p))
             .collect();
         roots = now;
-        if let Some(old) = std::mem::replace(&mut running, start(&roots)) {
-            tokio::spawn(async move {
-                tokio::time::sleep(Duration::from_millis(2 * debounce_ms + 500)).await;
-                old.cancel();
-            });
+        if available != online {
+            online = available;
+            if let Some(old) = std::mem::replace(&mut running, start(&online)) {
+                tokio::spawn(async move {
+                    tokio::time::sleep(Duration::from_millis(2 * debounce_ms + 500)).await;
+                    old.cancel();
+                });
+            }
         }
-        if added.is_empty() && forget.is_empty() {
+        let mut crawl = added;
+        if !back.is_empty() {
+            // Started above, the watcher already follows these roots, so what
+            // changes while they catch up is not lost.
+            let again = catch_up_roots(&crawler, back.clone(), &tx).await;
+            for root in back.iter().filter(|r| !again.contains(r)) {
+                let path = root.to_string_lossy();
+                let entries = crate::indexer::crawler::last_entries(&crawler.sqlite, &path);
+                crawler
+                    .metrics
+                    .set_root(&path, RootState::Ready, Some(entries));
+            }
+            crawl.extend(again);
+        }
+        if crawl.is_empty() && forget.is_empty() {
             continue;
         }
         // One crawl or removal at a time. A full crawl already running may
@@ -1032,11 +1120,10 @@ async fn follow_watch_paths(
                 _ = tokio::time::sleep(JOURNAL_CRAWL_POLL) => {}
             }
         }
-        let mut crawl = added;
         if !forget.is_empty() {
             let (c, kept) = (crawler.clone(), roots.clone());
             match tokio::task::spawn_blocking(move || forget_roots(&c, &forget, &kept)).await {
-                Ok(again) => crawl.extend(again),
+                Ok(again) => crawl.extend(again.into_iter().filter(|r| online.contains(r))),
                 Err(e) => tracing::warn!("forgetting removed watch paths failed: {e}"),
             }
         }
@@ -1045,6 +1132,27 @@ async fn follow_watch_paths(
         } else {
             crawler.spawn(Some(crawl), shutdown.clone());
         }
+    }
+}
+
+/// How long a check that the watch paths exist may take. An unreachable
+/// network share can block for tens of seconds.
+const PRESENCE_TIMEOUT: Duration = Duration::from_secs(5);
+
+/// The `roots` that exist now, as folders. When the check takes too long,
+/// the answer is `last`, what was known before, limited to `roots`.
+async fn present(roots: &[PathBuf], last: &[PathBuf]) -> Vec<PathBuf> {
+    let check = roots.to_vec();
+    let found = tokio::time::timeout(
+        PRESENCE_TIMEOUT,
+        tokio::task::spawn_blocking(move || {
+            check.into_iter().filter(|r| r.is_dir()).collect::<Vec<_>>()
+        }),
+    )
+    .await;
+    match found {
+        Ok(Ok(found)) => found,
+        _ => roots.iter().filter(|r| last.contains(r)).cloned().collect(),
     }
 }
 

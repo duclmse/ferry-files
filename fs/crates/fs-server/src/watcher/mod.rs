@@ -159,8 +159,12 @@ pub(super) fn long_path(path: PathBuf) -> PathBuf {
 /// `watcher.backend` names. When the backend reports lost changes, the
 /// timestamp scan finds them (`live::Recovery`); `reindex` asks for a crawl
 /// when that is too many to apply one by one.
+///
+/// `roots` are the watch paths to follow: those that exist now. The daemon
+/// starts the watcher again when they change.
 pub async fn run_watcher(
     config: Arc<RwLock<Config>>,
+    roots: Vec<PathBuf>,
     tx: mpsc::Sender<IndexEvent>,
     index: Arc<FileStore>,
     reindex: watch::Sender<bool>,
@@ -168,6 +172,7 @@ pub async fn run_watcher(
 ) -> Result<()> {
     let recovery = live::Recovery::spawn(
         Arc::clone(&config),
+        roots.clone(),
         index,
         reindex,
         tx.clone(),
@@ -180,6 +185,7 @@ pub async fn run_watcher(
     if backend != WatcherBackend::Notify {
         match live::run(
             Arc::clone(&config),
+            roots.clone(),
             tx.clone(),
             recovery.clone(),
             shutdown.clone(),
@@ -192,6 +198,7 @@ pub async fn run_watcher(
     }
     run_notify(
         config,
+        &roots,
         tx,
         recovery,
         Duration::from_millis(debounce_ms),
@@ -202,6 +209,7 @@ pub async fn run_watcher(
 
 async fn run_notify(
     config: Arc<RwLock<Config>>,
+    roots: &[PathBuf],
     tx: mpsc::Sender<IndexEvent>,
     recovery: live::Recovery,
     debounce: Duration,
@@ -216,15 +224,11 @@ async fn run_notify(
     })
     .map_err(|e| AppError::Index(format!("debouncer create: {e}")))?;
 
-    // Watch all configured paths
-    {
-        let cfg = config.read().await;
-        for path in &cfg.watch_paths {
-            debouncer
-                .watcher()
-                .watch(path, notify::RecursiveMode::Recursive)
-                .map_err(|e| AppError::Index(format!("watch {}: {e}", path.display())))?;
-        }
+    for path in roots {
+        debouncer
+            .watcher()
+            .watch(path, notify::RecursiveMode::Recursive)
+            .map_err(|e| AppError::Index(format!("watch {}: {e}", path.display())))?;
     }
 
     tracing::info!(

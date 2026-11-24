@@ -178,7 +178,12 @@ disk. The commit loop in `daemon.rs` runs every `commit_interval_secs`.
   restarts the watcher and crawls only the added roots (`crawl_roots`).
   A removed root stops being watched; its rows stay unless it was removed
   with `forget` (`forget_roots`). No watch paths means no watcher.
-  `process_events` drops events outside every watch path.
+  `process_events` drops events outside every watch path. A missing watch
+  path is offline, not an error: the watcher follows only present ones,
+  `crawl_roots` skips missing ones (a walk would sweep their rows away), and
+  one that returns is caught up (`catch_up_roots`).
+- Change-log positions are per watch path (`journal::root_key`); an older
+  fsd's shared `journal_position` is split once (`split_shared`).
 - Extension executables must keep stdout for the protocol and log to stderr.
 - `fsd` runs whatever is in `extensions_dir`. `extensions/trust.rs` and
   `ensure_unprotected` in `api/fs/common.rs` guard it; new file-mutating routes

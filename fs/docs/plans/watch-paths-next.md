@@ -246,6 +246,18 @@ picks up a new file within `poll_secs`.
 
 ## 6. Roots that go offline and come back
 
+> **Done.** `validate` no longer rejects a missing watch path
+> (`missing_watch_paths` warns); `follow_watch_paths` checks presence each
+> second with a timeout and runs the watcher on present roots only
+> (`run_watcher` takes them); `crawl_roots` skips missing roots;
+> positions are stored per root (`journal::root_key`, `stored_for`,
+> `split_shared` for the old shared key) and `daemon::catch_up_roots`
+> catches up each root alone at startup and on return. Tests:
+> `a_missing_watch_path_is_offline_not_an_error`,
+> `each_root_keeps_its_own_position_and_the_shared_one_splits`,
+> `test_a_watch_path_that_goes_offline_and_comes_back`. Not yet run:
+> `scripts/bench-windows.ps1`'s restart catch-up checks.
+
 **Today.** `validate` rejects a config whose watch path does not exist, so an
 unplugged drive stops fsd from starting and makes every later reload fail. The
 change-log position stores all roots together (`Position.roots`); any difference

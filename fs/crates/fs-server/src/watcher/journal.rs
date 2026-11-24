@@ -20,8 +20,66 @@ use crate::store::FileStore;
 mod scan;
 pub(super) mod usn;
 
-/// Store metadata key holding the serialized [`Position`].
+/// Store metadata key that held one [`Position`] for all roots together,
+/// before each root had its own ([`root_key`]). Read once, on upgrade.
 pub const META_KEY: &str = "journal_position";
+
+/// Store metadata key holding `root`'s own [`Position`]. Kept per root, so a
+/// root that was offline, added or removed leaves the others' positions
+/// alone, and only it is crawled.
+pub fn root_key(root: &str) -> String {
+    format!("{META_KEY}:{root}")
+}
+
+/// `root`'s stored position: its own, or else its part of the one stored for
+/// every root together by an older fsd.
+pub fn stored_for(store: &FileStore, root: &str) -> Option<Position> {
+    let read = |key: &str| {
+        store
+            .get_meta(key)
+            .ok()
+            .flatten()
+            .and_then(|s| Position::from_json(&s))
+    };
+    if let Some(p) = read(&root_key(root)) {
+        return Some(p);
+    }
+    let all = read(META_KEY)?;
+    let i = all.roots.iter().position(|(r, _)| r == root)?;
+    Some(Position {
+        event_id: all.event_id,
+        roots: vec![all.roots[i].clone()],
+        usn: all.usn.get(i).cloned().into_iter().collect(),
+    })
+}
+
+/// Turns the one position an older fsd stored for every root into one per
+/// root, where a root has none of its own yet, and clears it. A root that is
+/// offline at the upgrade keeps its place in the log this way.
+pub fn split_shared(store: &FileStore) {
+    let Some(all) = store
+        .get_meta(META_KEY)
+        .ok()
+        .flatten()
+        .and_then(|s| Position::from_json(&s))
+    else {
+        return;
+    };
+    for (root, _) in &all.roots {
+        let own = store.get_meta(&root_key(root)).ok().flatten();
+        if own.is_none_or(|s| s.is_empty()) {
+            if let Some(p) = stored_for(store, root) {
+                let _ = store_for(store, root, &p);
+            }
+        }
+    }
+    let _ = store.set_meta(META_KEY, "");
+}
+
+/// Stores `root`'s position.
+pub fn store_for(store: &FileStore, root: &str, position: &Position) -> crate::error::Result<()> {
+    store.set_meta(&root_key(root), &position.to_json())
+}
 
 /// Distinct changed paths replayed as individual events. Each event does its
 /// own stat and sibling sweep, so past this a reconcile crawl is cheaper.
@@ -102,7 +160,7 @@ impl IndexLookup for FileStore {
 }
 
 /// Current change-log position for `roots`, or `None` when this platform or
-/// one of the volumes has no replayable history.
+/// one of the volumes has no replayable history, or a root is missing.
 pub fn current_position(roots: &[PathBuf]) -> Option<Position> {
     #[cfg(target_os = "macos")]
     {
@@ -508,6 +566,42 @@ mod tests {
         let mut v: Vec<String> = ev.iter().map(|e| format!("{e:?}")).collect();
         v.sort();
         v
+    }
+
+    fn position(roots: &[&str], event_id: u64) -> Position {
+        Position {
+            event_id,
+            roots: roots
+                .iter()
+                .map(|r| (r.to_string(), format!("vol:{r}")))
+                .collect(),
+            usn: Vec::new(),
+        }
+    }
+
+    #[test]
+    fn each_root_keeps_its_own_position_and_the_shared_one_splits() {
+        let store = FileStore::Sqlite(std::sync::Arc::new(
+            crate::store::sqlite_store::SqliteStore::new(Path::new(":memory:")).unwrap(),
+        ));
+        // An older fsd stored one position for both roots.
+        store
+            .set_meta(META_KEY, &position(&["/a", "/b"], 7).to_json())
+            .unwrap();
+        assert_eq!(stored_for(&store, "/b"), Some(position(&["/b"], 7)));
+        assert_eq!(stored_for(&store, "/c"), None);
+
+        // /a has moved on by itself.
+        store_for(&store, "/a", &position(&["/a"], 9)).unwrap();
+        split_shared(&store);
+        assert_eq!(stored_for(&store, "/a"), Some(position(&["/a"], 9)));
+        assert_eq!(stored_for(&store, "/b"), Some(position(&["/b"], 7)));
+        assert!(store
+            .get_meta(META_KEY)
+            .unwrap()
+            .is_none_or(|s| s.is_empty()));
+        split_shared(&store);
+        assert_eq!(stored_for(&store, "/b"), Some(position(&["/b"], 7)));
     }
 
     #[test]

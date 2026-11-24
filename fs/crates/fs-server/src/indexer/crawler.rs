@@ -321,6 +321,13 @@ pub async fn crawl_roots(
             }
 
             let watch_root = watch_path.to_string_lossy().into_owned();
+            // Walked, a missing root would read as empty and its sweep would
+            // remove every entry it had.
+            if !watch_path.is_dir() {
+                tracing::warn!("{watch_root} is offline; not crawled, its entries stay");
+                metrics_w.set_root(&watch_root, RootState::Offline, None);
+                continue;
+            }
             let root_count = metrics_w.set_root(&watch_root, RootState::Crawling, None);
 
             let walker = super::walk_builder(watch_path)

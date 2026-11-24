@@ -136,6 +136,12 @@ async fn main() {
                     }
                     Err(e) => errors.push(e.to_string()),
                 }
+                for p in config::missing_watch_paths(&cfg) {
+                    eprintln!(
+                        "WARNING: watch_path does not exist, offline until it appears: {}",
+                        p.display()
+                    );
+                }
                 if errors.is_empty() {
                     println!("Config OK");
                     std::process::exit(0);

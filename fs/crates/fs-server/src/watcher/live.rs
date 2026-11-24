@@ -144,6 +144,7 @@ pub(super) struct Recovery {
 impl Recovery {
     pub(super) fn spawn(
         config: Arc<RwLock<Config>>,
+        roots: Vec<PathBuf>,
         index: Arc<FileStore>,
         reindex: watch::Sender<bool>,
         events: mpsc::Sender<IndexEvent>,
@@ -172,10 +173,10 @@ impl Recovery {
                         String::new()
                     }
                 );
-                let (roots, formats, exclusions) = {
+                let roots = roots.clone();
+                let (formats, exclusions) = {
                     let c = config.read().await;
                     (
-                        c.watch_paths.clone(),
                         c.archive_index.formats.clone(),
                         ExclusionEngine::for_config(&c),
                     )
@@ -241,14 +242,12 @@ fn with_formats(event: IndexEvent, formats: &[String]) -> IndexEvent {
 /// platform has none, for the caller to use notify instead.
 pub(super) async fn run(
     config: Arc<RwLock<Config>>,
+    roots: Vec<PathBuf>,
     tx: mpsc::Sender<IndexEvent>,
     recovery: Recovery,
     shutdown: CancellationToken,
 ) -> std::result::Result<(), String> {
-    let (roots, settings) = {
-        let c = config.read().await;
-        (c.watch_paths.clone(), c.watcher.clone())
-    };
+    let settings = config.read().await.watcher.clone();
     let (msg_tx, mut msg_rx) = mpsc::unbounded_channel::<Msg>();
     let stop = Arc::new(std::sync::atomic::AtomicBool::new(false));
     let threads = start(&roots, &settings, msg_tx, &stop)?;

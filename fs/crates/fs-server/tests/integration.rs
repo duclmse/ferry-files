@@ -638,6 +638,82 @@ async fn test_an_added_parent_takes_in_its_child_watch_path() {
     assert_eq!(file.watch_paths.len(), 2);
 }
 
+/// A watch path that disappears is offline: its entries stay, and nothing
+/// else is crawled. When it comes back, what changed meanwhile is found.
+#[tokio::test]
+async fn test_a_watch_path_that_goes_offline_and_comes_back() {
+    use fs_protocol::ipc_client::IpcClient;
+    use fs_protocol::ipc_protocol::{IpcRequest, IpcResponse, RootsResponse};
+
+    let dir = TempDir::new().unwrap();
+    let watch_dir = TempDir::new().unwrap();
+    let holder = TempDir::new().unwrap();
+    let root = holder.path().join("drive");
+    let away = holder.path().join("unplugged");
+    std::fs::create_dir(&root).unwrap();
+    std::fs::write(root.join("before.txt"), b"x").unwrap();
+
+    let daemon = TestDaemon::start(watch_dir.path(), dir).await;
+    daemon
+        .wait_until(Duration::from_secs(30), |s| s.last_crawl_secs > 0)
+        .await;
+    let mut client = IpcClient::connect(Path::new(&daemon.ipc)).await.unwrap();
+    client
+        .request(IpcRequest::WatchAdd {
+            path: root.to_string_lossy().into_owned(),
+        })
+        .await
+        .unwrap();
+    wait_for_hits(&daemon, "before.txt", 30, |p| p.len() == 1).await;
+
+    async fn roots(client: &mut IpcClient) -> RootsResponse {
+        match client.request(IpcRequest::Roots).await.unwrap() {
+            IpcResponse::Roots(r) => r,
+            other => panic!("unexpected {other:?}"),
+        }
+    }
+    async fn wait_state(client: &mut IpcClient, i: usize, state: &str) {
+        let deadline = std::time::Instant::now() + Duration::from_secs(20);
+        loop {
+            let r = roots(client).await;
+            if r.status[i].state.label() == state {
+                return;
+            }
+            assert!(std::time::Instant::now() < deadline, "{:?}", r.status);
+            tokio::time::sleep(Duration::from_millis(100)).await;
+        }
+    }
+    wait_state(&mut client, 1, "ready").await;
+    let listed: serde_json::Value = reqwest::get(daemon.url("/watch_paths"))
+        .await
+        .unwrap()
+        .json()
+        .await
+        .unwrap();
+    let first_crawl_done = listed["roots"][0]["finished"].clone();
+
+    std::fs::rename(&root, &away).unwrap();
+    wait_state(&mut client, 1, "offline").await;
+    assert_eq!(daemon.search("before.txt").await.total, 1, "entries stay");
+
+    std::fs::write(away.join("meanwhile.txt"), b"y").unwrap();
+    std::fs::rename(&away, &root).unwrap();
+    wait_for_hits(&daemon, "meanwhile.txt", 30, |p| p.len() == 1).await;
+    wait_state(&mut client, 1, "ready").await;
+    assert_eq!(daemon.search("before.txt").await.total, 1);
+
+    let listed: serde_json::Value = reqwest::get(daemon.url("/watch_paths"))
+        .await
+        .unwrap()
+        .json()
+        .await
+        .unwrap();
+    assert_eq!(
+        listed["roots"][0]["finished"], first_crawl_done,
+        "not crawled again"
+    );
+}
+
 /// Polls `query` until `ok` holds for its hits, or panics after `secs`.
 async fn wait_for_hits(
     daemon: &TestDaemon,

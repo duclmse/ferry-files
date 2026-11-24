@@ -670,10 +670,11 @@ pub fn validate(cfg: &Config) -> Vec<String> {
         errors.push("api.auth_mode = \"all\" requires api.auth_token_hash".into());
     }
 
+    // A missing watch path is not an error: it may be a drive that is not
+    // plugged in, or a share that is not mounted. It is offline until it
+    // appears (`missing_watch_paths`).
     for p in &cfg.watch_paths {
-        if !p.exists() {
-            errors.push(format!("watch_path does not exist: {}", p.display()));
-        } else if !p.is_dir() {
+        if p.exists() && !p.is_dir() {
             errors.push(format!("watch_path is not a directory: {}", p.display()));
         }
     }
@@ -749,6 +750,15 @@ pub fn validate(cfg: &Config) -> Vec<String> {
     }
 
     errors
+}
+
+/// Watch paths that do not exist now: offline until they appear.
+pub fn missing_watch_paths(cfg: &Config) -> Vec<&Path> {
+    cfg.watch_paths
+        .iter()
+        .filter(|p| !p.exists())
+        .map(PathBuf::as_path)
+        .collect()
 }
 
 /// Watch the config file for changes. On a valid change the shared config is
@@ -853,6 +863,27 @@ data_dir    = "{dir}/data"
 log_dir     = "{dir}/logs"
 "#
         )
+    }
+
+    #[test]
+    fn a_missing_watch_path_is_offline_not_an_error() {
+        let dir = tempfile::tempdir().unwrap();
+        let missing = dir.path().join("not-plugged-in");
+        let file = dir.path().join("a-file");
+        std::fs::write(&file, b"x").unwrap();
+        let fwd = |p: &Path| p.to_string_lossy().replace('\\', "/");
+        let f = write_config(&format!(
+            "watch_paths = [\"{}\", \"{}\"]\ndata_dir = \"{}\"\nlog_dir = \"{}\"\n",
+            fwd(&missing),
+            fwd(&file),
+            fwd(&dir.path().join("d")),
+            fwd(&dir.path().join("l")),
+        ));
+        let cfg = load(f.path()).unwrap();
+        let errors = validate(&cfg);
+        assert_eq!(errors.len(), 1, "{errors:?}");
+        assert!(errors[0].contains("not a directory"), "{errors:?}");
+        assert_eq!(missing_watch_paths(&cfg), [missing.as_path()]);
     }
 
     #[test]
