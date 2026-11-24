@@ -8,7 +8,7 @@ use tokio::io::{AsyncReadExt, AsyncWriteExt};
 
 const MAGIC: [u8; 4] = *b"ZFS1";
 /// fs-protocol's `PROTOCOL_VERSION`. fsd refuses any other.
-const VERSION: u16 = 4;
+const VERSION: u16 = 5;
 const MAX_FRAME: u32 = 16 * 1024 * 1024;
 /// fs-protocol's `attrib::HIDDEN`.
 pub const HIDDEN: u32 = 16;
@@ -37,6 +37,8 @@ pub enum Request {
     Open { path: String },
     Extension { name: String, command: String },
     Roots,
+    WatchAdd { path: String },
+    WatchRemove { path: String },
 }
 
 #[allow(dead_code)]
@@ -171,9 +173,9 @@ mod tests {
     #[test]
     fn bytes_fsd_expects() {
         let frame = |m| frame(1, m).unwrap();
-        assert_eq!(frame(Message::Request(Request::Roots)), b"\x08\0\0\0ZFS1\x04\x01\x00\x05");
-        assert_eq!(frame(Message::Request(Request::Search { query: "a".into(), limit: 2, offset: 3 })), b"\x0c\0\0\0ZFS1\x04\x01\x00\x00\x01a\x02\x03");
-        let answer = b"\x0c\0\0\0ZFS1\x04\x01\x01\x06\x01\x01C\x01";
+        assert_eq!(frame(Message::Request(Request::Roots)), b"\x08\0\0\0ZFS1\x05\x01\x00\x05");
+        assert_eq!(frame(Message::Request(Request::Search { query: "a".into(), limit: 2, offset: 3 })), b"\x0c\0\0\0ZFS1\x05\x01\x00\x00\x01a\x02\x03");
+        let answer = b"\x0c\0\0\0ZFS1\x05\x01\x01\x06\x01\x01C\x01";
         match unframe(&answer[4..]).unwrap().message {
             Message::Response(Response::Roots(r)) => {
                 assert_eq!(r.roots, ["C"]);
@@ -185,8 +187,8 @@ mod tests {
 
     #[test]
     fn another_version_is_named() {
-        let e = unframe(b"ZFS1\x05\x01\x01\x06\x00\x00").err().unwrap();
-        assert!(e.contains("version 5"), "{e}");
-        assert!(unframe(b"XXXX\x04").is_err());
+        let e = unframe(b"ZFS1\x06\x01\x01\x06\x00\x00").err().unwrap();
+        assert!(e.contains("version 6"), "{e}");
+        assert!(unframe(b"XXXX\x05").is_err());
     }
 }
