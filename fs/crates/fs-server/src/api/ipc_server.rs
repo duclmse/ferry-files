@@ -9,8 +9,8 @@
 //!
 //! A daemon run as a system service (`shared`) serves every local user: the
 //! socket or pipe lets them all connect, and requests that would act as the
-//! daemon's own account on their behalf (`Open`, extension commands) are
-//! refused.
+//! daemon's own account on their behalf (`Open`, extension commands,
+//! watch path changes) are refused.
 
 use std::sync::{atomic::Ordering, Arc};
 
@@ -283,10 +283,44 @@ async fn dispatch(req: IpcRequest, request_id: u128, ctx: &ConnCtx) -> IpcEnvelo
             extension_handler(request_id, &name, command, &ctx.extensions).await
         }
         IpcRequest::Roots => roots_handler(request_id, ctx).await,
+        // The daemon's account may read folders the client cannot, and the
+        // index would then show their names to every user.
+        IpcRequest::WatchAdd { .. } | IpcRequest::WatchRemove { .. } if ctx.shared => {
+            error_response(request_id, "NOT_ALLOWED", SHARED_WATCH_REFUSAL)
+        }
+        IpcRequest::WatchAdd { path } => {
+            let changed = crate::watch_list::add(&ctx.cfg, &path).await;
+            watch_handler(request_id, changed, ctx).await
+        }
+        IpcRequest::WatchRemove { path } => {
+            let changed = crate::watch_list::remove(&ctx.cfg, &path).await;
+            watch_handler(request_id, changed, ctx).await
+        }
     }
 }
 
 const SHARED_REFUSAL: &str = "fsd runs as a system service for all users, so it does not open files or run extension commands for a client; open the file yourself";
+
+const SHARED_WATCH_REFUSAL: &str = "fsd runs as a system service for all users, so its watch paths change only in its config file, or over REST or gRPC with the token";
+
+async fn watch_handler(
+    request_id: u128,
+    changed: Result<crate::watch_list::Outcome, crate::watch_list::WatchListError>,
+    ctx: &ConnCtx,
+) -> IpcEnvelope {
+    use crate::watch_list::WatchListError;
+    match changed {
+        Ok(_) => roots_handler(request_id, ctx).await,
+        Err(e) => {
+            let code = match e {
+                WatchListError::Invalid(_) => "INVALID_PATH",
+                WatchListError::NotFound(_) => "NOT_FOUND",
+                WatchListError::Config(_) => "CONFIG_ERROR",
+            };
+            error_response(request_id, code, e.to_string())
+        }
+    }
+}
 
 async fn roots_handler(request_id: u128, ctx: &ConnCtx) -> IpcEnvelope {
     let roots = ctx

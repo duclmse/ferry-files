@@ -256,19 +256,38 @@ pub async fn full_crawl(
     registry: Arc<ArchiveRegistry>,
     shutdown: CancellationToken,
 ) -> Result<()> {
+    crawl_roots(config, None, sqlite, tantivy, metrics, registry, shutdown).await
+}
+
+/// Crawls `roots`, or every watch path when `None`: a watch path added
+/// while the daemon runs is crawled alone. Each root's stale rows go with
+/// its own crawl, so the other roots' rows are left as they are.
+pub async fn crawl_roots(
+    config: Arc<RwLock<Config>>,
+    roots: Option<Vec<PathBuf>>,
+    sqlite: Arc<FileStore>,
+    tantivy: Arc<TantivyStore>,
+    metrics: Arc<IndexMetrics>,
+    registry: Arc<ArchiveRegistry>,
+    shutdown: CancellationToken,
+) -> Result<()> {
     let cfg = config.read().await.clone();
 
     let exclusions = Arc::new(ExclusionEngine::new(&cfg.exclusions)?);
-    let watch_paths = cfg.watch_paths.clone();
+    let whole = roots.is_none();
+    let watch_paths = roots.unwrap_or_else(|| cfg.watch_paths.clone());
 
     // One generation per full crawl. Each upserted row is marked with the
     // watch_root it was found under and this generation. After each root
     // finishes, rows with an older generation are stale and deleted in SQL -
     // no full path list is materialised in Rust memory.
     let generation = sqlite.begin_crawl_generation()?;
-    // Counted up from zero while the crawl runs, as its progress.
-    metrics.total_files.store(0, Ordering::Relaxed);
-    metrics.total_dirs.store(0, Ordering::Relaxed);
+    // Counted up from zero while the crawl runs, as its progress. A crawl of
+    // some roots counts on from what the others hold.
+    if whole {
+        metrics.total_files.store(0, Ordering::Relaxed);
+        metrics.total_dirs.store(0, Ordering::Relaxed);
+    }
 
     let stores = Stores {
         sqlite: Arc::clone(&sqlite),

@@ -98,7 +98,7 @@ index_cache_size = 256
 
 | Field                                   | Type           | Default          | Description                                       |
 | --------------------------------------- | -------------- | ---------------- | ------------------------------------------------- |
-| `watch_paths`                           | `[string]`     | _(required)_     | Directories to watch and index                    |
+| `watch_paths`                           | `[string]`     | `[]`             | Directories to watch and index; empty watches none |
 | `data_dir`                              | `string`       | _(required)_     | SQLite + Tantivy data directory                   |
 | `log_dir`                               | `string`       | _(required)_     | Rolling log files                                 |
 | `exclusions.path_patterns`              | `[string]`     | `[]`             | Glob patterns to exclude                          |
@@ -239,7 +239,8 @@ flag, and calls `spawn_crawl` if no crawl is already running.
 
 **Config hot-reload**: the watcher re-parses the TOML and validates it on every
 `Modify` event. Invalid configs are logged and discarded; the running config is kept.
-Watch-path additions take effect on the next crawl; removals require a restart.
+An added watch path is crawled and watched at once. A removed one is no longer
+watched, but its entries stay in the index.
 
 ---
 
@@ -348,6 +349,14 @@ Base URL: `http://127.0.0.1:7700`
 | `GET`  | `/health`                   | Health check                           |
 | `GET`  | `/file?path=`               | File metadata                          |
 | `POST` | `/open` `{"path":"..."}`    | Open file (extracts ZIP entry to temp) |
+| `GET`  | `/watch_paths`              | Watch paths, and whether a crawl has finished |
+| `POST` | `/watch_paths` `{"path":"..."}` | Add a watch path (token), crawled at once |
+| `DELETE` | `/watch_paths?path=`      | Remove a watch path (token); its entries stay |
+
+Watch path changes also go to the config file, and need the token in every
+`api.auth_mode`. The same calls are gRPC `ListWatchPaths`, `AddWatchPath`
+and `RemoveWatchPath`, and `fs watch [list|add|remove]` over IPC, which a
+system service refuses.
 
 ### gRPC
 

@@ -11,6 +11,9 @@ use crate::error::{AppError, Result};
 
 #[derive(Debug, Clone, Deserialize)]
 pub struct Config {
+    /// Folders to crawl and watch. None, or an empty list, watches nothing;
+    /// paths added while the daemon runs are crawled and watched then.
+    #[serde(default)]
     pub watch_paths: Vec<PathBuf>,
     pub data_dir: PathBuf,
     pub log_dir: PathBuf,
@@ -667,9 +670,6 @@ pub fn validate(cfg: &Config) -> Vec<String> {
         errors.push("api.auth_mode = \"all\" requires api.auth_token_hash".into());
     }
 
-    if cfg.watch_paths.is_empty() {
-        errors.push("watch_paths must not be empty".into());
-    }
     for p in &cfg.watch_paths {
         if !p.exists() {
             errors.push(format!("watch_path does not exist: {}", p.display()));
@@ -904,9 +904,11 @@ log_dir     = "{dir}/logs"
     }
 
     #[test]
-    fn load_missing_watch_paths_field() {
+    fn no_watch_paths_watches_nothing() {
         let f = write_config("data_dir = \"/tmp\"\nlog_dir = \"/tmp\"");
-        assert!(matches!(load(f.path()), Err(AppError::Config(_))));
+        let cfg = load(f.path()).unwrap();
+        assert!(cfg.watch_paths.is_empty());
+        assert!(validate(&cfg).is_empty(), "{:?}", validate(&cfg));
     }
 
     #[test]

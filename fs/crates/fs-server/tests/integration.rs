@@ -112,6 +112,8 @@ txt  = 131072
 
 struct TestDaemon {
     rest_base: String,
+    config_path: std::path::PathBuf,
+    ipc: String,
     shutdown: CancellationToken,
     _dir: TempDir,                 // keeps temp dir alive for duration of test
     _permit: OwnedSemaphorePermit, // released on drop, unblocks next test
@@ -131,9 +133,11 @@ impl TestDaemon {
 
         let shutdown = CancellationToken::new();
         let shutdown_c = shutdown.clone();
-        let daemon = tokio::spawn(async move {
-            fs_server::daemon::run_with_shutdown(config_path, shutdown_c).await
-        });
+        let config = config_path.clone();
+        let daemon =
+            tokio::spawn(
+                async move { fs_server::daemon::run_with_shutdown(config, shutdown_c).await },
+            );
 
         let rest_base = format!("http://127.0.0.1:{rest_port}");
         let client = reqwest::Client::new();
@@ -162,10 +166,21 @@ impl TestDaemon {
 
         Self {
             rest_base,
+            config_path,
+            ipc,
             shutdown,
             _dir: dir,
             _permit,
         }
+    }
+
+    /// Adds `dir` to the running daemon's watch paths, as an edit of its
+    /// config would.
+    fn add_watch_path(&self, dir: &Path) {
+        let text = std::fs::read_to_string(&self.config_path).unwrap();
+        let dir = dir.to_string_lossy().replace('\\', "/");
+        let text = text.replacen("watch_paths = [", &format!("watch_paths = [\"{dir}\", "), 1);
+        std::fs::write(&self.config_path, text).unwrap();
     }
 
     fn url(&self, path: &str) -> String {
@@ -398,6 +413,96 @@ async fn test_incremental_update() {
         0,
         "deleted file must disappear from search"
     );
+}
+
+/// A folder added to watch_paths while the daemon runs is crawled, and
+/// then watched.
+#[tokio::test]
+async fn test_watch_path_added_while_running() {
+    let dir = TempDir::new().unwrap();
+    let watch_dir = TempDir::new().unwrap();
+    let added = TempDir::new().unwrap();
+    std::fs::write(added.path().join("was_there.txt"), b"x").unwrap();
+
+    let daemon = TestDaemon::start(watch_dir.path(), dir).await;
+    daemon
+        .wait_until(Duration::from_secs(30), |s| s.last_crawl_secs > 0)
+        .await;
+    assert_eq!(daemon.search("was_there.txt").await.total, 0);
+
+    daemon.add_watch_path(added.path());
+    wait_for_hits(&daemon, "was_there.txt", 30, |p| p.len() == 1).await;
+
+    std::fs::write(added.path().join("came_later.txt"), b"y").unwrap();
+    wait_for_hits(&daemon, "came_later.txt", 15, |p| p.len() == 1).await;
+}
+
+/// Watch paths change over IPC (the `fs watch` commands) and REST, and the
+/// change reaches the config file.
+#[tokio::test]
+async fn test_watch_paths_change_over_the_apis() {
+    use fs_protocol::ipc_client::IpcClient;
+    use fs_protocol::ipc_protocol::{IpcRequest, IpcResponse};
+
+    let dir = TempDir::new().unwrap();
+    let watch_dir = TempDir::new().unwrap();
+    let added = TempDir::new().unwrap();
+    std::fs::write(added.path().join("over_ipc.txt"), b"x").unwrap();
+
+    let daemon = TestDaemon::start(watch_dir.path(), dir).await;
+    daemon
+        .wait_until(Duration::from_secs(30), |s| s.last_crawl_secs > 0)
+        .await;
+
+    let mut client = IpcClient::connect(Path::new(&daemon.ipc)).await.unwrap();
+    let path = added.path().to_string_lossy().into_owned();
+    let roots = match client
+        .request(IpcRequest::WatchAdd { path: path.clone() })
+        .await
+        .unwrap()
+    {
+        IpcResponse::Roots(r) => r.roots,
+        other => panic!("unexpected {other:?}"),
+    };
+    assert_eq!(roots.len(), 2, "{roots:?}");
+    wait_for_hits(&daemon, "over_ipc.txt", 30, |p| p.len() == 1).await;
+    let file = fs_server::config::load(&daemon.config_path).unwrap();
+    assert_eq!(file.watch_paths.len(), 2);
+
+    let listed: serde_json::Value = reqwest::get(daemon.url("/watch_paths"))
+        .await
+        .unwrap()
+        .json()
+        .await
+        .unwrap();
+    assert_eq!(listed["watch_paths"].as_array().unwrap().len(), 2);
+
+    // No token is configured, so REST refuses the change.
+    let refused = reqwest::Client::new()
+        .post(daemon.url("/watch_paths"))
+        .json(&serde_json::json!({ "path": path }))
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(refused.status(), reqwest::StatusCode::FORBIDDEN);
+
+    let roots = match client
+        .request(IpcRequest::WatchRemove { path })
+        .await
+        .unwrap()
+    {
+        IpcResponse::Roots(r) => r.roots,
+        other => panic!("unexpected {other:?}"),
+    };
+    assert_eq!(roots.len(), 1, "{roots:?}");
+    let file = fs_server::config::load(&daemon.config_path).unwrap();
+    assert_eq!(file.watch_paths.len(), 1);
+    assert!(client
+        .request(IpcRequest::WatchAdd {
+            path: "relative".into()
+        })
+        .await
+        .is_err());
 }
 
 /// Polls `query` until `ok` holds for its hits, or panics after `secs`.

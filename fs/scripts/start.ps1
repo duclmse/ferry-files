@@ -5,7 +5,8 @@
 #   - Otherwise: starts `fsd daemon` in the background, with no window, and
 #     waits until it answers over IPC.
 #
-# Override discovery with $env:FS_BIN / $env:FS_CONFIG, as for run.ps1.
+# Override discovery with $env:FS_BIN / $env:FS_CONFIG, as for run.ps1. With
+# neither $env:FS_CONFIG nor a config.toml, it uses scripts\config.default.toml.
 # A background fsd can only be stopped by killing it (Stop-Process), so the
 # memory store saves index.bin only every store.snapshot_interval_secs. For a
 # clean stop, use the service or scripts\run.ps1.
@@ -57,12 +58,12 @@ $bin = (Resolve-Path $bin).Path
 
 $config = $env:FS_CONFIG
 if (-not $config) {
-    foreach ($candidate in @(".\config.toml", "$env:ProgramFiles\fs\config.toml")) {
+    foreach ($candidate in @(".\config.toml", "$env:ProgramFiles\fs\config.toml", "scripts\config.default.toml")) {
         if (Test-Path $candidate) { $config = $candidate; break }
     }
 }
 if (-not $config) {
-    Write-Error "No config.toml found. Run scripts\install.ps1, or set `$env:FS_CONFIG."
+    Write-Error "No config found. Run scripts\install.ps1, or set `$env:FS_CONFIG."
     exit 1
 }
 $config = (Resolve-Path $config).Path

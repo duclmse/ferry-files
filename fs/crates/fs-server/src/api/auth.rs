@@ -96,6 +96,18 @@ fn check_grpc(api: &ApiConfig, header: Option<&str>) -> Result<(), tonic::Status
         .map_err(|_| tonic::Status::unauthenticated("missing or invalid bearer token"))
 }
 
+/// For gRPC calls that need the token in every `api.auth_mode`, as REST's
+/// routes that change things do.
+#[cfg(feature = "grpc")]
+pub fn require_grpc_token(api: &ApiConfig, header: Option<&str>) -> Result<(), tonic::Status> {
+    check(api.auth_token_hash.as_deref(), header).map_err(|denied| match denied {
+        Denied::NoTokenConfigured => {
+            tonic::Status::permission_denied("this call is disabled: set api.auth_token_hash")
+        }
+        Denied::BadToken => tonic::Status::unauthenticated("missing or invalid bearer token"),
+    })
+}
+
 /// Builds the interceptor for gRPC services.
 ///
 /// Interceptors are synchronous, so the config lock can only be tried. It is
@@ -159,5 +171,22 @@ mod tests {
             tonic::Code::Unauthenticated
         );
         assert!(check_grpc(&api(AuthMode::All), Some("Bearer secret")).is_ok());
+    }
+
+    #[cfg(feature = "grpc")]
+    #[test]
+    fn grpc_writes_need_a_token_in_every_mode() {
+        let writes = api(AuthMode::Writes);
+        assert_eq!(
+            require_grpc_token(&writes, None).unwrap_err().code(),
+            tonic::Code::Unauthenticated
+        );
+        assert!(require_grpc_token(&writes, Some("Bearer secret")).is_ok());
+        assert_eq!(
+            require_grpc_token(&ApiConfig::default(), Some("Bearer secret"))
+                .unwrap_err()
+                .code(),
+            tonic::Code::PermissionDenied
+        );
     }
 }

@@ -6,6 +6,10 @@ service FileSearch {
   rpc SearchStream (SearchRequest)  returns (stream SearchResult);
   rpc GetStats     (StatsRequest)   returns (StatsResponse);
   rpc Reindex      (ReindexRequest) returns (ReindexResponse);
+  rpc ListWatchPaths  (ListWatchPathsRequest) returns (WatchPathsResponse);
+  // Add and remove need the bearer token whatever api.auth_mode is.
+  rpc AddWatchPath    (WatchPathRequest)      returns (WatchPathsResponse);
+  rpc RemoveWatchPath (WatchPathRequest)      returns (WatchPathsResponse);
 }
 
 message SearchRequest {
@@ -48,3 +52,13 @@ message StatsResponse {
 
 message ReindexRequest  { bool full = 1; }
 message ReindexResponse { bool accepted = 1; }
+
+message ListWatchPathsRequest {}
+message WatchPathRequest { string path = 1; }
+message WatchPathsResponse {
+  repeated string watch_paths = 1;
+  // False until a full crawl has finished once.
+  bool crawled = 2;
+  // For add and remove: whether anything changed.
+  bool changed = 3;
+}

@@ -22,8 +22,8 @@ pub mod proto {
 
 use proto::{
     file_search_server::{FileSearch, FileSearchServer},
-    ReindexRequest, ReindexResponse, SearchRequest, SearchResponse, SearchResult, StatsRequest,
-    StatsResponse,
+    ListWatchPathsRequest, ReindexRequest, ReindexResponse, SearchRequest, SearchResponse,
+    SearchResult, StatsRequest, StatsResponse, WatchPathRequest, WatchPathsResponse,
 };
 
 // ---------------------------------------------------------------------------
@@ -114,6 +114,32 @@ impl FileSearch for FileSearchService {
         let _ = self.reindex_tx.send(full);
         Ok(Response::new(ReindexResponse { accepted: true }))
     }
+
+    async fn list_watch_paths(
+        &self,
+        _request: Request<ListWatchPathsRequest>,
+    ) -> Result<Response<WatchPathsResponse>, Status> {
+        let paths = self.config.read().await.watch_paths.clone();
+        Ok(Response::new(self.watch_paths(&paths, false)))
+    }
+
+    async fn add_watch_path(
+        &self,
+        request: Request<WatchPathRequest>,
+    ) -> Result<Response<WatchPathsResponse>, Status> {
+        let path = self.authorized(request).await?;
+        let outcome = crate::watch_list::add(&self.config, &path).await;
+        self.watch_change(outcome)
+    }
+
+    async fn remove_watch_path(
+        &self,
+        request: Request<WatchPathRequest>,
+    ) -> Result<Response<WatchPathsResponse>, Status> {
+        let path = self.authorized(request).await?;
+        let outcome = crate::watch_list::remove(&self.config, &path).await;
+        self.watch_change(outcome)
+    }
 }
 
 // ---------------------------------------------------------------------------
@@ -135,6 +161,43 @@ where
 // ---------------------------------------------------------------------------
 
 impl FileSearchService {
+    /// The request's path, once its token is checked.
+    async fn authorized(&self, request: Request<WatchPathRequest>) -> Result<String, Status> {
+        let header = request
+            .metadata()
+            .get("authorization")
+            .and_then(|v| v.to_str().ok())
+            .map(str::to_owned);
+        crate::api::auth::require_grpc_token(&self.config.read().await.api, header.as_deref())?;
+        Ok(request.into_inner().path)
+    }
+
+    fn watch_paths(&self, paths: &[std::path::PathBuf], changed: bool) -> WatchPathsResponse {
+        WatchPathsResponse {
+            watch_paths: paths
+                .iter()
+                .map(|p| p.to_string_lossy().into_owned())
+                .collect(),
+            crawled: self.metrics.last_crawl_secs.load(Ordering::Relaxed) != 0,
+            changed,
+        }
+    }
+
+    // Status is what tonic's handlers return; boxing it here gains nothing.
+    #[allow(clippy::result_large_err)]
+    fn watch_change(
+        &self,
+        outcome: Result<crate::watch_list::Outcome, crate::watch_list::WatchListError>,
+    ) -> Result<Response<WatchPathsResponse>, Status> {
+        use crate::watch_list::WatchListError;
+        match outcome {
+            Ok(o) => Ok(Response::new(self.watch_paths(&o.watch_paths, o.changed))),
+            Err(e @ WatchListError::Invalid(_)) => Err(Status::invalid_argument(e.to_string())),
+            Err(e @ WatchListError::NotFound(_)) => Err(Status::not_found(e.to_string())),
+            Err(e @ WatchListError::Config(_)) => Err(Status::internal(e.to_string())),
+        }
+    }
+
     async fn run_query(
         &self,
         query_str: &str,

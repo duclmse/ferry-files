@@ -7,6 +7,9 @@
 //!   GET  /health
 //!   GET  /file?path=
 //!   POST /open     { "path": "..." }
+//!   GET    /watch_paths
+//!   POST   /watch_paths         { "path": "..." }  (token)
+//!   DELETE /watch_paths?path=                     (token)
 
 use std::sync::{atomic::Ordering, Arc};
 
@@ -118,6 +121,8 @@ pub fn router(state: AppState) -> Router {
         .route("/metrics", get(metrics_handler))
         .route("/file", get(file_handler))
         .route("/open", post(open_handler))
+        .route("/watch_paths", get(watch_paths_handler))
+        .merge(watch_changes(state.clone()))
         .merge(crate::api::fs::router(state.clone()));
 
     if state.archive_registry.is_enabled() {
@@ -243,6 +248,87 @@ async fn reindex_handler(
 ) -> impl IntoResponse {
     let _ = state.reindex_tx.send(body.full);
     Json(ReindexAccepted { accepted: true })
+}
+
+/// Changing the watch paths needs the token whatever `api.auth_mode` is:
+/// the daemon would index, and show the names of, whatever its account
+/// can read.
+fn watch_changes(state: AppState) -> Router<AppState> {
+    Router::new()
+        .route(
+            "/watch_paths",
+            post(watch_add_handler).delete(watch_remove_handler),
+        )
+        .route_layer(from_fn_with_state(state, crate::api::auth::require_token))
+}
+
+#[derive(Serialize)]
+struct WatchPathsResponse {
+    watch_paths: Vec<String>,
+    /// False until a full crawl has finished once.
+    crawled: bool,
+    /// For a change: whether it changed anything.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    changed: Option<bool>,
+}
+
+#[derive(Deserialize)]
+struct WatchPathBody {
+    path: String,
+}
+
+async fn watch_paths_handler(State(state): State<AppState>) -> impl IntoResponse {
+    let paths = state.config.read().await.watch_paths.clone();
+    Json(watch_paths_response(&state, &paths, None))
+}
+
+fn watch_paths_response(
+    state: &AppState,
+    paths: &[std::path::PathBuf],
+    changed: Option<bool>,
+) -> WatchPathsResponse {
+    WatchPathsResponse {
+        watch_paths: paths
+            .iter()
+            .map(|p| p.to_string_lossy().into_owned())
+            .collect(),
+        crawled: state.metrics.last_crawl_secs.load(Ordering::Relaxed) != 0,
+        changed,
+    }
+}
+
+async fn watch_add_handler(
+    State(state): State<AppState>,
+    Json(body): Json<WatchPathBody>,
+) -> axum::response::Response {
+    let changed = crate::watch_list::add(&state.config, &body.path).await;
+    watch_change_response(&state, changed)
+}
+
+async fn watch_remove_handler(
+    State(state): State<AppState>,
+    Query(body): Query<WatchPathBody>,
+) -> axum::response::Response {
+    let changed = crate::watch_list::remove(&state.config, &body.path).await;
+    watch_change_response(&state, changed)
+}
+
+fn watch_change_response(
+    state: &AppState,
+    changed: Result<crate::watch_list::Outcome, crate::watch_list::WatchListError>,
+) -> axum::response::Response {
+    use crate::watch_list::WatchListError;
+    match changed {
+        Ok(o) => Json(watch_paths_response(state, &o.watch_paths, Some(o.changed))).into_response(),
+        Err(e) => {
+            let status = match e {
+                WatchListError::Invalid(_) => StatusCode::BAD_REQUEST,
+                WatchListError::NotFound(_) => StatusCode::NOT_FOUND,
+                WatchListError::Config(_) => StatusCode::INTERNAL_SERVER_ERROR,
+            };
+            api_error(status, e.to_string()).into_response()
+        }
+    }
 }
 
 async fn health_handler() -> impl IntoResponse {

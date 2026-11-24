@@ -96,6 +96,22 @@ enum Command {
         /// Command to run
         command: String,
     },
+
+    /// List, add or remove the folders the daemon indexes and watches
+    Watch {
+        #[command(subcommand)]
+        action: Option<WatchAction>,
+    },
+}
+
+#[derive(Subcommand)]
+enum WatchAction {
+    /// List the watch paths (the default)
+    List,
+    /// Add a folder; the daemon crawls it, then watches it
+    Add { path: std::path::PathBuf },
+    /// Remove a watch path; its entries stay in the index
+    Remove { path: std::path::PathBuf },
 }
 
 #[tokio::main]
@@ -173,6 +189,12 @@ async fn main() {
         Command::Ext { name, command } => {
             if let Err(e) = run_extension(cli.config, &name, &command).await {
                 eprintln!("extension error: {e}");
+                std::process::exit(1);
+            }
+        }
+        Command::Watch { action } => {
+            if let Err(e) = run_watch(cli.config, action.unwrap_or(WatchAction::List)).await {
+                eprintln!("watch error: {e}");
                 std::process::exit(1);
             }
         }
@@ -452,6 +474,37 @@ async fn run_extension(
 
     if let IpcResponse::Extension { output } = resp {
         println!("{output}");
+    }
+    Ok(())
+}
+
+async fn run_watch(config_path: std::path::PathBuf, action: WatchAction) -> anyhow::Result<()> {
+    // The daemon resolves paths from its own working folder, not this one.
+    let absolute = |p: std::path::PathBuf| -> anyhow::Result<String> {
+        let p = std::path::absolute(&p)?;
+        Ok(p.to_string_lossy().into_owned())
+    };
+    let request = match action {
+        WatchAction::List => IpcRequest::Roots,
+        WatchAction::Add { path } => IpcRequest::WatchAdd {
+            path: absolute(path)?,
+        },
+        WatchAction::Remove { path } => IpcRequest::WatchRemove {
+            path: absolute(path)?,
+        },
+    };
+    let mut client = ipc_client_for(config_path).await?;
+    let resp = client
+        .request(request)
+        .await
+        .map_err(|e| anyhow::anyhow!("{e}"))?;
+    if let IpcResponse::Roots(r) = resp {
+        if r.roots.is_empty() {
+            eprintln!("no watch paths");
+        }
+        for root in r.roots {
+            println!("{root}");
+        }
     }
     Ok(())
 }

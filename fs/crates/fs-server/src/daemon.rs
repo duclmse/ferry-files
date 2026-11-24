@@ -23,7 +23,7 @@ use crate::config;
 #[cfg(any(feature = "rest", feature = "grpc"))]
 use crate::config::AuthMode;
 use crate::error::AppError;
-use crate::indexer::crawler::{full_crawl, process_events, IndexEvent, IndexMetrics};
+use crate::indexer::crawler::{crawl_roots, process_events, IndexEvent, IndexMetrics};
 use crate::indexer::exclusions::ExclusionEngine;
 #[cfg(feature = "rest")]
 use crate::scheduler::{ArchiveSemaphores, ClientRateLimiter, SchedulerMetrics};
@@ -335,17 +335,20 @@ pub async fn run_with_options(
     // ── 13. Filesystem watcher → IndexEvent channel ────────────────────────
     let (ev_tx, mut ev_rx) = mpsc::channel::<IndexEvent>(1024);
     let catchup_tx = ev_tx.clone();
-    {
-        let shutdown_c = shutdown.clone();
-        let cfg_c = Arc::clone(&shared_cfg);
-        let index = Arc::clone(&sqlite);
-        let reindex = reindex_tx.clone();
-        tokio::spawn(async move {
-            if let Err(e) = watcher::run_watcher(cfg_c, ev_tx, index, reindex, shutdown_c).await {
-                tracing::error!("watcher error: {e}");
-            }
-        });
-    }
+    let crawler = Crawler {
+        active: Arc::clone(&crawl_active),
+        sqlite: Arc::clone(&sqlite),
+        tantivy: Arc::clone(&tantivy),
+        metrics: Arc::clone(&metrics),
+        registry: Arc::clone(&archive_registry),
+        cfg: Arc::clone(&shared_cfg),
+    };
+    tokio::spawn(follow_watch_paths(
+        crawler.clone(),
+        ev_tx,
+        reindex_tx.clone(),
+        shutdown.clone(),
+    ));
 
     // ── 14. IPC server ─────────────────────────────────────────────────────
     #[cfg(not(feature = "ipc"))]
@@ -516,23 +519,13 @@ pub async fn run_with_options(
             .unwrap_or(true); // on error assume uncrawled
         let crawl_active = Arc::clone(&crawl_active);
         let sqlite = Arc::clone(&sqlite);
-        let tantivy = Arc::clone(&tantivy);
-        let metrics = Arc::clone(&metrics);
-        let registry = Arc::clone(&archive_registry);
         let cfg = Arc::clone(&shared_cfg);
+        let crawler = crawler.clone();
         let shutdown = shutdown.clone();
         tokio::spawn(async move {
             let crawl = |reason: &str| {
                 tracing::info!("full crawl: {reason}");
-                spawn_crawl(
-                    &crawl_active,
-                    Arc::clone(&sqlite),
-                    Arc::clone(&tantivy),
-                    Arc::clone(&metrics),
-                    Arc::clone(&registry),
-                    Arc::clone(&cfg),
-                    shutdown.clone(),
-                );
+                crawler.spawn(None, shutdown.clone());
             };
             let (roots, formats, exclusions) = {
                 let c = cfg.read().await;
@@ -601,7 +594,7 @@ pub async fn run_with_options(
                 }
             }
             if let Some(now) = now {
-                keep_journal_position(sqlite, roots, now, crawl_active, shutdown).await;
+                keep_journal_position(sqlite, cfg, now, crawl_active, shutdown).await;
             }
         });
     }
@@ -642,15 +635,7 @@ pub async fn run_with_options(
                     .is_ok()
                 {
                     tracing::info!("reindex requested (full={full})");
-                    spawn_crawl(
-                        &crawl_active,
-                        Arc::clone(&sqlite),
-                        Arc::clone(&tantivy),
-                        Arc::clone(&metrics),
-                        Arc::clone(&archive_registry),
-                        Arc::clone(&shared_cfg),
-                        shutdown.clone(),
-                    );
+                    crawler.spawn(None, shutdown.clone());
                 } else {
                     tracing::info!("reindex ignored: crawl already active");
                 }
@@ -738,7 +723,7 @@ const JOURNAL_CRAWL_POLL: Duration = Duration::from_secs(2);
 /// before it has been crawled and everything after it is in the log.
 async fn keep_journal_position(
     store: Arc<FileStore>,
-    roots: Vec<PathBuf>,
+    cfg: Arc<RwLock<crate::config::Config>>,
     first: watcher::journal::Position,
     crawl_active: Arc<AtomicBool>,
     shutdown: CancellationToken,
@@ -762,7 +747,7 @@ async fn keep_journal_position(
                 tracing::warn!("store change-log position: {e}");
             }
         }
-        let roots = roots.clone();
+        let roots = cfg.read().await.watch_paths.clone();
         prev = tokio::task::spawn_blocking(move || watcher::journal::current_position(&roots))
             .await
             .ok()
@@ -919,6 +904,104 @@ async fn keep_file_lists(
 }
 
 // ---------------------------------------------------------------------------
+// Watch paths
+// ---------------------------------------------------------------------------
+
+/// How often the watch paths are compared with the config, which hot reload
+/// replaces.
+const WATCH_PATHS_POLL: Duration = Duration::from_secs(1);
+
+/// What a crawl needs.
+#[derive(Clone)]
+struct Crawler {
+    active: Arc<AtomicBool>,
+    sqlite: Arc<FileStore>,
+    tantivy: Arc<TantivyStore>,
+    metrics: Arc<IndexMetrics>,
+    registry: Arc<ArchiveRegistry>,
+    cfg: Arc<RwLock<crate::config::Config>>,
+}
+
+/// Runs the watcher over the config's watch paths (none when there are no
+/// paths), and starts it again when they change, crawling the added ones.
+/// The rows of a removed path stay.
+///
+/// The new watcher starts before the old one stops, and the old one gets a
+/// debounce window and more to deliver what it holds: changes in between
+/// are seen twice, which applying them tolerates, rather than not at all.
+async fn follow_watch_paths(
+    crawler: Crawler,
+    tx: mpsc::Sender<IndexEvent>,
+    reindex: watch::Sender<bool>,
+    shutdown: CancellationToken,
+) {
+    let start = |roots: &[PathBuf]| -> Option<CancellationToken> {
+        if roots.is_empty() {
+            tracing::info!("no watch_paths: nothing is watched");
+            return None;
+        }
+        let stop = shutdown.child_token();
+        let (cfg, tx, index, reindex, token) = (
+            Arc::clone(&crawler.cfg),
+            tx.clone(),
+            Arc::clone(&crawler.sqlite),
+            reindex.clone(),
+            stop.clone(),
+        );
+        tokio::spawn(async move {
+            if let Err(e) = watcher::run_watcher(cfg, tx, index, reindex, token).await {
+                tracing::error!("watcher error: {e}");
+            }
+        });
+        Some(stop)
+    };
+    let mut roots = crawler.cfg.read().await.watch_paths.clone();
+    let mut running = start(&roots);
+    loop {
+        tokio::select! {
+            _ = shutdown.cancelled() => return,
+            _ = tokio::time::sleep(WATCH_PATHS_POLL) => {}
+        }
+        let (now, debounce_ms) = {
+            let c = crawler.cfg.read().await;
+            (c.watch_paths.clone(), c.watcher.debounce_ms)
+        };
+        if now == roots {
+            continue;
+        }
+        let added: Vec<PathBuf> = now.iter().filter(|p| !roots.contains(p)).cloned().collect();
+        let removed = roots.iter().filter(|p| !now.contains(p)).count();
+        tracing::info!(
+            "watch_paths changed: {} added, {removed} removed",
+            added.len()
+        );
+        roots = now;
+        if let Some(old) = std::mem::replace(&mut running, start(&roots)) {
+            tokio::spawn(async move {
+                tokio::time::sleep(Duration::from_millis(2 * debounce_ms + 500)).await;
+                old.cancel();
+            });
+        }
+        if added.is_empty() {
+            continue;
+        }
+        // One crawl at a time. A full crawl already running may have read
+        // the paths before the change, so the added ones are crawled after it.
+        while crawler
+            .active
+            .compare_exchange(false, true, Ordering::AcqRel, Ordering::Relaxed)
+            .is_err()
+        {
+            tokio::select! {
+                _ = shutdown.cancelled() => return,
+                _ = tokio::time::sleep(JOURNAL_CRAWL_POLL) => {}
+            }
+        }
+        crawler.spawn(Some(added), shutdown.clone());
+    }
+}
+
+// ---------------------------------------------------------------------------
 // Crawl spawner - deduplicates the "start a full crawl as a background task"
 // pattern used both for the initial crawl and API-triggered reindexes.
 //
@@ -927,35 +1010,56 @@ async fn keep_file_lists(
 // the spawned task finishes.
 // ---------------------------------------------------------------------------
 
-fn spawn_crawl(
-    crawl_active: &Arc<AtomicBool>,
-    sqlite: Arc<FileStore>,
-    tantivy: Arc<TantivyStore>,
-    metrics: Arc<IndexMetrics>,
-    registry: Arc<ArchiveRegistry>,
-    cfg: Arc<RwLock<crate::config::Config>>,
-    shutdown: CancellationToken,
-) {
+impl Crawler {
+    /// Crawls `roots`, or every watch path, in the background.
+    fn spawn(&self, roots: Option<Vec<PathBuf>>, shutdown: CancellationToken) {
+        spawn_crawl(self.clone(), roots, shutdown);
+    }
+}
+
+fn spawn_crawl(c: Crawler, roots: Option<Vec<PathBuf>>, shutdown: CancellationToken) {
+    let Crawler {
+        active: ca,
+        sqlite,
+        tantivy,
+        metrics,
+        registry,
+        cfg,
+    } = c;
     // Set the flag so concurrent reindex requests are rejected until done.
-    crawl_active.store(true, Ordering::Release);
-    let ca = Arc::clone(crawl_active);
+    ca.store(true, Ordering::Release);
     tokio::spawn(async move {
-        tracing::info!("full crawl starting");
+        let what = match &roots {
+            None => "full crawl".to_owned(),
+            Some(r) => format!(
+                "crawl of {}",
+                r.iter()
+                    .map(|p| p.display().to_string())
+                    .collect::<Vec<_>>()
+                    .join(", ")
+            ),
+        };
+        tracing::info!("{what} starting");
         let store = Arc::clone(&sqlite);
-        let bulk = tokio::task::spawn_blocking(move || store.begin_bulk_load())
-            .await
-            .map_err(|e| e.to_string())
-            .and_then(|r| r.map_err(|e| e.to_string()))
-            .unwrap_or_else(|e| {
-                tracing::warn!("bulk load setup failed, crawling with indexes: {e}");
-                false
-            });
+        // Bulk load drops the indexes, which only pays when most rows are new.
+        let whole = roots.is_none();
+        let bulk = tokio::task::spawn_blocking(move || -> crate::error::Result<bool> {
+            Ok(whole && store.begin_bulk_load()?)
+        })
+        .await
+        .map_err(|e| e.to_string())
+        .and_then(|r| r.map_err(|e| e.to_string()))
+        .unwrap_or_else(|e| {
+            tracing::warn!("bulk load setup failed, crawling with indexes: {e}");
+            false
+        });
         let store = Arc::clone(&sqlite);
         let cancelled = shutdown.clone();
-        if let Err(e) = full_crawl(cfg, sqlite, tantivy, metrics, registry, shutdown).await {
-            tracing::error!("full_crawl error: {e}");
+        if let Err(e) = crawl_roots(cfg, roots, sqlite, tantivy, metrics, registry, shutdown).await
+        {
+            tracing::error!("{what} error: {e}");
         } else {
-            tracing::info!("full crawl complete");
+            tracing::info!("{what} complete");
             let warm = Arc::clone(&store);
             if let Err(e) = tokio::task::spawn_blocking(move || warm.warm_search()).await {
                 tracing::warn!("search warm-up panicked: {e}");

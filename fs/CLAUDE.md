@@ -87,6 +87,7 @@ crates/
     zidx/         .zidx sidecar index
     scheduler/    archive request scheduling and rate limits
     extensions.rs, extensions/  discovery, trust checks, process supervision
+    watch_list.rs add / remove watch paths for the APIs; edits the config file
   fs-ext-rar2zip/src/
     main.rs       extension executable (`run`, `validate`)
     extension.rs  Extension impl (lifecycle, client commands)
@@ -173,8 +174,10 @@ disk. The commit loop in `daemon.rs` runs every `commit_interval_secs`.
   units elsewhere) opens its IPC socket or pipe to all local users, and
   `ipc_server` refuses requests that act as the daemon's account (`Open`,
   extension commands). A new IPC request that does that must be refused too.
-- Config hot-reload is additive for watch paths. Removed paths are not
-  un-watched until restart.
+- `follow_watch_paths` in `daemon.rs` follows hot-reloaded watch paths: it
+  restarts the watcher and crawls only the added roots (`crawl_roots`).
+  A removed root stops being watched, but its rows stay. No watch paths
+  means no watcher.
 - Extension executables must keep stdout for the protocol and log to stderr.
 - `fsd` runs whatever is in `extensions_dir`. `extensions/trust.rs` and
   `ensure_unprotected` in `api/fs/common.rs` guard it; new file-mutating routes

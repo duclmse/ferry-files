@@ -1,19 +1,19 @@
 # fsd configuration: every field, each set to its default.
 #
-# Copy it, set watch_paths, and check it with:
+# Copy it, add watch_paths, and check it with:
 #   fsd --config <file> validate-config
 #
 # Relative paths are from the folder fsd starts in. `fsd install-service`
 # starts the service in the folder of its config file.
-# The file is reread when it changes; added watch paths take effect at once,
-# removed ones on restart.
+# The file is reread when it changes. Added watch paths are crawled and watched
+# at once; removed ones are no longer watched, but their entries stay indexed.
 # Fields left commented out have no fixed default: it depends on the platform
 # or the machine, or the field is unset by default.
 
 # ── Paths ─────────────────────────────────────────────────────────────────────
 
-# Folders to index and watch. At least one; each must exist.
-watch_paths = ["."]
+# Folders to index and watch; each must exist. Empty watches nothing.
+watch_paths = []
 
 # The index (index.bin or index.db, and the Tantivy full-text index). Created
 # on first run.

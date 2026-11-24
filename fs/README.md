@@ -165,6 +165,9 @@ index (Tools > Options > Indexes > File Lists).
 GET  /search?q=<query>&limit=100   → JSON array of file records
 GET  /stats                        → index statistics
 POST /reindex                      → trigger full re-crawl
+GET  /watch_paths                  → the folders indexed and watched
+POST /watch_paths {"path": ...}    → add a folder (token)
+DELETE /watch_paths?path=<folder>  → stop watching a folder (token)
 POST /open?path=<virtual_path>     → extract inner ZIP entry to temp dir
 GET  /health
 ```
