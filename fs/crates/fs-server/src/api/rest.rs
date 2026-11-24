@@ -271,6 +271,9 @@ struct WatchPathsResponse {
     /// For a change: whether it changed anything.
     #[serde(skip_serializing_if = "Option::is_none")]
     changed: Option<bool>,
+    /// For an add: the watch paths inside it, which it replaced.
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    absorbed: Vec<String>,
 }
 
 #[derive(Deserialize)]
@@ -303,6 +306,7 @@ fn watch_paths_response(
             .collect(),
         crawled: state.metrics.last_crawl_secs.load(Ordering::Relaxed) != 0,
         changed,
+        absorbed: Vec::new(),
     }
 }
 
@@ -328,7 +332,15 @@ fn watch_change_response(
 ) -> axum::response::Response {
     use crate::watch_list::WatchListError;
     match changed {
-        Ok(o) => Json(watch_paths_response(state, &o.watch_paths, Some(o.changed))).into_response(),
+        Ok(o) => {
+            let mut body = watch_paths_response(state, &o.watch_paths, Some(o.changed));
+            body.absorbed = o
+                .absorbed
+                .iter()
+                .map(|p| p.to_string_lossy().into_owned())
+                .collect();
+            Json(body).into_response()
+        }
         Err(e) => {
             let status = match e {
                 WatchListError::Invalid(_) => StatusCode::BAD_REQUEST,

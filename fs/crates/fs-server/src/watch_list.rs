@@ -30,6 +30,8 @@ pub enum WatchListError {
 pub struct Outcome {
     pub watch_paths: Vec<PathBuf>,
     pub changed: bool,
+    /// Watch paths an added one contains, which it replaced.
+    pub absorbed: Vec<PathBuf>,
 }
 
 /// The daemon's watch paths, as the APIs change them. One per daemon,
@@ -57,6 +59,8 @@ impl WatchList {
 
     /// Adds `path`, which must be an absolute path to a folder. A path that
     /// is already watched, or lies inside one that is, changes nothing.
+    /// Watch paths inside `path` are replaced by it: kept, each would be
+    /// crawled twice and report each change twice.
     pub async fn add(&self, path: &str) -> Result<Outcome, WatchListError> {
         let _one = self.changing.lock().await;
         let path = folder(path)?;
@@ -72,16 +76,27 @@ impl WatchList {
             return Ok(Outcome {
                 watch_paths: paths,
                 changed: false,
+                absorbed: Vec::new(),
             });
         }
+        let absorbed: Vec<PathBuf> = paths
+            .iter()
+            .filter(|p| p.starts_with(&path))
+            .cloned()
+            .collect();
+        paths.retain(|p| !absorbed.contains(p));
         paths.push(path.clone());
         if let Some(file) = source {
+            let gone = absorbed.clone();
             edit_file(file, move |entries| {
+                entries.retain(|e| !gone.contains(&resolved(Path::new(e))));
                 entries.push(path.to_string_lossy().into_owned());
             })
             .await?;
         }
-        Ok(self.store(paths).await)
+        let mut outcome = self.store(paths).await;
+        outcome.absorbed = absorbed;
+        Ok(outcome)
     }
 
     /// Removes `path`, as given or as it resolves. With `forget`, its
@@ -127,6 +142,7 @@ impl WatchList {
         Outcome {
             watch_paths: paths,
             changed: true,
+            absorbed: Vec::new(),
         }
     }
 }
@@ -307,6 +323,22 @@ mod tests {
             list.add("relative").await,
             Err(WatchListError::Invalid(_))
         ));
+
+        // The parent of both takes their place.
+        let both = list.add(&dir.path().to_string_lossy()).await.unwrap();
+        assert_eq!(both.watch_paths, [resolved(dir.path())]);
+        let mut absorbed = both.absorbed.clone();
+        absorbed.sort();
+        assert_eq!(absorbed, [resolved(&first), resolved(&second)]);
+        assert_eq!(
+            crate::config::load(&file).unwrap().watch_paths,
+            both.watch_paths
+        );
+        list.remove(&dir.path().to_string_lossy(), false)
+            .await
+            .unwrap();
+        list.add(&first.to_string_lossy()).await.unwrap();
+        list.add(&second_s).await.unwrap();
 
         let removed = list.remove(&first.to_string_lossy(), true).await.unwrap();
         assert_eq!(removed.watch_paths, [resolved(&second)]);

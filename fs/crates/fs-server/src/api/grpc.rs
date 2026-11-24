@@ -184,6 +184,7 @@ impl FileSearchService {
                 .collect(),
             crawled: self.metrics.last_crawl_secs.load(Ordering::Relaxed) != 0,
             changed,
+            absorbed: Vec::new(),
         }
     }
 
@@ -195,7 +196,15 @@ impl FileSearchService {
     ) -> Result<Response<WatchPathsResponse>, Status> {
         use crate::watch_list::WatchListError;
         match outcome {
-            Ok(o) => Ok(Response::new(self.watch_paths(&o.watch_paths, o.changed))),
+            Ok(o) => {
+                let mut response = self.watch_paths(&o.watch_paths, o.changed);
+                response.absorbed = o
+                    .absorbed
+                    .iter()
+                    .map(|p| p.to_string_lossy().into_owned())
+                    .collect();
+                Ok(Response::new(response))
+            }
             Err(e @ WatchListError::Invalid(_)) => Err(Status::invalid_argument(e.to_string())),
             Err(e @ WatchListError::NotFound(_)) => Err(Status::not_found(e.to_string())),
             Err(e @ WatchListError::Config(_)) => Err(Status::internal(e.to_string())),

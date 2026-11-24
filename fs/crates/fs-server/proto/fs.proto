@@ -65,4 +65,6 @@ message WatchPathsResponse {
   bool crawled = 2;
   // For add and remove: whether anything changed.
   bool changed = 3;
+  // For add: the watch paths inside the added one, which it replaced.
+  repeated string absorbed = 4;
 }

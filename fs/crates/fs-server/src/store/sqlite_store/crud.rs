@@ -397,19 +397,22 @@ impl SqliteStore {
         Ok(gen)
     }
 
-    /// Delete all rows under `watch_root` whose `crawl_generation` is older than
-    /// `generation`. Uses a path-prefix predicate so rows that were present
-    /// before watch_root tracking was introduced are also cleaned up. No paths
-    /// are loaded into Rust memory.
+    /// Delete the rows at and under `watch_root` whose `crawl_generation` is
+    /// older than `generation` (or unset), the rows the crawl that just
+    /// finished there did not see. Rows are found by path, as an index range,
+    /// whatever root they were last crawled under: a root that took in
+    /// watch paths below it sweeps their rows too, as the memory store does.
+    /// The `LIKE` this replaced was case-insensitive here, so it scanned the
+    /// whole table.
     pub fn remove_stale_for_root(&self, watch_root: &str, generation: i64) -> Result<usize> {
         let conn = self.write_conn()?;
-        // Rows that are newly upserted in this crawl get watch_root set by
-        // mark_seen(). Rows never marked have watch_root = NULL, so we cover
-        // both cases with a path prefix OR watch_root predicate.
         let n = conn.execute(
-            "DELETE FROM files
-             WHERE (watch_root = ?1 OR (watch_root IS NULL AND (path LIKE ?1 || '/%' OR path LIKE ?1 || '\\%')))
-               AND (crawl_generation IS NULL OR crawl_generation < ?2)",
+            &format!(
+                "DELETE FROM files
+                 WHERE (path = ?1 OR {})
+                   AND (crawl_generation IS NULL OR crawl_generation < ?2)",
+                super::schema::UNDER_DIR_1
+            ),
             rusqlite::params![watch_root, generation],
         )?;
         Ok(n)

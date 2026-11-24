@@ -154,8 +154,10 @@ them later in any of these ways:
 - **fsd's own folders.** `data_dir`, `log_dir` and the archive sidecar
   folders are never indexed, even under a watch path, so watching `C:\` with
   data in `C:\ProgramData\fs` is fine.
-- **Already covered.** Adding a folder that is already watched, or one inside
-  a watched folder, changes nothing or is refused.
+- **Already covered.** Adding a folder that is already watched changes
+  nothing, and adding one inside a watched folder is refused. Adding a parent
+  of watch paths replaces them with it: REST and gRPC list them as
+  `absorbed`.
 - **Removing.** fsd stops watching the folder. Its entries stay in the
   index, unless you remove it with `forget`: then they leave the index too,
   with their full-text documents and archive sidecars. A removed folder inside

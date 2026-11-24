@@ -699,6 +699,40 @@ fn recrawl_rewrites_changed_rows_and_keeps_unchanged_ones() {
     assert!(store.get_by_path("/r/c.txt").unwrap().is_none());
 }
 
+#[test]
+fn a_sweep_covers_rows_crawled_under_a_watch_path_it_took_in() {
+    let store = make_store();
+    let row = |p: &str, root: &str| (sample_record(p), root.to_owned());
+    let gen1 = store.begin_crawl_generation().unwrap();
+    store
+        .batch_upsert_crawl(
+            &[
+                row("/r/c", "/r/c"),
+                row("/r/c/kept.txt", "/r/c"),
+                row("/r/c/gone.txt", "/r/c"),
+                row("/rx/beside.txt", "/rx"),
+            ],
+            gen1,
+        )
+        .unwrap();
+    // /r now covers /r/c; gone.txt is no longer there.
+    let gen2 = store.begin_crawl_generation().unwrap();
+    store
+        .batch_upsert_crawl(
+            &[
+                row("/r", "/r"),
+                row("/r/c", "/r"),
+                row("/r/c/kept.txt", "/r"),
+            ],
+            gen2,
+        )
+        .unwrap();
+    assert_eq!(store.remove_stale_for_root("/r", gen2).unwrap(), 1);
+    assert!(store.get_by_path("/r/c/gone.txt").unwrap().is_none());
+    assert!(store.get_by_path("/r/c/kept.txt").unwrap().is_some());
+    assert!(store.get_by_path("/rx/beside.txt").unwrap().is_some());
+}
+
 fn schema_version(db: &Path) -> i64 {
     rusqlite::Connection::open(db)
         .unwrap()

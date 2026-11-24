@@ -578,6 +578,48 @@ async fn test_a_forgotten_watch_path_leaves_the_index() {
         .await;
 }
 
+/// Adding the parent of a watch path replaces it: one watch path, crawled
+/// once, that still covers the child's files and follows its changes.
+#[tokio::test]
+async fn test_an_added_parent_takes_in_its_child_watch_path() {
+    use fs_protocol::ipc_client::IpcClient;
+    use fs_protocol::ipc_protocol::{IpcRequest, IpcResponse};
+
+    let dir = TempDir::new().unwrap();
+    let watch_dir = TempDir::new().unwrap();
+    let outer = TempDir::new().unwrap();
+    let child = outer.path().join("child");
+    std::fs::create_dir(&child).unwrap();
+    std::fs::write(child.join("in_child.txt"), b"x").unwrap();
+    std::fs::write(outer.path().join("in_outer.txt"), b"x").unwrap();
+
+    let daemon = TestDaemon::start(watch_dir.path(), dir).await;
+    daemon
+        .wait_until(Duration::from_secs(30), |s| s.last_crawl_secs > 0)
+        .await;
+    let mut client = IpcClient::connect(Path::new(&daemon.ipc)).await.unwrap();
+    let mut add = async |p: &Path| match client
+        .request(IpcRequest::WatchAdd {
+            path: p.to_string_lossy().into_owned(),
+        })
+        .await
+        .unwrap()
+    {
+        IpcResponse::Roots(r) => r.roots,
+        other => panic!("unexpected {other:?}"),
+    };
+    assert_eq!(add(&child).await.len(), 2);
+    wait_for_hits(&daemon, "in_child.txt", 30, |p| p.len() == 1).await;
+    assert_eq!(add(outer.path()).await.len(), 2, "the child is replaced");
+    wait_for_hits(&daemon, "in_outer.txt", 30, |p| p.len() == 1).await;
+    assert_eq!(daemon.search("in_child.txt").await.total, 1);
+
+    std::fs::write(child.join("later.txt"), b"y").unwrap();
+    wait_for_hits(&daemon, "later.txt", 15, |p| p.len() == 1).await;
+    let file = fs_server::config::load(&daemon.config_path).unwrap();
+    assert_eq!(file.watch_paths.len(), 2);
+}
+
 /// Polls `query` until `ok` holds for its hits, or panics after `secs`.
 async fn wait_for_hits(
     daemon: &TestDaemon,
