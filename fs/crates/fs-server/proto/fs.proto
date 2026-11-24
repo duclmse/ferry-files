@@ -10,6 +10,8 @@ service FileSearch {
   // Add and remove need the bearer token whatever api.auth_mode is.
   rpc AddWatchPath    (WatchPathRequest)      returns (WatchPathsResponse);
   rpc RemoveWatchPath (WatchPathRequest)      returns (WatchPathsResponse);
+  // What changes, as it happens, until the client cancels.
+  rpc Subscribe       (SubscribeRequest)      returns (stream Notice);
 }
 
 message SearchRequest {
@@ -80,4 +82,22 @@ message RootStatus {
   // Unix seconds its last crawl started and finished here; 0 if none did.
   uint64 started = 4;
   uint64 finished = 5;
+}
+
+message SubscribeRequest {
+  // "watch_paths", "root", "applied"; all when empty.
+  repeated string kinds = 1;
+}
+
+message Notice {
+  // "watch_paths", "root", "applied", or "lagged": this subscriber fell
+  // behind by `count` notices and should refresh.
+  string kind = 1;
+  // watch_paths: the new watch paths. root: the one root. applied: the
+  // folders the changes were in.
+  repeated string paths = 2;
+  // root: "pending", "crawling", "ready" or "offline".
+  string state = 3;
+  // root: entries. applied: changes. lagged: notices missed.
+  uint64 count = 4;
 }

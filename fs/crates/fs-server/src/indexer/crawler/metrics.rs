@@ -3,7 +3,10 @@ use std::path::PathBuf;
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Arc, RwLock};
 
-pub use fs_protocol::ipc_protocol::RootState;
+pub use fs_protocol::ipc_protocol::{Notice, RootState};
+
+/// Notices a subscriber may fall behind by before it is told it lagged.
+const NOTICE_BACKLOG: usize = 256;
 
 // ---------------------------------------------------------------------------
 // IndexMetrics
@@ -20,6 +23,9 @@ pub struct IndexMetrics {
     pub archives_crawled: AtomicU64,
     /// Each watch path's crawl state, by path as the index stores it.
     roots: RwLock<HashMap<String, Root>>,
+    /// What changed, for subscribers (`subscribe`). Sending never waits: a
+    /// subscriber that falls behind loses the oldest and is told so.
+    notices: tokio::sync::broadcast::Sender<Notice>,
 }
 
 struct Root {
@@ -78,7 +84,27 @@ impl IndexMetrics {
             r.entries.store(n, Ordering::Relaxed);
         }
         r.state = state;
+        self.notify(Notice::Root {
+            root: root.to_owned(),
+            state,
+            entries: r.entries.load(Ordering::Relaxed),
+        });
         Arc::clone(&r.entries)
+    }
+
+    /// Sends `notice` to the subscribers, if any. Never waits.
+    pub fn notify(&self, notice: Notice) {
+        let _ = self.notices.send(notice);
+    }
+
+    /// Whether anyone is subscribed: a notice that costs something to build
+    /// is built only then.
+    pub fn has_subscribers(&self) -> bool {
+        self.notices.receiver_count() > 0
+    }
+
+    pub fn subscribe(&self) -> tokio::sync::broadcast::Receiver<Notice> {
+        self.notices.subscribe()
     }
 
     /// Forgets the state of watch paths that are no longer listed.
@@ -148,7 +174,19 @@ impl Default for IndexMetrics {
             archive_entries_indexed: AtomicU64::new(0),
             archives_crawled: AtomicU64::new(0),
             roots: RwLock::new(HashMap::new()),
+            notices: tokio::sync::broadcast::channel(NOTICE_BACKLOG).0,
         }
+    }
+}
+
+/// The next notice for a subscriber; `Notice::Lagged` when it fell behind,
+/// `None` once the daemon is gone.
+pub async fn next_notice(rx: &mut tokio::sync::broadcast::Receiver<Notice>) -> Option<Notice> {
+    use tokio::sync::broadcast::error::RecvError;
+    match rx.recv().await {
+        Ok(n) => Some(n),
+        Err(RecvError::Lagged(missed)) => Some(Notice::Lagged(missed)),
+        Err(RecvError::Closed) => None,
     }
 }
 
@@ -176,6 +214,42 @@ mod tests {
         assert_eq!(now[1].state, RootState::Pending);
         m.keep_roots(&roots[1..]);
         assert_eq!(m.roots(&roots)[0].state, RootState::Pending);
+    }
+
+    #[tokio::test]
+    async fn a_subscriber_that_falls_behind_is_told_and_never_blocks_the_sender() {
+        let m = IndexMetrics::default();
+        assert!(!m.has_subscribers());
+        m.notify(Notice::Lagged(0));
+        let mut rx = m.subscribe();
+        assert!(m.has_subscribers());
+        for i in 0..NOTICE_BACKLOG + 10 {
+            m.notify(Notice::Applied {
+                events: i as u32,
+                folders: vec![],
+            });
+        }
+        assert_eq!(next_notice(&mut rx).await, Some(Notice::Lagged(10)));
+        assert_eq!(
+            next_notice(&mut rx).await,
+            Some(Notice::Applied {
+                events: 10,
+                folders: vec![]
+            })
+        );
+        m.set_root("/a", RootState::Crawling, None);
+        let mut last = None;
+        while let Ok(n) = rx.try_recv() {
+            last = Some(n);
+        }
+        assert_eq!(
+            last,
+            Some(Notice::Root {
+                root: "/a".into(),
+                state: RootState::Crawling,
+                entries: 0
+            })
+        );
     }
 }
 

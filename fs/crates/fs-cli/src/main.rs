@@ -97,6 +97,14 @@ enum Command {
         command: String,
     },
 
+    /// Print what changes in the daemon as it happens, one line each, until
+    /// interrupted
+    Events {
+        /// Only these kinds: watch_paths, root, applied (comma-separated)
+        #[arg(long, value_delimiter = ',')]
+        kinds: Vec<String>,
+    },
+
     /// List, add or remove the folders the daemon indexes and watches
     Watch {
         #[command(subcommand)]
@@ -194,6 +202,12 @@ async fn main() {
         Command::Ext { name, command } => {
             if let Err(e) = run_extension(cli.config, &name, &command).await {
                 eprintln!("extension error: {e}");
+                std::process::exit(1);
+            }
+        }
+        Command::Events { kinds } => {
+            if let Err(e) = run_events(cli.config, &kinds).await {
+                eprintln!("events error: {e}");
                 std::process::exit(1);
             }
         }
@@ -483,6 +497,46 @@ async fn run_extension(
     Ok(())
 }
 
+async fn run_events(config_path: std::path::PathBuf, kinds: &[String]) -> anyhow::Result<()> {
+    use fs_protocol::ipc_protocol::NoticeKind;
+    let kinds = kinds
+        .iter()
+        .map(|k| NoticeKind::parse(k).ok_or_else(|| anyhow::anyhow!("unknown kind: {k}")))
+        .collect::<anyhow::Result<Vec<_>>>()?;
+    let mut client = ipc_client_for(config_path).await?;
+    client
+        .request(IpcRequest::Subscribe { kinds })
+        .await
+        .map_err(|e| anyhow::anyhow!("{e}"))?;
+    loop {
+        let n = client
+            .next_notice()
+            .await
+            .map_err(|e| anyhow::anyhow!("{e}"))?;
+        println!("{}", notice_line(&n));
+    }
+}
+
+fn notice_line(n: &fs_protocol::ipc_protocol::Notice) -> String {
+    use fs_protocol::ipc_protocol::Notice;
+    match n {
+        Notice::WatchPaths { roots } => format!("watch paths: {}", roots.join(", ")),
+        Notice::Root {
+            root,
+            state,
+            entries,
+        } => format!(
+            "{root}: {} ({} entries)",
+            state.label(),
+            group_thousands(*entries)
+        ),
+        Notice::Applied { events, folders } => {
+            format!("{events} changes in {}", folders.join(", "))
+        }
+        Notice::Lagged(missed) => format!("missed {missed} notices"),
+    }
+}
+
 /// One line per watch path: the path, its crawl state and entry count,
 /// the paths padded to one width.
 fn watch_table(r: &fs_protocol::ipc_protocol::RootsResponse) -> String {
@@ -546,6 +600,26 @@ async fn run_watch(config_path: std::path::PathBuf, action: WatchAction) -> anyh
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn notices_print_one_line_each() {
+        use fs_protocol::ipc_protocol::{Notice, RootState};
+        assert_eq!(
+            notice_line(&Notice::Root {
+                root: "/a".into(),
+                state: RootState::Ready,
+                entries: 1200
+            }),
+            "/a: ready (1,200 entries)"
+        );
+        assert_eq!(
+            notice_line(&Notice::Applied {
+                events: 3,
+                folders: vec!["/a".into(), "/b".into()]
+            }),
+            "3 changes in /a, /b"
+        );
+    }
 
     #[test]
     fn watch_paths_print_as_a_table() {

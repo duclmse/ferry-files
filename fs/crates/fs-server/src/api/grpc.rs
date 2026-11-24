@@ -22,8 +22,9 @@ pub mod proto {
 
 use proto::{
     file_search_server::{FileSearch, FileSearchServer},
-    ListWatchPathsRequest, ReindexRequest, ReindexResponse, SearchRequest, SearchResponse,
-    SearchResult, StatsRequest, StatsResponse, WatchPathRequest, WatchPathsResponse,
+    ListWatchPathsRequest, Notice as NoticeMsg, ReindexRequest, ReindexResponse, SearchRequest,
+    SearchResponse, SearchResult, StatsRequest, StatsResponse, SubscribeRequest, WatchPathRequest,
+    WatchPathsResponse,
 };
 
 // ---------------------------------------------------------------------------
@@ -62,6 +63,63 @@ impl FileSearch for FileSearchService {
     }
 
     type SearchStreamStream = ReceiverStream<Result<SearchResult, Status>>;
+    type SubscribeStream = ReceiverStream<Result<NoticeMsg, Status>>;
+
+    async fn subscribe(
+        &self,
+        request: Request<SubscribeRequest>,
+    ) -> Result<Response<Self::SubscribeStream>, Status> {
+        use fs_protocol::ipc_protocol::{Notice, NoticeKind};
+        let mut kinds = Vec::new();
+        for k in request.into_inner().kinds {
+            kinds.push(
+                NoticeKind::parse(&k)
+                    .ok_or_else(|| Status::invalid_argument(format!("unknown kind: {k}")))?,
+            );
+        }
+        let mut rx = self.metrics.subscribe();
+        let (tx, out) = tokio::sync::mpsc::channel(16);
+        tokio::spawn(async move {
+            while let Some(n) = crate::indexer::crawler::next_notice(&mut rx).await {
+                if !n.wanted(&kinds) {
+                    continue;
+                }
+                let msg = match n {
+                    Notice::WatchPaths { roots } => NoticeMsg {
+                        kind: "watch_paths".into(),
+                        paths: roots,
+                        ..Default::default()
+                    },
+                    Notice::Root {
+                        root,
+                        state,
+                        entries,
+                    } => NoticeMsg {
+                        kind: "root".into(),
+                        paths: vec![root],
+                        state: state.label().into(),
+                        count: entries,
+                    },
+                    Notice::Applied { events, folders } => NoticeMsg {
+                        kind: "applied".into(),
+                        paths: folders,
+                        count: u64::from(events),
+                        ..Default::default()
+                    },
+                    Notice::Lagged(missed) => NoticeMsg {
+                        kind: "lagged".into(),
+                        count: missed,
+                        ..Default::default()
+                    },
+                };
+                // The client went away.
+                if tx.send(Ok(msg)).await.is_err() {
+                    return;
+                }
+            }
+        });
+        Ok(Response::new(ReceiverStream::new(out)))
+    }
 
     async fn search_stream(
         &self,

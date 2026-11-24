@@ -295,6 +295,14 @@ meanwhile appear without a full crawl (`last_crawl_secs` unchanged).
 
 ## 7. Change notifications
 
+> **Done.** `IndexMetrics` holds the broadcast channel (`notify`,
+> `subscribe`, `next_notice`); notices for watch paths, root states and
+> applied batches (`Applied` is built only with subscribers). IPC
+> `Subscribe` (protocol version 8), REST `GET /events`, gRPC `Subscribe`,
+> `fs events`. Tests:
+> `a_subscriber_that_falls_behind_is_told_and_never_blocks_the_sender`,
+> `notices_round_trip_and_filter_by_kind`, `test_subscribers_hear_what_changes`.
+
 **Today.** Clients poll `/stats` or `Roots` to see crawls finish, and re-run
 searches to see changes.
 

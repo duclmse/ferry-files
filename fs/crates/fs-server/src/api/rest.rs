@@ -8,6 +8,7 @@
 //!   GET  /file?path=
 //!   POST /open     { "path": "..." }
 //!   GET    /watch_paths
+//!   GET    /events[?kinds=watch_paths,root,applied]   server-sent events
 //!   POST   /watch_paths         { "path": "..." }  (token)
 //!   DELETE /watch_paths?path=[&forget=true]       (token)
 
@@ -123,6 +124,7 @@ pub fn router(state: AppState) -> Router {
         .route("/file", get(file_handler))
         .route("/open", post(open_handler))
         .route("/watch_paths", get(watch_paths_handler))
+        .route("/events", get(events_handler))
         .merge(watch_changes(state.clone()))
         .merge(crate::api::fs::router(state.clone()));
 
@@ -373,6 +375,68 @@ fn watch_change_response(
             };
             api_error(status, e.to_string()).into_response()
         }
+    }
+}
+
+#[derive(Deserialize)]
+struct EventsParams {
+    /// Comma-separated kinds: watch_paths, root, applied. All when absent.
+    kinds: Option<String>,
+}
+
+/// Notices as server-sent events, one JSON object each, with a `kind`.
+async fn events_handler(
+    State(state): State<AppState>,
+    Query(params): Query<EventsParams>,
+) -> axum::response::Response {
+    use axum::response::sse::{Event, KeepAlive, Sse};
+    use fs_protocol::ipc_protocol::NoticeKind;
+    let mut kinds = Vec::new();
+    for k in params
+        .kinds
+        .iter()
+        .flat_map(|s| s.split(','))
+        .filter(|k| !k.is_empty())
+    {
+        match NoticeKind::parse(k) {
+            Some(kind) => kinds.push(kind),
+            None => {
+                return api_error(StatusCode::BAD_REQUEST, format!("unknown kind: {k}"))
+                    .into_response()
+            }
+        }
+    }
+    let mut rx = state.metrics.subscribe();
+    let stream = async_stream::stream! {
+        while let Some(n) = crate::indexer::crawler::next_notice(&mut rx).await {
+            if n.wanted(&kinds) {
+                yield Ok::<Event, std::convert::Infallible>(
+                    Event::default().json_data(notice_json(&n)).unwrap_or_default(),
+                );
+            }
+        }
+    };
+    Sse::new(stream)
+        .keep_alive(KeepAlive::default())
+        .into_response()
+}
+
+/// A notice as REST and gRPC show it: a kind and flat fields.
+pub(crate) fn notice_json(n: &fs_protocol::ipc_protocol::Notice) -> serde_json::Value {
+    use fs_protocol::ipc_protocol::Notice;
+    match n {
+        Notice::WatchPaths { roots } => serde_json::json!({"kind": "watch_paths", "roots": roots}),
+        Notice::Root {
+            root,
+            state,
+            entries,
+        } => {
+            serde_json::json!({"kind": "root", "root": root, "state": state.label(), "entries": entries})
+        }
+        Notice::Applied { events, folders } => {
+            serde_json::json!({"kind": "applied", "events": events, "folders": folders})
+        }
+        Notice::Lagged(missed) => serde_json::json!({"kind": "lagged", "missed": missed}),
     }
 }
 

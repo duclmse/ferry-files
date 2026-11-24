@@ -119,6 +119,17 @@ impl IpcClient {
         }
     }
 
+    /// The next notice on a connection that sent `IpcRequest::Subscribe`.
+    pub async fn next_notice(&mut self) -> Result<crate::ipc_protocol::Notice, IpcClientError> {
+        match self.read_envelope().await?.message {
+            IpcMessage::Response(IpcResponse::Notice(n)) => Ok(n),
+            IpcMessage::Response(IpcResponse::Error { code, message }) => {
+                Err(IpcClientError::DaemonError { code, message })
+            }
+            _ => Err(IpcClientError::UnexpectedMessage),
+        }
+    }
+
     async fn read_envelope(&mut self) -> Result<IpcEnvelope, IpcClientError> {
         let mut len_buf = [0u8; 4];
         self.stream

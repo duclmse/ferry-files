@@ -201,6 +201,7 @@ fs [--config <file>] <command>       # --config defaults to ./config.toml
 | `open <path>` | Opens a file with its default app, through the daemon. For a file inside a ZIP, it extracts it to a temp folder first |
 | `watch [list\|add <dir>\|remove [--forget] <dir>]` | Watch paths (section 4) |
 | `ext <name> <command>` | Sends a command to an extension, e.g. `fs ext rar2zip status` |
+| `events [--kinds root,applied]` | Prints what changes in the daemon as it happens (section 9.5) |
 | `tui` | The terminal UI |
 
 **Search flags.** Each flag adds a condition to the query:
@@ -369,6 +370,7 @@ for a system service).
 | `POST /watch_paths` `{"path": "..."}` | Adds a watch path (token) |
 | `DELETE /watch_paths?path=[&forget=true]` | Removes one (token); `forget` drops its entries too |
 | `GET /metrics` | Archive scheduler metrics, Prometheus text |
+| `GET /events?kinds=` | What changes, as server-sent events (section 9.5) |
 | `GET /health` | `{"status": "ok"}`, never needs a token |
 | `HEAD`, `GET /fs/read?path=` | A file's metadata, or its bytes. `Range:` gets 206 Partial Content |
 | `GET /fs/drives` | Drives and mount points |
@@ -405,6 +407,7 @@ reflection, so `grpcurl` needs no proto file.
 | `GetStats` | Index statistics |
 | `Reindex` | Asks for a crawl |
 | `ListWatchPaths`, `AddWatchPath`, `RemoveWatchPath` | Watch paths; add and remove need the token |
+| `Subscribe` | What changes, as a stream (section 9.5) |
 
 ```sh
 grpcurl -plaintext 127.0.0.1:7701 list
@@ -424,7 +427,26 @@ id. fsd refuses any other protocol version, so a client and fsd must be
 built from matching sources.
 
 **Requests:** `Search`, `Stats`, `Reindex`, `Open`, `Extension`, `Roots`,
-`WatchAdd` and `WatchRemove`. Errors come back as `Error {code, message}`.
+`WatchAdd`, `WatchRemove` and `Subscribe`. Errors come back as
+`Error {code, message}`.
+
+### 9.5 Change notifications
+
+Instead of polling `/stats` or the watch paths, a client can subscribe:
+IPC `Subscribe { kinds }` (then `IpcClient::next_notice`), REST
+`GET /events` (server-sent events) or gRPC `Subscribe`. `fs events` prints
+them.
+
+| Kind | Sent when | Carries |
+| ---- | --------- | ------- |
+| `watch_paths` | the watch paths change | the new list |
+| `root` | a watch path's crawl moves on | path, state, entries |
+| `applied` | a batch of file changes is applied | how many, and up to 32 folders they were in |
+| `lagged` | the subscriber fell behind | how many notices it missed: refresh |
+
+`kinds` picks some (`?kinds=root,applied`); `lagged` always comes. Sending
+never waits for a slow subscriber: one that falls more than 256 notices
+behind loses the oldest and gets `lagged`.
 
 ## 10. Files inside ZIPs, and the archive service
 

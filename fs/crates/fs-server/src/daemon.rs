@@ -1055,6 +1055,14 @@ async fn follow_watch_paths(
                 added.len(),
                 removed.len()
             );
+            crawler
+                .metrics
+                .notify(crate::indexer::crawler::Notice::WatchPaths {
+                    roots: now
+                        .iter()
+                        .map(|p| p.to_string_lossy().into_owned())
+                        .collect(),
+                });
         }
         crawler.metrics.keep_roots(&now);
         for root in &gone {

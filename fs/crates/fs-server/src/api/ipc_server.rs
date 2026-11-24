@@ -26,7 +26,8 @@ use crate::store::{tantivy_store::TantivyStore, FileRecord, FileStore};
 
 use fs_protocol::ipc_protocol::{
     decode_payload, encode_frame, DecodeError, IpcEnvelope, IpcMessage, IpcRequest, IpcResponse,
-    RootStatus, RootsResponse, SearchHitDto, SearchResponse, StatsResponse, MAX_FRAME_BYTES,
+    NoticeKind, RootStatus, RootsResponse, SearchHitDto, SearchResponse, StatsResponse,
+    MAX_FRAME_BYTES,
 };
 
 // ---------------------------------------------------------------------------
@@ -242,6 +243,9 @@ where
         };
 
         let request_id = env.request_id;
+        if let IpcMessage::Request(IpcRequest::Subscribe { kinds }) = env.message {
+            return subscribe(stream, request_id, kinds, &ctx).await;
+        }
         let response_env = match env.message {
             IpcMessage::Request(req) => dispatch(req, request_id, &ctx).await,
             IpcMessage::Response(_) => error_response(
@@ -262,6 +266,44 @@ where
                 tracing::warn!("ipc: encode error: {e}");
                 break;
             }
+        }
+    }
+}
+
+/// Sends the subscriber the notices it asked for until it hangs up. What it
+/// sends meanwhile is ignored: the connection is a stream now.
+async fn subscribe<S>(stream: S, request_id: u128, kinds: Vec<NoticeKind>, ctx: &ConnCtx)
+where
+    S: AsyncReadExt + AsyncWriteExt + Unpin,
+{
+    let mut rx = ctx.metrics.subscribe();
+    let (mut rd, mut wr) = tokio::io::split(stream);
+    let send = |message: IpcResponse| {
+        encode_frame(&IpcEnvelope::new(request_id, IpcMessage::Response(message)))
+    };
+    let Ok(frame) = send(IpcResponse::Subscribed) else {
+        return;
+    };
+    if wr.write_all(&frame).await.is_err() {
+        return;
+    }
+    let mut probe = [0u8; 64];
+    loop {
+        tokio::select! {
+            read = rd.read(&mut probe) => match read {
+                Ok(0) | Err(_) => return,
+                Ok(_) => {}
+            },
+            notice = crate::indexer::crawler::next_notice(&mut rx) => match notice {
+                None => return,
+                Some(n) if n.wanted(&kinds) => {
+                    let Ok(frame) = send(IpcResponse::Notice(n)) else { continue };
+                    if wr.write_all(&frame).await.is_err() {
+                        return;
+                    }
+                }
+                Some(_) => {}
+            },
         }
     }
 }
@@ -287,6 +329,12 @@ async fn dispatch(req: IpcRequest, request_id: u128, ctx: &ConnCtx) -> IpcEnvelo
             extension_handler(request_id, &name, command, &ctx.extensions).await
         }
         IpcRequest::Roots => roots_handler(request_id, ctx).await,
+        // Handled by `handle_connection`, which turns the connection over.
+        IpcRequest::Subscribe { .. } => error_response(
+            request_id,
+            "UNEXPECTED_SUBSCRIBE",
+            "Subscribe is answered with a stream",
+        ),
         // The daemon's account may read folders the client cannot, and the
         // index would then show their names to every user.
         IpcRequest::WatchAdd { .. } | IpcRequest::WatchRemove { .. } if ctx.shared => {

@@ -21,7 +21,7 @@ mod metrics;
 #[cfg(test)]
 mod tests;
 
-pub use metrics::{IndexEvent, IndexMetrics, RootProgress, RootState};
+pub use metrics::{next_notice, IndexEvent, IndexMetrics, Notice, RootProgress, RootState};
 
 use crawl::{crawl_archive_sync, SidecarConfig};
 use fsmeta::{build_file_record, is_hidden_name, record_from_mft, unix_now};
@@ -803,6 +803,10 @@ pub async fn process_events(
         }
     };
     let kept = events.len();
+    let applied = stores.metrics.has_subscribers().then(|| Notice::Applied {
+        events: kept as u32,
+        folders: event_folders(&events),
+    });
     let mut run = Vec::new();
     for event in events {
         if matches!(
@@ -824,6 +828,9 @@ pub async fn process_events(
         .await;
     }
     flush_run(&mut run, &cfg, &stores).await;
+    if let Some(notice) = applied.filter(|_| kept > 0) {
+        stores.metrics.notify(notice);
+    }
     let took = start.elapsed();
     if took > SLOW {
         tracing::info!(
@@ -831,6 +838,31 @@ pub async fn process_events(
             took.as_secs_f64()
         );
     }
+}
+
+/// The distinct folders `events` happened in, at most `NOTICE_FOLDERS`.
+fn event_folders(events: &[IndexEvent]) -> Vec<String> {
+    let mut out: Vec<String> = Vec::new();
+    for e in events {
+        let paths: [Option<&Path>; 2] = match e {
+            IndexEvent::Renamed { from, to } => [Some(from), Some(to)],
+            IndexEvent::Created(p)
+            | IndexEvent::Modified(p)
+            | IndexEvent::Deleted(p)
+            | IndexEvent::ArchiveModified(p)
+            | IndexEvent::ArchiveDeleted(p) => [Some(p), None],
+        };
+        for folder in paths.into_iter().flatten().filter_map(Path::parent) {
+            let folder = folder.to_string_lossy();
+            if !out.iter().any(|f| *f == folder) {
+                if out.len() == fs_protocol::ipc_protocol::NOTICE_FOLDERS {
+                    return out;
+                }
+                out.push(folder.into_owned());
+            }
+        }
+    }
+    out
 }
 
 /// An event batch or folder operation slower than this is logged, so a

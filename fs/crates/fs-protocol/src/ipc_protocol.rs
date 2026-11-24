@@ -11,7 +11,7 @@ use serde::{Deserialize, Serialize};
 // ---------------------------------------------------------------------------
 
 pub const MAGIC: [u8; 4] = *b"ZFS1";
-pub const PROTOCOL_VERSION: u16 = 7;
+pub const PROTOCOL_VERSION: u16 = 8;
 pub const MAX_FRAME_BYTES: u32 = 16 * 1024 * 1024; // 16 MiB
 
 // ---------------------------------------------------------------------------
@@ -80,6 +80,12 @@ pub enum IpcRequest {
         path: String,
         forget: bool,
     },
+    /// Turns the connection into a stream of `Notice` responses, of the
+    /// kinds asked for (all of them when empty), until the client closes it.
+    /// Answered first with `Subscribed`.
+    Subscribe {
+        kinds: Vec<NoticeKind>,
+    },
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -101,6 +107,65 @@ pub enum IpcResponse {
         output: String,
     },
     Roots(RootsResponse),
+    Subscribed,
+    Notice(Notice),
+}
+
+/// Something that changed in the daemon, sent to subscribers as it happens.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub enum Notice {
+    /// The watch paths changed; these are the new ones.
+    WatchPaths { roots: Vec<String> },
+    /// A watch path's crawl moved on.
+    Root {
+        root: String,
+        state: RootState,
+        entries: u64,
+    },
+    /// A batch of file changes was applied: how many, and the folders they
+    /// were in (at most `NOTICE_FOLDERS` of them).
+    Applied { events: u32, folders: Vec<String> },
+    /// This subscriber fell behind and missed this many notices: refresh
+    /// what it shows.
+    Lagged(u64),
+}
+
+/// Most folders an `Applied` notice names.
+pub const NOTICE_FOLDERS: usize = 32;
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+pub enum NoticeKind {
+    WatchPaths,
+    Root,
+    Applied,
+}
+
+impl Notice {
+    /// Its kind; `None` for `Lagged`, which every subscriber gets.
+    pub fn kind(&self) -> Option<NoticeKind> {
+        match self {
+            Notice::WatchPaths { .. } => Some(NoticeKind::WatchPaths),
+            Notice::Root { .. } => Some(NoticeKind::Root),
+            Notice::Applied { .. } => Some(NoticeKind::Applied),
+            Notice::Lagged(_) => None,
+        }
+    }
+
+    /// Whether a subscriber that asked for `kinds` (all when empty) gets it.
+    pub fn wanted(&self, kinds: &[NoticeKind]) -> bool {
+        kinds.is_empty() || self.kind().is_none_or(|k| kinds.contains(&k))
+    }
+}
+
+impl NoticeKind {
+    pub fn parse(s: &str) -> Option<Self> {
+        match s {
+            "watch_paths" => Some(NoticeKind::WatchPaths),
+            "root" => Some(NoticeKind::Root),
+            "applied" => Some(NoticeKind::Applied),
+            _ => None,
+        }
+    }
 }
 
 // ---------------------------------------------------------------------------
@@ -284,7 +349,7 @@ mod tests {
         let frame = |m| encode_frame(&IpcEnvelope::new(1, m)).unwrap();
         assert_eq!(
             frame(IpcMessage::Request(IpcRequest::Roots)),
-            b"\x08\0\0\0ZFS1\x07\x01\x00\x05"
+            b"\x08\0\0\0ZFS1\x08\x01\x00\x05"
         );
         assert_eq!(
             frame(IpcMessage::Request(IpcRequest::Search {
@@ -292,7 +357,7 @@ mod tests {
                 limit: 2,
                 offset: 3,
             })),
-            b"\x0c\0\0\0ZFS1\x07\x01\x00\x00\x01a\x02\x03"
+            b"\x0c\0\0\0ZFS1\x08\x01\x00\x00\x01a\x02\x03"
         );
         assert_eq!(
             frame(IpcMessage::Response(IpcResponse::Roots(RootsResponse {
@@ -300,8 +365,26 @@ mod tests {
                 crawled: true,
                 status: vec![],
             }))),
-            b"\x0d\0\0\0ZFS1\x07\x01\x01\x06\x01\x01C\x01\x00"
+            b"\x0d\0\0\0ZFS1\x08\x01\x01\x06\x01\x01C\x01\x00"
         );
+    }
+
+    #[test]
+    fn notices_round_trip_and_filter_by_kind() {
+        let n = Notice::Root {
+            root: "/a".into(),
+            state: RootState::Ready,
+            entries: 3,
+        };
+        match round_trip(IpcMessage::Response(IpcResponse::Notice(n.clone()))).message {
+            IpcMessage::Response(IpcResponse::Notice(back)) => assert_eq!(back, n),
+            other => panic!("unexpected {other:?}"),
+        }
+        assert!(n.wanted(&[]));
+        assert!(n.wanted(&[NoticeKind::Root]));
+        assert!(!n.wanted(&[NoticeKind::Applied]));
+        assert!(Notice::Lagged(2).wanted(&[NoticeKind::Applied]));
+        assert_eq!(NoticeKind::parse("applied"), Some(NoticeKind::Applied));
     }
 
     #[test]

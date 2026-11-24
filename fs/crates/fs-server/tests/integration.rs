@@ -714,6 +714,90 @@ async fn test_a_watch_path_that_goes_offline_and_comes_back() {
     );
 }
 
+/// A subscriber hears about watch-path changes, crawls and applied changes,
+/// over IPC and as server-sent events.
+#[tokio::test]
+async fn test_subscribers_hear_what_changes() {
+    use fs_protocol::ipc_client::IpcClient;
+    use fs_protocol::ipc_protocol::{IpcRequest, IpcResponse, Notice, RootState};
+
+    let dir = TempDir::new().unwrap();
+    let watch_dir = TempDir::new().unwrap();
+    let added = TempDir::new().unwrap();
+    let daemon = TestDaemon::start(watch_dir.path(), dir).await;
+    daemon
+        .wait_until(Duration::from_secs(30), |s| s.last_crawl_secs > 0)
+        .await;
+
+    let mut sub = IpcClient::connect(Path::new(&daemon.ipc)).await.unwrap();
+    assert!(matches!(
+        sub.request(IpcRequest::Subscribe { kinds: vec![] })
+            .await
+            .unwrap(),
+        IpcResponse::Subscribed
+    ));
+    let mut sse = reqwest::get(daemon.url("/events?kinds=root"))
+        .await
+        .unwrap();
+    assert_eq!(sse.status(), reqwest::StatusCode::OK);
+
+    let path = added.path().to_string_lossy().into_owned();
+    let mut client = IpcClient::connect(Path::new(&daemon.ipc)).await.unwrap();
+    client
+        .request(IpcRequest::WatchAdd { path: path.clone() })
+        .await
+        .unwrap();
+    let next = async |sub: &mut IpcClient| {
+        tokio::time::timeout(Duration::from_secs(20), sub.next_notice())
+            .await
+            .expect("a notice in time")
+            .unwrap()
+    };
+    let mut heard_paths = false;
+    loop {
+        match next(&mut sub).await {
+            Notice::WatchPaths { roots } => heard_paths = roots.len() == 2,
+            Notice::Root {
+                root,
+                state: RootState::Ready,
+                ..
+            } => {
+                let r = fs_server::config::load(&daemon.config_path).unwrap();
+                assert!(r.watch_paths.iter().any(|p| p.to_string_lossy() == root));
+                break;
+            }
+            _ => {}
+        }
+    }
+    assert!(heard_paths, "the watch-path change came first");
+
+    std::fs::write(added.path().join("heard.txt"), b"x").unwrap();
+    loop {
+        if let Notice::Applied { events, folders } = next(&mut sub).await {
+            assert!(events >= 1);
+            assert!(
+                folders
+                    .iter()
+                    .any(|f| f
+                        .ends_with(added.path().file_name().unwrap().to_string_lossy().as_ref()))
+            );
+            break;
+        }
+    }
+
+    let mut text = String::new();
+    while !text.contains("\"ready\"") {
+        let chunk = tokio::time::timeout(Duration::from_secs(10), sse.chunk())
+            .await
+            .expect("an event in time")
+            .unwrap()
+            .expect("the stream stays open");
+        text.push_str(&String::from_utf8_lossy(&chunk));
+    }
+    assert!(text.contains("\"kind\":\"root\""), "{text}");
+    assert!(!text.contains("applied"), "{text}");
+}
+
 /// Polls `query` until `ok` holds for its hits, or panics after `secs`.
 async fn wait_for_hits(
     daemon: &TestDaemon,
