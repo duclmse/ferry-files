@@ -379,6 +379,12 @@ pub struct ApiConfig {
     /// Enable the Named-Pipe / Unix-socket IPC API (default: true).
     #[serde(default = "default_true")]
     pub ipc_enabled: bool,
+
+    /// Unix: members of this group may change a system service's watch
+    /// paths over IPC, as root may. On Windows an elevated administrator
+    /// may.
+    #[serde(default)]
+    pub admin_group: Option<String>,
 }
 
 fn default_rest_port() -> u16 {
@@ -432,6 +438,7 @@ impl Default for ApiConfig {
             rest_enabled: true,
             grpc_enabled: true,
             ipc_enabled: true,
+            admin_group: None,
         }
     }
 }

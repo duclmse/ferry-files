@@ -9,8 +9,9 @@
 //!
 //! A daemon run as a system service (`shared`) serves every local user: the
 //! socket or pipe lets them all connect, and requests that would act as the
-//! daemon's own account on their behalf (`Open`, extension commands,
-//! watch path changes) are refused.
+//! daemon's own account on their behalf (`Open`, extension commands) are
+//! refused. Watch path changes are refused too, unless the client is an
+//! administrator (`client_is_admin`).
 
 use std::sync::{atomic::Ordering, Arc};
 
@@ -85,6 +86,12 @@ pub async fn run_ipc_server(
                 res = listener.accept() => {
                     match res {
                         Ok((stream, _)) => {
+                            let admin = if shared {
+                                let group = cfg.read().await.api.admin_group.clone();
+                                client_is_admin(&stream, group.as_deref())
+                            } else {
+                                false
+                            };
                             let ctx = ConnCtx {
                                 cfg:        Arc::clone(&cfg),
                                 sqlite:     Arc::clone(&sqlite),
@@ -94,6 +101,7 @@ pub async fn run_ipc_server(
                                 extensions: Arc::clone(&extensions),
                                 watch_list: Arc::clone(&watch_list),
                                 shared,
+                                admin,
                             };
                             tokio::spawn(handle_connection(stream, ctx));
                         }
@@ -149,6 +157,7 @@ pub async fn run_ipc_server(
                 res = server.connect() => {
                     match res {
                         Ok(()) => {
+                            let admin = shared && client_is_admin(&server);
                             let ctx = ConnCtx {
                                 cfg:        Arc::clone(&cfg),
                                 sqlite:     Arc::clone(&sqlite),
@@ -158,6 +167,7 @@ pub async fn run_ipc_server(
                                 extensions: Arc::clone(&extensions),
                                 watch_list: Arc::clone(&watch_list),
                                 shared,
+                                admin,
                             };
                             tokio::spawn(handle_connection(server, ctx));
                         }
@@ -185,6 +195,9 @@ struct ConnCtx {
     extensions: Arc<Extensions>,
     watch_list: Arc<crate::watch_list::WatchList>,
     shared: bool,
+    /// The client is an administrator: root or `api.admin_group` on Unix,
+    /// an elevated administrator on Windows. Looked up only for `shared`.
+    admin: bool,
 }
 
 // ---------------------------------------------------------------------------
@@ -337,7 +350,9 @@ async fn dispatch(req: IpcRequest, request_id: u128, ctx: &ConnCtx) -> IpcEnvelo
         ),
         // The daemon's account may read folders the client cannot, and the
         // index would then show their names to every user.
-        IpcRequest::WatchAdd { .. } | IpcRequest::WatchRemove { .. } if ctx.shared => {
+        IpcRequest::WatchAdd { .. } | IpcRequest::WatchRemove { .. }
+            if !may_change_watch_paths(ctx.shared, ctx.admin) =>
+        {
             error_response(request_id, "NOT_ALLOWED", SHARED_WATCH_REFUSAL)
         }
         IpcRequest::WatchAdd { path } => {
@@ -353,7 +368,78 @@ async fn dispatch(req: IpcRequest, request_id: u128, ctx: &ConnCtx) -> IpcEnvelo
 
 const SHARED_REFUSAL: &str = "fsd runs as a system service for all users, so it does not open files or run extension commands for a client; open the file yourself";
 
-const SHARED_WATCH_REFUSAL: &str = "fsd runs as a system service for all users, so its watch paths change only in its config file, or over REST or gRPC with the token";
+const SHARED_WATCH_REFUSAL: &str = "fsd runs as a system service for all users, so only an administrator changes its watch paths over IPC (root or api.admin_group on Unix, an elevated prompt on Windows); or edit its config file, or use REST or gRPC with the token";
+
+/// Changing the watch paths makes the daemon's account read what it may
+/// read and show its names to every user, so a shared daemon takes it only
+/// from an administrator. Decided per request.
+fn may_change_watch_paths(shared: bool, admin: bool) -> bool {
+    !shared || admin
+}
+
+/// Root, or a member of `admin_group`, by the peer's credentials.
+#[cfg(unix)]
+fn client_is_admin(stream: &tokio::net::UnixStream, admin_group: Option<&str>) -> bool {
+    use nix::unistd::{Group, Uid, User};
+    let Ok(cred) = stream.peer_cred() else {
+        return false;
+    };
+    if cred.uid() == 0 {
+        return true;
+    }
+    let Some(Ok(Some(group))) = admin_group.map(Group::from_name) else {
+        return false;
+    };
+    cred.gid() == group.gid.as_raw()
+        || User::from_uid(Uid::from_raw(cred.uid()))
+            .ok()
+            .flatten()
+            .is_some_and(|u| group.mem.contains(&u.name))
+}
+
+/// An elevated token: an administrator who confirmed UAC, or SYSTEM. A
+/// filtered administrator token is not elevated.
+#[cfg(windows)]
+fn client_is_admin(pipe: &tokio::net::windows::named_pipe::NamedPipeServer) -> bool {
+    use std::os::windows::io::AsRawHandle;
+    use windows::Win32::Foundation::{CloseHandle, HANDLE};
+    use windows::Win32::Security::{
+        GetTokenInformation, TokenElevation, TOKEN_ELEVATION, TOKEN_QUERY,
+    };
+    use windows::Win32::System::Pipes::GetNamedPipeClientProcessId;
+    use windows::Win32::System::Threading::{
+        OpenProcess, OpenProcessToken, PROCESS_QUERY_LIMITED_INFORMATION,
+    };
+    // SAFETY: the pipe handle is valid while `pipe` lives; the process and
+    // token handles are closed before returning; `elevation` is the size
+    // passed.
+    unsafe {
+        let mut pid = 0u32;
+        if GetNamedPipeClientProcessId(HANDLE(pipe.as_raw_handle() as isize), &mut pid).is_err() {
+            return false;
+        }
+        let Ok(process) = OpenProcess(PROCESS_QUERY_LIMITED_INFORMATION, false, pid) else {
+            return false;
+        };
+        let mut token = HANDLE::default();
+        let opened = OpenProcessToken(process, TOKEN_QUERY, &mut token);
+        let _ = CloseHandle(process);
+        if opened.is_err() {
+            return false;
+        }
+        let mut elevation = TOKEN_ELEVATION::default();
+        let mut len = 0u32;
+        let read = GetTokenInformation(
+            token,
+            TokenElevation,
+            Some(&mut elevation as *mut TOKEN_ELEVATION as *mut std::ffi::c_void),
+            std::mem::size_of::<TOKEN_ELEVATION>() as u32,
+            &mut len,
+        );
+        let _ = CloseHandle(token);
+        read.is_ok() && elevation.TokenIsElevated != 0
+    }
+}
 
 async fn watch_handler(
     request_id: u128,
@@ -712,6 +798,30 @@ mod tests {
             indexed_at: 0,
             archive_path: archive_path.map(str::to_string),
         }
+    }
+
+    #[test]
+    fn only_an_administrator_changes_a_shared_daemons_watch_paths() {
+        assert!(may_change_watch_paths(false, false));
+        assert!(may_change_watch_paths(true, true));
+        assert!(!may_change_watch_paths(true, false));
+    }
+
+    /// This test process, run from an elevated prompt or not, is told apart
+    /// the same way `whoami /groups` would.
+    #[cfg(windows)]
+    #[tokio::test]
+    async fn a_pipe_client_is_an_administrator_only_when_elevated() {
+        use tokio::net::windows::named_pipe::{ClientOptions, ServerOptions};
+        let name = format!(r"\\.\pipe\fs_admin_test_{}", std::process::id());
+        let server = ServerOptions::new().create(&name).unwrap();
+        let _client = ClientOptions::new().open(&name).unwrap();
+        server.connect().await.unwrap();
+        let elevated = std::process::Command::new("net")
+            .arg("session")
+            .output()
+            .is_ok_and(|o| o.status.success());
+        assert_eq!(client_is_admin(&server), elevated);
     }
 
     #[test]

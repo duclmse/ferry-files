@@ -142,7 +142,7 @@ upgrading, because stored watch roots no longer carry the `\\?\` prefix.
 
 ## Plans
 
-- [Watch paths: next steps](plans/watch-paths-next.md) - proposed:
+- [Watch paths: next steps](plans/watch-paths-next.md) - implemented:
   forgetting removed roots, folding child roots, keeping `data_dir` out,
   per-root progress and settings, offline roots, notifications, admin IPC
 - [Performance & Memory Update](plans/performance-memory-update.md) -

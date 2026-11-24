@@ -121,6 +121,11 @@ auth_mode = "writes"
 # routes that change files are refused and "all" does not start.
 # auth_token_hash = "<64 hex characters>"
 
+# A system service refuses watch-path changes over IPC except from an
+# administrator: root or, if set, a member of this group (Unix), or an
+# elevated administrator (Windows).
+# admin_group = "fs-admin"
+
 # Named pipe (Windows) or Unix socket the `fs` client and the TUI use.
 # Default: \\.\pipe\fs on Windows, /tmp/fs.sock elsewhere.
 # ipc_path = "/tmp/fs.sock"

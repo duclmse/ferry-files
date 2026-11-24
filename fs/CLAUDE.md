@@ -174,6 +174,8 @@ disk. The commit loop in `daemon.rs` runs every `commit_interval_secs`.
   units elsewhere) opens its IPC socket or pipe to all local users, and
   `ipc_server` refuses requests that act as the daemon's account (`Open`,
   extension commands). A new IPC request that does that must be refused too.
+  Watch path changes are allowed from an administrator only
+  (`client_is_admin`, `may_change_watch_paths`).
 - `follow_watch_paths` in `daemon.rs` follows hot-reloaded watch paths: it
   restarts the watcher and crawls only the added roots (`crawl_roots`).
   A removed root stops being watched; its rows stay unless it was removed

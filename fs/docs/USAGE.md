@@ -170,9 +170,11 @@ them later in any of these ways:
   with their full-text documents and archive sidecars. A removed folder inside
   another watch path keeps its entries, which that path still covers.
 - **Who may change them.** REST and gRPC need the bearer token, whatever
-  `api.auth_mode` is (section 9.1). A system service refuses changes over
-  IPC, since every local user can reach its IPC endpoint; edit its config
-  file instead, or use REST or gRPC with the token.
+  `api.auth_mode` is (section 9.1). Every local user can reach a system
+  service's IPC endpoint, so it takes changes over IPC only from an
+  administrator: on Windows, `fs` run from an elevated prompt; on Unix,
+  root or a member of `api.admin_group`. Others can edit its config file,
+  or use REST or gRPC with the token.
 - **Settings per path.** A `[[watch]]` table gives one watch path settings
   of its own; its path joins `watch_paths`:
 
@@ -329,8 +331,9 @@ The config is validated before the service is registered.
 **System and user services.** A system service (every Windows service, and
 `--system` elsewhere) serves all local users. Any of them can search its
 index over IPC, so watch only folders they may all see. It refuses requests
-that would act with its own rights: `fs open`, extension commands and
-watch-path changes. A user service serves only its user.
+that would act with its own rights: `fs open` and extension commands, and
+watch-path changes unless they come from an administrator (section 4). A
+user service serves only its user.
 
 On macOS, read the notes at the top of `config.macos.toml` (Full Disk
 Access) first.
@@ -754,7 +757,7 @@ noted.
 | `fs`: unsupported version | `fs` and `fsd` come from different builds; rebuild both |
 | A config edit has no effect | The log in `log_dir` says why the reload was rejected; run `fsd validate-config` |
 | Search finds nothing yet | `fs stats`: the first crawl may still be running (`last_crawl_secs` is 0 until it ends) |
-| `NOT_ALLOWED` from `fs open`, `fs ext` or `fs watch add` | fsd runs as a system service (section 8) |
+| `NOT_ALLOWED` from `fs open`, `fs ext` or `fs watch add` | fsd runs as a system service (section 8); for `fs watch`, run it as an administrator |
 | REST 403 "this route is disabled" | No `api.auth_token_hash` (section 9.1) |
 | REST 401 | Missing or wrong bearer token |
 | Changes made while stopped are missing | On Windows without administrator rights, catch-up is a timestamp scan; `fs reindex` crawls everything again |

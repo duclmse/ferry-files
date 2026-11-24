@@ -128,7 +128,9 @@ fsd uninstall-service            # add --system for a system service
 A system service (every Windows service, and `--system` elsewhere) serves
 all local users: any of them can search its index over IPC, so watch only
 folders they may all see. It refuses `fs open` and extension commands from
-clients, which would otherwise run as LocalSystem or root. A user service
+clients, which would otherwise run as LocalSystem or root, and takes
+`fs watch add` / `remove` only from an administrator (an elevated prompt on
+Windows; root or `api.admin_group` elsewhere). A user service
 serves only its user. On macOS, read the notes at the top of
 `config.macos.toml` first (Full Disk Access).
 

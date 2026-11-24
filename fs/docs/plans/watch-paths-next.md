@@ -1,6 +1,7 @@
 # Watch paths: next steps
 
-> **Status:** proposed (Nov 2026). Builds on `ec9bfe8`: watch paths may be
+> **Status:** implemented (Nov 2026), items 1–8; each section says what was
+> built and what was left. Builds on `ec9bfe8`: watch paths may be
 > empty, change while the daemon runs (`daemon::follow_watch_paths`,
 > `crawler::crawl_roots`), and change over IPC, REST and gRPC (`watch_list.rs`).
 
@@ -340,6 +341,15 @@ channel at a few hundred).
 Integration: subscribe, add a watch path, receive `RootState(ready)`.
 
 ## 8. Administrators change a service's watch paths over IPC
+
+> **Done.** `ipc_server::client_is_admin`: Windows,
+> `GetNamedPipeClientProcessId` and the client's `TokenElevation`; Unix,
+> `peer_cred` uid 0 or `api.admin_group` (primary group or member). Looked
+> up per connection, decided per request (`may_change_watch_paths`). Tests:
+> `only_an_administrator_changes_a_shared_daemons_watch_paths`,
+> `a_pipe_client_is_an_administrator_only_when_elevated` (Windows). The
+> Unix code is not built yet: this was written on Windows, and CI builds it
+> on Linux and macOS on the next push.
 
 **Today.** A system service refuses `WatchAdd` / `WatchRemove` over IPC for
 everyone, since any local user can connect.
