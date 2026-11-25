@@ -108,7 +108,7 @@ sd-notify = "0.4"
 
 [target.'cfg(windows)'.dependencies]
 windows-service = "0.6"
-windows = { version = "0.54", features = [
+windows = { version = "0.62", features = [
     "Win32_Foundation",
     "Win32_Security",
     "Win32_Security_Authorization",

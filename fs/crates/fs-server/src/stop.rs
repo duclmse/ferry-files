@@ -46,7 +46,7 @@ mod imp {
 
     use tokio_util::sync::CancellationToken;
     use windows::core::PCWSTR;
-    use windows::Win32::Foundation::{CloseHandle, BOOL, HANDLE, WAIT_OBJECT_0};
+    use windows::Win32::Foundation::{CloseHandle, HANDLE, WAIT_OBJECT_0};
     use windows::Win32::System::Threading::{
         CreateEventW, OpenEventW, OpenMutexW, SetEvent, WaitForSingleObject, EVENT_MODIFY_STATE,
         SYNCHRONIZATION_SYNCHRONIZE,
@@ -65,6 +65,10 @@ mod imp {
 
     struct Owned(HANDLE);
 
+    // SAFETY: an event handle may be waited on and closed from any thread;
+    // `listen` hands its one to the thread that waits on it.
+    unsafe impl Send for Owned {}
+
     impl Drop for Owned {
         fn drop(&mut self) {
             unsafe {
@@ -77,7 +81,7 @@ mod imp {
     /// thread ends with the daemon, so tests that run several leave none.
     pub fn listen(data_dir: &Path, shutdown: CancellationToken) -> Result<(), AppError> {
         let name = event_name(data_dir);
-        let event = unsafe { CreateEventW(None, BOOL(1), BOOL(0), PCWSTR(name.as_ptr())) }
+        let event = unsafe { CreateEventW(None, true, false, PCWSTR(name.as_ptr())) }
             .map_err(|e| AppError::Config(format!("CreateEventW: {e}")))?;
         let event = Owned(event);
         std::thread::Builder::new()
@@ -99,8 +103,7 @@ mod imp {
     /// Sets the event; false when no daemon made it.
     pub fn request(data_dir: &Path) -> Result<bool, AppError> {
         let name = event_name(data_dir);
-        let event = match unsafe { OpenEventW(EVENT_MODIFY_STATE, BOOL(0), PCWSTR(name.as_ptr())) }
-        {
+        let event = match unsafe { OpenEventW(EVENT_MODIFY_STATE, false, PCWSTR(name.as_ptr())) } {
             Ok(h) => Owned(h),
             Err(e) if e.code() == windows::Win32::Foundation::ERROR_ACCESS_DENIED.to_hresult() => {
                 return Err(AppError::Config(
@@ -118,7 +121,7 @@ mod imp {
     /// Whether the instance mutex is still held.
     pub fn running(data_dir: &Path) -> bool {
         let name = wide(&crate::daemon::instance_mutex_name(data_dir));
-        match unsafe { OpenMutexW(SYNCHRONIZATION_SYNCHRONIZE, BOOL(0), PCWSTR(name.as_ptr())) } {
+        match unsafe { OpenMutexW(SYNCHRONIZATION_SYNCHRONIZE, false, PCWSTR(name.as_ptr())) } {
             Ok(h) => {
                 drop(Owned(h));
                 true

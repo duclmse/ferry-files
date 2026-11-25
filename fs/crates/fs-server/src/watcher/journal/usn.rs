@@ -208,6 +208,10 @@ mod imp {
 
     pub(in crate::watcher) struct Handle(pub(in crate::watcher) HANDLE);
 
+    // SAFETY: a volume or file handle may be used from any thread; the
+    // journal reader opens it on one and reads on its own.
+    unsafe impl Send for Handle {}
+
     impl Drop for Handle {
         fn drop(&mut self) {
             // SAFETY: the handle came from a successful open and is closed

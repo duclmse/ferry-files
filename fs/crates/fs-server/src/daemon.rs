@@ -56,12 +56,14 @@ pub(crate) fn instance_mutex_name(data_dir: &std::path::Path) -> String {
 mod win_guard {
     use super::AppError;
     use windows::core::PCWSTR;
-    use windows::Win32::Foundation::{
-        CloseHandle, GetLastError, BOOL, ERROR_ALREADY_EXISTS, HANDLE,
-    };
+    use windows::Win32::Foundation::{CloseHandle, GetLastError, ERROR_ALREADY_EXISTS, HANDLE};
     use windows::Win32::System::Threading::CreateMutexW;
 
     pub struct InstanceGuard(HANDLE);
+
+    // SAFETY: the guard only closes its handle, which any thread may do; it
+    // is held across awaits on the daemon's multi-threaded runtime.
+    unsafe impl Send for InstanceGuard {}
 
     impl Drop for InstanceGuard {
         fn drop(&mut self) {
@@ -77,7 +79,7 @@ mod win_guard {
             .chain(std::iter::once(0))
             .collect();
         unsafe {
-            let handle = CreateMutexW(None, BOOL(1), PCWSTR(name.as_ptr()))
+            let handle = CreateMutexW(None, true, PCWSTR(name.as_ptr()))
                 .map_err(|e| AppError::Config(format!("CreateMutexW: {e}")))?;
             // A valid handle with ERROR_ALREADY_EXISTS means another instance owns the mutex.
             if GetLastError() == ERROR_ALREADY_EXISTS {

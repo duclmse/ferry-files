@@ -489,7 +489,7 @@ fn client_is_admin(pipe: &tokio::net::windows::named_pipe::NamedPipeServer) -> b
     // passed.
     unsafe {
         let mut pid = 0u32;
-        if GetNamedPipeClientProcessId(HANDLE(pipe.as_raw_handle() as isize), &mut pid).is_err() {
+        if GetNamedPipeClientProcessId(HANDLE(pipe.as_raw_handle()), &mut pid).is_err() {
             return false;
         }
         let Ok(process) = OpenProcess(PROCESS_QUERY_LIMITED_INFORMATION, false, pid) else {
@@ -741,7 +741,7 @@ mod pipe_security {
     impl Drop for AllUsers {
         fn drop(&mut self) {
             unsafe {
-                let _ = LocalFree(HLOCAL(self.0 .0 as _));
+                let _ = LocalFree(Some(HLOCAL(self.0 .0)));
             }
         }
     }
