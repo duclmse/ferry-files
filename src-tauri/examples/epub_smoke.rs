@@ -102,6 +102,8 @@ fn main() {
                 replace: String::new(),
                 match_case: false,
                 whole_word: true,
+                regex: false,
+                preserve_case: false,
             })
             .is_ok_and(|f| f.total > 0)
         });
@@ -112,6 +114,8 @@ fn main() {
                 replace: "FERRYSMOKE".into(),
                 match_case: false,
                 whole_word: true,
+                regex: false,
+                preserve_case: false,
             };
             let f = book.find(&q).unwrap();
             replaced = book.replace_all(&q).expect("replace");
@@ -147,6 +151,8 @@ fn main() {
                 replace: String::new(),
                 match_case: true,
                 whole_word: false,
+                regex: false,
+                preserve_case: false,
             };
             assert_eq!(again.find(&q).unwrap().total, replaced);
         }
