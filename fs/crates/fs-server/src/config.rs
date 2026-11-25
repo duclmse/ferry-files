@@ -65,7 +65,9 @@ pub struct Config {
     pub watcher: WatcherConfig,
 }
 
-/// A `[[watch]]` table: one watch path and how it is followed.
+/// A `[[watch]]` table: one watch path and how it is followed. Inside another
+/// watch path, its `content` and `exclude` apply to that folder, and its
+/// mode is ignored.
 #[derive(Debug, Clone, Deserialize, PartialEq, Eq)]
 pub struct RootConfig {
     pub path: PathBuf,
@@ -99,8 +101,8 @@ pub enum RootMode {
 }
 
 impl Config {
-    /// The `[[watch]]` settings of the watch path holding `path`, if it has
-    /// a table.
+    /// The `[[watch]]` settings closest above `path`: its watch path's, or
+    /// a folder's inside it.
     pub fn root_config(&self, path: &Path) -> Option<&RootConfig> {
         self.watch
             .iter()
@@ -697,8 +699,11 @@ pub fn load(path: &Path) -> Result<Config> {
     };
     cfg.watch_paths.iter_mut().for_each(resolve);
     cfg.watch.iter_mut().for_each(|r| resolve(&mut r.path));
+    // A table inside another watch path is not one itself: its settings
+    // apply to that part of it (`root_config`). Such a table is what a
+    // watch path with settings becomes when a parent takes it in.
     for r in &cfg.watch {
-        if !cfg.watch_paths.contains(&r.path) {
+        if !cfg.watch_paths.iter().any(|p| r.path.starts_with(p)) {
             cfg.watch_paths.push(r.path.clone());
         }
     }
@@ -992,6 +997,21 @@ log_dir     = "{dir}/logs"
             d = fwd(&dir.path().join("d")),
         ));
         assert_eq!(validate(&load(bad.path()).unwrap()).len(), 1);
+
+        // A table inside a watch path sets a folder's settings, and is no
+        // watch path of its own.
+        let nested = write_config(&format!(
+            "watch_paths = [\"{a}\"]\ndata_dir = \"{d}\"\nlog_dir = \"{d}\"\n\
+             [[watch]]\npath = \"{deep}\"\nmode = \"poll\"\ncontent = false\n",
+            a = fwd(a),
+            deep = fwd(&a.join("deep")),
+            d = fwd(&dir.path().join("d")),
+        ));
+        let cfg = load(nested.path()).unwrap();
+        assert_eq!(cfg.watch_paths.len(), 1);
+        assert!(cfg.polled().is_empty());
+        assert!(!cfg.content_under(&cfg.watch_paths[0].join("deep").join("x.txt")));
+        assert!(cfg.content_under(&cfg.watch_paths[0].join("x.txt")));
     }
 
     #[test]

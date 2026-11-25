@@ -192,6 +192,11 @@ them later in any of these ways:
   are missing or unreliable. A scan lists every folder of the path (about
   3 s for 350k entries), so keep the interval in minutes. Removing the path
   removes its table.
+
+  A table whose path is inside another watch path is not a watch path of
+  its own: its `content` and `exclude` apply to that folder, and its `mode`
+  is ignored. That is what happens to a watch path with settings when you
+  add a parent of it: it keeps its settings.
 - **Progress.** `fs watch` lists each watch path with its state and the
   entries its crawl wrote:
 

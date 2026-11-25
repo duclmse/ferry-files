@@ -88,7 +88,9 @@ impl WatchList {
         paths.push(path.clone());
         if let Some(file) = source {
             let gone = absorbed.clone();
-            let tables = absorbed.clone();
+            // The children's tables stay: inside the new path they keep
+            // their folders' settings.
+            let tables = Vec::new();
             edit_file(
                 file,
                 move |entries| {
@@ -149,7 +151,8 @@ impl WatchList {
 
     async fn store(&self, paths: Vec<PathBuf>) -> Outcome {
         let mut cfg = self.config.write().await;
-        cfg.watch.retain(|r| paths.contains(&r.path));
+        cfg.watch
+            .retain(|r| paths.iter().any(|p| r.path.starts_with(p)));
         cfg.watch_paths = paths.clone();
         drop(cfg);
         Outcome {
@@ -214,7 +217,12 @@ fn edit_text(
     {
         tables.retain(|t| {
             let path = t.get("path").and_then(|v| v.as_str());
-            !path.is_some_and(|p| drop_tables.contains(&resolved(Path::new(p))))
+            // A table inside a removed path goes with it: left, it would
+            // become a watch path of its own.
+            !path.is_some_and(|p| {
+                let p = resolved(Path::new(p));
+                drop_tables.iter().any(|d| p.starts_with(d))
+            })
         });
     }
     let mut entries: Vec<String> = match doc.get("watch_paths") {
@@ -316,10 +324,43 @@ mod tests {
     }
 
     #[test]
-    fn removing_a_path_drops_its_watch_table() {
-        let text = "watch_paths = []\n\n[[watch]]\npath = '/nas'\nmode = 'poll'\n\n[[watch]]\npath = '/usb'\n";
+    fn removing_a_path_drops_its_watch_tables() {
+        let text = "watch_paths = []\n\n[[watch]]\npath = '/nas'\nmode = 'poll'\n\n\
+                    [[watch]]\npath = '/nas/sub'\ncontent = false\n\n[[watch]]\npath = '/usb'\n";
         let out = edit_text(text, |_| {}, &[PathBuf::from("/nas")]).unwrap();
         assert_eq!(out, "watch_paths = []\n\n[[watch]]\npath = '/usb'\n");
+    }
+
+    #[tokio::test]
+    async fn a_parent_keeps_the_settings_of_a_child_it_takes_in() {
+        let dir = tempfile::tempdir().unwrap();
+        let child = dir.path().join("child");
+        std::fs::create_dir(&child).unwrap();
+        let fwd = |p: &Path| p.to_string_lossy().replace('\\', "/");
+        let (cfg, list, file) = shared(
+            dir.path(),
+            &format!(
+                "data_dir = \"{d}\"\nlog_dir = \"{d}\"\n\n[[watch]]\npath = \"{c}\"\ncontent = false\n",
+                c = fwd(&child),
+                d = fwd(&dir.path().join("d")),
+            ),
+        );
+        let added = list.add(&dir.path().to_string_lossy()).await.unwrap();
+        assert_eq!(added.absorbed, [resolved(&child)]);
+        let reread = crate::config::load(&file).unwrap();
+        assert_eq!(reread.watch_paths, [resolved(dir.path())]);
+        assert!(!reread.content_under(&resolved(&child).join("x.txt")));
+        assert!(!cfg
+            .read()
+            .await
+            .content_under(&resolved(&child).join("x.txt")));
+
+        list.remove(&dir.path().to_string_lossy(), false)
+            .await
+            .unwrap();
+        let reread = crate::config::load(&file).unwrap();
+        assert!(reread.watch_paths.is_empty(), "{:?}", reread.watch_paths);
+        assert!(reread.watch.is_empty());
     }
 
     #[tokio::test]

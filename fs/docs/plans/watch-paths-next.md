@@ -210,10 +210,13 @@ count.
 > `Config::root_config`, `content_under`, `polled`; per-root globs in
 > `ExclusionEngine` (`roots`); `SideWork` drops content where
 > `content = false`; `daemon::Polls` scans polled roots, which get no
-> watcher; removing a path drops its table. Tests:
+> watcher; removing a path drops its table and the tables inside it. A
+> table inside another watch path sets that folder's `content` and
+> `exclude`, so a child taken in by a parent keeps its settings. Tests:
 > `watch_tables_join_the_watch_paths_with_their_settings`,
 > `a_watch_paths_own_patterns_apply_only_under_it`,
-> `removing_a_path_drops_its_watch_table`,
+> `removing_a_path_drops_its_watch_tables`,
+> `a_parent_keeps_the_settings_of_a_child_it_takes_in`,
 > `test_a_polled_watch_path_with_its_own_settings`.
 
 **Today.** Exclusions, content limits and the watcher backend are global. A
@@ -269,8 +272,10 @@ picks up a new file within `poll_secs`.
 > catches up each root alone at startup and on return. Tests:
 > `a_missing_watch_path_is_offline_not_an_error`,
 > `each_root_keeps_its_own_position_and_the_shared_one_splits`,
-> `test_a_watch_path_that_goes_offline_and_comes_back`. Not yet run:
-> `scripts/bench-windows.ps1`'s restart catch-up checks.
+> `test_a_watch_path_that_goes_offline_and_comes_back`.
+> `scripts/bench-windows.ps1` (not elevated, so the timestamp scan) passed
+> 9/9 catch-up checks with the memory store, SQLite, and backslash roots;
+> the USN replay path needs an elevated run.
 
 **Today.** `validate` rejects a config whose watch path does not exist, so an
 unplugged drive stops fsd from starting and makes every later reload fail. The
@@ -349,9 +354,11 @@ Integration: subscribe, add a watch path, receive `RootState(ready)`.
 > `peer_cred` uid 0 or `api.admin_group` (primary group or member). Looked
 > up per connection, decided per request (`may_change_watch_paths`). Tests:
 > `only_an_administrator_changes_a_shared_daemons_watch_paths`,
-> `a_pipe_client_is_an_administrator_only_when_elevated` (Windows). The
-> Unix code is not built yet: this was written on Windows, and CI builds it
-> on Linux and macOS on the next push.
+> `a_pipe_client_is_an_administrator_only_when_elevated` (Windows),
+> `group_membership_is_read_from_the_system` (Unix). The group lookup waits
+> for a request that needs it and runs on the blocking pool. The Unix code
+> was type-checked and linted for Linux and macOS from a copy outside the
+> workspace; its tests run in CI.
 
 **Today.** A system service refuses `WatchAdd` / `WatchRemove` over IPC for
 everyone, since any local user can connect.
