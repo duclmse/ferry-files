@@ -15,6 +15,8 @@ pub(crate) struct BookView {
     dirty: bool,
     meta: epub::Meta,
     chapters: Vec<epub::ChapterRef>,
+    /// The table of contents, its entries in order with their depths.
+    toc: Vec<epub::TocEntry>,
     cover: Option<String>,
     stats: epub::Stats,
 }
@@ -28,6 +30,7 @@ pub(crate) fn book_view(id: u32, src: &str, b: &Book) -> Result<BookView, String
         dirty: b.dirty,
         meta: b.meta()?,
         chapters: b.chapters()?,
+        toc: b.toc().unwrap_or_default(),
         cover: b.cover_path().map(|p| protocol::book_url(id, &p, b.rev)),
         stats: b.stats()?,
     })
@@ -95,6 +98,40 @@ pub(crate) fn epub_set_meta(state: State<'_, AppState>, id: u32, meta: epub::Met
     Ok(with_book(&state, id, |b| b.set_meta(&meta))?.1)
 }
 
+/// Adds an entry to the table of contents, for the cursor's place in a chapter (as `epub_move`
+/// is given it: `block` and `names`, or `offset`).
+#[tauri::command(rename_all = "snake_case")]
+#[allow(clippy::too_many_arguments)]
+pub(crate) fn epub_toc_add(
+    state: State<'_, AppState>,
+    id: u32,
+    path: String,
+    block: Option<usize>,
+    offset: Option<usize>,
+    names: Option<Vec<String>>,
+    label: String,
+    level: epub::Level,
+) -> Result<BookView, String> {
+    let cut = match (block, offset) {
+        (Some(k), _) => epub::Cut::Block(k),
+        (None, Some(o)) => epub::Cut::Offset(o, false),
+        (None, None) => epub::Cut::Block(0),
+    };
+    Ok(with_book(&state, id, |b| b.add_toc(&path, cut, names.as_deref(), &label, level))?.1)
+}
+
+/// Takes entry `index` out of the table of contents.
+#[tauri::command(rename_all = "snake_case")]
+pub(crate) fn epub_toc_remove(state: State<'_, AppState>, id: u32, index: usize) -> Result<BookView, String> {
+    Ok(with_book(&state, id, |b| b.remove_toc(index))?.1)
+}
+
+/// Renames a chapter in the table of contents.
+#[tauri::command(rename_all = "snake_case")]
+pub(crate) fn epub_rename_chapter(state: State<'_, AppState>, id: u32, path: String, label: String) -> Result<BookView, String> {
+    Ok(with_book(&state, id, |b| b.rename_chapter(&path, &label))?.1)
+}
+
 /// Asks for an image on the Mac and makes it the cover. None if cancelled.
 #[tauri::command(rename_all = "snake_case")]
 pub(crate) async fn epub_cover(app: AppHandle, state: State<'_, AppState>, id: u32) -> Result<Option<BookView>, String> {
@@ -127,6 +164,51 @@ pub(crate) struct Replaced {
 pub(crate) fn epub_replace(state: State<'_, AppState>, id: u32, query: epub::Query) -> Result<Replaced, String> {
     let (count, book) = with_book(&state, id, |b| b.replace_all(&query))?;
     Ok(Replaced { count, book })
+}
+
+#[derive(Serialize)]
+pub(crate) struct ReplacedOne {
+    /// Where the replacement ends in the chapter's XHTML; None when no match was left there.
+    at: Option<usize>,
+    book: BookView,
+}
+
+/// Replaces one match in a chapter: the first at or after byte `from` of its XHTML.
+#[tauri::command(rename_all = "snake_case")]
+pub(crate) fn epub_replace_one(state: State<'_, AppState>, id: u32, query: epub::Query, path: String, from: usize) -> Result<ReplacedOne, String> {
+    let (at, book) = with_book(&state, id, |b| b.replace_one(&query, &path, from))?;
+    Ok(ReplacedOne { at, book })
+}
+
+#[derive(Serialize)]
+pub(crate) struct MovedView {
+    #[serde(flatten)]
+    moved: epub::Moved,
+    book: BookView,
+}
+
+/// Moves part of chapter `path` to the chapter before it (`next` false: what comes before the
+/// cut) or after it (`next` true: the cut and what follows). The cut is `block`, a top-level
+/// element's index, checked against `names` (what the visual view shows), or `offset`, a place
+/// in the source; `through` takes the element at the offset with the part moved to the previous chapter.
+#[tauri::command(rename_all = "snake_case")]
+pub(crate) fn epub_move(
+    state: State<'_, AppState>,
+    id: u32,
+    path: String,
+    next: bool,
+    block: Option<usize>,
+    offset: Option<usize>,
+    through: Option<bool>,
+    names: Option<Vec<String>>,
+) -> Result<MovedView, String> {
+    let cut = match (block, offset) {
+        (Some(k), _) => epub::Cut::Block(k),
+        (None, Some(o)) => epub::Cut::Offset(o, through.unwrap_or(false)),
+        (None, None) => return Err("Put the cursor where the chapter should be cut.".into()),
+    };
+    let (moved, book) = with_book(&state, id, |b| b.move_part(&path, next, cut, names.as_deref()))?;
+    Ok(MovedView { moved, book })
 }
 
 #[derive(Serialize)]

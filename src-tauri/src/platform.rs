@@ -8,6 +8,33 @@ use std::ffi::OsStr;
 use std::path::{Path, PathBuf};
 use std::process::Command;
 
+/// Once the window is open: on Windows, WebView2's own shortcuts are turned off (Ctrl+F's find
+/// bar, Ctrl+R and F5 reloading, Ctrl+P printing), so the app's own shortcuts get those keys
+/// wherever the focus is, a book's page included. Copy, paste and undo still work.
+pub fn webview_ready(app: &tauri::AppHandle) {
+    #[cfg(windows)]
+    {
+        use tauri::Manager;
+        for w in app.webview_windows().values() {
+            let _ = w.with_webview(|wv| {
+                use webview2_com::Microsoft::Web::WebView2::Win32::ICoreWebView2Settings3;
+                use windows::core::Interface;
+                // SAFETY: COM calls on the window's own WebView2, on the main thread, where
+                // with_webview runs this.
+                unsafe {
+                    if let Ok(settings) = wv.controller().CoreWebView2().and_then(|c| c.Settings()) {
+                        if let Ok(s3) = settings.cast::<ICoreWebView2Settings3>() {
+                            let _ = s3.SetAreBrowserAcceleratorKeysEnabled(false);
+                        }
+                    }
+                }
+            });
+        }
+    }
+    #[cfg(not(windows))]
+    let _ = app;
+}
+
 /// What the app calls the computer it runs on, in sentences ("Backups are kept on the Mac").
 pub const COMPUTER: &str = if cfg!(target_os = "macos") {
     "Mac"

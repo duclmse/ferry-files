@@ -346,9 +346,26 @@ td.name .where {
   color: var(--danger);
 }
 
+/* Kind, size and time: boxes in the app's colours (light and dark), the chosen ones lit. */
 .search-filters select {
+  height: 26px;
+  padding: 0 4px;
+  border: 1px solid var(--line);
+  border-radius: 6px;
+  background: var(--bg);
+  color: var(--ink);
   font: inherit;
-  padding: 2px 4px;
+  font-size: 12px;
+}
+
+.search-filters select.chosen {
+  border-color: var(--accent);
+  color: var(--accent);
+}
+
+.search-filters select option {
+  background: var(--panel);
+  color: var(--ink);
 }
 
 /* Renaming several items. */

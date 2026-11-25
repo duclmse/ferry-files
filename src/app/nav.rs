@@ -280,12 +280,9 @@ impl Ctx {
         });
     }
 
-    /// Closes the open window; the reader goes back to the library it came from.
+    /// Closes the open window.
     pub(super) fn close_panel(self) {
-        match self.panel.get_untracked() {
-            Some(Panel::Reader(src, _, Some(dir))) => self.panel.set(Some(Panel::Library(src, dir))),
-            _ => self.panel.set(None),
-        }
+        self.panel.set(None);
     }
 
     pub(super) fn set_favs(self, favs: Vec<Fav>) {

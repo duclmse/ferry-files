@@ -380,8 +380,21 @@ pub struct Book {
     pub dirty: bool,
     pub meta: Meta,
     pub chapters: Vec<ChapterRef>,
+    /// The table of contents, its entries in order.
+    #[serde(default)]
+    pub toc: Vec<TocEntry>,
     pub cover: Option<String>,
     pub stats: Stats,
+}
+
+/// An entry of a book's table of contents: the chapter it opens (and the id there, if it names
+/// a place in it), and its depth, 1 for the outer list.
+#[derive(Clone, Debug, PartialEq, Deserialize)]
+pub struct TocEntry {
+    pub label: String,
+    pub path: String,
+    pub fragment: Option<String>,
+    pub depth: usize,
 }
 
 #[derive(Clone, Debug, PartialEq, Deserialize)]
@@ -397,6 +410,8 @@ pub struct Query {
     pub replace: String,
     pub match_case: bool,
     pub whole_word: bool,
+    pub regex: bool,
+    pub preserve_case: bool,
 }
 
 #[derive(Clone, Debug, PartialEq, Deserialize)]
@@ -424,6 +439,24 @@ pub struct Found {
 #[derive(Clone, Debug, Deserialize)]
 pub struct Replaced {
     pub count: usize,
+    pub book: Book,
+}
+
+/// One match replaced (`epub_replace_one`): where it ends in the chapter, if one was left.
+#[derive(Clone, Debug, Deserialize)]
+pub struct ReplacedOne {
+    pub at: Option<usize>,
+    pub book: Book,
+}
+
+/// What moving part of a chapter did (`epub_move`).
+#[derive(Clone, Debug, Deserialize)]
+pub struct Moved {
+    /// The chapter it went to.
+    pub to: String,
+    pub blocks: usize,
+    /// Links changed to follow the part moved.
+    pub links: usize,
     pub book: Book,
 }
 

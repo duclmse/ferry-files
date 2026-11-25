@@ -36,6 +36,7 @@ mod near;
 mod palette;
 mod pane;
 mod preview;
+mod reading;
 mod rows;
 mod safety;
 mod scripts;
@@ -77,7 +78,7 @@ use terminal::*;
 use transfer::*;
 use undo::*;
 use util::*;
-pub(crate) use util::{store, stored_flag};
+pub(crate) use util::{store, stored, stored_flag};
 use video::*;
 pub use video::{popped_out, PopOut};
 use views::*;
@@ -998,8 +999,6 @@ enum Panel {
     Library(Src, String),
     /// The command palette.
     Palette,
-    /// Reading a book; the folder is the library to go back to.
-    Reader(Src, String, Option<String>),
 }
 
 /// A side of a job: the computer, or a phone found again by its serial (by its id when it has none,
@@ -1205,6 +1204,10 @@ struct Ctx {
     searches: RwSignal<Vec<String>>,
     /// Settings: "auto", "light" or "dark".
     theme: RwSignal<String>,
+    /// An EPUB in the preview shows its chapters, to read, rather than its cover.
+    epub_read: RwSignal<bool>,
+    /// ⌘F while reading a book: the pane whose preview it's in, and a count that goes up each time.
+    read_find: RwSignal<(usize, u32)>,
     /// The user's keyboard shortcuts, by command, where they differ from the defaults (keymap.rs).
     keymap: RwSignal<HashMap<String, Vec<String>>>,
     /// The command waiting for a key press in the Keyboard shortcuts dialog.
@@ -1305,6 +1308,8 @@ impl Ctx {
             pane_w: stored_px(PANE_W_KEY),
             searches: RwSignal::new(stored(SEARCHES_KEY).and_then(|s| serde_json::from_str(&s).ok()).unwrap_or_default()),
             theme: RwSignal::new(stored(THEME_KEY).unwrap_or_else(|| "auto".into())),
+            epub_read: RwSignal::new(stored_flag(preview::EPUB_READ_KEY, false)),
+            read_find: RwSignal::new((0, 0)),
             keymap: RwSignal::new(saved_keys()),
             capturing: RwSignal::new(None),
             settings_tab: RwSignal::new("general"),
@@ -1426,6 +1431,14 @@ impl Ctx {
     }
 }
 
+/// A chapter's HTML for the EPUB editor's visual view at `zoom` percent, in the colours of the
+/// app's theme as when it's read. The theme is read once: following it later would reload the
+/// page and lose what was typed.
+pub(crate) fn editor_page(html: &str, zoom: u32) -> String {
+    let theme = expect_context::<Ctx>().theme.get_untracked();
+    reading::page(html, &reading::page_style(&theme, 15, zoom, "16px 20px 60px", "1.55"), None)
+}
+
 #[component]
 pub fn App() -> impl IntoView {
     rename_stored_keys();
@@ -1518,11 +1531,27 @@ pub fn App() -> impl IntoView {
         ctx.active.set(p.id);
         ctx.go_up(p);
     });
+    // What was clicked last, for the book editor's and reader's shortcuts when nothing there has
+    // the focus (a click on a button often leaves it on the page).
+    let clicked = StoredValue::new_local(None::<web_sys::Element>);
+    // In the preview that holds the book editor: its bar and page, and the line above them (the
+    // book's name, Read and Edit).
+    let in_editor = |el: &web_sys::Element| {
+        el.closest(".book-editor").ok().flatten().is_some()
+            || el.closest(".preview").ok().flatten().and_then(|p| p.query_selector(".book-editor").ok().flatten()).is_some()
+    };
     let _mouse_nav_down = window_event_listener(ev::mousedown, move |e| {
         if matches!(e.button(), 3 | 4) {
             e.prevent_default();
         }
+        clicked.set_value(e.target().and_then(|t| t.dyn_into::<web_sys::Element>().ok()));
     });
+    // The pane whose preview is reading a book, with `el` in it.
+    let in_reader = |el: &web_sys::Element| {
+        let preview = el.closest(".preview").ok().flatten()?;
+        preview.query_selector(".book-reader").ok().flatten()?;
+        preview.closest("[data-pane]").ok().flatten()?.get_attribute("data-pane")?.parse::<usize>().ok()
+    };
     let _keys = window_event_listener(ev::keydown, move |e| {
         let meta = e.meta_key() || e.ctrl_key();
         if ctx.menu.get_untracked().is_some() {
@@ -1570,12 +1599,26 @@ pub fn App() -> impl IntoView {
             }
             return;
         }
-        // ⌘S in the preview's book editor saves the book.
-        if meta && e.key() == "s" && ep.book.with_untracked(|b| b.is_some()) {
-            let in_book = document().active_element().is_some_and(|el| el.closest(".epub-edit, .epub-bar").ok().flatten().is_some());
+        // In the preview's book editor: ⌘S saves the book, ⌘F finds in it and ⌘R (or ⌥⌘F)
+        // replaces in it.
+        // Where the keys go: what has the focus, or else what was clicked last.
+        let place = || document().active_element().filter(|el| el.tag_name() != "BODY").or_else(|| clicked.with_value(Clone::clone));
+        if meta && matches!(e.key().as_str(), "f" | "ƒ") {
+            if let Some(id) = place().and_then(|el| in_reader(&el)) {
+                e.prevent_default();
+                ctx.read_find.update(|(p, n)| (*p, *n) = (id, *n + 1));
+                return;
+            }
+        }
+        if meta && matches!(e.key().as_str(), "s" | "f" | "ƒ" | "r") && ep.book.with_untracked(|b| b.is_some()) {
+            let in_book = place().is_some_and(|el| in_editor(&el)) && ep.host.get_untracked().is_some();
             if in_book {
                 e.prevent_default();
-                ep.save();
+                match e.key().as_str() {
+                    "s" => ep.save(),
+                    "r" => ep.open_find(true),
+                    _ => ep.open_find(e.alt_key()),
+                }
                 return;
             }
         }
@@ -1937,7 +1980,6 @@ pub fn App() -> impl IntoView {
             Panel::Import(pane, from, targets) => view! { <ImportPhotos pane from targets/> }.into_any(),
             Panel::Library(src, dir) => view! { <Library src=src dir=dir/> }.into_any(),
             Panel::Palette => view! { <Palette/> }.into_any(),
-            Panel::Reader(src, path, back) => view! { <Reader src=src path=path back=back/> }.into_any(),
         })}
     }
 }

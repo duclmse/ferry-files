@@ -14,9 +14,13 @@ pub type Result<T> = std::result::Result<T, String>;
 mod chapter;
 mod check;
 mod meta;
+mod part;
 mod search;
+mod toc;
 
 pub use check::Issue;
+pub use part::{Cut, Moved};
+pub use toc::{Level, TocEntry};
 
 pub struct Book {
     /// (path inside the zip, bytes), in the zip's order.
@@ -69,6 +73,12 @@ pub struct Query {
     pub match_case: bool,
     #[serde(default)]
     pub whole_word: bool,
+    /// `find` is a regular expression.
+    #[serde(default)]
+    pub regex: bool,
+    /// The replacement takes each match's case: Foo becomes Bar, FOO becomes BAR.
+    #[serde(default)]
+    pub preserve_case: bool,
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -218,6 +228,38 @@ fn relative(from: &str, to: &str) -> String {
     parts.join("/")
 }
 
+/// `href` (as written) with its file name's extension replaced by `tail` (".png", "-1.png");
+/// the folder, the name before the extension and any `#fragment` keep their bytes.
+fn renamed_href(href: &str, tail: &str) -> String {
+    let end = href.find(['#', '?']).unwrap_or(href.len());
+    let seg = href[..end].rfind('/').map_or(0, |k| k + 1);
+    let dot = href[seg..end].rfind('.').map_or(end, |k| seg + k);
+    format!("{}{tail}{}", &href[..dot], &href[end..])
+}
+
+/// Where the addresses in the `url(…)`s of CSS text `css` are written (without quotes), offset
+/// by `base`.
+fn css_urls(css: &str, base: usize) -> Vec<(usize, usize)> {
+    let lower = css.to_ascii_lowercase();
+    let mut out = vec![];
+    let mut from = 0;
+    while let Some(k) = lower[from..].find("url(").map(|k| from + k + 4) {
+        let Some(close) = css[k..].find(')').map(|c| k + c) else { break };
+        let inner = &css[k..close];
+        let lead = inner.len() - inner.trim_start().len();
+        let v = inner.trim();
+        let (s, e) = match v.chars().next() {
+            Some(q @ ('"' | '\'')) if v.len() >= 2 && v.ends_with(q) => (k + lead + 1, k + lead + v.len() - 1),
+            _ => (k + lead, k + lead + v.len()),
+        };
+        if s < e {
+            out.push((base + s, base + e));
+        }
+        from = close + 1;
+    }
+    out
+}
+
 fn media_for_ext(ext: &str) -> Option<&'static str> {
     Some(match ext.to_ascii_lowercase().as_str() {
         "jpg" | "jpeg" => "image/jpeg",
@@ -249,20 +291,46 @@ pub fn media_guess(path: &str) -> &'static str {
 /// before the chapter is parsed as HTML in the visual editor.
 const VOID: &[&str] = &["area", "base", "br", "col", "embed", "hr", "img", "input", "link", "meta", "param", "source", "track", "wbr"];
 
-/// Non-overlapping matches of `needle` in `hay`, as byte ranges.
+/// Non-overlapping matches of `needle` in `hay`, as byte ranges. A space in `needle` matches
+/// any run of white space (a line break and indent in the XHTML shows as one space).
 pub fn find_all(hay: &str, needle: &str, match_case: bool, whole_word: bool) -> Vec<(usize, usize)> {
     let h: Vec<(usize, char)> = hay.char_indices().collect();
-    let n: Vec<char> = needle.chars().collect();
+    let mut n: Vec<char> = vec![];
+    for c in needle.trim().chars() {
+        let c = if c.is_whitespace() { ' ' } else { c };
+        if !(c == ' ' && n.last() == Some(&' ')) {
+            n.push(c);
+        }
+    }
     let mut out = vec![];
     if n.is_empty() {
         return out;
     }
     let eq = |a: char, b: char| a == b || (!match_case && a.to_lowercase().eq(b.to_lowercase()));
     let word = |c: char| c.is_alphanumeric() || c == '_';
+    // Where a match starting at `i` ends, if one does.
+    let at = |i: usize| -> Option<usize> {
+        let mut j = i;
+        for &c in &n {
+            if c == ' ' {
+                let k = j;
+                while j < h.len() && h[j].1.is_whitespace() {
+                    j += 1;
+                }
+                if j == k {
+                    return None;
+                }
+            } else if j < h.len() && eq(h[j].1, c) {
+                j += 1;
+            } else {
+                return None;
+            }
+        }
+        Some(j)
+    };
     let mut i = 0;
-    while i + n.len() <= h.len() {
-        if (0..n.len()).all(|k| eq(h[i + k].1, n[k])) {
-            let j = i + n.len();
+    while i < h.len() {
+        if let Some(j) = at(i) {
             let bounded = (i == 0 || !word(h[i - 1].1)) && (j == h.len() || !word(h[j].1));
             if !whole_word || bounded {
                 out.push((h[i].0, h.get(j).map_or(hay.len(), |x| x.0)));
@@ -351,6 +419,20 @@ impl Book {
         for path in toc.map(|i| i.path.clone()).collect::<Vec<_>>() {
             if let Ok(data) = get(&path) {
                 book.files.push((path, data));
+            }
+        }
+        Ok(book)
+    }
+
+    /// What `contents_only` reads, and every chapter's text too (not their pictures or styles):
+    /// enough to search the book without reading all of it.
+    pub fn with_chapters(get: &mut dyn FnMut(&str) -> Result<Vec<u8>>) -> Result<Book> {
+        let mut book = Book::contents_only(get)?;
+        for ch in book.chapters()? {
+            if book.file(&ch.path).is_none() {
+                if let Ok(data) = get(&ch.path) {
+                    book.files.push((ch.path, data));
+                }
             }
         }
         Ok(book)
@@ -537,15 +619,6 @@ fn dedupe(edits: &mut Vec<(usize, usize, String)>) {
         out.push(e);
     }
     *edits = out;
-}
-
-fn tag_text(name: &str, attrs: &[(String, String)], empty: bool) -> String {
-    let mut s = format!("<{name}");
-    for (k, v) in attrs {
-        s.push_str(&format!(r#" {k}="{}""#, xml::escape_attr(v)));
-    }
-    s.push_str(if empty { "/>" } else { ">" });
-    s
 }
 
 #[cfg(test)]

@@ -761,6 +761,26 @@ pub(super) async fn epub_peek(state: State<'_, AppState>, src: String, path: Str
     .await
 }
 
+/// Finds text in an EPUB being read (not opened in the editor): its chapters' text is read for
+/// it, by range, without the rest of the book.
+#[tauri::command(rename_all = "snake_case")]
+pub(super) async fn epub_peek_find(
+    state: State<'_, AppState>,
+    src: String,
+    path: String,
+    size: u64,
+    query: crate::books::epub::Query,
+) -> Result<crate::books::epub::Found, String> {
+    let dev = state.source(Some(&src))?;
+    blocking(move || {
+        let book = crate::preview::archive::unpack_each(size, &mut |at, len| dev.read_range(&path, at, len).map_err(msg), UNPACK_MAX, |get| {
+            crate::books::epub::Book::with_chapters(get)
+        })??;
+        book.find(&query)
+    })
+    .await
+}
+
 /// The files on the system clipboard (copied in Finder or File Explorer), as app paths.
 #[tauri::command(rename_all = "snake_case")]
 pub(super) fn clip_files() -> Vec<String> {

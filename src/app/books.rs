@@ -381,7 +381,8 @@ pub(super) fn Library(src: Src, dir: String) -> impl IntoView {
                                                 }}
                                             </div>
                                             <button class="btn" title="Read the book" on:click=move |_| {
-                                                ctx.panel.set(Some(Panel::Reader(src, e.get_value().path, Some(dir.get_value()))));
+                                                ctx.panel.set(None);
+                                                ctx.read_book(src, e.get_value().path);
                                             }>{ico(Icon::Book)}"Read"</button>
                                             <button class="btn" title="Edit in the preview" on:click=move |_| {
                                                 ctx.panel.set(None);
@@ -403,128 +404,8 @@ pub(super) fn Library(src: Src, dir: String) -> impl IntoView {
                         _ => String::new(),
                     }}</span>
                     <span class="grow"></span>
+                    </div>
                     <button class="btn primary" on:click=move |_| close()>"Done"</button>
-                </div>
-            </div>
-        </div>
-    }
-}
-
-/// Reading a book, a chapter at a time, in a quiet page.
-#[component]
-pub(super) fn Reader(src: Src, path: String, back: Option<String>) -> impl IntoView {
-    let ctx = expect_context::<Ctx>();
-    let book = RwSignal::new(None::<Result<crate::api::Book, String>>);
-    let at = RwSignal::new(0usize);
-    let page = RwSignal::new(None::<Result<String, String>>);
-    let size = RwSignal::new(19u32);
-    // The backend keeps the book open until this closes.
-    let id = std::sync::Arc::new(std::sync::atomic::AtomicU32::new(u32::MAX));
-    let alive = std::sync::Arc::new(std::sync::atomic::AtomicBool::new(true));
-    {
-        let (id, alive) = (id.clone(), alive.clone());
-        let path = path.clone();
-        spawn_local(async move {
-            let r = call::<crate::api::Book>("epub_open", json!({ "src": src.key(), "path": path })).await;
-            if let Ok(b) = &r {
-                if !alive.load(std::sync::atomic::Ordering::Relaxed) {
-                    let _ = call::<()>("epub_close", json!({ "id": b.id })).await;
-                    return;
-                }
-                id.store(b.id, std::sync::atomic::Ordering::Relaxed);
-            }
-            book.try_set(Some(r));
-        });
-    }
-    {
-        let (id, alive) = (id.clone(), alive.clone());
-        on_cleanup(move || {
-            alive.store(false, std::sync::atomic::Ordering::Relaxed);
-            let id = id.load(std::sync::atomic::Ordering::Relaxed);
-            if id != u32::MAX {
-                spawn_local(async move {
-                    let _ = call::<()>("epub_close", json!({ "id": id })).await;
-                });
-            }
-        });
-    }
-    Effect::new(move |_| {
-        let Some(Ok(b)) = book.get() else { return };
-        let Some(ch) = b.chapters.get(at.get()).cloned() else { return };
-        page.set(None);
-        spawn_local(async move {
-            let r = call::<crate::api::ChapterDoc>("epub_chapter", json!({ "id": b.id, "path": ch.path })).await;
-            let r = r.and_then(|d| d.html.ok_or_else(|| d.problem.unwrap_or_else(|| "This chapter can't be shown.".into())));
-            page.try_set(Some(r));
-        });
-    });
-    let count = move || book.with(|b| b.as_ref().and_then(|b| b.as_ref().ok()).map_or(0, |b| b.chapters.len()));
-    let go = move |d: i32| {
-        let n = count();
-        let to = at.get_untracked() as i32 + d;
-        if to >= 0 && (to as usize) < n {
-            at.set(to as usize);
-        }
-    };
-    let keys = window_event_listener(ev::keydown, move |e| match e.key().as_str() {
-        "ArrowRight" | "PageDown" => go(1),
-        "ArrowLeft" | "PageUp" => go(-1),
-        _ => {}
-    });
-    on_cleanup(move || keys.remove());
-    let doc = move || {
-        let html = page.get()?.ok()?;
-        let style = format!(
-            "<style>html{{font-size:{}px !important;background:#fbfaf7;color:#1d1d1f}}body{{max-width:36em;margin:0 auto !important;padding:28px 28px 80px !important;line-height:1.6}}img,svg{{max-width:100%;height:auto}}@media (prefers-color-scheme: dark){{html{{background:#1c1c1e;color:#e6e6e6}}a{{color:#8ab4ff}}}}</style>",
-            size.get()
-        );
-        // After the <base> the backend adds, so the book's own styles still load.
-        Some(match html.find("<base ").and_then(|k| html[k..].find('>').map(|j| k + j + 1)) {
-            Some(k) => format!("{}{style}{}", &html[..k], &html[k..]),
-            None => format!("{style}{html}"),
-        })
-    };
-    let back = StoredValue::new(back);
-    let path = StoredValue::new(path);
-    let close = move || match back.get_value() {
-        Some(dir) => ctx.panel.set(Some(Panel::Library(src, dir))),
-        None => ctx.panel.set(None),
-    };
-    view! {
-        <div class="overlay" on:click=move |_| close()>
-            <div class="dialog reader" on:click=|e| e.stop_propagation()>
-                <div class="reader-bar">
-                    <b class="title">{move || book.with(|b| match b {
-                        Some(Ok(b)) => if b.meta.title.is_empty() { b.name.clone() } else { b.meta.title.clone() },
-                        _ => base(&path.get_value()),
-                    })}</b>
-                    <button class="btn" title="Previous chapter (←)" aria-label="Previous chapter" disabled=move || at.get() == 0 on:click=move |_| go(-1)>{ico(Icon::Prev)}</button>
-                    <select prop:value=move || at.get().to_string() on:change=move |ev| at.set(event_target_value(&ev).parse().unwrap_or(0))>
-                        {move || book.with(|b| match b {
-                            Some(Ok(b)) => b.chapters.iter().enumerate().map(|(k, c)| view! { <option value=k.to_string()>{c.label.clone()}</option> }).collect_view().into_any(),
-                            _ => ().into_any(),
-                        })}
-                    </select>
-                    <button class="btn" title="Next chapter (→)" aria-label="Next chapter" disabled=move || {at.get() + 1 >= count()} on:click=move |_| go(1)>{ico(Icon::Next)}</button>
-                    <button class="btn" title="Smaller text" on:click=move |_| size.update(|s| *s = (*s).saturating_sub(1).max(12))>"A−"</button>
-                    <button class="btn" title="Bigger text" on:click=move |_| size.update(|s| *s = (*s + 1).min(32))>"A+"</button>
-                    <span class="grow"></span>
-                    <span class="about">{move || match count() { 0 => String::new(), n => format!("{} of {n}", at.get() + 1) }}</span>
-                    <button class="btn" title="Edit in the preview" on:click=move |_| {
-                        ctx.panel.set(None);
-                        ctx.edit_book(src, path.get_value());
-                    }>{ico(Icon::Edit)}"Edit"</button>
-                    {if back.get_value().is_some() {
-                        view! { <button class="btn back" title="Back" aria-label="Back" on:click=move |_| close()><svg class="back-icon" viewBox="0 0 16 16" aria-hidden="true"><path d="M13 8H3M7.5 3.5 3 8l4.5 4.5"/></svg></button> }.into_any()
-                    } else {
-                        view! { <button class="btn primary" on:click=move |_| close()>"Close"</button> }.into_any()
-                    }}
-                </div>
-                {move || match (book.get(), page.get()) {
-                    (Some(Err(e)), _) | (_, Some(Err(e))) => view! { <p class="error">{e}</p> }.into_any(),
-                    (Some(Ok(_)), Some(Ok(_))) => view! { <iframe class="read" sandbox="allow-same-origin" srcdoc=doc></iframe> }.into_any(),
-                    _ => view! { <p class="hint">"Opening…"</p> }.into_any(),
-                }}
             </div>
         </div>
     }

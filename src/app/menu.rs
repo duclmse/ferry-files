@@ -742,7 +742,7 @@ impl Ctx {
                 }
                 self.panel.set(Some(Panel::Dupes(folders)));
             }
-            (Act::Read, Some(e)) => self.panel.set(Some(Panel::Reader(p.src.get_untracked(), e.path, None))),
+            (Act::Read, Some(e)) => self.read_book(p.src.get_untracked(), e.path),
             (Act::Check, Some(e)) => self.check_book(p, e),
             (Act::Library, _) => self.panel.set(Some(Panel::Library(p.src.get_untracked(), p.cwd.get_untracked()))),
             (Act::NewTab, Some(e)) if e.dir => self.new_tab(p, p.src.get_untracked(), e.path),

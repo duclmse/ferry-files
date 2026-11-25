@@ -86,6 +86,8 @@ version = "3"
 features = ["async-secret-service", "tokio", "crypto-rust"]
 
 [target.'cfg(windows)'.dependencies]
+# WebView2's settings (its own shortcuts off; see platform::webview_ready). The version wry uses.
+webview2-com = "0.39"
 windows = { version = "0.62", features = [
     "Win32_Devices_PortableDevices",
     "Win32_Foundation",

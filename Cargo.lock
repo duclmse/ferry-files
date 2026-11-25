@@ -1646,6 +1646,7 @@ dependencies = [
  "trash",
  "ureq",
  "webpki-roots 0.26.11",
+ "webview2-com",
  "windows",
  "zip",
 ]

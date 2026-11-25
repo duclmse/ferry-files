@@ -183,6 +183,7 @@ pub fn run() {
             files::pdf_outline,
             files::epub_contents,
             files::epub_peek,
+            files::epub_peek_find,
             files::copy_text,
             files::clip_files,
             files::clip_set,
@@ -249,6 +250,11 @@ pub fn run() {
             books::editor::epub_cover,
             books::editor::epub_find,
             books::editor::epub_replace,
+            books::editor::epub_move,
+            books::editor::epub_rename_chapter,
+            books::editor::epub_replace_one,
+            books::editor::epub_toc_add,
+            books::editor::epub_toc_remove,
             books::editor::epub_save,
             books::editor::epub_export,
             books::editor::epub_close,
@@ -257,10 +263,11 @@ pub fn run() {
         .expect("error while running Ferry Files");
     #[cfg(unix)]
     quit_on_signals(app.handle().clone());
-    app.run(|app, event| {
-        if let tauri::RunEvent::Exit = event {
-            state(app).close_all();
-        }
+    app.run(|app, event| match event {
+        // The window is made now, once the app runs (not when it's built).
+        tauri::RunEvent::Ready => platform::webview_ready(app),
+        tauri::RunEvent::Exit => state(app).close_all(),
+        _ => {}
     });
 }
 

@@ -45,6 +45,23 @@ impl Ctx {
         });
     }
 
+    /// Shows the book `path` on `src` in the preview, its chapters to read.
+    pub(super) fn read_book(self, src: Src, path: String) {
+        let p = self.act();
+        let dir = parent(&path);
+        if p.src.get_untracked() != src || p.cwd.get_untracked() != dir {
+            self.navigate_select(p, src, dir, Some(path.clone()));
+        } else {
+            p.selected.set(Some(path.clone()));
+        }
+        p.preview.set(true);
+        if self.ep.host.get_untracked() == Some(p.id) && self.ep.holds(&src.key(), &path) {
+            self.ep.close(false);
+        }
+        self.epub_read.set(true);
+        store(preview::EPUB_READ_KEY, "1");
+    }
+
     /// Opens a file in its default Mac app. A phone file is copied to the Mac first; that copy is
     /// what the app sees, so changes to it don't go back to the phone.
     pub(super) fn open_in_app(self, p: Pane, path: String) {

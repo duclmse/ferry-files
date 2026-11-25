@@ -48,7 +48,7 @@ jobs:
         run: cargo test --lib --features fsd
 
       - name: Bundle
-        run: cargo tauri build --debug
+        run: cargo tauri build --debug --config '{"build":{"features":[]}}'
 
       - uses: actions/upload-artifact@v4
         with:

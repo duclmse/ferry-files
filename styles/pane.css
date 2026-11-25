@@ -667,6 +667,12 @@ th.num {
   width: 22px;
   height: auto;
   padding: 0;
+  border: 0;
+  background: none;
+}
+
+.find-bar .btn.chevron:hover {
+  background: var(--hover);
 }
 
 /* Beside both boxes, its arrow halfway down them. */

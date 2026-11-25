@@ -2,6 +2,43 @@
 
 use super::*;
 
+/// Folds a bar's parts away, a level at a time, while it can't hold them: `fold-1` on it, then
+/// `fold-2` too, up to `levels`, which its CSS hides parts by. Checked whenever its width
+/// changes, with every part laid out in one line (`measuring`), before the paint.
+pub(crate) fn fold_bar(bar: NodeRef<leptos::html::Div>, levels: u32) {
+    let fit = move || {
+        let Some(el) = bar.try_get_untracked().flatten() else { return };
+        let classes = el.class_list();
+        for k in 1..=levels {
+            let _ = classes.remove_1(&format!("fold-{k}"));
+        }
+        let _ = classes.add_1("measuring");
+        let mut k = 0;
+        while k < levels && el.scroll_width() > el.client_width() + 1 {
+            k += 1;
+            let _ = classes.add_1(&format!("fold-{k}"));
+        }
+        let _ = classes.remove_1("measuring");
+    };
+    let watcher = StoredValue::new_local(None::<(web_sys::ResizeObserver, wasm_bindgen::closure::Closure<dyn Fn()>)>);
+    Effect::new(move |_| {
+        let Some(node) = bar.get() else { return };
+        let cb = wasm_bindgen::closure::Closure::<dyn Fn()>::new(fit);
+        if let Ok(ro) = web_sys::ResizeObserver::new(cb.as_ref().unchecked_ref()) {
+            ro.observe(&node);
+            if let Some((old, _)) = watcher.try_update_value(|w| w.replace((ro, cb))).flatten() {
+                old.disconnect();
+            }
+        }
+        request_animation_frame(fit);
+    });
+    on_cleanup(move || {
+        if let Some((ro, _)) = watcher.try_update_value(Option::take).flatten() {
+            ro.disconnect();
+        }
+    });
+}
+
 pub(super) const TEXT_EXTS: &[&str] = &[
     "txt",
     "md",
@@ -332,7 +369,7 @@ pub(super) fn storage() -> Option<web_sys::Storage> {
     window().local_storage().ok().flatten()
 }
 
-pub(super) fn stored(key: &str) -> Option<String> {
+pub(crate) fn stored(key: &str) -> Option<String> {
     storage().and_then(|s| s.get_item(key).ok().flatten())
 }
 

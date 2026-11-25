@@ -295,18 +295,6 @@ pub(super) fn Sidebar() -> impl IntoView {
         shown("workspaces").then(|| view! {
         {ws_heading()}
         {move || ws_open.get().then(|| view! {
-            {move || ctx.workspaces.get().into_iter().map(|w| {
-                let tip = ctx.workspace_tip(&w);
-                let (w1, name) = (w.clone(), w.name.clone());
-                view! {
-                    <div class="tree-row fav" style="--depth: 1">
-                        <span class="twisty none"></span>
-                        <button class="item" title=tip on:click=move |_| ctx.open_workspace(w1.clone())>{w.name.clone()}</button>
-                        <button class="unfav" title="Delete this workspace" aria-label="Delete this workspace"
-                            on:click=move |_| ctx.set_workspaces(ctx.workspaces.get_untracked().into_iter().filter(|x| x.name != name).collect())>{ico(Icon::Close)}</button>
-                    </div>
-                }
-            }).collect_view()}
             {move || match ws_name.get() {
                 None => view! {
                     <div class="tree-row" style="--depth: 1">
@@ -341,6 +329,18 @@ pub(super) fn Sidebar() -> impl IntoView {
                     }.into_any()
                 }
             }}
+            {move || ctx.workspaces.get().into_iter().map(|w| {
+                let tip = ctx.workspace_tip(&w);
+                let (w1, name) = (w.clone(), w.name.clone());
+                view! {
+                    <div class="tree-row fav" style="--depth: 1">
+                        <span class="twisty none"></span>
+                        <button class="item" title=tip on:click=move |_| ctx.open_workspace(w1.clone())>{w.name.clone()}</button>
+                        <button class="unfav" title="Delete this workspace" aria-label="Delete this workspace"
+                            on:click=move |_| ctx.set_workspaces(ctx.workspaces.get_untracked().into_iter().filter(|x| x.name != name).collect())>{ico(Icon::Close)}</button>
+                    </div>
+                }
+            }).collect_view()}
         })}
     })
     };

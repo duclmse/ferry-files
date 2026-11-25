@@ -25,9 +25,9 @@ own files and disks, with tools for EPUB books in particular.
   - hex, read by range, with go-to-offset;
   - PDFs, with an outline, go to page, zoom, turn, Open and Show in Finder;
   - fonts as samples;
-  - EPUBs as their cover, or read a chapter at a time. Only the chapter shown
-    (and its pictures) is read from the book. Edit opens the whole book in the
-    EPUB editor, there in the preview;
+  - EPUBs as their cover, or read a chapter at a time, with the chapters beside the page
+    and a bigger or smaller text. Only the chapter shown (and its pictures) is read from
+    the book. Edit opens the whole book in the EPUB editor, there in the preview;
   - ZIP, APK and JAR contents as a tree, read from the file's end without
     unpacking. A file picked in it shows in the preview: read in place when
     it's stored without compression (as videos usually are), otherwise
@@ -61,9 +61,11 @@ own files and disks, with tools for EPUB books in particular.
 - **Terminal** in a pane, on this computer, an adb phone or an SFTP server.
 - **Editor view**: a folder tree beside text files in tabs.
 - **Books**: list every EPUB under a folder. Check them, change their info, or
-  make smaller copies. Read them a chapter at a time, or edit them in the
-  preview's EPUB editor: info, cover, find and replace, a visual or XHTML view
-  (in colour), and saving back to the phone. Unedited parts of an EPUB keep their exact bytes.
+  make smaller copies. Read them in the preview, a chapter at a time (⌘F finds in the whole book, and marks the matches in the page; scroll on past a chapter's end for the
+  next one; the page takes the app's light or dark theme, whatever the book's styles say), or
+  edit them in the preview's EPUB editor: info, cover, chapter names, the table of contents (add the cursor's place as a section, chapter or subsection, or take an entry out), find and replace, a visual or XHTML view
+  (in colour), moving a chapter's start or end into the chapter before or after it (for books
+  split in the wrong place), and saving back to the phone. Unedited parts of an EPUB keep their exact bytes.
 
 Press ? for the keyboard shortcuts. ⌘K opens the commands: type `>` first for actions only, or `:`
 to find files and folders on the computer by name, from fsd's index.
@@ -128,9 +130,10 @@ cd src-tauri && cargo test --lib   # backend tests
 On macOS the build runs `scripts/bundle-libmtp.sh`, which bundles Homebrew's
 libmtp and libusb (LGPL-2.1), so the build machine needs `brew install libmtp`.
 
-Searches through fsd are the `fsd` cargo feature, off by default: run
-`cargo tauri dev --features fsd` (or `build`, `cargo test --lib`) to have them. CI builds
-the app without them and tests them separately. They need no fs sources: `fsd/wire.rs`
+Searches through fsd are the `fsd` cargo feature. `cargo tauri dev` and `cargo tauri build`
+turn it on (`build.features` in `tauri.conf.json`); plain `cargo build` and `cargo test --lib`
+leave it off, so add `--features fsd` there. CI builds the app without them (overriding
+`build.features`) and tests them separately. They need no fs sources: `fsd/wire.rs`
 carries its own copy of fsd's protocol. Without the feature, searches walk the folders and
 the palette's `:` says fsd isn't in this build.
 
@@ -169,8 +172,8 @@ cargo run --example epub_smoke [-- adb|mtp]
 
 ## EPUB editor limits
 
-- Find doesn't match a phrase that formatting splits in two (half of it bold,
-  for example).
-- Named character codes the editor doesn't know (such as `&eacute;`) are written
-  back in a different form when their text is replaced.
-- Replacing the cover with a different image type keeps the old file name.
+- Find matches within a paragraph (across bold, italics and links in it), not from one
+  paragraph, line break or picture into the next. Entities the book defines itself (in its
+  DOCTYPE) are matched as written.
+- Moving part of a chapter between chapters in different folders is refused when the part has
+  styles that name files (`url()`); links and pictures in it are changed to match.

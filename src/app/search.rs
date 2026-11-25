@@ -148,9 +148,12 @@ pub(super) fn SearchPane(pane: Pane) -> impl IntoView {
     let narrowed = move || p.search_kind.get() + p.search_size.get() + p.search_time.get() > 0;
     let pick = |label: &'static str, sig: RwSignal<usize>, names: Vec<&'static str>| {
         view! {
-            <select aria-label=label prop:value=move || sig.get().to_string()
+            // Each option says whether it's chosen, as the box's value can be set before its
+            // options are in it; keys stay in the box (not the pane's shortcuts).
+            <select class="search-pick" class:chosen=move || { sig.get() > 0 } aria-label=label title=label prop:value=move || sig.get().to_string()
+                on:keydown=|e| e.stop_propagation()
                 on:change=move |e| sig.set(event_target_value(&e).parse().unwrap_or(0))>
-                {names.into_iter().enumerate().map(|(i, n)| view! { <option value=i.to_string()>{n}</option> }).collect_view()}
+                {names.into_iter().enumerate().map(|(i, n)| view! { <option value=i.to_string() selected=move || sig.get() == i>{n}</option> }).collect_view()}
             </select>
         }
     };

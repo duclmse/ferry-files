@@ -31,6 +31,8 @@ pub(crate) enum Icon {
     /// Restore into the open folder.
     RestoreHere,
     Eye,
+    /// </>: source code.
+    Code,
     Refresh,
     Text,
     Wifi,
@@ -61,6 +63,14 @@ pub(crate) enum Icon {
     Replace,
     /// Replace's, into a stack of boxes.
     ReplaceAll,
+    /// Text with an arrow up to the line above it: move into the previous chapter.
+    ToPrevPart,
+    /// Text with an arrow down to the line below it: move into the next chapter.
+    ToNextPart,
+    /// Three lines: more tools, in a menu.
+    Menu,
+    /// A name in a box, and a text cursor: rename.
+    Rename,
     /// A folder with a + on it: add a folder.
     FolderPlus,
     /// A folder with an arrow round to it: use another folder.
@@ -97,6 +107,10 @@ impl Icon {
             Icon::Plus => r#"<path d="M8 3v10M3 8h10"/>"#,
             Icon::Prev => r#"<path d="M10 3.5 5.5 8l4.5 4.5"/>"#,
             Icon::Next => r#"<path d="M6 3.5 10.5 8 6 12.5"/>"#,
+            Icon::ToPrevPart => r#"<path d="M2.5 2.5h11M8 12.5v-7M5.5 8 8 5.5 10.5 8M3 10.5h2M11 10.5h2M3 13.5h3M10 13.5h3"/>"#,
+            Icon::Rename => r#"<path d="M1.5 5.5h8v5h-8zM12.5 3v10M11 3h3M11 13h3"/>"#,
+            Icon::Menu => r#"<path d="M2.5 4h11M2.5 8h11M2.5 12h11"/>"#,
+            Icon::ToNextPart => r#"<path d="M2.5 13.5h11M8 3.5v7M5.5 8 8 10.5 10.5 8M3 5.5h2M11 5.5h2M3 2.5h3M10 2.5h3"/>"#,
             Icon::ZoomIn => r#"<circle cx="7" cy="7" r="4.5"/><path d="M10.5 10.5 14 14M5 7h4M7 5v4"/>"#,
             Icon::ZoomOut => r#"<circle cx="7" cy="7" r="4.5"/><path d="M10.5 10.5 14 14M5 7h4"/>"#,
             Icon::TurnLeft => r#"<path d="M3.5 8a4.5 4.5 0 1 0 1.3-3.2"/><path d="M4.5 2v3h3"/>"#,
@@ -105,6 +119,7 @@ impl Icon {
             Icon::RestoreHere => {
                 r#"<path d="M1.5 12.5v-9a1 1 0 0 1 1-1h3.5l1.5 2h6a1 1 0 0 1 1 1v7a1 1 0 0 1-1 1h-11a1 1 0 0 1-1-1z"/><path d="M8 6.5v4.5M6 9l2 2 2-2"/>"#
             }
+            Icon::Code => r#"<path d="M5 4.5 1.5 8 5 11.5M11 4.5 14.5 8 11 11.5M9.25 3l-2.5 10"/>"#,
             Icon::Eye => r#"<path d="M1.5 8S4 3.5 8 3.5 14.5 8 14.5 8 12 12.5 8 12.5 1.5 8 1.5 8z"/><circle cx="8" cy="8" r="2"/>"#,
             Icon::Refresh => r#"<path d="M13 8a5 5 0 1 1-1.5-3.6"/><path d="M13 2.5v3h-3"/>"#,
             Icon::Text => r#"<path d="M3 3.5h10M8 3.5v9.5"/>"#,

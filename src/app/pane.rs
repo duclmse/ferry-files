@@ -438,7 +438,6 @@ pub(super) fn PaneView(pane: Pane) -> impl IntoView {
                         on:click=move |_| ctx.toggle_terminal(p)>{ico(Icon::Terminal)}</button>
                 })}
             </div>
-            <SearchPane pane=p/>
             <CompareBar pane=p/>
             {move || if coding.get() {
                 view! { <CodeView pane=p/> }.into_any()
@@ -446,6 +445,8 @@ pub(super) fn PaneView(pane: Pane) -> impl IntoView {
                 view! {
                     <div class="body">
                         <div class="files" class:beside=move || p.preview.get()>
+                            // Filter and search are the files', so they go over them, not the preview.
+                            <SearchPane pane=p/>
                             {move || match p.view.get() {
                                 ViewMode::List => view! { <ListView pane=p/> }.into_any(),
                                 ViewMode::Thumbs => view! { <ThumbView pane=p/> }.into_any(),

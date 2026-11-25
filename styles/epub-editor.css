@@ -254,27 +254,33 @@
   border-color: var(--line);
 }
 
-.epub-edit .fmt button:nth-child(1) {
+.epub-edit .fmt > button:nth-child(1) {
   font-weight: 700;
 }
 
-.epub-edit .fmt button:nth-child(2) {
+.epub-edit .fmt > button:nth-child(2) {
   font-style: italic;
 }
 
-/* The book's own styles decide its colours, so the page is always light, like a printed page. */
+/* The page takes the app's theme, as when the book is read (app/reading.rs). */
 .epub-edit iframe.page {
   flex: 1;
   width: 100%;
   border: 0;
-  background: #fff;
-  color-scheme: light;
+  background: #fbfaf7;
+}
+
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) .epub-edit iframe.page {
+    background: #1c1c1e;
+  }
 }
 
 /* The editor in the preview, under its bar: notices, then the part of the book shown. */
 .preview .epub-edit {
   flex: 1 1 0;
   min-height: 0;
+  min-width: 0;
   width: 100%;
   display: flex;
   flex-direction: column;
@@ -291,12 +297,14 @@
   gap: 10px;
 }
 
+/* The preview's whole width, and the info's fields two to a line (wide ones take the line). */
 .epub-edit .card {
   padding: 10px 12px;
+  max-width: none;
 }
 
 .epub-edit .grid {
-  grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
+  grid-template-columns: repeat(2, minmax(0, 1fr));
 }
 
 .epub-edit .cover-row {
@@ -342,4 +350,421 @@
 .epub-edit .fmt button {
   height: 26px;
   min-width: 26px;
+}
+
+/* The editor's zoom (--zoom, set on the box): the coloured layer and the text box under it
+   must keep the same size, or the colours drift off the text. */
+.epub-edit .code-edit.source .code-layer,
+.epub-edit .code-edit.source .code-input {
+  font-size: calc(13px * var(--zoom, 1));
+  line-height: calc(20px * var(--zoom, 1));
+}
+
+/* The chapter's bar keeps to one line, zoom at its end: the formatting buttons wrap among
+   themselves, and the block styles fold into one menu when the bar is narrow. */
+.epub-edit .viewer-bar.tools {
+  flex-wrap: nowrap;
+  align-items: flex-start;
+  container: tools / inline-size;
+}
+
+.epub-edit .viewer-bar.tools > * {
+  flex: none;
+}
+
+/* In the bar the formatting buttons keep to one line, so a bar too narrow for them shows it
+   (and folds them into the menu); in the menu they wrap. */
+.epub-edit .viewer-bar.tools .fmt {
+  flex-wrap: nowrap;
+}
+
+.epub-edit .viewer-bar.tools.compact:not(.measuring) .tools-rest.open .fmt {
+  flex: 0 1 auto;
+  flex-wrap: wrap;
+  min-width: 0;
+}
+
+.epub-edit .tools-rest > * {
+  flex: none;
+}
+
+/* The tools after Visual and Source sit in the bar when they fit; otherwise (.compact, set in
+   epub.rs) they fold into the menu button and open under it. .measuring lays them out in full
+   to see whether they fit. */
+.epub-edit .viewer-bar.tools {
+  position: relative;
+}
+
+.epub-edit .tools-rest {
+  display: contents;
+}
+
+.epub-edit .viewer-bar.tools > .tools-more {
+  display: none;
+}
+
+.epub-edit .viewer-bar.tools.measuring {
+  overflow: hidden;
+}
+
+.epub-edit .viewer-bar.tools.compact:not(.measuring) > .tools-more {
+  display: inline-flex;
+}
+
+.epub-edit .viewer-bar.tools.compact:not(.measuring) .tools-rest {
+  display: none;
+}
+
+.epub-edit .viewer-bar.tools.compact:not(.measuring) .tools-rest.open {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px;
+  position: absolute;
+  top: calc(100% + 2px);
+  left: 0;
+  right: 0;
+  z-index: 20;
+  padding: 6px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: var(--panel);
+  box-shadow: 0 6px 18px rgba(0, 0, 0, 0.18);
+}
+
+.epub-edit .tools-more.active {
+  background: var(--sel);
+}
+
+.epub-edit .viewer-bar.tools > .spacer {
+  flex: 1 1 0;
+}
+
+.epub-edit .viewer-bar.tools .seg button {
+  display: inline-flex;
+  align-items: center;
+}
+
+.epub-edit .fmt-blocks {
+  display: contents;
+}
+
+.epub-edit .fmt-block-menu {
+  display: none;
+  position: relative;
+}
+
+@container tools (max-width: 660px) {
+  .epub-edit .fmt-blocks {
+    display: none;
+  }
+
+  .epub-edit .fmt-block-menu {
+    display: inline-flex;
+  }
+}
+
+.epub-edit .fmt-popup {
+  position: absolute;
+  top: calc(100% + 2px);
+  left: 0;
+  z-index: 20;
+  display: flex;
+  flex-direction: column;
+  min-width: 150px;
+  padding: 4px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: var(--panel);
+  box-shadow: 0 6px 18px rgba(0, 0, 0, 0.18);
+}
+
+.epub-edit .fmt .fmt-popup button {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  width: 100%;
+  text-align: left;
+}
+
+.epub-edit .fmt-popup .mark {
+  min-width: 24px;
+  font-weight: 600;
+  color: var(--muted);
+}
+
+/* The chapters beside the editor: Book info and Find first, then a line, then the chapters. */
+.epub-outline .epub-outline-rule {
+  margin: 4px 8px;
+  border-top: 1px solid var(--line);
+}
+
+/* A chapter in the outline: its name, and a pencil to rename it, shown on hover. */
+.epub-outline .epub-ch {
+  display: flex;
+  align-items: center;
+}
+
+.epub-outline .epub-ch .pdf-head {
+  flex: 1;
+  min-width: 0;
+}
+
+.epub-outline .epub-ch.here {
+  background: var(--sel);
+}
+
+.epub-outline .ch-rename {
+  flex: none;
+  display: grid;
+  place-items: center;
+  width: 22px;
+  height: 22px;
+  margin-right: 4px;
+  padding: 0;
+  border: 0;
+  border-radius: 4px;
+  background: none;
+  color: var(--muted);
+  cursor: pointer;
+  visibility: hidden;
+}
+
+.epub-outline .epub-ch:hover .ch-rename,
+.epub-outline .ch-rename:focus-visible {
+  visibility: visible;
+}
+
+.epub-outline .ch-rename:hover {
+  background: var(--hover);
+  color: var(--ink);
+}
+
+.epub-outline .ch-name {
+  box-sizing: border-box;
+  width: calc(100% - 8px);
+  margin: 1px 4px;
+  padding: 2px 4px;
+  border: 1px solid var(--accent);
+  border-radius: 4px;
+  background: var(--bg);
+  color: var(--ink);
+  font: inherit;
+  font-size: 12px;
+}
+
+/* Save, and its menu (Save a copy). */
+.epub-save {
+  position: relative;
+}
+
+.epub-save .btn.more {
+  width: 22px;
+  padding: 0;
+  justify-content: center;
+}
+
+.epub-save .btn.more .ico {
+  transform: rotate(90deg);
+}
+
+.epub-save .save-menu {
+  position: absolute;
+  top: calc(100% + 2px);
+  right: 0;
+  z-index: 20;
+  display: flex;
+  flex-direction: column;
+  padding: 4px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: var(--panel);
+  box-shadow: 0 6px 18px rgba(0, 0, 0, 0.18);
+}
+
+.epub-save .save-menu button {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 5px 8px;
+  border: 0;
+  border-radius: 5px;
+  background: none;
+  color: var(--ink);
+  font: inherit;
+  white-space: nowrap;
+  text-align: left;
+  cursor: pointer;
+}
+
+.epub-save .save-menu button:hover {
+  background: var(--hover);
+}
+
+/* The book's bar, narrow (fold_bar in util.rs): first the zoom percentage goes, then the
+   chapter list. */
+.viewer-bar.epub-bar.measuring {
+  flex-wrap: nowrap;
+  overflow: hidden;
+}
+
+.viewer-bar.epub-bar.measuring .epub-chapters.grow {
+  flex-shrink: 0;
+}
+
+.viewer-bar.epub-bar.fold-1 .btn.zoom,
+.viewer-bar.epub-bar.fold-2 .epub-chapters,
+.viewer-bar.epub-bar.fold-2 .epub-of,
+.viewer-bar.epub-bar.fold-3 .btn-group:has(> .btn.zoom) {
+  display: none;
+}
+
+/* The editor's bar keeps to one line, Save at its end. */
+.viewer-bar.epub-bar.book-editor {
+  flex-wrap: nowrap;
+}
+
+.viewer-bar.epub-bar.book-editor > * {
+  flex: none;
+}
+
+.viewer-bar.epub-bar.book-editor > .epub-chapters.grow {
+  flex: 1 1 120px;
+  min-width: 0;
+}
+
+.viewer-bar.epub-bar .epub-save {
+  margin-left: auto;
+}
+
+.viewer-bar.epub-bar.book-editor.measuring > .epub-chapters.grow {
+  flex-shrink: 0;
+}
+
+/* The bar's spinner keeps its place, and shows after a moment of work, not for a quick one. */
+.epub-bar .spin.bar-spin {
+  visibility: hidden;
+}
+
+.epub-bar .spin.bar-spin.on {
+  visibility: visible;
+  animation-name: spin, bar-spin-in;
+  animation-duration: 0.8s, 0.3s;
+  animation-timing-function: linear, step-end;
+  animation-iteration-count: infinite, 1;
+}
+
+@keyframes bar-spin-in {
+  from {
+    opacity: 0;
+  }
+}
+
+/* The Contents tab beside the editor: adding the cursor's place, then the entries as a tree. */
+.epub-outline .toc-view {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  padding: 2px 6px 6px;
+  text-align: left;
+}
+
+.epub-outline .toc-add {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  padding-bottom: 6px;
+  border-bottom: 1px solid var(--line);
+}
+
+.epub-outline .toc-label {
+  box-sizing: border-box;
+  width: 100%;
+  height: 26px;
+  padding: 0 6px;
+  border: 1px solid var(--line);
+  border-radius: 6px;
+  background: var(--bg);
+  color: var(--ink);
+  font: inherit;
+  font-size: 12px;
+}
+
+.epub-outline .toc-label:focus {
+  outline: 2px solid var(--accent);
+  outline-offset: -1px;
+}
+
+.epub-outline .toc-add-row {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+}
+
+.epub-outline .toc-levels {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  border: 1px solid var(--line);
+  border-radius: 6px;
+  overflow: hidden;
+}
+
+.epub-outline .toc-levels button {
+  flex: 1 1 0;
+  min-width: 0;
+  height: 24px;
+  padding: 0 4px;
+  border: 0;
+  background: var(--panel);
+  color: var(--ink);
+  font: inherit;
+  font-size: 11px;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  cursor: pointer;
+}
+
+.epub-outline .toc-levels button + button {
+  border-left: 1px solid var(--line);
+}
+
+.epub-outline .toc-levels button.active {
+  background: var(--sel);
+  font-weight: 600;
+}
+
+.epub-outline .toc-add-row .btn {
+  height: 26px;
+}
+
+.epub-outline .toc-tree {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+}
+
+/* An entry, indented by its depth; its ✕ shows on hover. */
+.epub-outline .toc-entry {
+  display: flex;
+  align-items: center;
+  padding-left: calc(var(--depth, 0) * 14px);
+  border-radius: 5px;
+}
+
+.epub-outline .toc-entry .pdf-head {
+  flex: 1;
+  min-width: 0;
+}
+
+.epub-outline .toc-entry .pdf-head .name {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.epub-outline .toc-entry:hover .ch-rename,
+.epub-outline .toc-entry .ch-rename:focus-visible {
+  visibility: visible;
 }

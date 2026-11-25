@@ -17,7 +17,7 @@ cd .. && cargo tauri build --debug            # full app bundle
 cargo check --target x86_64-pc-windows-gnu      # in src-tauri: Windows type-check (needs the target; CI builds it for real)
 ```
 
-fsd searches are the `fsd` cargo feature, off by default: add `--features fsd` to `cargo tauri dev`, `cargo build` and `cargo test --lib` to build and test them. Keep both ways building without warnings.
+fsd searches are the `fsd` cargo feature. `cargo tauri dev` and `cargo tauri build` turn it on (`build.features` in `tauri.conf.json`); plain `cargo build` and `cargo test --lib` leave it off, so add `--features fsd` there to build and test them. Keep both ways building without warnings.
 
 Rust code is formatted with rustfmt (`rustfmt.toml`, for both crates): run `cargo fmt` in the root and in `src-tauri`. The pre-commit hook in `.githooks/` formats the staged Rust files; turn it on once per clone with `git config core.hooksPath .githooks`.
 

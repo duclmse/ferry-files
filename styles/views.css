@@ -1167,9 +1167,28 @@ td.name input.rename {
   background: #fff;
 }
 
-/* An EPUB read in the preview, a chapter at a time: its buttons are at the end of the line above. */
-.preview .meta > .viewer-bar.epub-bar {
-  gap: 4px;
+/* An EPUB in the preview: Read and Edit at the end of the line above; the chapter's (or the
+   editor's) controls over the page, and the chapters beside it when asked for. */
+.preview > .view.epub-view {
+  justify-content: flex-start;
+}
+
+.preview > .view.epub-view > .viewer-bar.epub-bar {
+  flex: none;
+  justify-content: flex-start;
+  margin-top: 0;
+}
+
+.preview .epub-body {
+  width: 100%;
+  flex: 1 1 0;
+  min-height: 240px;
+  display: flex;
+  gap: 6px;
+}
+
+.epub-outline .pdf-head.here {
+  background: var(--sel);
 }
 
 .epub-bar .btn.active {
@@ -1187,6 +1206,12 @@ td.name input.rename {
   color: var(--ink);
 }
 
+/* Reading: the chapter list takes the bar's room between zoom and previous / next. */
+.epub-bar .epub-chapters.grow {
+  flex: 1 1 120px;
+  max-width: none;
+}
+
 .epub-bar .epub-of {
   color: var(--muted);
   font-size: 12px;
@@ -1194,9 +1219,8 @@ td.name input.rename {
 }
 
 .preview iframe.epub-page {
-  width: 100%;
   flex: 1 1 0;
-  min-height: 240px;
+  min-width: 0;
   border: 1px solid var(--line);
   border-radius: 6px;
   background: #fbfaf7;
@@ -1206,6 +1230,13 @@ td.name input.rename {
   :root:not([data-theme="light"]) .preview iframe.epub-page {
     background: #1c1c1e;
   }
+}
+
+/* The page's own colours, as the app's theme picks them (see app/reading.rs), so it doesn't
+   flash light while a chapter loads. */
+:root[data-theme="dark"] .preview iframe.epub-page,
+:root[data-theme="dark"] .epub-edit iframe.page {
+  background: #1c1c1e;
 }
 
 .font-sample {
@@ -1723,3 +1754,303 @@ td.name .ext {
 .ft-image { --ft: var(--ansi-2); }
 .ft-video { --ft: var(--ansi-1); }
 .ft-music { --ft: var(--ansi-3); }
+
+/* The pane beside a book being read: two tabs, Chapters and Search. */
+.epub-outline .outline-tabs {
+  position: sticky;
+  top: -4px;
+  z-index: 1;
+  display: flex;
+  gap: 2px;
+  margin: -4px 0 4px;
+  padding: 4px 4px 0;
+  border-bottom: 1px solid var(--line);
+  background: var(--panel);
+}
+
+.epub-outline .outline-tabs button {
+  flex: 1 1 0;
+  min-width: 0;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 5px;
+  padding: 4px 6px;
+  margin-bottom: -1px;
+  border: 1px solid transparent;
+  border-radius: 6px 6px 0 0;
+  background: none;
+  color: var(--muted);
+  font: inherit;
+  font-size: 12px;
+  cursor: pointer;
+  white-space: nowrap;
+  overflow: hidden;
+}
+
+.epub-outline .outline-tabs button:hover {
+  color: var(--ink);
+}
+
+.epub-outline .outline-tabs button.on {
+  border-color: var(--line);
+  border-bottom-color: var(--panel);
+  background: var(--panel);
+  color: var(--ink);
+  font-weight: 600;
+}
+
+/* Search, in its tab (app/reading.rs): the box and its options, the count, then the chapters
+   it's found in. */
+.read-find {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  padding: 2px 6px 6px;
+  text-align: left;
+}
+
+.read-find .read-find-box {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.read-find .filter-box {
+  width: auto;
+  min-width: 0;
+}
+
+.read-find .find-tools {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+}
+
+.read-find .find-tools .btn {
+  height: 24px;
+}
+
+.read-find .count {
+  color: var(--muted);
+  font-size: 12px;
+}
+
+.read-find .filter-opt.on {
+  background: var(--accent);
+  color: var(--accent-ink);
+}
+
+.read-find .filter-opt .word {
+  padding: 0 2px 1px;
+  border: 1.5px solid currentColor;
+  border-top: 0;
+  line-height: 1;
+}
+
+.read-find .read-results {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.read-find .read-results button {
+  width: 100%;
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+  padding: 8px 10px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: var(--bg);
+  color: var(--ink);
+  font: inherit;
+  text-align: left;
+  cursor: pointer;
+}
+
+.read-find .read-results button:hover {
+  background: var(--hover);
+}
+
+.read-find .read-results .kind {
+  align-self: flex-start;
+}
+
+.read-find .snip {
+  color: var(--muted);
+  font-size: 12px;
+}
+
+.read-find mark {
+  background: #ffe58a;
+  color: #1b1f27;
+  border-radius: 2px;
+}
+
+/* The book editor's Search tab: Replace with opens from the chevron, under the find box. */
+.read-find .btn.chevron {
+  width: 22px;
+  padding: 0;
+  border: 0;
+  background: none;
+  justify-content: center;
+}
+
+.read-find .btn.chevron:hover {
+  background: var(--hover);
+}
+
+.read-find .chevron .ico {
+  transition: transform 0.15s ease;
+}
+
+.read-find .chevron.open .ico {
+  transform: rotate(90deg);
+}
+
+.read-find .find-tools .spacer {
+  flex: 1;
+}
+
+.read-find .confirm {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px;
+  padding: 6px 8px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: var(--bg);
+}
+
+.read-find .confirm .text {
+  flex: 1 1 100%;
+  font-size: 12px;
+}
+
+.read-find .hint.error {
+  color: var(--danger);
+  font-size: 12px;
+}
+
+/* Search results while reading: a tree, the chapters and under each its matches. */
+.read-find .hit-tree,
+.read-find .hit-tree ul {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+}
+
+.read-find .hit-tree > li + li {
+  margin-top: 2px;
+}
+
+.read-find .hit-head {
+  display: flex;
+  align-items: center;
+  gap: 2px;
+}
+
+.read-find .hit-head .twisty {
+  flex: none;
+  display: grid;
+  place-items: center;
+  width: 18px;
+  height: 22px;
+  padding: 0;
+  border: 0;
+  border-radius: 4px;
+  background: none;
+  cursor: pointer;
+}
+
+.read-find .hit-tree .chev {
+  width: 18px;
+  height: 18px;
+  padding: 3px;
+  box-sizing: border-box;
+  fill: none;
+  stroke: var(--muted);
+  stroke-width: 1.5;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+  transition: transform 0.12s ease;
+}
+
+.read-find .hit-tree .chev.open {
+  transform: rotate(90deg);
+}
+
+.read-find .hit-head .name {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  align-items: baseline;
+  gap: 6px;
+  padding: 3px 4px;
+  border: 0;
+  border-radius: 5px;
+  background: none;
+  color: var(--ink);
+  font: inherit;
+  font-size: 12px;
+  font-weight: 600;
+  text-align: left;
+  cursor: pointer;
+}
+
+.read-find .hit-head .name .label {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.read-find .hit-head .name .kind {
+  flex: none;
+  margin-left: auto;
+  color: var(--muted);
+  font-weight: 400;
+  font-variant-numeric: tabular-nums;
+}
+
+.read-find .hit-head :is(.twisty, .name):hover,
+.read-find .hit:hover {
+  background: var(--hover);
+}
+
+/* A match: its line, under the chapter's name. */
+.read-find .hit {
+  display: block;
+  width: 100%;
+  padding: 3px 6px 3px 24px;
+  border: 0;
+  border-radius: 5px;
+  background: none;
+  color: var(--muted);
+  font: inherit;
+  font-size: 12px;
+  text-align: left;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  cursor: pointer;
+}
+
+.read-find .hit mark {
+  color: #1b1f27;
+}
+
+.read-find .hit.here {
+  background: var(--sel);
+  color: var(--ink);
+}
+
+.read-find .hit-tree .hint {
+  padding: 3px 6px 3px 24px;
+  font-size: 11px;
+}
