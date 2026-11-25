@@ -185,9 +185,13 @@ pub fn stored_span(size: u64, read: &mut Read, name: &str) -> Result<Option<(u64
         .index_for_name(name)
         .ok_or_else(|| format!("{name}: not in the ZIP."))?;
     let f = zip.by_index_raw(i).map_err(|e| format!("{name}: {e}"))?;
+    // by_index_raw has read the local header, so the offset is known.
+    let start = f
+        .data_start()
+        .ok_or_else(|| format!("{name}: where its data starts is unknown."))?;
     Ok(
         (f.compression() == zip::CompressionMethod::Stored && !f.encrypted())
-            .then(|| (f.data_start(), f.size())),
+            .then(|| (start, f.size())),
     )
 }
 
@@ -244,7 +248,7 @@ mod tests {
             z.write_all(&[b'x'; 100_000]).unwrap();
             z.start_file("é.txt", o).unwrap();
             z.write_all(b"hi").unwrap();
-            z.set_comment("a comment");
+            z.set_comment("a comment").unwrap();
             z.finish().unwrap();
         }
         let file = buf.into_inner();

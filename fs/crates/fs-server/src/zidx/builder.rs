@@ -243,7 +243,7 @@ impl ZidxBuilder {
         for i in 0..total {
             let entry = archive.by_index(i)?;
             // Normalise path: replace backslashes used by some ZIP writers.
-            let raw_name = entry.name().replace('\\', "/");
+            let raw_name = entry.name()?.replace('\\', "/");
             let is_dir = entry.is_dir();
             // zip 2.x exposes CompressionMethod as an opaque struct with no
             // public From<..> impl; map known constants to their ZIP spec values.

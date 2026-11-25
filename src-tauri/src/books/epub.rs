@@ -413,7 +413,10 @@ impl Book {
             if f.is_dir() {
                 continue;
             }
-            let name = f.name().to_string();
+            let name = f
+                .name()
+                .map_err(|e| format!("Can't read the EPUB: {e}"))?
+                .into_owned();
             let mut buf = Vec::with_capacity(f.size() as usize);
             f.read_to_end(&mut buf)
                 .map_err(|e| format!("Can't read {name} in the EPUB: {e}"))?;

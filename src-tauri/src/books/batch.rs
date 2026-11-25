@@ -77,7 +77,9 @@ fn zip_issues(data: &[u8]) -> Vec<Issue> {
     let first = zip.by_index(0).ok().map(|mut f| {
         let mut s = String::new();
         let _ = std::io::Read::read_to_string(&mut f, &mut s);
-        (f.name().to_string(), f.compression(), s)
+        // An unreadable name is as wrong as any other here.
+        let name = f.name().map(|n| n.into_owned()).unwrap_or_default();
+        (name, f.compression(), s)
     });
     match first {
         Some((name, _, _)) if name != "mimetype" => out.push(Issue {

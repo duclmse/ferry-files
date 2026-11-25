@@ -290,8 +290,11 @@ fn process_entry<R: Read + std::io::Seek>(
         let f = archive
             .by_index(index)
             .map_err(|e| AppError::Content(format!("entry {index} in {archive_str}: {e}")))?;
+        let name = f
+            .name()
+            .map_err(|e| AppError::Content(format!("entry {index} in {archive_str}: {e}")))?;
         (
-            normalize_name(f.name()),
+            normalize_name(&name),
             f.size(),
             dos_to_unix(f.last_modified()),
             f.is_dir(),

@@ -2,7 +2,7 @@ use std::fs::File;
 use std::io::{BufWriter, Cursor, Read, Write};
 use std::path::{Path, PathBuf};
 
-use zip::write::FileOptions;
+use zip::write::SimpleFileOptions;
 use zip::CompressionMethod;
 
 use crate::config::ConversionConfig;
@@ -309,8 +309,8 @@ fn copy_chunked<R: Read, W: Write>(src: &mut R, dst: &mut W) -> Result<()> {
     Ok(())
 }
 
-fn zip_opts(method: CompressionMethod, level: i64) -> FileOptions<'static, ()> {
-    let base = FileOptions::default().compression_method(method);
+fn zip_opts(method: CompressionMethod, level: i64) -> SimpleFileOptions {
+    let base = SimpleFileOptions::default().compression_method(method);
     if method == CompressionMethod::Stored {
         base
     } else {
@@ -426,7 +426,7 @@ mod tests {
     fn zip_entry_names(zip_bytes: Vec<u8>) -> Vec<String> {
         let mut arch = zip::ZipArchive::new(std::io::Cursor::new(zip_bytes)).unwrap();
         (0..arch.len())
-            .map(|i| arch.by_index(i).unwrap().name().to_string())
+            .map(|i| arch.by_index(i).unwrap().name().unwrap().into_owned())
             .collect()
     }
 
@@ -444,7 +444,7 @@ mod tests {
         let mut arch = zip::ZipArchive::new(std::io::Cursor::new(zip_bytes)).unwrap();
         assert_eq!(arch.len(), 1);
         let mut f = arch.by_index(0).unwrap();
-        assert_eq!(f.name(), "hello.txt");
+        assert_eq!(f.name().unwrap(), "hello.txt");
         let mut buf = Vec::new();
         std::io::Read::read_to_end(&mut f, &mut buf).unwrap();
         assert_eq!(buf, content);

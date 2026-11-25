@@ -78,7 +78,7 @@ memmap2     = "0.9"
 blake3      = { workspace = true }
 
 # Archive inner-file indexing
-zip      = { version = "2", default-features = false, features = ["deflate"] }
+zip      = { version = "9", default-features = false, features = ["deflate"] }
 tempfile = "3"
 
 # Binary serialization (store snapshots)
