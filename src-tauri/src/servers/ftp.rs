@@ -907,6 +907,10 @@ mod tests {
         let mut data: Option<TcpListener> = None;
         let mut rest = 0usize;
         let mut from = String::new();
+        // A RETR still sending. Held while its 226 is said, so an ABOR answers as a real server
+        // does: 426 and 226 while it's sending, 226 alone once it's done. (On Windows the whole
+        // file can fit in the socket's buffers, and be sent before the client aborts.)
+        let sending = Arc::new(Mutex::new(false));
         say_to(&w, "220 fake ready");
         let mut line = String::new();
         loop {
@@ -982,16 +986,24 @@ mod tests {
                     say_to(&w, "150 sending");
                     let (mut d, _) = data.take().unwrap().accept().unwrap();
                     let from = std::mem::take(&mut rest).min(body.len());
-                    let w2 = w.clone();
+                    let (w2, sending2) = (w.clone(), sending.clone());
+                    *sending.lock().unwrap() = true;
                     std::thread::spawn(move || {
                         // Whoever closes the data connection early gets no 226 from here.
-                        if d.write_all(&body[from..]).is_ok() {
-                            drop(d);
+                        let sent = d.write_all(&body[from..]).is_ok();
+                        drop(d);
+                        let mut still = sending2.lock().unwrap();
+                        if sent && *still {
                             say_to(&w2, "226 done");
                         }
+                        *still = false;
                     });
                 }
-                "ABOR" => say_to(&w, "426 aborted\r\n226 ok"),
+                "ABOR" => {
+                    let mut still = sending.lock().unwrap();
+                    say_to(&w, if *still { "426 aborted\r\n226 ok" } else { "226 ok" });
+                    *still = false;
+                }
                 "STOR" => {
                     say_to(&w, "150 go on");
                     let (mut d, _) = data.take().unwrap().accept().unwrap();
