@@ -18,4 +18,4 @@ clap        = { workspace = true }
 
 # TUI
 ratatui   = "0.26"
-crossterm = "0.27"
+crossterm = "0.29"

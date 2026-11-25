@@ -5,7 +5,8 @@
 
 use std::io::Write as _;
 
-use criterion::{black_box, criterion_group, criterion_main, BenchmarkId, Criterion, Throughput};
+use criterion::{criterion_group, criterion_main, BenchmarkId, Criterion, Throughput};
+use std::hint::black_box;
 
 use fs_server::archive::inflate::{copy_match, copy_simd, RingBuffer, SimdDeflateDecoder};
 use fs_server::archive::Decoder;

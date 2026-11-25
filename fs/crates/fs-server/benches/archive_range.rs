@@ -9,7 +9,8 @@
 use std::io::Write as _;
 use std::path::PathBuf;
 
-use criterion::{black_box, criterion_group, criterion_main, Criterion, Throughput};
+use criterion::{criterion_group, criterion_main, Criterion, Throughput};
+use std::hint::black_box;
 use tempfile::TempDir;
 
 use fs_server::archive::inflate::SimdDeflateDecoder;

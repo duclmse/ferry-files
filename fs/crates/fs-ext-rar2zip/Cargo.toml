@@ -41,7 +41,7 @@ unrar       = "0.5"
 sevenz-rust = "0.6"
 tar         = "0.4"
 flate2      = "1"
-bzip2       = "0.4"
+bzip2       = "0.6"
 zip         = { version = "9", default-features = false, features = ["deflate"] }
 
 # Hashing

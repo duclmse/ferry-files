@@ -517,7 +517,7 @@ pub async fn run_with_options(
     // ── 17a. Notify systemd the daemon is ready ────────────────────────────
     #[cfg(target_os = "linux")]
     {
-        if let Err(e) = sd_notify::notify(false, &[sd_notify::NotifyState::Ready]) {
+        if let Err(e) = sd_notify::notify(&[sd_notify::NotifyState::Ready]) {
             tracing::debug!("sd_notify ready skipped: {e}");
         }
     }
@@ -617,7 +617,7 @@ pub async fn run_with_options(
     // ── 19. Graceful shutdown ──────────────────────────────────────────────
     #[cfg(target_os = "linux")]
     {
-        let _ = sd_notify::notify(false, &[sd_notify::NotifyState::Stopping]);
+        let _ = sd_notify::notify(&[sd_notify::NotifyState::Stopping]);
     }
     tracing::info!("draining in-flight events (max 10s)…");
     let drain_deadline = tokio::time::Instant::now() + Duration::from_secs(10);
