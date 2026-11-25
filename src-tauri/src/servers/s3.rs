@@ -6,6 +6,7 @@
 
 use crate::device::{basename, dirname, err, Result, Transport};
 use crate::devices::connect;
+use crate::servers::web;
 use crate::*;
 use hmac::{Hmac, KeyInit, Mac};
 use percent_encoding::{utf8_percent_encode, AsciiSet, NON_ALPHANUMERIC};
@@ -300,12 +301,13 @@ fn explain(status: u16, body: &str, bucket: &str) -> String {
 }
 
 fn agent() -> ureq::Agent {
-    ureq::AgentBuilder::new()
-        .timeout_connect(Duration::from_secs(10))
-        .timeout_read(Duration::from_secs(60))
-        .timeout_write(Duration::from_secs(60))
-        .redirects(0)
+    web::config()
+        .timeout_connect(Some(Duration::from_secs(10)))
+        .timeout_per_read(Some(Duration::from_secs(60)))
+        .timeout_per_write(Some(Duration::from_secs(60)))
+        .max_redirects(0)
         .build()
+        .into()
 }
 
 pub struct S3 {
@@ -336,8 +338,8 @@ fn host_header(base: &str) -> String {
 }
 
 /// An answer's ETag without its quotes.
-fn etag_of(res: &ureq::Response) -> String {
-    res.header("ETag")
+fn etag_of(res: &web::Response) -> String {
+    web::header(res, "ETag")
         .unwrap_or("")
         .trim_matches('"')
         .to_string()
@@ -400,7 +402,7 @@ impl S3 {
         query: &[(&str, String)],
         headers: &[(&str, String)],
         body: &[u8],
-    ) -> Res<ureq::Response> {
+    ) -> Res<web::Response> {
         self.call_body(method, key, query, headers, Body::Bytes(body))
     }
 
@@ -412,7 +414,7 @@ impl S3 {
         query: &[(&str, String)],
         headers: &[(&str, String)],
         body: Body,
-    ) -> Res<ureq::Response> {
+    ) -> Res<web::Response> {
         let uri = if key.is_empty() {
             format!("/{}", encode(&self.bucket))
         } else {
@@ -441,31 +443,34 @@ impl S3 {
         } else {
             format!("{}{uri}?{query}", self.base)
         };
-        let mut req = agent().request(method, &url);
         // The Host header is set here, exactly as signed: ureq would write the address's host in
         // lowercase, which a signature made with the host as typed wouldn't match.
-        for (k, v) in &signed {
-            req = req.set(k, v);
-        }
-        req = req.set("Authorization", &auth);
-        let sent = match body {
-            _ if !matches!(method, "PUT" | "POST") => req.call(),
-            Body::Bytes(b) => req.send_bytes(b),
+        let mut headers: Vec<(&str, &str)> = signed
+            .iter()
+            .map(|(k, v)| (k.as_str(), v.as_str()))
+            .collect();
+        headers.push(("Authorization", &auth));
+        let (mut bytes, mut file);
+        let send: Option<(&mut dyn Read, u64)> = match body {
+            _ if !matches!(method, "PUT" | "POST") => None,
+            Body::Bytes(b) => {
+                bytes = b;
+                Some((&mut bytes, b.len() as u64))
+            }
             Body::File(from, r) => {
-                let f = part_of(from, r.clone())?;
-                req.set("Content-Length", &(r.end - r.start).to_string())
-                    .send(f)
+                file = part_of(from, r.clone())?;
+                Some((&mut file, r.end - r.start))
             }
         };
-        sent.map_err(|e| match e {
-            ureq::Error::Status(status, res) => {
-                let text = res.into_string().unwrap_or_default();
+        web::run(&agent(), method, &url, &headers, send).map_err(|e| match e {
+            web::Error::Status(status, res) => {
+                let text = web::text(res).unwrap_or_default();
                 Fail {
                     status,
                     msg: explain(status, &text, &self.bucket),
                 }
             }
-            ureq::Error::Transport(_) => Fail {
+            web::Error::Transport(_) => Fail {
                 status: 0,
                 msg: format!(
                     "Can't reach {}. Check the address and the connection.",
@@ -475,8 +480,8 @@ impl S3 {
         })
     }
 
-    fn text(&self, res: ureq::Response) -> Res<String> {
-        res.into_string().map_err(|e| Fail {
+    fn text(&self, res: web::Response) -> Res<String> {
+        web::text(res).map_err(|e| Fail {
             status: 0,
             msg: format!("Couldn't read the answer from S3: {e}"),
         })
@@ -533,12 +538,10 @@ impl S3 {
     fn head(&self, key: &str) -> Res<Option<Entry>> {
         match self.call("HEAD", key, &[], &[], &[]) {
             Ok(res) => {
-                let mtime = res
-                    .header("Last-Modified")
+                let mtime = web::header(&res, "Last-Modified")
                     .and_then(|d| chrono::DateTime::parse_from_rfc2822(d).ok())
                     .map_or(0, |d| d.timestamp());
-                let size = res
-                    .header("Content-Length")
+                let size = web::header(&res, "Content-Length")
                     .and_then(|n| n.parse().ok())
                     .unwrap_or(0);
                 Ok(Some(Entry {
@@ -825,7 +828,7 @@ impl Transport for S3 {
         let res = self.call("GET", key_of(path), &[], &[], &[])?;
         let version = etag_of(&res);
         let mut data = vec![];
-        res.into_reader()
+        web::reader(res)
             .read_to_end(&mut data)
             .map_err(|e| DevError::Msg(format!("Couldn't read {path} from S3: {e}")))?;
         Ok((data, version))
@@ -844,7 +847,7 @@ impl Transport for S3 {
         };
         // A server that ignores the range sends the whole file: skip to `start`.
         let skip = if res.status() == 206 { 0 } else { start };
-        let mut reader = res.into_reader();
+        let mut reader = web::reader(res);
         std::io::copy(&mut (&mut reader).take(skip), &mut std::io::sink())
             .map_err(|e| DevError::Msg(e.to_string()))?;
         let mut data = vec![];
@@ -888,11 +891,9 @@ impl Transport for S3 {
     ) -> Result<String> {
         let res = self.call("GET", key_of(path), &[], &[], &[])?;
         let version = etag_of(&res);
-        let size = res
-            .header("Content-Length")
-            .and_then(|n| n.parse::<u64>().ok());
+        let size = web::header(&res, "Content-Length").and_then(|n| n.parse::<u64>().ok());
         let got = crate::device::pour(
-            &mut res.into_reader(),
+            &mut web::reader(res),
             to,
             &format!("{path} from S3"),
             read,

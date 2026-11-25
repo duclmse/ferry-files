@@ -55,9 +55,11 @@ async fn send_webhook(url: &str, payload: &AlertPayload) {
 
     let result = tokio::task::spawn_blocking(move || {
         ureq::post(&url)
-            .timeout(std::time::Duration::from_secs(5))
-            .set("Content-Type", "application/json")
-            .send_string(&body)
+            .config()
+            .timeout_global(Some(std::time::Duration::from_secs(5)))
+            .build()
+            .header("Content-Type", "application/json")
+            .send(&body)
             .map_err(Box::new)
     })
     .await;

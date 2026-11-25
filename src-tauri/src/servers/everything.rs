@@ -7,6 +7,7 @@
 
 use crate::device::{basename, dirname, err, Result, Search, Transport};
 use crate::devices::connect;
+use crate::servers::web;
 use crate::*;
 use percent_encoding::{utf8_percent_encode, AsciiSet, NON_ALPHANUMERIC};
 use serde_json::Value;
@@ -154,24 +155,25 @@ impl Order<'_> {
 }
 
 fn agent() -> ureq::Agent {
-    ureq::AgentBuilder::new()
-        .timeout_connect(Duration::from_secs(3))
-        .timeout(Duration::from_secs(60))
+    web::config()
+        .timeout_connect(Some(Duration::from_secs(3)))
+        .timeout_global(Some(Duration::from_secs(60)))
         .build()
+        .into()
 }
 
 /// What went wrong talking to Everything, in words that say what to do.
-fn failed(e: ureq::Error, srv: &Server) -> String {
+fn failed(e: web::Error, srv: &Server) -> String {
     let base = &srv.base;
     match e {
-        ureq::Error::Status(401, _) if srv.auth.is_some() => {
+        web::Error::Status(401, _) if srv.auth.is_some() => {
             format!("Everything at {base} didn't take the user name and password. Check them in Settings > Connections.")
         }
-        ureq::Error::Status(401, _) => {
+        web::Error::Status(401, _) => {
             format!("Everything at {base} asks for a user name and password. Add them in Settings > Connections.")
         }
-        ureq::Error::Status(code, _) => format!("Everything at {base} answered with error {code}."),
-        ureq::Error::Transport(_) => {
+        web::Error::Status(code, _) => format!("Everything at {base} answered with error {code}."),
+        web::Error::Transport(_) => {
             format!("Can't reach Everything at {base}. Turn on its HTTP server (Tools > Options > HTTP Server) and check the address.")
         }
     }
@@ -187,9 +189,9 @@ fn ask(
 ) -> std::result::Result<Found, String> {
     let mut req = agent().get(&format!("{}/", srv.base));
     if let Some(a) = &srv.auth {
-        req = req.set("Authorization", a);
+        req = req.header("Authorization", a);
     }
-    let body = req
+    let sent = req
         .query("search", query)
         .query("json", "1")
         .query("path_column", "1")
@@ -197,12 +199,14 @@ fn ask(
         .query("date_modified_column", "1")
         .query("sort", order.param())
         .query("ascending", if order.1 { "1" } else { "0" })
-        .query("offset", &offset.to_string())
-        .query("count", &count.to_string())
-        .call()
-        .map_err(|e| failed(e, srv))?
-        .into_string()
-        .map_err(|e| format!("Couldn't read Everything's answer: {e}"))?;
+        .query("offset", offset.to_string())
+        .query("count", count.to_string())
+        .call();
+    let body = web::checked(sent)
+        .map_err(|e| failed(e, srv))
+        .and_then(|res| {
+            web::text(res).map_err(|e| format!("Couldn't read Everything's answer: {e}"))
+        })?;
     parse(&body)
 }
 
@@ -344,19 +348,16 @@ impl Everything {
         Ok((entries, total))
     }
 
-    fn get(&self, url: &str, range: Option<(u64, u64)>) -> Result<ureq::Response> {
+    fn get(&self, url: &str, range: Option<(u64, u64)>) -> Result<web::Response> {
         let mut req = agent().get(url);
         if let Some(a) = &self.srv.auth {
-            req = req.set("Authorization", a);
+            req = req.header("Authorization", a);
         }
         if let Some((start, len)) = range {
-            req = req.set(
-                "Range",
-                &format!("bytes={start}-{}", start + len.max(1) - 1),
-            );
+            req = req.header("Range", format!("bytes={start}-{}", start + len.max(1) - 1));
         }
-        req.call().map_err(|e| match e {
-            ureq::Error::Status(403 | 404, _) => DevError::Msg(format!(
+        web::checked(req.call()).map_err(|e| match e {
+            web::Error::Status(403 | 404, _) => DevError::Msg(format!(
                 "Everything at {} doesn't give out this file. Allow file downloads in Everything (Tools > Options > HTTP Server).",
                 self.srv.base
             )),
@@ -464,8 +465,7 @@ impl Transport for Everything {
 
     fn read(&self, path: &str) -> Result<(Vec<u8>, String)> {
         let mut data = vec![];
-        self.get(&file_url(&self.srv.base, path), None)?
-            .into_reader()
+        web::reader(self.get(&file_url(&self.srv.base, path), None)?)
             .read_to_end(&mut data)
             .map_err(|e| DevError::Msg(format!("Couldn't read {path} from Everything: {e}")))?;
         let version = self
@@ -481,10 +481,7 @@ impl Transport for Everything {
         // A server that ignores the range sends the whole file: copy it to the computer in the
         // background, and read from the copy as it comes (or, not knowing its size, skip to `start`).
         let whole = (res.status() != 206)
-            .then(|| {
-                res.header("Content-Length")
-                    .and_then(|n| n.parse::<u64>().ok())
-            })
+            .then(|| web::header(&res, "Content-Length").and_then(|n| n.parse::<u64>().ok()))
             .flatten();
         if let Some(size) = whole {
             let key = format!("everything|{}|{path}|{size}", self.srv.base);
@@ -492,7 +489,7 @@ impl Transport for Everything {
                 .rsplit_once('.')
                 .filter(|(_, x)| !x.contains('/'))
                 .map_or(String::new(), |(_, x)| format!(".{x}"));
-            let mut body = res.into_reader();
+            let mut body = web::reader(res);
             let fill = move |to: &std::path::Path, stop: &std::sync::atomic::AtomicBool| {
                 crate::preview::stream::copy_until(&mut body, to, stop)
             };
@@ -500,7 +497,7 @@ impl Transport for Everything {
                 .map_err(DevError::Msg);
         }
         let skip = if res.status() == 206 { 0 } else { start };
-        let mut reader = res.into_reader();
+        let mut reader = web::reader(res);
         std::io::copy(&mut (&mut reader).take(skip), &mut std::io::sink())
             .map_err(|e| DevError::Msg(e.to_string()))?;
         let mut data = vec![];
@@ -526,9 +523,7 @@ impl Transport for Everything {
         read: &mut dyn FnMut(u64),
         stop: &std::sync::atomic::AtomicBool,
     ) -> Result<String> {
-        let mut r = self
-            .get(&file_url(&self.srv.base, path), None)?
-            .into_reader();
+        let mut r = web::reader(self.get(&file_url(&self.srv.base, path), None)?);
         let total =
             crate::device::pour(&mut r, to, &format!("{path} from Everything"), read, stop)?;
         Ok(self
@@ -710,7 +705,9 @@ mod tests {
         );
         // "me:pw" in base64.
         assert!(
-            lines[1].contains("Authorization: Basic bWU6cHc="),
+            lines[1]
+                .lines()
+                .any(|l| l.eq_ignore_ascii_case("Authorization: Basic bWU6cHc=")),
             "{}",
             lines[1]
         );

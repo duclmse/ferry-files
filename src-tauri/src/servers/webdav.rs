@@ -7,6 +7,7 @@
 use crate::books::xml;
 use crate::device::{basename, dirname, err, join, Result, Transport};
 use crate::devices::connect;
+use crate::servers::web;
 use crate::*;
 use percent_encoding::{percent_decode_str, utf8_percent_encode, AsciiSet, NON_ALPHANUMERIC};
 use std::io::Read;
@@ -210,29 +211,29 @@ fn parse(body: &str, prefix: &str) -> std::result::Result<Vec<Item>, String> {
 }
 
 /// What went wrong talking to the server, in words that say what to do.
-fn failed(e: ureq::Error, host: &str, login: bool) -> String {
+fn failed(e: web::Error, host: &str, login: bool) -> String {
     match e {
-        ureq::Error::Status(401, _) if login => format!(
+        web::Error::Status(401, _) if login => format!(
             "{host} didn't take the user name and password. Check them in Settings > Connections."
         ),
-        ureq::Error::Status(401, _) => {
+        web::Error::Status(401, _) => {
             format!("{host} asks for a user name and password. Add them in Settings > Connections.")
         }
-        ureq::Error::Status(403, _) => format!("{host} doesn't allow that."),
-        ureq::Error::Status(404, _) => format!("Not found on {host}."),
-        ureq::Error::Status(405, _) => format!("{host} doesn't allow that here."),
-        ureq::Error::Status(409, _) => format!("The folder isn't there on {host}."),
-        ureq::Error::Status(412, _) => "Something with that name is already there.".to_string(),
-        ureq::Error::Status(423, _) => "The server has that locked.".to_string(),
-        ureq::Error::Status(507, _) => format!("{host} is out of space."),
-        ureq::Error::Status(code @ 300..=399, r) => match r.header("location") {
+        web::Error::Status(403, _) => format!("{host} doesn't allow that."),
+        web::Error::Status(404, _) => format!("Not found on {host}."),
+        web::Error::Status(405, _) => format!("{host} doesn't allow that here."),
+        web::Error::Status(409, _) => format!("The folder isn't there on {host}."),
+        web::Error::Status(412, _) => "Something with that name is already there.".to_string(),
+        web::Error::Status(423, _) => "The server has that locked.".to_string(),
+        web::Error::Status(507, _) => format!("{host} is out of space."),
+        web::Error::Status(code @ 300..=399, r) => match web::header(&r, "location") {
             Some(l) => {
                 format!("{host} sent us to {l}. Use that address in Settings > Connections.")
             }
             None => format!("{host} sent us somewhere else (error {code}). Check the address."),
         },
-        ureq::Error::Status(code, _) => format!("{host} answered with error {code}."),
-        ureq::Error::Transport(t) => {
+        web::Error::Status(code, _) => format!("{host} answered with error {code}."),
+        web::Error::Transport(t) => {
             let detail = t.to_string();
             let low = detail.to_lowercase();
             if low.contains("certificate")
@@ -250,12 +251,12 @@ fn failed(e: ureq::Error, host: &str, login: bool) -> String {
 
 /// Why a PROPFIND failed: the server said no, or its answer made no sense.
 enum Pf {
-    Http(ureq::Error),
+    Http(web::Error),
     Bad(String),
 }
 
-impl From<ureq::Error> for Pf {
-    fn from(e: ureq::Error) -> Pf {
+impl From<web::Error> for Pf {
+    fn from(e: web::Error) -> Pf {
         Pf::Http(e)
     }
 }
@@ -497,12 +498,13 @@ impl Dav {
         let login = login.map(|(u, p)| (u.to_string(), p.to_string()));
         // Redirects off in ureq, which would turn a redirected PROPFIND or MOVE into a GET:
         // `send` follows them itself.
-        let agent = ureq::AgentBuilder::new()
-            .redirects(0)
-            .timeout_connect(Duration::from_secs(10))
-            .timeout_read(Duration::from_secs(60))
-            .timeout_write(Duration::from_secs(60))
-            .build();
+        let agent = web::config()
+            .max_redirects(0)
+            .timeout_connect(Some(Duration::from_secs(10)))
+            .timeout_per_read(Some(Duration::from_secs(60)))
+            .timeout_per_write(Some(Duration::from_secs(60)))
+            .build()
+            .into();
         let dav = Dav {
             place,
             login,
@@ -511,19 +513,19 @@ impl Dav {
         };
         match dav.propfind("/", "0") {
             Ok(_) => Ok(dav),
-            Err(Pf::Http(ureq::Error::Status(404 | 405, _))) | Err(Pf::Bad(_)) => {
+            Err(Pf::Http(web::Error::Status(404 | 405, _))) | Err(Pf::Bad(_)) => {
                 Err(format!("{} isn't a WebDAV folder.", dav.place.label))
             }
             Err(Pf::Http(e)) => Err(dav.fail(e)),
         }
     }
 
-    fn fail(&self, e: ureq::Error) -> String {
+    fn fail(&self, e: web::Error) -> String {
         failed(e, &self.place.label, self.login.is_some())
     }
 
-    fn dev(&self, e: ureq::Error) -> DevError {
-        let conflict = matches!(e, ureq::Error::Status(412, _));
+    fn dev(&self, e: web::Error) -> DevError {
+        let conflict = matches!(e, web::Error::Status(412, _));
         let msg = self.fail(e);
         if conflict {
             DevError::Conflict(msg)
@@ -580,36 +582,40 @@ impl Dav {
         url: &str,
         headers: &[(String, String)],
         body: Body,
-    ) -> std::result::Result<ureq::Response, ureq::Error> {
+    ) -> std::result::Result<web::Response, web::Error> {
         let mut retried = false;
         loop {
-            let mut req = self.agent.request(method, url);
-            if let Some(a) = self.authorization(method, url) {
-                req = req.set("Authorization", &a);
+            let auth = self.authorization(method, url);
+            let mut hdrs: Vec<(&str, &str)> = Vec::with_capacity(headers.len() + 1);
+            if let Some(a) = &auth {
+                hdrs.push(("Authorization", a));
             }
-            for (k, v) in headers {
-                req = req.set(k, v);
-            }
-            let res = match body {
-                _ if method == "GET" => req.call(),
-                Body::Bytes(b) => req.send_bytes(b),
+            hdrs.extend(headers.iter().map(|(k, v)| (k.as_str(), v.as_str())));
+            let (mut bytes, mut file);
+            let send: Option<(&mut dyn Read, u64)> = match body {
+                _ if method == "GET" => None,
+                Body::Bytes(b) => {
+                    bytes = b;
+                    Some((&mut bytes, b.len() as u64))
+                }
                 // Opened again for each try: a retry or redirect sends it from the start.
                 Body::File(from) => {
-                    let f = std::fs::File::open(from).map_err(|e| {
-                        ureq::Error::from(std::io::Error::new(
+                    file = std::fs::File::open(from).map_err(|e| {
+                        web::Error::from(std::io::Error::new(
                             e.kind(),
                             format!("{}: {e}", from.display()),
                         ))
                     })?;
-                    let size = f.metadata().map_err(ureq::Error::from)?.len();
-                    req.set("Content-Length", &size.to_string()).send(f)
+                    let size = file.metadata().map_err(web::Error::from)?.len();
+                    Some((&mut file, size))
                 }
             };
-            let Err(ureq::Error::Status(401, r)) = res else {
+            let res = web::run(&self.agent, method, url, &hdrs, send);
+            let Err(web::Error::Status(401, r)) = res else {
                 return res;
             };
             if !retried && self.login.is_some() {
-                if let Some(new) = digest_challenge(&r.all("www-authenticate")) {
+                if let Some(new) = digest_challenge(&web::headers(&r, "www-authenticate")) {
                     let mut state = self.digest.lock().unwrap_or_else(|e| e.into_inner());
                     // A new nonce, or the same Digest again after a stale one: worth another try.
                     let worth = match state.as_ref() {
@@ -623,7 +629,7 @@ impl Dav {
                     }
                 }
             }
-            return Err(ureq::Error::Status(401, r));
+            return Err(web::Error::Status(401, r));
         }
     }
 
@@ -636,7 +642,7 @@ impl Dav {
         url: &str,
         headers: &[(&str, &str)],
         body: &[u8],
-    ) -> std::result::Result<ureq::Response, ureq::Error> {
+    ) -> std::result::Result<web::Response, web::Error> {
         self.send_body(method, url, headers, Body::Bytes(body))
     }
 
@@ -647,7 +653,7 @@ impl Dav {
         url: &str,
         headers: &[(&str, &str)],
         body: Body,
-    ) -> std::result::Result<ureq::Response, ureq::Error> {
+    ) -> std::result::Result<web::Response, web::Error> {
         let mut url = url.to_string();
         let mut headers: Vec<(String, String)> = headers
             .iter()
@@ -656,11 +662,11 @@ impl Dav {
         let mut hops = 0;
         loop {
             let res = self.attempt(method, &url, &headers, body)?;
-            let code = res.status();
+            let code = res.status().as_u16();
             if !(300..400).contains(&code) {
                 return Ok(res);
             }
-            let next = res.header("location").and_then(|l| resolve(&url, l));
+            let next = web::header(&res, "location").and_then(|l| resolve(&url, l));
             match next {
                 Some(next)
                     if matches!(code, 301 | 302 | 307 | 308)
@@ -678,7 +684,7 @@ impl Dav {
                     url = next;
                     hops += 1;
                 }
-                _ => return Err(ureq::Error::Status(code, res)),
+                _ => return Err(web::Error::Status(code, res)),
             }
         }
     }
@@ -697,7 +703,7 @@ impl Dav {
             PROPS.as_bytes(),
         );
         let mut body = String::new();
-        res?.into_reader()
+        web::reader(res?)
             .take(LIST_MAX)
             .read_to_string(&mut body)
             .map_err(|e| Pf::Bad(format!("Couldn't read the server's answer: {e}")))?;
@@ -708,18 +714,18 @@ impl Dav {
     fn props(&self, path: &str) -> Result<Option<Item>> {
         match self.propfind(path, "0") {
             Ok(items) => Ok(items.into_iter().find(|i| i.path == path || path == "/")),
-            Err(Pf::Http(ureq::Error::Status(404, _))) => Ok(None),
+            Err(Pf::Http(web::Error::Status(404, _))) => Ok(None),
             Err(e) => Err(self.dev_pf(e)),
         }
     }
 
-    fn get(&self, path: &str, range: Option<(u64, u64)>) -> Result<Option<ureq::Response>> {
+    fn get(&self, path: &str, range: Option<(u64, u64)>) -> Result<Option<web::Response>> {
         let value = range.map(|(start, len)| format!("bytes={start}-{}", start + len.max(1) - 1));
         let headers: Vec<(&str, &str)> = value.iter().map(|v| ("Range", v.as_str())).collect();
         match self.send("GET", &self.url(path, false), &headers, &[]) {
             Ok(r) => Ok(Some(r)),
             // Starting past the end of the file.
-            Err(ureq::Error::Status(416, _)) => Ok(None),
+            Err(web::Error::Status(416, _)) => Ok(None),
             Err(e) => Err(self.dev(e)),
         }
     }
@@ -795,7 +801,7 @@ impl Transport for Dav {
             return err(format!("Couldn't read {path}."));
         };
         let mut data = vec![];
-        res.into_reader()
+        web::reader(res)
             .read_to_end(&mut data)
             .map_err(|e| DevError::Msg(format!("Couldn't read {path}: {e}")))?;
         let version = item
@@ -811,10 +817,7 @@ impl Transport for Dav {
         // A server that ignores the range sends the whole file: copy it to the computer in the
         // background, and read from the copy as it comes (or, not knowing its size, skip to `start`).
         let whole = (res.status() != 206)
-            .then(|| {
-                res.header("Content-Length")
-                    .and_then(|n| n.parse::<u64>().ok())
-            })
+            .then(|| web::header(&res, "Content-Length").and_then(|n| n.parse::<u64>().ok()))
             .flatten();
         if let Some(size) = whole {
             let key = format!("webdav|{}|{path}|{size}", self.place.base);
@@ -822,7 +825,7 @@ impl Transport for Dav {
                 .rsplit_once('.')
                 .filter(|(_, x)| !x.contains('/'))
                 .map_or(String::new(), |(_, x)| format!(".{x}"));
-            let mut body = res.into_reader();
+            let mut body = web::reader(res);
             let fill = move |to: &std::path::Path, stop: &std::sync::atomic::AtomicBool| {
                 crate::preview::stream::copy_until(&mut body, to, stop)
             };
@@ -830,7 +833,7 @@ impl Transport for Dav {
                 .map_err(DevError::Msg);
         }
         let skip = if res.status() == 206 { 0 } else { start };
-        let mut reader = res.into_reader();
+        let mut reader = web::reader(res);
         std::io::copy(&mut (&mut reader).take(skip), &mut std::io::sink())
             .map_err(|e| DevError::Msg(e.to_string()))?;
         let mut data = vec![];
@@ -865,7 +868,7 @@ impl Transport for Dav {
         let Some(res) = self.get(path, None)? else {
             return err(format!("Couldn't read {path}."));
         };
-        let total = crate::device::pour(&mut res.into_reader(), to, path, read, stop)?;
+        let total = crate::device::pour(&mut web::reader(res), to, path, read, stop)?;
         Ok(item
             .map(|i| i.version())
             .unwrap_or_else(|| format!("{total}:0")))
@@ -882,9 +885,7 @@ impl Transport for Dav {
         self.send("MKCOL", &self.url(path, true), &[], &[])
             .map(|_| ())
             .map_err(|e| match e {
-                ureq::Error::Status(405, _) => {
-                    DevError::Conflict(format!("{path} already exists."))
-                }
+                web::Error::Status(405, _) => DevError::Conflict(format!("{path} already exists.")),
                 e => self.dev(e),
             })
     }
@@ -1185,9 +1186,10 @@ mod tests {
         );
         assert!(has_header(&reqs[2], "Overwrite: T"), "{}", reqs[2]);
         assert!(
-            reqs[2].contains(&format!(
-                "Destination: {at}/remote.php/dav/files/me/caf%C3%A9.epub"
-            )),
+            has_header(
+                &reqs[2],
+                &format!("Destination: {at}/remote.php/dav/files/me/caf%C3%A9.epub")
+            ),
             "{}",
             reqs[2]
         );
@@ -1277,7 +1279,7 @@ mod tests {
         );
         assert!(has_header(&reqs[4], "Overwrite: F"), "{}", reqs[4]);
         assert!(
-            reqs[4].contains(&format!("Destination: {at}/dav/a/c%20d.txt")),
+            has_header(&reqs[4], &format!("Destination: {at}/dav/a/c%20d.txt")),
             "{}",
             reqs[4]
         );
@@ -1348,11 +1350,15 @@ mod tests {
 
     /// The `key="value"` parts of an Authorization header the client sent.
     fn sent_params(req: &str) -> Vec<(String, String)> {
+        const AT: &str = "authorization: digest ";
         let line = req
             .lines()
-            .find(|l| l.starts_with("Authorization: Digest "))
+            .find(|l| {
+                l.get(..AT.len())
+                    .is_some_and(|h| h.eq_ignore_ascii_case(AT))
+            })
             .unwrap_or_else(|| panic!("no Digest in {req}"));
-        params(&line["Authorization: Digest ".len()..])
+        params(&line[AT.len()..])
     }
 
     #[test]

@@ -7,4 +7,5 @@ pub(crate) mod s3;
 pub(crate) mod secrets;
 pub(crate) mod sftp;
 pub(crate) mod smb;
+pub(crate) mod web;
 pub(crate) mod webdav;
