@@ -484,7 +484,7 @@ pub async fn run_with_options(
             };
             let reflection = tonic_reflection::server::Builder::configure()
                 .register_encoded_file_descriptor_set(grpc::proto::FILE_DESCRIPTOR_SET)
-                .build()
+                .build_v1()
                 .expect("gRPC reflection service build");
             let shutdown_c = shutdown.clone();
             let grpc_port = api_cfg.grpc_port;

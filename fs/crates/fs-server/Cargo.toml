@@ -12,7 +12,7 @@ path = "src/main.rs"
 [features]
 default = ["rest", "grpc", "ipc"]
 rest    = ["dep:async-stream", "dep:axum", "dep:tower", "dep:tower-http", "dep:hyper"]
-grpc    = ["dep:tonic", "dep:tonic-reflection", "dep:prost", "dep:tonic-build", "dep:protoc-bin-vendored"]
+grpc    = ["dep:tonic", "dep:tonic-prost", "dep:tonic-reflection", "dep:prost", "dep:tonic-prost-build", "dep:protoc-bin-vendored"]
 ipc     = []
 
 [dependencies]
@@ -47,9 +47,10 @@ notify-debouncer-full = "0.3"
 tantivy = "0.22"
 
 # gRPC
-tonic            = { version = "0.11", optional = true }
-tonic-reflection = { version = "0.11", optional = true }
-prost            = { version = "0.12", optional = true }
+tonic            = { version = "0.14", optional = true }
+tonic-prost      = { version = "0.14", optional = true }
+tonic-reflection = { version = "0.14", optional = true }
+prost            = { version = "0.14", optional = true }
 
 # REST
 axum       = { version = "0.8", features = ["macros"], optional = true }
@@ -121,7 +122,7 @@ windows = { version = "0.62", features = [
 ] }
 
 [build-dependencies]
-tonic-build         = { version = "0.11", optional = true }
+tonic-prost-build   = { version = "0.14", optional = true }
 protoc-bin-vendored = { version = "3", optional = true }
 
 [dev-dependencies]

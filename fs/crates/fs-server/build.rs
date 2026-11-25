@@ -9,12 +9,12 @@ fn main() {
 
         let out_dir = std::path::PathBuf::from(std::env::var("OUT_DIR").unwrap());
 
-        tonic_build::configure()
+        tonic_prost_build::configure()
             .build_server(true)
             .build_client(false)
             // Emit a file descriptor set so tonic-reflection can enumerate RPCs.
             .file_descriptor_set_path(out_dir.join("fs_descriptor.bin"))
-            .compile(&["proto/fs.proto"], &["proto"])
-            .unwrap_or_else(|e| panic!("tonic_build failed: {e}"));
+            .compile_protos(&["proto/fs.proto"], &["proto"])
+            .unwrap_or_else(|e| panic!("tonic_prost_build failed: {e}"));
     }
 }
