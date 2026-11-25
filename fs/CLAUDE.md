@@ -2,10 +2,16 @@
 
 ## Build commands
 
+The fs crates are members of Ferry's workspace (the repo root's `Cargo.toml`,
+one `Cargo.lock`, one `target/` at the root). `--workspace` takes in Ferry too,
+and a plain `cargo build` builds only Ferry's UI. The root `.cargo/config.toml`
+has aliases for the fs crates alone (`fs-build`, `fs-check`, `fs-test`,
+`fs-clippy`, `fs-doc`), and its `[env]` holds fs's `LIBSQLITE3_FLAGS`.
+
 ```sh
-# Full workspace
-cargo build
-cargo build --release
+# All fs crates
+cargo fs-build
+cargo fs-build --release
 
 # Single crate
 cargo build -p fs-server          # binary: fsd
@@ -14,14 +20,14 @@ cargo build -p fs-ext-rar2zip     # binary: fs-ext-rar2zip
 cargo build -p fs-ext-sftpd       # binary: fs-ext-sftpd
 
 # Check only (fast)
-cargo check --workspace
+cargo fs-check
 
 # Lint (must pass clean)
-cargo clippy --workspace -- -D warnings
+cargo fs-clippy -- -D warnings
 cargo clippy -p fs-server --all-targets --no-default-features -- -D warnings
 
 # Docs
-cargo doc --no-deps --workspace
+cargo fs-doc
 ```
 
 All crates build on Windows, Linux and macOS. `fsd install-service` registers
@@ -35,8 +41,8 @@ crate, which compiles the bundled RARLAB UnRAR C++ source, so building
 ## Test commands
 
 ```sh
-# All tests
-cargo test --workspace
+# All fs tests
+cargo fs-test
 
 # Single crate
 cargo test -p fs-server
@@ -44,7 +50,7 @@ cargo test -p fs-cli
 cargo test -p fs-protocol
 cargo test -p fs-ext-rar2zip
 cargo test -p fs-ext-sftpd
-cargo test -p common
+cargo test -p fs-common
 
 # Single module
 cargo test -p fs-server query::parser
@@ -61,7 +67,7 @@ cargo bench -p fs-server
 
 ```
 crates/
-  common/src/
+  fs-common/src/
     error.rs      CommonError, ProjectError trait
     logger.rs     tracing init (JSON, daily rolling)
     extension.rs  Extension trait

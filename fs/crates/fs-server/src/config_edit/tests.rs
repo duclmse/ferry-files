@@ -1,6 +1,6 @@
 use std::sync::atomic::{AtomicUsize, Ordering};
 
-use common::extension::{Extension, ExtensionFuture};
+use fs_common::extension::{Extension, ExtensionFuture};
 use tokio_util::sync::CancellationToken;
 
 use super::*;

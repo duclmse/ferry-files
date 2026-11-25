@@ -9,7 +9,7 @@ A Rust workspace for file search, with optional archive-transfer and SFTP server
 | `fs-protocol`    | -      | IPC wire format and client                                                                                  |
 | `fs-ext-rar2zip` | `fs-ext-rar2zip` | Drop-in extension - converts RAR/7Z/TAR archives to ZIP and transfers them to SFTP servers                   |
 | `fs-ext-sftpd`   | `fs-ext-sftpd`   | Drop-in extension - serves one folder over SFTP, public-key login only                                       |
-| `common`         | -      | Shared logger, error types, and the extension trait                                                         |
+| `fs-common`      | -      | Shared logger, error types, and the extension trait                                                         |
 
 ---
 
@@ -349,7 +349,7 @@ executable = "fs-ext-rar2zip"
 Extensions are discovered at startup, restarted if they crash, and receive the
 daemon's config path so they can read their own `[extensions.<name>]` section.
 Use `fs ext <name> <command>` to talk to one. The protocol is described in
-`crates/common/src/extension_stdio.rs`.
+`crates/fs-common/src/extension_stdio.rs`.
 
 **Extensions run with the daemon's privileges.** On Unix, `fsd` refuses a folder
 unless it and its parents are writable only by root or the daemon user, and

@@ -16,7 +16,7 @@ tracing            = { workspace = true }
 tracing-subscriber = { workspace = true }
 clap               = { workspace = true }
 anyhow             = { workspace = true }
-common             = { path = "../common" }
+fs-common          = { path = "../fs-common" }
 # Same backend choice as rar2zip: ring avoids aws-lc-rs, which needs NASM on Windows.
 russh      = { version = "0.60", default-features = false, features = ["ring", "flate2", "rsa"] }
 russh-sftp = "2"

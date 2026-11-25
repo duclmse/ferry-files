@@ -83,33 +83,33 @@ fi
 # ---------------------------------------------------------------------------
 # Install
 # ---------------------------------------------------------------------------
-if [ ! -x "target/release/fsd" ]; then
-    echo "target/release/fsd not found. Run scripts/build.sh first." >&2
+if [ ! -x "../target/release/fsd" ]; then
+    echo "../target/release/fsd not found. Run scripts/build.sh first." >&2
     exit 1
 fi
 
 echo "==> Installing binaries to $BIN_DIR"
 $SUDO mkdir -p "$BIN_DIR" "$CONFIG_DIR" "$DATA_DIR" "$LOG_DIR"
-$SUDO cp target/release/fsd "$BIN_PATH"
+$SUDO cp ../target/release/fsd "$BIN_PATH"
 $SUDO chmod 755 "$BIN_PATH"
-$SUDO cp target/release/fs "$CLIENT_PATH"
+$SUDO cp ../target/release/fs "$CLIENT_PATH"
 $SUDO chmod 755 "$CLIENT_PATH"
 
-if [ -x target/release/fs-ext-rar2zip ]; then
+if [ -x ../target/release/fs-ext-rar2zip ]; then
     echo "==> Installing rar2zip extension to $EXT_DIR/rar2zip"
     $SUDO mkdir -p "$EXT_DIR/rar2zip"
     $SUDO chmod 755 "$EXT_DIR" "$EXT_DIR/rar2zip"
-    $SUDO cp target/release/fs-ext-rar2zip crates/fs-ext-rar2zip/extension.toml "$EXT_DIR/rar2zip/"
+    $SUDO cp ../target/release/fs-ext-rar2zip crates/fs-ext-rar2zip/extension.toml "$EXT_DIR/rar2zip/"
     $SUDO chmod 755 "$EXT_DIR/rar2zip/fs-ext-rar2zip"
     $SUDO chmod 644 "$EXT_DIR/rar2zip/extension.toml"
     echo "==> To enable it, add to the top of $CONFIG_FILE: extensions_dir = \"$EXT_DIR\""
 fi
 
-if [ -x target/release/fs-ext-sftpd ]; then
+if [ -x ../target/release/fs-ext-sftpd ]; then
     echo "==> Installing sftpd extension to $EXT_DIR/sftpd"
     $SUDO mkdir -p "$EXT_DIR/sftpd"
     $SUDO chmod 755 "$EXT_DIR" "$EXT_DIR/sftpd"
-    $SUDO cp target/release/fs-ext-sftpd crates/fs-ext-sftpd/extension.toml "$EXT_DIR/sftpd/"
+    $SUDO cp ../target/release/fs-ext-sftpd crates/fs-ext-sftpd/extension.toml "$EXT_DIR/sftpd/"
     $SUDO chmod 755 "$EXT_DIR/sftpd/fs-ext-sftpd"
     $SUDO chmod 644 "$EXT_DIR/sftpd/extension.toml"
     echo "==> To enable it, set extensions_dir = \"$EXT_DIR\" and add an [extensions.sftpd] section (see crates/fs-ext-sftpd/config.toml)"

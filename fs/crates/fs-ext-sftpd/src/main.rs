@@ -4,7 +4,7 @@ use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
 use clap::{Parser, Subcommand};
-use common::extension::Extension;
+use fs_common::extension::Extension;
 use fs_ext_sftpd::extension::SftpdExtension;
 
 #[derive(Parser)]
@@ -57,7 +57,7 @@ async fn run(config: &Path) -> i32 {
             return 1;
         }
     };
-    match common::extension_stdio::serve(Arc::new(ext)).await {
+    match fs_common::extension_stdio::serve(Arc::new(ext)).await {
         Ok(()) => 0,
         Err(e) => {
             tracing::error!("{e:#}");

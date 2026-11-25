@@ -1,4 +1,4 @@
-use common::CommonError;
+use fs_common::CommonError;
 
 #[derive(thiserror::Error, Debug)]
 pub enum AppError {

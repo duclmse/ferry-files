@@ -39,7 +39,7 @@ Set-Location (Join-Path $PSScriptRoot "..")
 $repoRoot = (Get-Location).Path
 
 $stamp = Get-Date -Format "yyyyMMdd-HHmmss"
-if (-not $OutDir) { $OutDir = Join-Path $repoRoot "target\bench-everything\$stamp" }
+if (-not $OutDir) { $OutDir = Join-Path $repoRoot "..\target\bench-everything\$stamp" }
 New-Item -ItemType Directory -Force -Path $OutDir | Out-Null
 $OutDir = (Resolve-Path $OutDir).Path
 

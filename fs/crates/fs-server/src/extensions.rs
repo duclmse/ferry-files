@@ -9,8 +9,8 @@ mod trust;
 use std::path::{Component, Path, PathBuf};
 use std::sync::Arc;
 
-use common::extension::Extension;
-use common::extension_stdio::EXTENSION_PROTOCOL_VERSION;
+use fs_common::extension::Extension;
+use fs_common::extension_stdio::EXTENSION_PROTOCOL_VERSION;
 use serde::Deserialize;
 
 use crate::error::AppError;

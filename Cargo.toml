@@ -62,7 +62,34 @@ vt100 = "0.18.1"
 base64 = "0.22"
 
 [workspace]
-members = ["src-tauri"]
+resolver = "2"
+members = ["src-tauri", "fs/crates/*"]
+# As before the merge, plain `cargo build` at the root builds the UI only;
+# the rest builds with `-p` or `--workspace`.
+default-members = ["."]
+
+# Used by the fs crates (`{ workspace = true }`).
+[workspace.dependencies]
+tokio              = { version = "1", features = ["full"] }
+tokio-util         = { version = "0.7", features = ["rt", "io-util"] }
+serde              = { version = "1", features = ["derive"] }
+serde_json         = "1"
+toml               = "1"
+toml_edit          = "0.25"
+tracing            = "0.1"
+tracing-subscriber = { version = "0.3", features = ["env-filter", "json"] }
+tracing-appender   = "0.2"
+thiserror          = "1"
+anyhow             = "1"
+chrono             = { version = "0.4", features = ["serde"] }
+rusqlite           = { version = "0.31", features = ["bundled"] }
+r2d2               = "0.8"
+r2d2_sqlite        = "0.24"
+clap               = { version = "4", features = ["derive"] }
+glob               = "0.3"
+uuid               = { version = "1", features = ["v4"] }
+bytes              = "1"
+blake3             = "1"
 
 # Image decoding (thumbnails) is far too slow unoptimised; dependencies are built optimised even in dev.
 [profile.dev.package."*"]
@@ -76,3 +103,16 @@ codegen-units = 1
 # The UI is downloaded into the webview at each launch: optimised for size.
 [profile.release.package.ferry-files-ui]
 opt-level = "s"
+
+# fs's binaries ship stripped, as they did before the merge.
+[profile.release.package.fs-server]
+strip = true
+
+[profile.release.package.fs-cli]
+strip = true
+
+[profile.release.package.fs-ext-rar2zip]
+strip = true
+
+[profile.release.package.fs-ext-sftpd]
+strip = true

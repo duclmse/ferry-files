@@ -2,7 +2,7 @@
 
 use std::path::Path;
 
-use common::extension::{Extension, ExtensionFuture};
+use fs_common::extension::{Extension, ExtensionFuture};
 use tokio_util::sync::CancellationToken;
 
 use crate::config::{self, Config};

@@ -7,8 +7,8 @@ cd "$(dirname "${BASH_SOURCE[0]}")/.."
 
 BIN="${FS_BIN:-}"
 if [ -z "$BIN" ]; then
-    if [ -x "target/release/fsd" ]; then
-        BIN="target/release/fsd"
+    if [ -x "../target/release/fsd" ]; then
+        BIN="../target/release/fsd"
     elif command -v fsd >/dev/null 2>&1; then
         BIN="$(command -v fsd)"
     else

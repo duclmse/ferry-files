@@ -39,7 +39,7 @@ crates/fs-ext-rar2zip/
 ```
 
 > **Note:** There is no `logger.rs` - logging initialisation is provided by
-> `common::logger::init()` from `crates/common`.
+> `fs_common::logger::init()` from `crates/fs-common`.
 
 ---
 

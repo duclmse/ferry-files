@@ -7,8 +7,8 @@ Set-Location (Join-Path $PSScriptRoot "..")
 
 $bin = $env:FS_BIN
 if (-not $bin) {
-    if (Test-Path "target\release\fsd.exe") {
-        $bin = "target\release\fsd.exe"
+    if (Test-Path "..\target\release\fsd.exe") {
+        $bin = "..\target\release\fsd.exe"
     } elseif (Get-Command fsd.exe -ErrorAction SilentlyContinue) {
         $bin = (Get-Command fsd.exe).Source
     } else {

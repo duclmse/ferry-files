@@ -44,11 +44,11 @@ $TargetDir = (Resolve-Path $TargetDir).Path
 
 if ($DataDir) { $KeepDb = $true }
 
-if (-not (Test-Path "target\release\fsd.exe")) {
+if (-not (Test-Path "..\target\release\fsd.exe")) {
     Write-Host "==> Building release binary first"
     & .\scripts\build.ps1
 }
-$bin = Join-Path $repoRoot "target\release\fsd.exe"
+$bin = Join-Path $repoRoot "..\target\release\fsd.exe"
 
 if ($DataDir) {
     New-Item -ItemType Directory -Force -Path $DataDir | Out-Null

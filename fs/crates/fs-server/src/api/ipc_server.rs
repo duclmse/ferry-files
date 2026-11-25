@@ -798,14 +798,14 @@ mod tests {
 
     struct FakeExtension;
 
-    impl common::extension::Extension for FakeExtension {
+    impl fs_common::extension::Extension for FakeExtension {
         fn name(&self) -> &str {
             "fake"
         }
         fn validate(&self) -> Vec<String> {
             Vec::new()
         }
-        fn run(&self, _shutdown: CancellationToken) -> common::extension::ExtensionFuture {
+        fn run(&self, _shutdown: CancellationToken) -> fs_common::extension::ExtensionFuture {
             Box::pin(async { Ok(()) })
         }
         fn command(&self, command: &str) -> anyhow::Result<String> {

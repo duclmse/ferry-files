@@ -42,7 +42,7 @@ if ($running) {
 
 $bin = $env:FS_BIN
 if (-not $bin) {
-    foreach ($candidate in @("target\release\fsd.exe", "$env:ProgramFiles\fs\fsd.exe")) {
+    foreach ($candidate in @("..\target\release\fsd.exe", "$env:ProgramFiles\fs\fsd.exe")) {
         if (Test-Path $candidate) { $bin = $candidate; break }
     }
     if (-not $bin -and (Get-Command fsd.exe -ErrorAction SilentlyContinue)) {

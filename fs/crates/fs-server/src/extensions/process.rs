@@ -8,8 +8,8 @@ use std::sync::Mutex;
 use std::time::{Duration, Instant};
 
 use anyhow::Context;
-use common::extension::{Extension, ExtensionFuture};
-use common::extension_stdio::{ExtensionReply, HostMessage};
+use fs_common::extension::{Extension, ExtensionFuture};
+use fs_common::extension_stdio::{ExtensionReply, HostMessage};
 use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader};
 use tokio::process::{Child, ChildStdin, Command};
 use tokio::sync::mpsc;

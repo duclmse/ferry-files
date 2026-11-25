@@ -34,7 +34,7 @@ building and testing from source, see [DEVELOPMENT.md](DEVELOPMENT.md).
 | `fs-protocol` | – | The IPC wire format and client, for programs that talk to `fsd` |
 | `fs-ext-rar2zip` | `fs-ext-rar2zip` | Extension: converts RAR / 7Z / TAR archives dropped into a folder to ZIP and uploads them over SFTP |
 | `fs-ext-sftpd` | `fs-ext-sftpd` | Extension: serves one folder over SFTP, public-key login only |
-| `common` | – | Logging, error types and the extension protocol, shared by the others |
+| `fs-common` | – | Logging, error types and the extension protocol, shared by the others |
 
 One config file drives everything. `fsd` reads all of it, `fs` reads only
 `api.ipc_path` from it, and each extension reads its own
@@ -756,7 +756,7 @@ if let IpcResponse::Search(r) = client
 The crate also holds `attrib`, the file attribute bits and their Windows
 mapping, and `efu`, which reads and writes Everything file lists.
 
-**`common`** holds what the daemon and the extensions share:
+**`fs-common`** holds what the daemon and the extensions share:
 - the tracing setup (JSON lines, daily files);
 - the error types;
 - the `Extension` trait;

@@ -44,8 +44,8 @@ if ($Service -and -not (Test-Admin)) {
     exit 1
 }
 
-if (-not (Test-Path "target\release\fsd.exe")) {
-    Write-Error "target\release\fsd.exe not found. Run scripts\build.ps1 first."
+if (-not (Test-Path "..\target\release\fsd.exe")) {
+    Write-Error "..\target\release\fsd.exe not found. Run scripts\build.ps1 first."
     exit 1
 }
 
@@ -53,23 +53,23 @@ Write-Host "==> Installing to $Prefix"
 New-Item -ItemType Directory -Force -Path $Prefix | Out-Null
 New-Item -ItemType Directory -Force -Path "$dataDir\data" | Out-Null
 New-Item -ItemType Directory -Force -Path "$dataDir\logs" | Out-Null
-Copy-Item "target\release\fsd.exe" $exePath -Force
-Copy-Item "target\release\fs.exe" (Join-Path $Prefix "fs.exe") -Force
+Copy-Item "..\target\release\fsd.exe" $exePath -Force
+Copy-Item "..\target\release\fs.exe" (Join-Path $Prefix "fs.exe") -Force
 
-if (Test-Path "target\release\fs-ext-rar2zip.exe") {
+if (Test-Path "..\target\release\fs-ext-rar2zip.exe") {
     $extDir = Join-Path $Prefix "extensions\rar2zip"
     Write-Host "==> Installing rar2zip extension to $extDir"
     New-Item -ItemType Directory -Force -Path $extDir | Out-Null
-    Copy-Item "target\release\fs-ext-rar2zip.exe" $extDir -Force
+    Copy-Item "..\target\release\fs-ext-rar2zip.exe" $extDir -Force
     Copy-Item "crates\fs-ext-rar2zip\extension.toml" $extDir -Force
     Write-Host "==> To enable it, add to the top of $configFile: extensions_dir = '$Prefix\extensions'"
 }
 
-if (Test-Path "target\release\fs-ext-sftpd.exe") {
+if (Test-Path "..\target\release\fs-ext-sftpd.exe") {
     $extDir = Join-Path $Prefix "extensions\sftpd"
     Write-Host "==> Installing sftpd extension to $extDir"
     New-Item -ItemType Directory -Force -Path $extDir | Out-Null
-    Copy-Item "target\release\fs-ext-sftpd.exe" $extDir -Force
+    Copy-Item "..\target\release\fs-ext-sftpd.exe" $extDir -Force
     Copy-Item "crates\fs-ext-sftpd\extension.toml" $extDir -Force
     Write-Host "==> To enable it, set extensions_dir = '$Prefix\extensions' and add an [extensions.sftpd] section (see crates\fs-ext-sftpd\config.toml)"
 }

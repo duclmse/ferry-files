@@ -42,7 +42,7 @@
 # -RootStyle backslash writes watch_paths with '\' separators instead of '/',
 # to check that replayed paths match crawled ones either way.
 #
-# Results go to -OutDir, default target\bench-windows\<timestamp>:
+# Results go to -OutDir, default ..\target\bench-windows\<timestamp>:
 #   summary.txt    the report printed at the end
 #   samples.csv    one row per process sample
 #   queries.csv    per-query latency
@@ -75,14 +75,14 @@ $repoRoot = (Get-Location).Path
 if (-not $TargetDir) { $TargetDir = $repoRoot }
 $TargetDir = (Resolve-Path $TargetDir).Path
 
-if (-not (Test-Path "target\release\fsd.exe")) {
+if (-not (Test-Path "..\target\release\fsd.exe")) {
     Write-Host "==> Building release binary first"
     & .\scripts\build.ps1
 }
-$bin = Join-Path $repoRoot "target\release\fsd.exe"
+$bin = Join-Path $repoRoot "..\target\release\fsd.exe"
 
 $stamp = Get-Date -Format "yyyyMMdd-HHmmss"
-if (-not $OutDir) { $OutDir = Join-Path $repoRoot "target\bench-windows\$stamp" }
+if (-not $OutDir) { $OutDir = Join-Path $repoRoot "..\target\bench-windows\$stamp" }
 New-Item -ItemType Directory -Force -Path $OutDir | Out-Null
 $OutDir = (Resolve-Path $OutDir).Path
 

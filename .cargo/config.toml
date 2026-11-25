@@ -6,3 +6,19 @@ runner = "scripts/mac-dev-run.sh"
 # stack frames, and running out shows as "memory access out of bounds" and a blank window.
 [target.wasm32-unknown-unknown]
 rustflags = ["-C", "link-arg=-zstack-size=8388608"]
+
+# From fs. Bundled SQLite (libsqlite3-sys) counts every allocation under one global
+# mutex by default. Searches that allocate per row (`LOWER(name) GLOB ...` for `*.ext`)
+# then serialise across the read pool: on C:\Windows, 8 concurrent `*.toml` searches ran
+# at 10 req/s with it, 130 req/s without. Nothing reads SQLite's memory statistics or sets
+# a heap limit. It lives here because cargo reads only the config above where it runs.
+[env]
+LIBSQLITE3_FLAGS = "-DSQLITE_DEFAULT_MEMSTATUS=0"
+
+# The fs crates alone; `--workspace` takes in Ferry too. `cargo fs-test`, `cargo fs-clippy -- -D warnings`.
+[alias]
+fs-build = "build -p fs-server -p fs-cli -p fs-protocol -p fs-common -p fs-ext-rar2zip -p fs-ext-sftpd"
+fs-check = "check -p fs-server -p fs-cli -p fs-protocol -p fs-common -p fs-ext-rar2zip -p fs-ext-sftpd"
+fs-test = "test -p fs-server -p fs-cli -p fs-protocol -p fs-common -p fs-ext-rar2zip -p fs-ext-sftpd"
+fs-clippy = "clippy --all-targets -p fs-server -p fs-cli -p fs-protocol -p fs-common -p fs-ext-rar2zip -p fs-ext-sftpd"
+fs-doc = "doc --no-deps -p fs-server -p fs-cli -p fs-protocol -p fs-common -p fs-ext-rar2zip -p fs-ext-sftpd"

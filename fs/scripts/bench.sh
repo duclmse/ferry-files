@@ -43,11 +43,11 @@ while [ $# -gt 0 ]; do
 done
 TARGET_DIR="$(cd "$TARGET_DIR" && pwd)"
 
-if [ ! -x "target/release/fsd" ]; then
+if [ ! -x "../target/release/fsd" ]; then
     echo "==> Building release binary first"
     ./scripts/build.sh
 fi
-BIN="$REPO_ROOT/target/release/fsd"
+BIN="$(cd "$REPO_ROOT/.." && pwd)/target/release/fsd"
 
 if [ -n "$DATA_DIR_ARG" ]; then
     mkdir -p "$DATA_DIR_ARG"
