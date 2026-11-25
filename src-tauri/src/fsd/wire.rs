@@ -31,14 +31,30 @@ enum Message {
 #[allow(dead_code)]
 #[derive(Serialize, Deserialize)]
 pub enum Request {
-    Search { query: String, limit: u32, offset: u32 },
+    Search {
+        query: String,
+        limit: u32,
+        offset: u32,
+    },
     Stats,
-    Reindex { full: bool },
-    Open { path: String },
-    Extension { name: String, command: String },
+    Reindex {
+        full: bool,
+    },
+    Open {
+        path: String,
+    },
+    Extension {
+        name: String,
+        command: String,
+    },
     Roots,
-    WatchAdd { path: String },
-    WatchRemove { path: String, forget: bool },
+    WatchAdd {
+        path: String,
+    },
+    WatchRemove {
+        path: String,
+        forget: bool,
+    },
 }
 
 #[allow(dead_code)]
@@ -46,10 +62,20 @@ pub enum Request {
 pub enum Response {
     Search(SearchResponse),
     Stats(StatsResponse),
-    Reindex { accepted: bool },
-    Open { opened: bool, temp_path: Option<String> },
-    Error { code: String, message: String },
-    Extension { output: String },
+    Reindex {
+        accepted: bool,
+    },
+    Open {
+        opened: bool,
+        temp_path: Option<String>,
+    },
+    Error {
+        code: String,
+        message: String,
+    },
+    Extension {
+        output: String,
+    },
     Roots(RootsResponse),
 }
 
@@ -127,7 +153,13 @@ fn default_path() -> std::path::PathBuf {
 }
 
 fn frame(request_id: u128, message: Message) -> Result<Vec<u8>, String> {
-    let payload = postcard::to_allocvec(&Envelope { magic: MAGIC, version: VERSION, request_id, message }).map_err(|e| e.to_string())?;
+    let payload = postcard::to_allocvec(&Envelope {
+        magic: MAGIC,
+        version: VERSION,
+        request_id,
+        message,
+    })
+    .map_err(|e| e.to_string())?;
     let mut out = (payload.len() as u32).to_le_bytes().to_vec();
     out.extend_from_slice(&payload);
     Ok(out)
@@ -167,7 +199,10 @@ impl Client {
         let id = self.next_id;
         self.next_id += 1;
         let io = |e: std::io::Error| format!("talking to fsd: {e}");
-        self.stream.write_all(&frame(id, Message::Request(request))?).await.map_err(io)?;
+        self.stream
+            .write_all(&frame(id, Message::Request(request))?)
+            .await
+            .map_err(io)?;
         let mut len = [0u8; 4];
         self.stream.read_exact(&mut len).await.map_err(io)?;
         let len = u32::from_le_bytes(len);
@@ -177,7 +212,9 @@ impl Client {
         let mut payload = vec![0u8; len as usize];
         self.stream.read_exact(&mut payload).await.map_err(io)?;
         match unframe(&payload)?.message {
-            Message::Response(Response::Error { code, message }) => Err(format!("fsd: {message} ({code})")),
+            Message::Response(Response::Error { code, message }) => {
+                Err(format!("fsd: {message} ({code})"))
+            }
             Message::Response(r) => Ok(r),
             Message::Request(_) => Err("fsd sent a request".into()),
         }
@@ -191,8 +228,18 @@ mod tests {
     #[test]
     fn bytes_fsd_expects() {
         let frame = |m| frame(1, m).unwrap();
-        assert_eq!(frame(Message::Request(Request::Roots)), b"\x08\0\0\0ZFS1\x09\x01\x00\x05");
-        assert_eq!(frame(Message::Request(Request::Search { query: "a".into(), limit: 2, offset: 3 })), b"\x0c\0\0\0ZFS1\x09\x01\x00\x00\x01a\x02\x03");
+        assert_eq!(
+            frame(Message::Request(Request::Roots)),
+            b"\x08\0\0\0ZFS1\x09\x01\x00\x05"
+        );
+        assert_eq!(
+            frame(Message::Request(Request::Search {
+                query: "a".into(),
+                limit: 2,
+                offset: 3
+            })),
+            b"\x0c\0\0\0ZFS1\x09\x01\x00\x00\x01a\x02\x03"
+        );
         let answer = b"\x0d\0\0\0ZFS1\x09\x01\x01\x06\x01\x01C\x01\x00";
         match unframe(&answer[4..]).unwrap().message {
             Message::Response(Response::Roots(r)) => {

@@ -6,7 +6,9 @@ use crate::api::WifiService;
 
 /// Phones connected over Wi-Fi before, as (name, address), newest first.
 fn remembered() -> Vec<(String, String)> {
-    stored(WIFI_KEY).and_then(|s| serde_json::from_str(&s).ok()).unwrap_or_default()
+    stored(WIFI_KEY)
+        .and_then(|s| serde_json::from_str(&s).ok())
+        .unwrap_or_default()
 }
 
 fn remember(list: &[(String, String)]) {
@@ -15,13 +17,24 @@ fn remember(list: &[(String, String)]) {
 
 /// What `connect` takes for a phone adb reaches at `serial` (its address).
 fn wifi_device(serial: &str, name: &str) -> UsbDevice {
-    UsbDevice { usb: format!("adb:{serial}"), transport: "adb".into(), which: serial.into(), name: name.into(), serial: Some(serial.into()) }
+    UsbDevice {
+        usb: format!("adb:{serial}"),
+        transport: "adb".into(),
+        which: serial.into(),
+        name: name.into(),
+        serial: Some(serial.into()),
+    }
 }
 
 impl Ctx {
     /// Connects adb to `address`, then the app to the phone. Errors go to `error`; on success the
     /// address is remembered under the phone's name and the dialog closes.
-    fn connect_wifi(self, address: String, error: RwSignal<Option<String>>, working: RwSignal<bool>) {
+    fn connect_wifi(
+        self,
+        address: String,
+        error: RwSignal<Option<String>>,
+        working: RwSignal<bool>,
+    ) {
         working.set(true);
         error.set(None);
         spawn_local(async move {
@@ -31,7 +44,12 @@ impl Ctx {
                     self.tried.update_value(|t| {
                         t.insert(serial.clone());
                     });
-                    match call::<Info>("connect", json!({ "transport": "adb", "which": serial, "serial": serial })).await {
+                    match call::<Info>(
+                        "connect",
+                        json!({ "transport": "adb", "which": serial, "serial": serial }),
+                    )
+                    .await
+                    {
                         Ok(info) => {
                             let mut list = remembered();
                             list.retain(|(_, a)| *a != serial);
@@ -67,12 +85,19 @@ impl Ctx {
                 if self.connected_keys().contains(&address) {
                     continue;
                 }
-                if let Ok(serial) = call::<String>("adb_connect", json!({ "address": address })).await {
+                if let Ok(serial) =
+                    call::<String>("adb_connect", json!({ "address": address })).await
+                {
                     self.tried.update_value(|t| {
                         t.insert(serial.clone());
                     });
                     let f = wifi_device(&serial, &name);
-                    if let Ok(info) = call::<Info>("connect", json!({ "transport": "adb", "which": f.which, "serial": f.serial })).await {
+                    if let Ok(info) = call::<Info>(
+                        "connect",
+                        json!({ "transport": "adb", "which": f.which, "serial": f.serial }),
+                    )
+                    .await
+                    {
                         self.connected(info, false);
                     }
                 }
@@ -98,7 +123,11 @@ pub(super) fn WifiDialog() -> impl IntoView {
     let look = move || {
         found.set(None);
         spawn_local(async move {
-            found.set(Some(call::<Vec<WifiService>>("adb_discover", json!({})).await.unwrap_or_default()));
+            found.set(Some(
+                call::<Vec<WifiService>>("adb_discover", json!({}))
+                    .await
+                    .unwrap_or_default(),
+            ));
         });
     };
     look();

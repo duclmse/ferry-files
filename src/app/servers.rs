@@ -23,7 +23,15 @@ pub(super) enum ConnKind {
 }
 
 impl ConnKind {
-    pub(super) const ALL: [ConnKind; 7] = [ConnKind::Sftp, ConnKind::Smb, ConnKind::Nfs, ConnKind::WebDav, ConnKind::Ftp, ConnKind::S3, ConnKind::Everything];
+    pub(super) const ALL: [ConnKind; 7] = [
+        ConnKind::Sftp,
+        ConnKind::Smb,
+        ConnKind::Nfs,
+        ConnKind::WebDav,
+        ConnKind::Ftp,
+        ConnKind::S3,
+        ConnKind::Everything,
+    ];
 
     pub(super) fn key(self) -> &'static str {
         match self {
@@ -146,7 +154,11 @@ impl Conn {
     /// "https://host:port", for WebDAV and S3.
     fn web_base(&self) -> String {
         let port = self.port.map(|p| format!(":{p}")).unwrap_or_default();
-        format!("{}://{}{port}", if self.tls { "https" } else { "http" }, self.host)
+        format!(
+            "{}://{}{port}",
+            if self.tls { "https" } else { "http" },
+            self.host
+        )
     }
 
     /// The address the backend knows it by: "http://pc:8080", "me@box:2222", "smb://nas/Photos",
@@ -156,13 +168,17 @@ impl Conn {
         match self.kind {
             ConnKind::WebDav if self.share.is_empty() => self.web_base(),
             ConnKind::WebDav | ConnKind::S3 => format!("{}/{}", self.web_base(), self.share),
-            ConnKind::Ftp if self.auth == Auth::Password && !self.user.is_empty() => format!("{}@{}{port}", self.user, self.host),
+            ConnKind::Ftp if self.auth == Auth::Password && !self.user.is_empty() => {
+                format!("{}@{}{port}", self.user, self.host)
+            }
             ConnKind::Ftp => format!("{}{port}", self.host),
             ConnKind::Everything => format!("http://{}{port}", self.host),
             ConnKind::Sftp if self.user.is_empty() => format!("{}{port}", self.host),
             ConnKind::Sftp => format!("{}@{}{port}", self.user, self.host),
             // A user without a saved password goes in the address, so the system asks for theirs.
-            ConnKind::Smb if !self.user.is_empty() && self.auth == Auth::System => format!("smb://{}@{}{port}/{}", self.user, self.host, self.share),
+            ConnKind::Smb if !self.user.is_empty() && self.auth == Auth::System => {
+                format!("smb://{}@{}{port}/{}", self.user, self.host, self.share)
+            }
             ConnKind::Smb => format!("smb://{}{port}/{}", self.host, self.share),
             ConnKind::Nfs => format!("nfs://{}/{}", self.host, self.share),
         }
@@ -171,11 +187,17 @@ impl Conn {
     /// As it's shown: "me@box:2222", "nas/Photos", "pc:8080".
     pub(super) fn name(&self) -> String {
         let port = self.port.map(|p| format!(":{p}")).unwrap_or_default();
-        let user = if self.user.is_empty() { String::new() } else { format!("{}@", self.user) };
+        let user = if self.user.is_empty() {
+            String::new()
+        } else {
+            format!("{}@", self.user)
+        };
         match self.kind {
             ConnKind::Smb => format!("{user}{}{port}/{}", self.host, self.share),
             ConnKind::Nfs => format!("{}:/{}", self.host, self.share),
-            ConnKind::WebDav if !self.share.is_empty() => format!("{user}{}{port}/{}", self.host, self.share),
+            ConnKind::WebDav if !self.share.is_empty() => {
+                format!("{user}{}{port}/{}", self.host, self.share)
+            }
             // The user here is the access key: not shown.
             ConnKind::S3 => format!("{}{port}/{}", self.host, self.share),
             _ => format!("{user}{}{port}", self.host),
@@ -185,7 +207,11 @@ impl Conn {
     /// Whether `text` is in its host, user name or share (ignoring case).
     pub(super) fn matches(&self, text: &str) -> bool {
         let t = text.trim().to_lowercase();
-        t.is_empty() || [&self.host, &self.user, &self.share].iter().any(|f| f.to_lowercase().contains(&t)) || self.name().to_lowercase().contains(&t)
+        t.is_empty()
+            || [&self.host, &self.user, &self.share]
+                .iter()
+                .any(|f| f.to_lowercase().contains(&t))
+            || self.name().to_lowercase().contains(&t)
     }
 
     /// The id of the password to log in with, when one is saved and used.
@@ -195,16 +221,29 @@ impl Conn {
 
     /// The command that connects it, and its arguments.
     fn connect_call(&self) -> (&'static str, serde_json::Value) {
-        let user = (self.auth == Auth::Password && !self.user.is_empty()).then_some(self.user.as_str());
+        let user =
+            (self.auth == Auth::Password && !self.user.is_empty()).then_some(self.user.as_str());
         match self.kind {
-            ConnKind::Everything => ("everything_connect", json!({ "server": self.addr(), "user": user, "secret": self.secret() })),
+            ConnKind::Everything => (
+                "everything_connect",
+                json!({ "server": self.addr(), "user": user, "secret": self.secret() }),
+            ),
             ConnKind::Sftp => {
                 let key = (self.auth == Auth::Key).then_some(self.key_file.as_str());
-                ("sftp_connect", json!({ "server": self.addr(), "key_file": key, "secret": self.secret() }))
+                (
+                    "sftp_connect",
+                    json!({ "server": self.addr(), "key_file": key, "secret": self.secret() }),
+                )
             }
-            ConnKind::Smb => ("smb_mount", json!({ "share": self.addr(), "user": user, "domain": self.domain, "secret": self.secret() })),
+            ConnKind::Smb => (
+                "smb_mount",
+                json!({ "share": self.addr(), "user": user, "domain": self.domain, "secret": self.secret() }),
+            ),
             ConnKind::Nfs => ("smb_mount", json!({ "share": self.addr() })),
-            ConnKind::WebDav => ("webdav_connect", json!({ "server": self.addr(), "user": user, "secret": self.secret() })),
+            ConnKind::WebDav => (
+                "webdav_connect",
+                json!({ "server": self.addr(), "user": user, "secret": self.secret() }),
+            ),
             ConnKind::Ftp => {
                 let port = self.port.map(|p| format!(":{p}")).unwrap_or_default();
                 (
@@ -221,7 +260,12 @@ impl Conn {
 
     /// What's wrong with it before trying to connect, if anything.
     pub(super) fn problem(&self) -> Option<&'static str> {
-        if self.host.trim().is_empty() || self.host.contains(|c: char| c.is_whitespace() || "/\\@".contains(c)) || self.host.starts_with('-') {
+        if self.host.trim().is_empty()
+            || self
+                .host
+                .contains(|c: char| c.is_whitespace() || "/\\@".contains(c))
+            || self.host.starts_with('-')
+        {
             return Some("Enter the server's name or address, without a user or folder.");
         }
         if self.kind == ConnKind::Smb && self.share.trim().is_empty() {
@@ -236,7 +280,8 @@ impl Conn {
         if self.kind == ConnKind::S3 && self.user.trim().is_empty() {
             return Some("Enter the access key ID.");
         }
-        if self.auth == Auth::Password && self.user.trim().is_empty() && self.kind != ConnKind::Sftp {
+        if self.auth == Auth::Password && self.user.trim().is_empty() && self.kind != ConnKind::Sftp
+        {
             return Some("Enter the user name to log in with.");
         }
         if self.auth == Auth::Key && self.key_file.trim().is_empty() {
@@ -248,7 +293,11 @@ impl Conn {
     /// A connection from an address kept by an older version: "http://pc:8080", "me@box:2222"
     /// or "smb://me@nas/Photos".
     fn from_old(kind: ConnKind, addr: &str, id: String) -> Option<Conn> {
-        let t = addr.trim().trim_start_matches("http://").trim_start_matches("smb:").trim_start_matches('/');
+        let t = addr
+            .trim()
+            .trim_start_matches("http://")
+            .trim_start_matches("smb:")
+            .trim_start_matches('/');
         let (hostpart, share) = t.split_once('/').unwrap_or((t, ""));
         let (user, hostport) = match hostpart.rsplit_once('@') {
             Some((u, h)) => (u, h),
@@ -289,14 +338,24 @@ pub(super) fn split_address(text: &str) -> (String, String, Option<u16>, String)
         Some((h, p)) => (h, p.parse().ok()),
         None => (hostport, None),
     };
-    (user.to_string(), host.to_string(), port, share.split('/').next().unwrap_or_default().to_string())
+    (
+        user.to_string(),
+        host.to_string(),
+        port,
+        share.split('/').next().unwrap_or_default().to_string(),
+    )
 }
 
 /// The path after the server in a typed address ("https://cloud/remote.php/dav" → "remote.php/dav").
 pub(super) fn split_path(text: &str) -> String {
     let t = text.trim().replace('\\', "/");
-    let t = t.split_once("://").map_or(t.as_str(), |(_, rest)| rest).trim_start_matches('/');
-    t.split_once('/').map(|(_, path)| path.trim_matches('/').to_string()).unwrap_or_default()
+    let t = t
+        .split_once("://")
+        .map_or(t.as_str(), |(_, rest)| rest)
+        .trim_start_matches('/');
+    t.split_once('/')
+        .map(|(_, path)| path.trim_matches('/').to_string())
+        .unwrap_or_default()
 }
 
 /// The type an address typed in the box at the top of the list suggests, and whether it says
@@ -317,14 +376,19 @@ pub(super) fn kind_and_tls(text: &str) -> (ConnKind, bool) {
     if scheme.is_empty() && t.contains(":/") {
         return (ConnKind::Nfs, false);
     }
-    let kind =
-        if t.starts_with("smb:") || t.starts_with("\\\\") || (t.contains('/') && !t.starts_with("sftp:") && !t.starts_with("ssh:") && !t.starts_with("http")) {
-            ConnKind::Smb
-        } else if t.starts_with("http") {
-            ConnKind::Everything
-        } else {
-            ConnKind::Sftp
-        };
+    let kind = if t.starts_with("smb:")
+        || t.starts_with("\\\\")
+        || (t.contains('/')
+            && !t.starts_with("sftp:")
+            && !t.starts_with("ssh:")
+            && !t.starts_with("http"))
+    {
+        ConnKind::Smb
+    } else if t.starts_with("http") {
+        ConnKind::Everything
+    } else {
+        ConnKind::Sftp
+    };
     (kind, false)
 }
 
@@ -333,11 +397,19 @@ pub(super) fn stored_conns() -> Vec<Conn> {
     if let Some(list) = stored(CONNS_KEY).and_then(|s| serde_json::from_str(&s).ok()) {
         return list;
     }
-    let old = |key: &str| stored(key).and_then(|s| serde_json::from_str::<Vec<String>>(&s).ok()).unwrap_or_default();
+    let old = |key: &str| {
+        stored(key)
+            .and_then(|s| serde_json::from_str::<Vec<String>>(&s).ok())
+            .unwrap_or_default()
+    };
     let now = js_sys::Date::now() as u64;
     let mut n = 0;
     let mut list = vec![];
-    for (kind, key) in [(ConnKind::Everything, EVERYTHING_KEY), (ConnKind::Sftp, SFTP_KEY), (ConnKind::Smb, SMB_KEY)] {
+    for (kind, key) in [
+        (ConnKind::Everything, EVERYTHING_KEY),
+        (ConnKind::Sftp, SFTP_KEY),
+        (ConnKind::Smb, SMB_KEY),
+    ] {
         for a in old(key) {
             n += 1;
             list.extend(Conn::from_old(kind, &a, format!("c{now}-{n}")));
@@ -358,19 +430,25 @@ fn usb_addr(info: &Info) -> Option<&str> {
 
 impl Ctx {
     pub(super) fn conns_of(self, kind: ConnKind) -> Vec<Conn> {
-        self.conns.with(|cs| cs.iter().filter(|c| c.kind == kind).cloned().collect())
+        self.conns
+            .with(|cs| cs.iter().filter(|c| c.kind == kind).cloned().collect())
     }
 
     /// The device a connection (an Everything or SFTP server) is connected as, when it is.
     pub(super) fn conn_src(self, c: &Conn) -> Option<Src> {
         let (kind, addr) = (c.kind.key(), c.addr());
-        self.phones.with(|ps| ps.iter().find(|i| i.transport == kind && usb_addr(i) == Some(addr.as_str())).map(|i| Src::of(&i.id)))
+        self.phones.with(|ps| {
+            ps.iter()
+                .find(|i| i.transport == kind && usb_addr(i) == Some(addr.as_str()))
+                .map(|i| Src::of(&i.id))
+        })
     }
 
     /// Where an SMB share or NFS export is mounted, when it is.
     pub(super) fn smb_path(self, c: &Conn) -> Option<String> {
         let addr = c.addr();
-        self.smb_mounts.with(|m| m.iter().find(|m| m.share == addr).map(|m| m.path.clone()))
+        self.smb_mounts
+            .with(|m| m.iter().find(|m| m.share == addr).map(|m| m.path.clone()))
     }
 
     /// Whether it's connected (or mounted).
@@ -384,12 +462,18 @@ impl Ctx {
     /// The network shares mounted, in the app or not, that aren't in the list.
     pub(super) fn other_mounts(self) -> Vec<SmbMount> {
         let known: Vec<String> = self.mounted_conns().iter().map(Conn::addr).collect();
-        self.smb_mounts.with(|m| m.iter().filter(|m| !known.contains(&m.share)).cloned().collect())
+        self.smb_mounts.with(|m| {
+            m.iter()
+                .filter(|m| !known.contains(&m.share))
+                .cloned()
+                .collect()
+        })
     }
 
     /// The SMB shares and NFS exports in the list.
     pub(super) fn mounted_conns(self) -> Vec<Conn> {
-        self.conns.with(|cs| cs.iter().filter(|c| c.kind.mounted()).cloned().collect())
+        self.conns
+            .with(|cs| cs.iter().filter(|c| c.kind.mounted()).cloned().collect())
     }
 
     fn set_conns(self, list: Vec<Conn>) {
@@ -415,8 +499,13 @@ impl Ctx {
         c.host = c.host.trim().to_string();
         c.user = c.user.trim().to_string();
         c.share = c.share.trim().trim_matches('/').to_string();
-        let old = self.conns.with_untracked(|cs| cs.iter().find(|x| x.id == c.id).cloned());
-        if self.conns.with_untracked(|cs| cs.iter().any(|x| x.id != c.id && x.kind == c.kind && x.addr() == c.addr())) {
+        let old = self
+            .conns
+            .with_untracked(|cs| cs.iter().find(|x| x.id == c.id).cloned());
+        if self.conns.with_untracked(|cs| {
+            cs.iter()
+                .any(|x| x.id != c.id && x.kind == c.kind && x.addr() == c.addr())
+        }) {
             return Err("That connection is already in the list.".into());
         }
         // The password: a new one saved, or the saved one forgotten when it's no longer used.
@@ -434,8 +523,18 @@ impl Ctx {
             }
         }
         self.set_conns(match old {
-            Some(_) => self.conns.get_untracked().into_iter().map(|x| if x.id == c.id { c.clone() } else { x }).collect(),
-            None => self.conns.get_untracked().into_iter().chain([c.clone()]).collect(),
+            Some(_) => self
+                .conns
+                .get_untracked()
+                .into_iter()
+                .map(|x| if x.id == c.id { c.clone() } else { x })
+                .collect(),
+            None => self
+                .conns
+                .get_untracked()
+                .into_iter()
+                .chain([c.clone()])
+                .collect(),
         });
         self.connect_conn(c, true).await
     }
@@ -458,7 +557,10 @@ impl Ctx {
             match call::<Info>(cmd, args).await {
                 Ok(info) => {
                     // Taken out of the list while connecting.
-                    if !self.conns.with_untracked(|cs| cs.iter().any(|x| x.id == c.id)) {
+                    if !self
+                        .conns
+                        .with_untracked(|cs| cs.iter().any(|x| x.id == c.id))
+                    {
                         let _ = call::<()>("disconnect", json!({ "src": info.id })).await;
                         return Ok(());
                     }
@@ -477,8 +579,19 @@ impl Ctx {
     /// Takes connection `id` out of the list: disconnects it and forgets its password. A
     /// mounted SMB share stays mounted until it's ejected.
     pub(super) fn remove_conn(self, id: &str) {
-        let Some(c) = self.conns.with_untracked(|cs| cs.iter().find(|x| x.id == id).cloned()) else { return };
-        self.set_conns(self.conns.get_untracked().into_iter().filter(|x| x.id != id).collect());
+        let Some(c) = self
+            .conns
+            .with_untracked(|cs| cs.iter().find(|x| x.id == id).cloned())
+        else {
+            return;
+        };
+        self.set_conns(
+            self.conns
+                .get_untracked()
+                .into_iter()
+                .filter(|x| x.id != id)
+                .collect(),
+        );
         self.conn_error(id, None);
         if let Some(src) = self.conn_src(&c) {
             self.disconnect(src);
@@ -493,7 +606,11 @@ impl Ctx {
 
     /// Takes the server connected as `src` out of the list.
     pub(super) fn remove_conn_of(self, src: Src) {
-        let id = self.conns.with_untracked(|cs| cs.iter().find(|c| self.conn_src(c) == Some(src)).map(|c| c.id.clone()));
+        let id = self.conns.with_untracked(|cs| {
+            cs.iter()
+                .find(|c| self.conn_src(c) == Some(src))
+                .map(|c| c.id.clone())
+        });
         match id {
             Some(id) => self.remove_conn(&id),
             None => self.disconnect(src),
@@ -503,7 +620,8 @@ impl Ctx {
     /// Unmounts the SMB share mounted at `path`. Panes showing it go back to the home folder first.
     pub(super) fn unmount_smb(self, path: String, name: String) {
         if self.running() {
-            self.act().error("Wait for the copy to finish before disconnecting.");
+            self.act()
+                .error("Wait for the copy to finish before disconnecting.");
             return;
         }
         for p in self.panes {
@@ -550,12 +668,19 @@ impl Ctx {
     /// Looks again at an Everything server's drives.
     fn refresh_drives(self, src: Src) {
         spawn_local(async move {
-            if call::<()>("refresh", json!({ "src": src.key() })).await.is_err() {
+            if call::<()>("refresh", json!({ "src": src.key() }))
+                .await
+                .is_err()
+            {
                 return;
             }
-            if let Ok(Some(info)) = call::<Option<Info>>("info", json!({ "src": src.key() })).await {
+            if let Ok(Some(info)) = call::<Option<Info>>("info", json!({ "src": src.key() })).await
+            {
                 // Only when the drives changed, so the sidebar isn't drawn again for nothing.
-                let changed = self.phones.with_untracked(|ps| ps.iter().any(|i| i.id == info.id && i.quick_dirs != info.quick_dirs));
+                let changed = self.phones.with_untracked(|ps| {
+                    ps.iter()
+                        .any(|i| i.id == info.id && i.quick_dirs != info.quick_dirs)
+                });
                 if changed {
                     self.phones.update(|ps| {
                         if let Some(i) = ps.iter_mut().find(|i| i.id == info.id) {
@@ -574,58 +699,118 @@ mod tests {
 
     fn conn(kind: ConnKind, host: &str, user: &str, port: Option<u16>, share: &str) -> Conn {
         let mut c = Conn::with_id(kind, "c1".into());
-        (c.id, c.host, c.port, c.user, c.share) = ("c1".into(), host.into(), port, user.into(), share.into());
+        (c.id, c.host, c.port, c.user, c.share) =
+            ("c1".into(), host.into(), port, user.into(), share.into());
         c
     }
 
     #[test]
     fn addresses() {
-        assert_eq!(conn(ConnKind::Everything, "pc", "", Some(8080), "").addr(), "http://pc:8080");
-        assert_eq!(conn(ConnKind::Sftp, "box", "me", Some(2222), "").addr(), "me@box:2222");
+        assert_eq!(
+            conn(ConnKind::Everything, "pc", "", Some(8080), "").addr(),
+            "http://pc:8080"
+        );
+        assert_eq!(
+            conn(ConnKind::Sftp, "box", "me", Some(2222), "").addr(),
+            "me@box:2222"
+        );
         assert_eq!(conn(ConnKind::Sftp, "box", "", None, "").addr(), "box");
-        assert_eq!(conn(ConnKind::Smb, "nas", "me", None, "Photos").addr(), "smb://me@nas/Photos");
+        assert_eq!(
+            conn(ConnKind::Smb, "nas", "me", None, "Photos").addr(),
+            "smb://me@nas/Photos"
+        );
         let mut c = conn(ConnKind::Smb, "nas", "me", None, "Photos");
         c.auth = Auth::Password;
         assert_eq!(c.addr(), "smb://nas/Photos");
         assert_eq!(c.name(), "me@nas/Photos");
         assert!(c.matches("NAS") && c.matches("me") && c.matches("photo") && !c.matches("box"));
-        assert!(conn(ConnKind::Sftp, "me@box", "", None, "").problem().is_some());
+        assert!(conn(ConnKind::Sftp, "me@box", "", None, "")
+            .problem()
+            .is_some());
         assert!(conn(ConnKind::Smb, "nas", "", None, "").problem().is_some());
-        assert_eq!(conn(ConnKind::WebDav, "cloud", "me", None, "remote.php/dav/files/me").addr(), "https://cloud/remote.php/dav/files/me");
-        assert_eq!(conn(ConnKind::WebDav, "nas", "", Some(5005), "").addr(), "https://nas:5005");
+        assert_eq!(
+            conn(
+                ConnKind::WebDav,
+                "cloud",
+                "me",
+                None,
+                "remote.php/dav/files/me"
+            )
+            .addr(),
+            "https://cloud/remote.php/dav/files/me"
+        );
+        assert_eq!(
+            conn(ConnKind::WebDav, "nas", "", Some(5005), "").addr(),
+            "https://nas:5005"
+        );
         let mut f = conn(ConnKind::Ftp, "ftp.host", "me", Some(2121), "");
         assert_eq!(f.addr(), "ftp.host:2121");
         f.auth = Auth::Password;
         assert_eq!(f.addr(), "me@ftp.host:2121");
-        let s3 = conn(ConnKind::S3, "s3.us-east-1.amazonaws.com", "AKIA", None, "photos");
+        let s3 = conn(
+            ConnKind::S3,
+            "s3.us-east-1.amazonaws.com",
+            "AKIA",
+            None,
+            "photos",
+        );
         assert_eq!(
             (s3.auth, s3.addr(), s3.name()),
-            (Auth::Password, "https://s3.us-east-1.amazonaws.com/photos".to_string(), "s3.us-east-1.amazonaws.com/photos".to_string())
+            (
+                Auth::Password,
+                "https://s3.us-east-1.amazonaws.com/photos".to_string(),
+                "s3.us-east-1.amazonaws.com/photos".to_string()
+            )
         );
-        assert!(conn(ConnKind::S3, "s3", "AKIA", None, "").problem().is_some());
+        assert!(conn(ConnKind::S3, "s3", "AKIA", None, "")
+            .problem()
+            .is_some());
         assert!(conn(ConnKind::S3, "s3", "", None, "b").problem().is_some());
     }
 
     #[test]
     fn typed_addresses() {
-        assert_eq!(split_address("me@box:2222"), ("me".into(), "box".into(), Some(2222), String::new()));
-        assert_eq!(split_address(r"\\nas\Photos"), (String::new(), "nas".into(), None, "Photos".into()));
-        assert_eq!(split_address("smb://me@nas/Photos/x"), ("me".into(), "nas".into(), None, "Photos".into()));
+        assert_eq!(
+            split_address("me@box:2222"),
+            ("me".into(), "box".into(), Some(2222), String::new())
+        );
+        assert_eq!(
+            split_address(r"\\nas\Photos"),
+            (String::new(), "nas".into(), None, "Photos".into())
+        );
+        assert_eq!(
+            split_address("smb://me@nas/Photos/x"),
+            ("me".into(), "nas".into(), None, "Photos".into())
+        );
         assert_eq!(kind_and_tls(r"\\nas\Photos").0, ConnKind::Smb);
         assert_eq!(kind_and_tls("nfs://nas/export").0, ConnKind::Nfs);
         assert_eq!(kind_and_tls("nas:/export/photos").0, ConnKind::Nfs);
         assert_eq!(kind_and_tls("me@box:2222").0, ConnKind::Sftp);
         let nfs = conn(ConnKind::Nfs, "nas", "", None, "export/photos");
-        assert_eq!((nfs.addr().as_str(), nfs.name().as_str()), ("nfs://nas/export/photos", "nas:/export/photos"));
-        assert!(conn(ConnKind::Nfs, "nas", "", None, "/").problem().is_some());
+        assert_eq!(
+            (nfs.addr().as_str(), nfs.name().as_str()),
+            ("nfs://nas/export/photos", "nas:/export/photos")
+        );
+        assert!(conn(ConnKind::Nfs, "nas", "", None, "/")
+            .problem()
+            .is_some());
         assert_eq!(kind_and_tls("http://pc:8080").0, ConnKind::Everything);
         assert_eq!(kind_and_tls("me@box").0, ConnKind::Sftp);
         assert_eq!(kind_and_tls("ftps://me@host"), (ConnKind::Ftp, true));
-        assert_eq!(kind_and_tls("https://cloud/remote.php/dav/"), (ConnKind::WebDav, true));
-        assert_eq!(split_path("https://cloud/remote.php/dav/"), "remote.php/dav");
+        assert_eq!(
+            kind_and_tls("https://cloud/remote.php/dav/"),
+            (ConnKind::WebDav, true)
+        );
+        assert_eq!(
+            split_path("https://cloud/remote.php/dav/"),
+            "remote.php/dav"
+        );
         assert_eq!(split_path("nas"), "");
         let old = Conn::from_old(ConnKind::Sftp, "me@box:2222", "c1".into()).unwrap();
-        assert_eq!((old.user.as_str(), old.host.as_str(), old.port), ("me", "box", Some(2222)));
+        assert_eq!(
+            (old.user.as_str(), old.host.as_str(), old.port),
+            ("me", "box", Some(2222))
+        );
         let old = Conn::from_old(ConnKind::Smb, "smb://nas/Photos", "c2".into()).unwrap();
         assert_eq!((old.host.as_str(), old.share.as_str()), ("nas", "Photos"));
         let old = Conn::from_old(ConnKind::Everything, "http://pc:8080", "c3".into()).unwrap();

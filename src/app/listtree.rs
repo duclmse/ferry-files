@@ -5,11 +5,16 @@ use super::*;
 impl Pane {
     /// Whether the list shows as a tree now (tracked): in the list view, and not for search results.
     pub(super) fn tree_on(self) -> bool {
-        self.list_tree.get() && self.view.get() == ViewMode::List && self.found.with(Option::is_none)
+        self.list_tree.get()
+            && self.view.get() == ViewMode::List
+            && self.found.with(Option::is_none)
     }
 
     pub(super) fn set_list_tree(self, on: bool) {
-        store(&format!("ferry-files.list-tree.{}", self.id), if on { "1" } else { "0" });
+        store(
+            &format!("ferry-files.list-tree.{}", self.id),
+            if on { "1" } else { "0" },
+        );
         if !on {
             self.kids.set(HashMap::new());
         }
@@ -18,7 +23,12 @@ impl Pane {
 
     /// The list's rows (tracked) with their depth: each item, and an open folder's items under it.
     pub(super) fn tree_rows(self) -> Vec<(Entry, usize)> {
-        fn add(out: &mut Vec<(Entry, usize)>, es: &[Entry], kids: &HashMap<String, Option<Vec<Entry>>>, depth: usize) {
+        fn add(
+            out: &mut Vec<(Entry, usize)>,
+            es: &[Entry],
+            kids: &HashMap<String, Option<Vec<Entry>>>,
+            depth: usize,
+        ) {
             for e in es {
                 out.push((e.clone(), depth));
                 if let Some(Some(k)) = e.dir.then(|| kids.get(&e.path)).flatten() {
@@ -37,7 +47,13 @@ impl Pane {
 
     /// The items in the order they're shown (untracked), open folders' items included.
     pub(super) fn shown_rows(self) -> Vec<Entry> {
-        untrack(|| if self.tree_on() { self.tree_rows().into_iter().map(|(e, _)| e).collect() } else { self.entries.get() })
+        untrack(|| {
+            if self.tree_on() {
+                self.tree_rows().into_iter().map(|(e, _)| e).collect()
+            } else {
+                self.entries.get()
+            }
+        })
     }
 
     /// Whether folder `path` is open in the tree (tracked).
@@ -57,11 +73,16 @@ impl Ctx {
             return self.load_kids(p, path, false);
         }
         let under = format!("{}/", path.trim_end_matches('/'));
-        p.kids.update(|k| k.retain(|x, _| *x != path && !x.starts_with(&under)));
-        if p.marked.with_untracked(|m| m.iter().any(|x| x.starts_with(&under))) {
+        p.kids
+            .update(|k| k.retain(|x, _| *x != path && !x.starts_with(&under)));
+        if p.marked
+            .with_untracked(|m| m.iter().any(|x| x.starts_with(&under)))
+        {
             p.marked.update(|m| m.retain(|x| !x.starts_with(&under)));
         }
-        if p.selected.with_untracked(|s| s.as_ref().is_some_and(|s| s.starts_with(&under))) {
+        if p.selected
+            .with_untracked(|s| s.as_ref().is_some_and(|s| s.starts_with(&under)))
+        {
             p.selected.set(Some(path));
         }
     }
@@ -70,7 +91,11 @@ impl Ctx {
     fn load_kids(self, p: Pane, path: String, quiet: bool) {
         let src = p.src.get_untracked();
         spawn_local(async move {
-            let got = call::<Vec<Entry>>("list", json!({ "src": src.key(), "path": path, "current": false })).await;
+            let got = call::<Vec<Entry>>(
+                "list",
+                json!({ "src": src.key(), "path": path, "current": false }),
+            )
+            .await;
             // Closed, or the pane went elsewhere, meanwhile.
             if p.src.get_untracked() != src || !p.kids.with_untracked(|k| k.contains_key(&path)) {
                 return;
@@ -97,7 +122,10 @@ impl Ctx {
 
     /// Lists the open folders again.
     pub(super) fn reload_kids(self, p: Pane) {
-        for path in p.kids.with_untracked(|k| k.keys().cloned().collect::<Vec<_>>()) {
+        for path in p
+            .kids
+            .with_untracked(|k| k.keys().cloned().collect::<Vec<_>>())
+        {
             self.load_kids(p, path, true);
         }
     }
@@ -118,7 +146,11 @@ impl Ctx {
         if right && at.dir {
             if !open {
                 self.toggle_kids(p, at.path.clone());
-            } else if let Some(next) = rows.iter().position(|e| e.path == at.path).and_then(|i| rows.get(i + 1)) {
+            } else if let Some(next) = rows
+                .iter()
+                .position(|e| e.path == at.path)
+                .and_then(|i| rows.get(i + 1))
+            {
                 if parent(&next.path) == at.path {
                     p.select_only(Some(next.path.clone()));
                 }

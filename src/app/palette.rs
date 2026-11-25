@@ -10,7 +10,9 @@ const RECENT_KEY: &str = "ferry-files.recent";
 const RECENT_MAX: usize = 20;
 
 fn recent() -> Vec<Fav> {
-    stored(RECENT_KEY).and_then(|s| serde_json::from_str(&s).ok()).unwrap_or_default()
+    stored(RECENT_KEY)
+        .and_then(|s| serde_json::from_str(&s).ok())
+        .unwrap_or_default()
 }
 
 impl Ctx {
@@ -23,9 +25,19 @@ impl Ctx {
         let mut list = recent();
         list.retain(|f| !(f.place == place && f.path == path));
         let label = self.src_info(src).map_or_else(String::new, |i| i.label);
-        list.insert(0, Fav { place, label, path: path.to_string() });
+        list.insert(
+            0,
+            Fav {
+                place,
+                label,
+                path: path.to_string(),
+            },
+        );
         list.truncate(RECENT_MAX);
-        store(RECENT_KEY, &serde_json::to_string(&list).unwrap_or_default());
+        store(
+            RECENT_KEY,
+            &serde_json::to_string(&list).unwrap_or_default(),
+        );
     }
 }
 
@@ -82,14 +94,31 @@ fn lower(s: &str) -> Vec<char> {
 
 /// A menu's items as choices: the enabled ones, with ✓ marks turned into words, and those of its
 /// submenus after the submenu's name ("Sort by: Size").
-fn from_menu(group: &'static str, items: Vec<MenuItem>, entry: Option<&Entry>, out: &mut Vec<Choice>) {
+fn from_menu(
+    group: &'static str,
+    items: Vec<MenuItem>,
+    entry: Option<&Entry>,
+    out: &mut Vec<Choice>,
+) {
     from_menu_in(group, "", items, entry, out)
 }
 
-fn from_menu_in(group: &'static str, under: &str, items: Vec<MenuItem>, entry: Option<&Entry>, out: &mut Vec<Choice>) {
+fn from_menu_in(
+    group: &'static str,
+    under: &str,
+    items: Vec<MenuItem>,
+    entry: Option<&Entry>,
+    out: &mut Vec<Choice>,
+) {
     for it in items {
         let (label, key, act) = match it {
-            MenuItem::Do { label, key, act, enabled: true, .. } => (label, key, act),
+            MenuItem::Do {
+                label,
+                key,
+                act,
+                enabled: true,
+                ..
+            } => (label, key, act),
             MenuItem::Sub { label, items } => {
                 from_menu_in(group, &label, items, entry, out);
                 continue;
@@ -103,7 +132,10 @@ fn from_menu_in(group: &'static str, under: &str, items: Vec<MenuItem>, entry: O
         let label = match act {
             Act::View(_) if checked => continue,
             Act::View(_) => format!("View {bare}"),
-            Act::Column(_) => format!("{} the {bare} column", if checked { "Hide" } else { "Show" }),
+            Act::Column(_) => format!(
+                "{} the {bare} column",
+                if checked { "Hide" } else { "Show" }
+            ),
             Act::Go(_) => continue,
             // In a submenu, what's ticked is already so.
             _ if checked && !under.is_empty() => continue,
@@ -113,7 +145,12 @@ fn from_menu_in(group: &'static str, under: &str, items: Vec<MenuItem>, entry: O
         if out.iter().any(|c| c.label == label) {
             continue;
         }
-        out.push(Choice { group, label, key, cmd: Cmd::Act(act, entry.cloned()) });
+        out.push(Choice {
+            group,
+            label,
+            key,
+            cmd: Cmd::Act(act, entry.cloned()),
+        });
     }
 }
 
@@ -136,7 +173,16 @@ impl Ctx {
         from_menu("Here", self.menu_items(p, None), None, &mut out);
         // The views, which the menu leaves to the buttons above the files.
         let now = p.view.get_untracked();
-        from_menu("Here", ViewMode::ALL.into_iter().filter(|m| *m != now).map(|m| item(m.label(), "", Act::View(m))).collect(), None, &mut out);
+        from_menu(
+            "Here",
+            ViewMode::ALL
+                .into_iter()
+                .filter(|m| *m != now)
+                .map(|m| item(m.label(), "", Act::View(m)))
+                .collect(),
+            None,
+            &mut out,
+        );
         let app: [AppCmd; 8] = [
             ("Settings", "", |c| c.settings.set(true)),
             ("Keyboard shortcuts", "help", |c| c.show_shortcuts()),
@@ -147,28 +193,61 @@ impl Ctx {
             ("Go up a folder", "up", |c| c.go_up(c.act())),
             ("Terminal", "terminal", |c| c.toggle_terminal(c.act())),
         ];
-        out.extend(app.into_iter().map(|(label, key, f)| Choice { group: "App", label: label.into(), key, cmd: Cmd::Do(f) }));
+        out.extend(app.into_iter().map(|(label, key, f)| Choice {
+            group: "App",
+            label: label.into(),
+            key,
+            cmd: Cmd::Do(f),
+        }));
         let here = (p.src.get_untracked(), p.cwd.get_untracked());
         let mut seen: HashSet<(Src, String)> = HashSet::from([here]);
-        let mut go = |out: &mut Vec<Choice>, group: &'static str, src: Src, path: String, label: String| {
-            if seen.insert((src, path.clone())) {
-                out.push(Choice { group, label, key: "", cmd: Cmd::Go(src, path) });
-            }
+        let mut go =
+            |out: &mut Vec<Choice>, group: &'static str, src: Src, path: String, label: String| {
+                if seen.insert((src, path.clone())) {
+                    out.push(Choice {
+                        group,
+                        label,
+                        key: "",
+                        cmd: Cmd::Go(src, path),
+                    });
+                }
+            };
+        let at = |src: Src, path: &str| {
+            format!(
+                "{} on {}",
+                if path == "/" {
+                    "All storage".to_string()
+                } else {
+                    base(path)
+                },
+                self.place(src)
+            )
         };
-        let at = |src: Src, path: &str| format!("{} on {}", if path == "/" { "All storage".to_string() } else { base(path) }, self.place(src));
         for f in self.favs.get_untracked() {
             if let Some(src) = self.fav_src(&f) {
                 go(&mut out, "Favourite", src, f.path.clone(), at(src, &f.path));
             }
         }
         if let Some(mac) = self.mac.get_untracked() {
-            go(&mut out, "Device", Src::Mac, mac.default_dir.clone(), at(Src::Mac, &mac.default_dir));
+            go(
+                &mut out,
+                "Device",
+                Src::Mac,
+                mac.default_dir.clone(),
+                at(Src::Mac, &mac.default_dir),
+            );
         }
         for i in self.phones.get_untracked() {
             let src = Src::of(&i.id);
             go(&mut out, "Device", src, "/".into(), at(src, "/"));
             for (name, path) in i.quick_dirs {
-                go(&mut out, "Device", src, path, format!("{name} on {}", i.label));
+                go(
+                    &mut out,
+                    "Device",
+                    src,
+                    path,
+                    format!("{name} on {}", i.label),
+                );
             }
         }
         for f in recent() {
@@ -179,11 +258,27 @@ impl Ctx {
         }
         for w in self.workspaces.get_untracked() {
             let label = format!("Open workspace {}", w.name);
-            out.push(Choice { group: "Workspace", label, key: "", cmd: Cmd::Workspace(w) });
+            out.push(Choice {
+                group: "Workspace",
+                label,
+                key: "",
+                cmd: Cmd::Workspace(w),
+            });
         }
         for pair in self.sync_pairs.get_untracked() {
-            let label = format!("Sync {} on {} → {} on {}", base(&pair.from_dir), self.side_name(&pair.from), base(&pair.to_dir), self.side_name(&pair.to));
-            out.push(Choice { group: "Sync pair", label, key: "", cmd: Cmd::Pair(pair) });
+            let label = format!(
+                "Sync {} on {} → {} on {}",
+                base(&pair.from_dir),
+                self.side_name(&pair.from),
+                base(&pair.to_dir),
+                self.side_name(&pair.to)
+            );
+            out.push(Choice {
+                group: "Sync pair",
+                label,
+                key: "",
+                cmd: Cmd::Pair(pair),
+            });
         }
         out
     }
@@ -208,7 +303,11 @@ pub(super) fn Palette() -> impl IntoView {
     let ctx = expect_context::<Ctx>();
     let choices = StoredValue::new(ctx.choices());
     // What typing is matched against, per choice: the label, and the group with the label.
-    let hay = StoredValue::new(choices.with_value(|cs| cs.iter().map(|c| (lower(&c.label), lower(&format!("{} {}", c.group, c.label)))).collect::<Vec<_>>()));
+    let hay = StoredValue::new(choices.with_value(|cs| {
+        cs.iter()
+            .map(|c| (lower(&c.label), lower(&format!("{} {}", c.group, c.label))))
+            .collect::<Vec<_>>()
+    }));
     let query = RwSignal::new(String::new());
     let at = RwSignal::new(0usize);
     // After `:`, what fsd found for the text (or why it couldn't look), and the text asked last.
@@ -239,7 +338,11 @@ pub(super) fn Palette() -> impl IntoView {
             Some(rest) => (true, rest),
             None => (false, q),
         };
-        let q: Vec<char> = q.to_lowercase().chars().filter(|c| !c.is_whitespace()).collect();
+        let q: Vec<char> = q
+            .to_lowercase()
+            .chars()
+            .filter(|c| !c.is_whitespace())
+            .collect();
         choices.with_value(|cs| {
             hay.with_value(|hs| {
                 let act = |i: usize| !only_acts || matches!(cs[i].cmd, Cmd::Act(..) | Cmd::Do(_));
@@ -251,11 +354,15 @@ pub(super) fn Palette() -> impl IntoView {
                         if q.is_empty() {
                             return Some((0, i));
                         }
-                        score(&q, own).max(score(&q, with_group).map(|s| s - 2)).map(|s| (s, i))
+                        score(&q, own)
+                            .max(score(&q, with_group).map(|s| s - 2))
+                            .map(|s| (s, i))
                     })
                     .collect();
                 hits.sort_by_key(|&(s, i)| (std::cmp::Reverse(s), i));
-                hits.into_iter().map(|(_, i)| cs[i].clone()).collect::<Vec<_>>()
+                hits.into_iter()
+                    .map(|(_, i)| cs[i].clone())
+                    .collect::<Vec<_>>()
             })
         })
     });
@@ -263,7 +370,13 @@ pub(super) fn Palette() -> impl IntoView {
     let timer = StoredValue::new_local(None::<TimeoutHandle>);
     Effect::new(move |_| {
         let q = query.get();
-        let Some(text) = q.trim_start().strip_prefix(':').map(|t| t.trim().to_string()) else { return };
+        let Some(text) = q
+            .trim_start()
+            .strip_prefix(':')
+            .map(|t| t.trim().to_string())
+        else {
+            return;
+        };
         if let Some(t) = timer.try_update_value(Option::take).flatten() {
             t.clear();
         }
@@ -298,7 +411,11 @@ pub(super) fn Palette() -> impl IntoView {
     let run = move |c: Choice| ctx.run_choice(c);
     let reveal = move || {
         request_animation_frame(|| {
-            if let Some(el) = document().query_selector(".palette .choice.on").ok().flatten() {
+            if let Some(el) = document()
+                .query_selector(".palette .choice.on")
+                .ok()
+                .flatten()
+            {
                 el.scroll_into_view_with_bool(false);
             }
         });
@@ -322,7 +439,10 @@ pub(super) fn Palette() -> impl IntoView {
                     run(c);
                 }
             }
-            _ if chord_of(&e).and_then(|c| ctx.command_for(&c)).is_some_and(|c| c.id == "palette") => {
+            _ if chord_of(&e)
+                .and_then(|c| ctx.command_for(&c))
+                .is_some_and(|c| c.id == "palette") =>
+            {
                 e.prevent_default();
                 // Not on to the window, which would open it again.
                 e.stop_propagation();

@@ -5,7 +5,8 @@ use super::*;
 /// Where a menu of `rows` rows opens for a click at `ev`, kept whole on screen.
 pub(super) fn menu_at(ev: &web_sys::MouseEvent, w: f64, rows: usize) -> (f64, f64) {
     let h = rows as f64 * 28.0 + 12.0;
-    let size = |v: Result<wasm_bindgen::JsValue, _>| v.ok().and_then(|v| v.as_f64()).unwrap_or(800.0);
+    let size =
+        |v: Result<wasm_bindgen::JsValue, _>| v.ok().and_then(|v| v.as_f64()).unwrap_or(800.0);
     let (vw, vh) = (size(window().inner_width()), size(window().inner_height()));
     let x = (ev.client_x() as f64).min(vw - w - 4.0).max(4.0);
     let y = (ev.client_y() as f64).min(vh - h - 4.0).max(4.0);
@@ -23,7 +24,17 @@ impl Ctx {
             }
         }
         let (x, y) = menu_at(ev, 240.0, self.menu_items(p, entry.as_ref()).len());
-        self.menu.set(Some(Menu { x, y, pane: p.id, entry, columns: false, folders: vec![], place: None, sections: false, tree: false }));
+        self.menu.set(Some(Menu {
+            x,
+            y,
+            pane: p.id,
+            entry,
+            columns: false,
+            folders: vec![],
+            place: None,
+            sections: false,
+            tree: false,
+        }));
     }
 
     /// The list's columns to show or hide, from a right-click on its header.
@@ -32,7 +43,17 @@ impl Ctx {
         ev.stop_propagation();
         self.active.set(p.id);
         let (x, y) = menu_at(ev, 220.0, self.column_items(p).len());
-        self.menu.set(Some(Menu { x, y, pane: p.id, entry: None, columns: true, folders: vec![], place: None, sections: false, tree: false }));
+        self.menu.set(Some(Menu {
+            x,
+            y,
+            pane: p.id,
+            entry: None,
+            columns: true,
+            folders: vec![],
+            place: None,
+            sections: false,
+            tree: false,
+        }));
     }
 
     /// A folder in the sidebar: open it here or in a new tab, or (un)favourite it.
@@ -41,48 +62,124 @@ impl Ctx {
         ev.stop_propagation();
         let p = self.act();
         let (x, y) = menu_at(ev, 220.0, self.place_items(src, &path).len());
-        self.menu.set(Some(Menu { x, y, pane: p.id, entry: None, columns: false, folders: vec![], place: Some((src, path)), sections: false, tree: false }));
+        self.menu.set(Some(Menu {
+            x,
+            y,
+            pane: p.id,
+            entry: None,
+            columns: false,
+            folders: vec![],
+            place: Some((src, path)),
+            sections: false,
+            tree: false,
+        }));
     }
 
     /// A sidebar folder's menu: ways to open it, what can go in it, where else to see it, its
     /// path, Favourites, and Eject for a disk that can be taken out.
     pub(super) fn place_items(self, src: Src, path: &str) -> Vec<MenuItem> {
-        let fav = if self.is_fav(src, path) { "Remove from Favourites" } else { "Add to Favourites" };
+        let fav = if self.is_fav(src, path) {
+            "Remove from Favourites"
+        } else {
+            "Add to Favourites"
+        };
         // Nothing goes on an Everything server, nor at the top of an MTP device (its storages).
-        let writable = !self.read_only(src) && (path != "/" || self.src_info(src).is_some_and(|i| i.transport != "mtp"));
-        let mut v = vec![item("Open", "", Act::Open), item("Open in new tab", "", Act::NewTab)];
+        let writable = !self.read_only(src)
+            && (path != "/" || self.src_info(src).is_some_and(|i| i.transport != "mtp"));
+        let mut v = vec![
+            item("Open", "", Act::Open),
+            item("Open in new tab", "", Act::NewTab),
+        ];
         if self.split.get_untracked() {
             v.push(item("Open in the other pane", "", Act::OtherPane));
         }
         v.extend([
             MenuItem::Sep,
-            MenuItem::Do { label: self.paste_label(), key: "", act: Act::Paste, danger: false, enabled: writable && self.can_paste() },
-            MenuItem::Do { label: "New folder…".into(), key: "", act: Act::NewFolder, danger: false, enabled: writable },
-            MenuItem::Do { label: "New text file…".into(), key: "", act: Act::NewFile, danger: false, enabled: writable },
+            MenuItem::Do {
+                label: self.paste_label(),
+                key: "",
+                act: Act::Paste,
+                danger: false,
+                enabled: writable && self.can_paste(),
+            },
+            MenuItem::Do {
+                label: "New folder…".into(),
+                key: "",
+                act: Act::NewFolder,
+                danger: false,
+                enabled: writable,
+            },
+            MenuItem::Do {
+                label: "New text file…".into(),
+                key: "",
+                act: Act::NewFile,
+                danger: false,
+                enabled: writable,
+            },
             MenuItem::Sep,
         ]);
         if src == Src::Mac {
-            v.push(item(format!("Show in {}", crate::os::file_manager()), "", Act::Reveal));
+            v.push(item(
+                format!("Show in {}", crate::os::file_manager()),
+                "",
+                Act::Reveal,
+            ));
         }
         if self.has_shell(src) {
             v.push(item("Open in terminal", "", Act::Terminal));
         }
-        v.extend([item("Copy path", "", Act::CopyPath), MenuItem::Sep, item(fav, "", Act::Favourite)]);
+        v.extend([
+            item("Copy path", "", Act::CopyPath),
+            MenuItem::Sep,
+            item(fav, "", Act::Favourite),
+        ]);
         // The folder itself: not a device's top, a disk, or a folder the device names (Home, Storage).
         if !self.fixed_place(src, path) {
             let writable = !self.read_only(src);
             v.push(MenuItem::Sep);
-            v.push(MenuItem::Do { label: "Rename".into(), key: "", act: Act::Rename, danger: false, enabled: writable });
+            v.push(MenuItem::Do {
+                label: "Rename".into(),
+                key: "",
+                act: Act::Rename,
+                danger: false,
+                enabled: writable,
+            });
             if src == Src::Mac {
                 let trash = crate::os::trash();
-                v.push(MenuItem::Do { label: format!("Move to {trash}…"), key: "", act: Act::DeletePlace(false), danger: true, enabled: writable });
-                v.push(MenuItem::Do { label: "Delete permanently…".into(), key: "", act: Act::DeletePlace(true), danger: true, enabled: writable });
+                v.push(MenuItem::Do {
+                    label: format!("Move to {trash}…"),
+                    key: "",
+                    act: Act::DeletePlace(false),
+                    danger: true,
+                    enabled: writable,
+                });
+                v.push(MenuItem::Do {
+                    label: "Delete permanently…".into(),
+                    key: "",
+                    act: Act::DeletePlace(true),
+                    danger: true,
+                    enabled: writable,
+                });
             } else {
-                v.push(MenuItem::Do { label: "Delete folder if empty…".into(), key: "", act: Act::DeletePlace(false), danger: true, enabled: writable });
+                v.push(MenuItem::Do {
+                    label: "Delete folder if empty…".into(),
+                    key: "",
+                    act: Act::DeletePlace(false),
+                    danger: true,
+                    enabled: writable,
+                });
             }
         }
-        if src == Src::Mac && self.devices.with_untracked(|d| d.as_ref().is_some_and(|d| d.ejectable.iter().any(|e| e == path))) {
-            v.extend([MenuItem::Sep, item(format!("Eject {}", base(path)), "", Act::Eject)]);
+        if src == Src::Mac
+            && self.devices.with_untracked(|d| {
+                d.as_ref()
+                    .is_some_and(|d| d.ejectable.iter().any(|e| e == path))
+            })
+        {
+            v.extend([
+                MenuItem::Sep,
+                item(format!("Eject {}", base(path)), "", Act::Eject),
+            ]);
         }
         v
     }
@@ -91,8 +188,13 @@ impl Ctx {
     /// folders a device names (Home, Desktop, Storage): these aren't renamed, deleted or dragged.
     pub(super) fn fixed_place(self, src: Src, path: &str) -> bool {
         let top = path == "/" || parent(path) == "/";
-        let named = self.src_info(src).is_some_and(|i| i.default_dir == path || i.quick_dirs.iter().any(|(_, d)| d == path));
-        let drive = self.devices.with_untracked(|d| d.as_ref().is_some_and(|d| d.drives.iter().any(|(_, p)| p == path)));
+        let named = self
+            .src_info(src)
+            .is_some_and(|i| i.default_dir == path || i.quick_dirs.iter().any(|(_, d)| d == path));
+        let drive = self.devices.with_untracked(|d| {
+            d.as_ref()
+                .is_some_and(|d| d.drives.iter().any(|(_, p)| p == path))
+        });
         top || named || drive
     }
 
@@ -113,7 +215,9 @@ impl Ctx {
                 if p.src.get_untracked() != src || p.cwd.get_untracked() != path {
                     self.open_place(src, path);
                 }
-                p.notice.set(Notice::NewItem { folder: act == Act::NewFolder });
+                p.notice.set(Notice::NewItem {
+                    folder: act == Act::NewFolder,
+                });
             }
             Act::Reveal => spawn_local(async move {
                 if let Err(e) = call::<()>("reveal", json!({ "path": path })).await {
@@ -126,12 +230,26 @@ impl Ctx {
                 }
                 self.cd_in_terminal(p, path);
             }
-            Act::CopyPath => copy_text(p, if src == Src::Mac { crate::os::native_path(&path) } else { path }),
+            Act::CopyPath => copy_text(
+                p,
+                if src == Src::Mac {
+                    crate::os::native_path(&path)
+                } else {
+                    path
+                },
+            ),
             Act::Favourite => self.toggle_fav(src, path),
             Act::Eject => self.eject(path),
             Act::Rename => self.side_renaming.set(Some((src, path))),
             Act::DeletePlace(forever) => {
-                let e = Entry { name: base(&path), path, dir: true, size: 0, mtime: 0, hidden: false };
+                let e = Entry {
+                    name: base(&path),
+                    path,
+                    dir: true,
+                    size: 0,
+                    mtime: 0,
+                    hidden: false,
+                };
                 p.notice.set(Notice::ConfirmDelete(src, vec![e], forever));
             }
             _ => {}
@@ -144,7 +262,17 @@ impl Ctx {
         ev.stop_propagation();
         let p = self.act();
         let (x, y) = menu_at(ev, 220.0, self.section_items().len());
-        self.menu.set(Some(Menu { x, y, pane: p.id, entry: None, columns: false, folders: vec![], place: None, sections: true, tree: false }));
+        self.menu.set(Some(Menu {
+            x,
+            y,
+            pane: p.id,
+            entry: None,
+            columns: false,
+            folders: vec![],
+            place: None,
+            sections: true,
+            tree: false,
+        }));
     }
 
     /// ✓ beside each of the sidebar's sections that's shown.
@@ -154,22 +282,56 @@ impl Ctx {
             .iter()
             .enumerate()
             .map(|(i, &(key, title))| {
-                let title = if key == "mac" { crate::os::computer() } else { title };
-                item(format!("{} {title}", if hidden.iter().any(|h| h == key) { "\u{2003}" } else { "✓" }), "", Act::Section(i))
+                let title = if key == "mac" {
+                    crate::os::computer()
+                } else {
+                    title
+                };
+                item(
+                    format!(
+                        "{} {title}",
+                        if hidden.iter().any(|h| h == key) {
+                            "\u{2003}"
+                        } else {
+                            "✓"
+                        }
+                    ),
+                    "",
+                    Act::Section(i),
+                )
             })
             .collect();
         v.extend([
             MenuItem::Sep,
-            MenuItem::Do { label: "Show all sections".into(), key: "", act: Act::AllSections, danger: false, enabled: !hidden.is_empty() },
+            MenuItem::Do {
+                label: "Show all sections".into(),
+                key: "",
+                act: Act::AllSections,
+                danger: false,
+                enabled: !hidden.is_empty(),
+            },
             MenuItem::Sep,
-            item(format!("{} Show the current folder", if self.follow_folder.get_untracked() { "✓" } else { "\u{2003}" }), "", Act::FollowFolder),
+            item(
+                format!(
+                    "{} Show the current folder",
+                    if self.follow_folder.get_untracked() {
+                        "✓"
+                    } else {
+                        "\u{2003}"
+                    }
+                ),
+                "",
+                Act::FollowFolder,
+            ),
         ]);
         v
     }
 
     /// Shows the section if it's hidden, else hides it.
     fn toggle_section(self, i: usize) {
-        let Some(&(key, _)) = SECTIONS.get(i) else { return };
+        let Some(&(key, _)) = SECTIONS.get(i) else {
+            return;
+        };
         let mut hidden = self.hidden_sections.get_untracked();
         match hidden.iter().position(|h| h == key) {
             Some(at) => {
@@ -185,25 +347,70 @@ impl Ctx {
         ev.stop_propagation();
         self.active.set(p.id);
         let (mut x, mut y) = (ev.client_x() as f64, ev.client_y() as f64);
-        if let Some(el) = ev.current_target().and_then(|t| t.dyn_into::<web_sys::Element>().ok()) {
+        if let Some(el) = ev
+            .current_target()
+            .and_then(|t| t.dyn_into::<web_sys::Element>().ok())
+        {
             let r = el.get_bounding_client_rect();
             (x, y) = (r.left(), r.bottom() + 2.0);
         }
-        self.menu.set(Some(Menu { x, y, pane: p.id, entry: None, columns: false, folders, place: None, sections: false, tree: false }));
+        self.menu.set(Some(Menu {
+            x,
+            y,
+            pane: p.id,
+            entry: None,
+            columns: false,
+            folders,
+            place: None,
+            sections: false,
+            tree: false,
+        }));
     }
 
     /// ✓ beside each of the list's columns that's shown; Name is always shown.
     pub(super) fn column_items(self, p: Pane) -> Vec<MenuItem> {
         let shown = p.list_cols.get_untracked();
         let mut v = vec![
-            item(format!("{} Show as a tree", if p.list_tree.get_untracked() { "✓" } else { "\u{2003}" }), "", Act::ListTree),
+            item(
+                format!(
+                    "{} Show as a tree",
+                    if p.list_tree.get_untracked() {
+                        "✓"
+                    } else {
+                        "\u{2003}"
+                    }
+                ),
+                "",
+                Act::ListTree,
+            ),
             MenuItem::Sep,
-            MenuItem::Do { label: "✓ Name".into(), key: "", act: Act::Column(usize::MAX), danger: false, enabled: false },
+            MenuItem::Do {
+                label: "✓ Name".into(),
+                key: "",
+                act: Act::Column(usize::MAX),
+                danger: false,
+                enabled: false,
+            },
         ];
-        v.extend(
-            LIST_ORDER.iter().map(|&c| item(format!("{} {}", if shown.contains(&c) { "✓" } else { "\u{2003}" }, LIST_COLS[c].label()), "", Act::Column(c))),
-        );
-        v.extend([MenuItem::Sep, item("Default columns", "", Act::ResetColumns)]);
+        v.extend(LIST_ORDER.iter().map(|&c| {
+            item(
+                format!(
+                    "{} {}",
+                    if shown.contains(&c) {
+                        "✓"
+                    } else {
+                        "\u{2003}"
+                    },
+                    LIST_COLS[c].label()
+                ),
+                "",
+                Act::Column(c),
+            )
+        }));
+        v.extend([
+            MenuItem::Sep,
+            item("Default columns", "", Act::ResetColumns),
+        ]);
         v
     }
 
@@ -211,9 +418,16 @@ impl Ctx {
     pub(super) fn to_label(self, p: Pane, verb: &str, n: usize) -> String {
         let o = self.other(p);
         let (from, to) = (p.src.get_untracked(), o.src.get_untracked());
-        let what = if n > 1 { format!(" {n} items") } else { String::new() };
+        let what = if n > 1 {
+            format!(" {n} items")
+        } else {
+            String::new()
+        };
         if from != to {
-            format!("{verb}{what} to {}", self.place(to).trim_start_matches("the "))
+            format!(
+                "{verb}{what} to {}",
+                self.place(to).trim_start_matches("the ")
+            )
         } else {
             format!("{verb}{what} to “{}”", base(&o.cwd.get_untracked()))
         }
@@ -236,29 +450,45 @@ impl Ctx {
         let src = p.src.get_untracked();
         // Finder gets the files; for a phone's, the clipboard gets their names instead, so what
         // Finder copied before isn't pasted in their place.
-        let mac: Vec<String> = if src == Src::Mac { items.clone() } else { vec![] };
+        let mac: Vec<String> = if src == Src::Mac {
+            items.clone()
+        } else {
+            vec![]
+        };
         let names = items.iter().map(|x| base(x)).collect::<Vec<_>>().join("\n");
         self.wrote.set_value(mac.clone());
         self.finder.set(vec![]);
         spawn_local(async move {
             let _ = call::<()>("clip_set", json!({ "paths": mac, "text": names })).await;
         });
-        self.clip.set(Some(Clip { side: self.side(src), items, moving }));
+        self.clip.set(Some(Clip {
+            side: self.side(src),
+            items,
+            moving,
+        }));
         let key = match self.key_label("paste") {
             k if k.is_empty() => String::new(),
             k => format!(" ({k})"),
         };
         let verb = if moving { "Cut" } else { "Copied" };
         let how = if moving { "move it" } else { "paste it" };
-        p.notice.set(Notice::Ok(format!("{verb} {what}: paste to {how} into another folder{key}.")));
+        p.notice.set(Notice::Ok(format!(
+            "{verb} {what}: paste to {how} into another folder{key}."
+        )));
     }
 
     /// Looks at the system clipboard for files copied in Finder since the app's last Copy, which
     /// Paste then pastes instead.
     pub(super) fn check_clipboard(self) {
         spawn_local(async move {
-            let files = call::<Vec<String>>("clip_files", json!({})).await.unwrap_or_default();
-            let theirs = if files == self.wrote.get_value() { vec![] } else { files };
+            let files = call::<Vec<String>>("clip_files", json!({}))
+                .await
+                .unwrap_or_default();
+            let theirs = if files == self.wrote.get_value() {
+                vec![]
+            } else {
+                files
+            };
             if self.finder.get_untracked() != theirs {
                 self.finder.set(theirs);
             }
@@ -296,13 +526,25 @@ impl Ctx {
     /// Paste into folder `to_dir` on `to_src` (a sidebar folder), with the work shown in pane `p`.
     pub(super) fn paste_to(self, p: Pane, to_src: Src, to_dir: String) {
         spawn_local(async move {
-            let files = call::<Vec<String>>("clip_files", json!({})).await.unwrap_or_default();
-            let finder = if files == self.wrote.get_value() { vec![] } else { files };
+            let files = call::<Vec<String>>("clip_files", json!({}))
+                .await
+                .unwrap_or_default();
+            let finder = if files == self.wrote.get_value() {
+                vec![]
+            } else {
+                files
+            };
             self.finder.set(finder.clone());
             let clip = match self.clip.get_untracked() {
-                _ if !finder.is_empty() => Clip { side: Side::Mac, items: finder, moving: false },
+                _ if !finder.is_empty() => Clip {
+                    side: Side::Mac,
+                    items: finder,
+                    moving: false,
+                },
                 Some(c) => c,
-                None => return p.error("Nothing to paste: pick files or folders and Copy them first."),
+                None => {
+                    return p.error("Nothing to paste: pick files or folders and Copy them first.")
+                }
             };
             let from = match self.src_of(&clip.side) {
                 Ok(s) => s,
@@ -310,11 +552,15 @@ impl Ctx {
             };
             let items = clip.items;
             if from == to_src {
-                if items.iter().any(|x| *x == to_dir || to_dir.starts_with(&format!("{}/", x.trim_end_matches('/')))) {
+                if items.iter().any(|x| {
+                    *x == to_dir || to_dir.starts_with(&format!("{}/", x.trim_end_matches('/')))
+                }) {
                     return p.error("A folder can't be pasted into itself.");
                 }
                 if items.iter().all(|x| parent(x) == to_dir) {
-                    return p.error("That's already in this folder. Open another folder to paste it into.");
+                    return p.error(
+                        "That's already in this folder. Open another folder to paste it into.",
+                    );
                 }
             }
             // What was cut is moved once; after that it isn't where it was.
@@ -331,7 +577,17 @@ impl Ctx {
         ev.stop_propagation();
         self.active.set(p.id);
         let (x, y) = menu_at(ev, 240.0, self.tree_items(p, entry.as_ref()).len());
-        self.menu.set(Some(Menu { x, y, pane: p.id, entry, columns: false, folders: vec![], place: None, sections: false, tree: true }));
+        self.menu.set(Some(Menu {
+            x,
+            y,
+            pane: p.id,
+            entry,
+            columns: false,
+            folders: vec![],
+            place: None,
+            sections: false,
+            tree: true,
+        }));
     }
 
     pub(super) fn tree_items(self, p: Pane, entry: Option<&Entry>) -> Vec<MenuItem> {
@@ -352,7 +608,13 @@ impl Ctx {
         let Some(e) = entry else {
             let cwd = p.cwd.get_untracked();
             let mut v = vec![
-                MenuItem::Do { label: "Set root to the folder above".into(), key: "", act: Act::Up, danger: false, enabled: cwd != "/" && !cwd.is_empty() },
+                MenuItem::Do {
+                    label: "Set root to the folder above".into(),
+                    key: "",
+                    act: Act::Up,
+                    danger: false,
+                    enabled: cwd != "/" && !cwd.is_empty(),
+                },
                 MenuItem::Do {
                     label: "Collapse all folders".into(),
                     key: "",
@@ -381,7 +643,11 @@ impl Ctx {
         if e.dir {
             let open = p.tree_open.with_untracked(|o| o.contains(&e.path));
             v.push(item("Set root here", "", Act::SetRoot));
-            v.push(item(if open { "Collapse" } else { "Expand" }, "", Act::Expand));
+            v.push(item(
+                if open { "Collapse" } else { "Expand" },
+                "",
+                Act::Expand,
+            ));
             v.push(item("Open in new tab", "", Act::NewTab));
         } else if kind(e) == Kind::Text {
             v.push(item("Open", "", Act::Open));
@@ -392,10 +658,18 @@ impl Ctx {
             v.push(item("Open in default app", "", Act::OpenInApp));
         }
         // A device's storages, at the top of MTP, can't be renamed.
-        let renamable = !(parent(&e.path) == "/" && self.src_info(src).is_some_and(|i| i.transport == "mtp")) && !self.read_only(src);
+        let renamable = !(parent(&e.path) == "/"
+            && self.src_info(src).is_some_and(|i| i.transport == "mtp"))
+            && !self.read_only(src);
         v.extend([
             MenuItem::Sep,
-            MenuItem::Do { label: "Rename".into(), key: "", act: Act::Rename, danger: false, enabled: renamable },
+            MenuItem::Do {
+                label: "Rename".into(),
+                key: "",
+                act: Act::Rename,
+                danger: false,
+                enabled: renamable,
+            },
             item("Refresh", "", Act::Refresh),
         ]);
         if mac || (e.dir && shell) {
@@ -409,7 +683,11 @@ impl Ctx {
         }
         copies(&mut v, false);
         if e.dir {
-            let fav = if self.is_fav(src, &e.path) { "Remove from Favourites" } else { "Add to Favourites" };
+            let fav = if self.is_fav(src, &e.path) {
+                "Remove from Favourites"
+            } else {
+                "Add to Favourites"
+            };
             v.extend([MenuItem::Sep, item(fav, "", Act::Favourite)]);
         }
         v
@@ -419,7 +697,9 @@ impl Ctx {
     fn run_tree(self, p: Pane, act: Act, entry: Option<Entry>) {
         let src = p.src.get_untracked();
         let cwd = p.cwd.get_untracked();
-        let path = entry.as_ref().map_or_else(|| cwd.clone(), |e| e.path.clone());
+        let path = entry
+            .as_ref()
+            .map_or_else(|| cwd.clone(), |e| e.path.clone());
         match act {
             Act::SetRoot => self.navigate(p, path),
             Act::Up => self.navigate(p, parent(&cwd)),
@@ -454,7 +734,14 @@ impl Ctx {
             }),
             Act::Terminal => self.cd_in_terminal(p, path),
             Act::CopyName => copy_text(p, base(&path)),
-            Act::CopyPath => copy_text(p, if src == Src::Mac { crate::os::native_path(&path) } else { path }),
+            Act::CopyPath => copy_text(
+                p,
+                if src == Src::Mac {
+                    crate::os::native_path(&path)
+                } else {
+                    path
+                },
+            ),
             Act::CopyRelPath => copy_text(p, relative(&cwd, &path)),
             Act::Favourite => self.toggle_fav(src, path),
             Act::Rename => p.renaming.set(entry.map(|e| e.path)),
@@ -468,16 +755,43 @@ impl Ctx {
         let Some(e) = entry else {
             let here = self.in_storage(p);
             let mut v = vec![
-                MenuItem::Do { label: self.paste_label(), key: "paste", act: Act::Paste, danger: false, enabled: here && self.can_paste() },
+                MenuItem::Do {
+                    label: self.paste_label(),
+                    key: "paste",
+                    act: Act::Paste,
+                    danger: false,
+                    enabled: here && self.can_paste(),
+                },
                 MenuItem::Sep,
-                MenuItem::Do { label: "New folder…".into(), key: "", act: Act::NewFolder, danger: false, enabled: here },
-                MenuItem::Do { label: "New text file…".into(), key: "", act: Act::NewFile, danger: false, enabled: here },
+                MenuItem::Do {
+                    label: "New folder…".into(),
+                    key: "",
+                    act: Act::NewFolder,
+                    danger: false,
+                    enabled: here,
+                },
+                MenuItem::Do {
+                    label: "New text file…".into(),
+                    key: "",
+                    act: Act::NewFile,
+                    danger: false,
+                    enabled: here,
+                },
             ];
             if device {
-                v.push(MenuItem::Do { label: "Upload files…".into(), key: "", act: Act::Upload, danger: false, enabled: here });
+                v.push(MenuItem::Do {
+                    label: "Upload files…".into(),
+                    key: "",
+                    act: Act::Upload,
+                    danger: false,
+                    enabled: here,
+                });
             }
-            let fav =
-                if self.is_fav(p.src.get_untracked(), &p.cwd.get_untracked()) { "Remove this folder from Favourites" } else { "Add this folder to Favourites" };
+            let fav = if self.is_fav(p.src.get_untracked(), &p.cwd.get_untracked()) {
+                "Remove this folder from Favourites"
+            } else {
+                "Add this folder to Favourites"
+            };
             v.push(MenuItem::Do {
                 label: "Books in this folder…".into(),
                 key: "",
@@ -494,9 +808,26 @@ impl Ctx {
             });
             v.push(self.script_menu());
             v.extend([MenuItem::Sep, self.sort_menu(p), self.group_menu(p)]);
-            v.extend([MenuItem::Sep, item("New tab", "new_tab", Act::NewTab), item(fav, "", Act::Favourite), item("Refresh", "", Act::Refresh)]);
-            v.push(MenuItem::Do { label: "Import photos…".into(), key: "", act: Act::Import, danger: false, enabled: !p.cwd.get_untracked().is_empty() });
-            v.push(MenuItem::Do { label: "Find duplicates…".into(), key: "", act: Act::Dupes, danger: false, enabled: !p.cwd.get_untracked().is_empty() });
+            v.extend([
+                MenuItem::Sep,
+                item("New tab", "new_tab", Act::NewTab),
+                item(fav, "", Act::Favourite),
+                item("Refresh", "", Act::Refresh),
+            ]);
+            v.push(MenuItem::Do {
+                label: "Import photos…".into(),
+                key: "",
+                act: Act::Import,
+                danger: false,
+                enabled: !p.cwd.get_untracked().is_empty(),
+            });
+            v.push(MenuItem::Do {
+                label: "Find duplicates…".into(),
+                key: "",
+                act: Act::Dupes,
+                danger: false,
+                enabled: !p.cwd.get_untracked().is_empty(),
+            });
             v.push(MenuItem::Do {
                 label: "Compare with the other pane".into(),
                 key: "",
@@ -517,26 +848,72 @@ impl Ctx {
                 v.extend(self.column_items(p));
             }
             v.push(MenuItem::Sep);
-            v.push(item(if split { "Hide second pane" } else { "Show second pane" }, "split", Act::Split));
-            let side = if self.side.get_untracked() { "Hide" } else { "Show" };
-            v.push(item(format!("{side} {}", crate::os::sidebar()), "sidebar", Act::Sidebar));
-            v.push(item(if self.show_hidden.get_untracked() { "Hide hidden files" } else { "Show hidden files" }, "hidden", Act::Hidden));
+            v.push(item(
+                if split {
+                    "Hide second pane"
+                } else {
+                    "Show second pane"
+                },
+                "split",
+                Act::Split,
+            ));
+            let side = if self.side.get_untracked() {
+                "Hide"
+            } else {
+                "Show"
+            };
+            v.push(item(
+                format!("{side} {}", crate::os::sidebar()),
+                "sidebar",
+                Act::Sidebar,
+            ));
+            v.push(item(
+                if self.show_hidden.get_untracked() {
+                    "Hide hidden files"
+                } else {
+                    "Show hidden files"
+                },
+                "hidden",
+                Act::Hidden,
+            ));
             if let Some((_, text)) = self.last_undo() {
-                let short: String = if text.chars().count() > 40 { format!("{}…", text.chars().take(39).collect::<String>()) } else { text };
-                v.splice(0..0, [item(format!("Undo: {short}"), "undo", Act::Undo), MenuItem::Sep]);
+                let short: String = if text.chars().count() > 40 {
+                    format!("{}…", text.chars().take(39).collect::<String>())
+                } else {
+                    text
+                };
+                v.splice(
+                    0..0,
+                    [
+                        item(format!("Undo: {short}"), "undo", Act::Undo),
+                        MenuItem::Sep,
+                    ],
+                );
             }
             return v;
         };
         let picked = p.picked().len();
         if picked > 1 {
             let mut v = vec![
-                MenuItem::Do { label: format!("Cut {picked} items"), key: "cut_items", act: Act::CutItems, danger: false, enabled: self.renamable(p) },
+                MenuItem::Do {
+                    label: format!("Cut {picked} items"),
+                    key: "cut_items",
+                    act: Act::CutItems,
+                    danger: false,
+                    enabled: self.renamable(p),
+                },
                 item(format!("Copy {picked} items"), "copy_items", Act::CopyItems),
                 MenuItem::Sep,
             ];
             if split {
                 let enabled = self.in_storage(self.other(p));
-                v.push(MenuItem::Do { label: self.to_label(p, "Copy", picked), key: "copy", act: Act::Copy, danger: false, enabled });
+                v.push(MenuItem::Do {
+                    label: self.to_label(p, "Copy", picked),
+                    key: "copy",
+                    act: Act::Copy,
+                    danger: false,
+                    enabled,
+                });
                 v.push(MenuItem::Do {
                     label: self.to_label(p, "Move", picked),
                     key: "move",
@@ -547,7 +924,13 @@ impl Ctx {
                 v.push(MenuItem::Sep);
             }
             let renamable = self.renamable(p);
-            v.push(MenuItem::Do { label: format!("Rename {picked} items…"), key: "rename", act: Act::Rename, danger: false, enabled: renamable });
+            v.push(MenuItem::Do {
+                label: format!("Rename {picked} items…"),
+                key: "rename",
+                act: Act::Rename,
+                danger: false,
+                enabled: renamable,
+            });
             v.push(self.script_menu());
             v.push(MenuItem::Sep);
             v.extend(self.delete_items(p, &format!("{picked} items"), false));
@@ -579,20 +962,43 @@ impl Ctx {
         }
         // The column view opens a ZIP's folders as more columns; any file can be tried as one
         // (an EPUB, an Office file).
-        if !e.dir && p.view.get_untracked() == ViewMode::Columns && !super::preview::has_ext(e, super::preview::ZIP_EXTS) {
+        if !e.dir
+            && p.view.get_untracked() == ViewMode::Columns
+            && !super::preview::has_ext(e, super::preview::ZIP_EXTS)
+        {
             v.push(item("Open as ZIP in columns", "", Act::ShowAs(PeekAs::Zip)));
         }
         if device && !e.dir {
-            v.push(item(format!("Download to {}…", crate::os::computer()), "", Act::Download));
+            v.push(item(
+                format!("Download to {}…", crate::os::computer()),
+                "",
+                Act::Download,
+            ));
         }
-        v.push(MenuItem::Do { label: "Cut".into(), key: "cut_items", act: Act::CutItems, danger: false, enabled: self.renamable(p) });
+        v.push(MenuItem::Do {
+            label: "Cut".into(),
+            key: "cut_items",
+            act: Act::CutItems,
+            danger: false,
+            enabled: self.renamable(p),
+        });
         v.push(item("Copy", "copy_items", Act::CopyItems));
         if e.dir && self.can_paste() {
-            v.push(item(format!("{} into “{}”", self.paste_label(), e.name), "", Act::Paste));
+            v.push(item(
+                format!("{} into “{}”", self.paste_label(), e.name),
+                "",
+                Act::Paste,
+            ));
         }
         if split {
             let enabled = self.in_storage(self.other(p));
-            v.push(MenuItem::Do { label: self.to_label(p, "Copy", 1), key: "copy", act: Act::Copy, danger: false, enabled });
+            v.push(MenuItem::Do {
+                label: self.to_label(p, "Copy", 1),
+                key: "copy",
+                act: Act::Copy,
+                danger: false,
+                enabled,
+            });
             v.push(MenuItem::Do {
                 label: self.to_label(p, "Move", 1),
                 key: "move",
@@ -602,9 +1008,19 @@ impl Ctx {
             });
         }
         let renamable = self.renamable(p);
-        v.push(MenuItem::Do { label: "Rename".into(), key: "rename", act: Act::Rename, danger: false, enabled: renamable });
+        v.push(MenuItem::Do {
+            label: "Rename".into(),
+            key: "rename",
+            act: Act::Rename,
+            danger: false,
+            enabled: renamable,
+        });
         if e.dir {
-            let fav = if self.is_fav(p.src.get_untracked(), &e.path) { "Remove from Favourites" } else { "Add to Favourites" };
+            let fav = if self.is_fav(p.src.get_untracked(), &e.path) {
+                "Remove from Favourites"
+            } else {
+                "Add to Favourites"
+            };
             v.push(item(fav, "", Act::Favourite));
         }
         v.push(MenuItem::Sep);
@@ -612,8 +1028,16 @@ impl Ctx {
             v.push(item("Show as text", "", Act::ShowAs(PeekAs::Text)));
             v.push(item("Show as hex", "", Act::ShowAs(PeekAs::Hex)));
         }
-        v.extend([item("Copy name", "", Act::CopyName), item("Copy path", "", Act::CopyPath)]);
-        v.extend([MenuItem::Sep, self.script_menu(), item("Refresh", "", Act::Refresh), MenuItem::Sep]);
+        v.extend([
+            item("Copy name", "", Act::CopyName),
+            item("Copy path", "", Act::CopyPath),
+        ]);
+        v.extend([
+            MenuItem::Sep,
+            self.script_menu(),
+            item("Refresh", "", Act::Refresh),
+            MenuItem::Sep,
+        ]);
         v.extend(self.delete_items(p, "", e.dir));
         v
     }
@@ -628,24 +1052,54 @@ impl Ctx {
                 item(
                     format!("{} {}", tick(k == now), k.label()),
                     "",
-                    Act::SortBy(Sort(k, if k == now { asc } else { matches!(k, SortKey::Name | SortKey::Kind) })),
+                    Act::SortBy(Sort(
+                        k,
+                        if k == now {
+                            asc
+                        } else {
+                            matches!(k, SortKey::Name | SortKey::Kind)
+                        },
+                    )),
                 )
             })
             .collect();
         items.extend([
             MenuItem::Sep,
-            item(format!("{} Ascending", tick(asc)), "", Act::SortBy(Sort(now, true))),
-            item(format!("{} Descending", tick(!asc)), "", Act::SortBy(Sort(now, false))),
+            item(
+                format!("{} Ascending", tick(asc)),
+                "",
+                Act::SortBy(Sort(now, true)),
+            ),
+            item(
+                format!("{} Descending", tick(!asc)),
+                "",
+                Act::SortBy(Sort(now, false)),
+            ),
         ]);
-        MenuItem::Sub { label: "Sort by".into(), items }
+        MenuItem::Sub {
+            label: "Sort by".into(),
+            items,
+        }
     }
 
     /// Group by ▸: nothing, or what the list's headings go by (✓ the one now). Only the list
     /// shows the headings; the other views keep the groups together.
     fn group_menu(self, p: Pane) -> MenuItem {
         let now = p.group.get_untracked();
-        let items = Group::ALL.into_iter().map(|g| item(format!("{} {}", if g == now { "✓" } else { "\u{2003}" }, g.label()), "", Act::GroupBy(g))).collect();
-        MenuItem::Sub { label: "Group by".into(), items }
+        let items = Group::ALL
+            .into_iter()
+            .map(|g| {
+                item(
+                    format!("{} {}", if g == now { "✓" } else { "\u{2003}" }, g.label()),
+                    "",
+                    Act::GroupBy(g),
+                )
+            })
+            .collect();
+        MenuItem::Sub {
+            label: "Group by".into(),
+            items,
+        }
     }
 
     /// Run script ▸: the scripts (Settings > Scripts), then a way to add some.
@@ -656,17 +1110,34 @@ impl Ctx {
                 .enumerate()
                 .map(|(i, s)| {
                     let key = untrack(|| self.script_key_label(&s.path));
-                    item(if key.is_empty() { s.name.clone() } else { format!("{}\t{key}", s.name) }, "", Act::Script(i))
+                    item(
+                        if key.is_empty() {
+                            s.name.clone()
+                        } else {
+                            format!("{}\t{key}", s.name)
+                        },
+                        "",
+                        Act::Script(i),
+                    )
                 })
                 .collect()
         });
         if items.is_empty() {
-            items.push(MenuItem::Do { label: "No scripts yet".into(), key: "", act: Act::ScriptSettings, danger: false, enabled: false });
+            items.push(MenuItem::Do {
+                label: "No scripts yet".into(),
+                key: "",
+                act: Act::ScriptSettings,
+                danger: false,
+                enabled: false,
+            });
         }
         items.extend([MenuItem::Sep, item("Scripts…", "", Act::ScriptSettings)]);
         // Found again for the next time, in case the scripts folder changed.
         self.load_scripts();
-        MenuItem::Sub { label: "Run script".into(), items }
+        MenuItem::Sub {
+            label: "Run script".into(),
+            items,
+        }
     }
 
     /// Delete, and on the computer Delete permanently. `what` is "3 items", or "" for one item;
@@ -676,17 +1147,43 @@ impl Ctx {
         let mut v = vec![];
         if p.src.get_untracked() == Src::Mac {
             let trash = crate::os::trash();
-            let label = if what.is_empty() { format!("Move to {trash}") } else { format!("Move {what} to {trash}") };
-            v.push(MenuItem::Do { label, key: "delete", act: Act::Delete, danger: true, enabled });
-            let label = if what.is_empty() { "Delete permanently…".to_string() } else { format!("Delete {what} permanently…") };
-            v.push(MenuItem::Do { label, key: "delete_forever", act: Act::DeleteForever, danger: true, enabled });
+            let label = if what.is_empty() {
+                format!("Move to {trash}")
+            } else {
+                format!("Move {what} to {trash}")
+            };
+            v.push(MenuItem::Do {
+                label,
+                key: "delete",
+                act: Act::Delete,
+                danger: true,
+                enabled,
+            });
+            let label = if what.is_empty() {
+                "Delete permanently…".to_string()
+            } else {
+                format!("Delete {what} permanently…")
+            };
+            v.push(MenuItem::Do {
+                label,
+                key: "delete_forever",
+                act: Act::DeleteForever,
+                danger: true,
+                enabled,
+            });
         } else {
             let label = match (what.is_empty(), dir) {
                 (true, true) => "Delete folder if empty…".to_string(),
                 (true, false) => "Delete…".to_string(),
                 _ => format!("Delete {what}…"),
             };
-            v.push(MenuItem::Do { label, key: "delete", act: Act::Delete, danger: true, enabled });
+            v.push(MenuItem::Do {
+                label,
+                key: "delete",
+                act: Act::Delete,
+                danger: true,
+                enabled,
+            });
         }
         v
     }
@@ -734,17 +1231,22 @@ impl Ctx {
                 self.settings.set(true);
             }
             (Act::Dupes, _) => {
-                let mut folders: Vec<(Src, String)> = vec![(p.src.get_untracked(), p.cwd.get_untracked())];
+                let mut folders: Vec<(Src, String)> =
+                    vec![(p.src.get_untracked(), p.cwd.get_untracked())];
                 let o = self.other(p);
                 let theirs = (o.src.get_untracked(), o.cwd.get_untracked());
-                if self.split.get_untracked() && !theirs.1.is_empty() && !folders.contains(&theirs) {
+                if self.split.get_untracked() && !theirs.1.is_empty() && !folders.contains(&theirs)
+                {
                     folders.push(theirs);
                 }
                 self.panel.set(Some(Panel::Dupes(folders)));
             }
             (Act::Read, Some(e)) => self.read_book(p.src.get_untracked(), e.path),
             (Act::Check, Some(e)) => self.check_book(p, e),
-            (Act::Library, _) => self.panel.set(Some(Panel::Library(p.src.get_untracked(), p.cwd.get_untracked()))),
+            (Act::Library, _) => self.panel.set(Some(Panel::Library(
+                p.src.get_untracked(),
+                p.cwd.get_untracked(),
+            ))),
             (Act::NewTab, Some(e)) if e.dir => self.new_tab(p, p.src.get_untracked(), e.path),
             (Act::NewTab, None) => self.new_tab(p, p.src.get_untracked(), p.cwd.get_untracked()),
             (Act::Refresh, _) => self.refresh(p),
@@ -758,7 +1260,14 @@ impl Ctx {
             (Act::Paste, Some(e)) if e.dir => self.paste(p, Some(e.path)),
             (Act::Paste, None) => self.paste(p, None),
             (Act::CopyName, Some(e)) => copy_text(p, e.name),
-            (Act::CopyPath, Some(e)) => copy_text(p, if p.src.get_untracked() == Src::Mac { crate::os::native_path(&e.path) } else { e.path }),
+            (Act::CopyPath, Some(e)) => copy_text(
+                p,
+                if p.src.get_untracked() == Src::Mac {
+                    crate::os::native_path(&e.path)
+                } else {
+                    e.path
+                },
+            ),
             (Act::Column(c), _) if c < LIST_COLS.len() => {
                 let mut v = p.list_cols.get_untracked();
                 match v.iter().position(|&x| x == c) {
@@ -799,7 +1308,11 @@ pub(super) fn ContextMenu() -> impl IntoView {
             } else if let Some((src, path)) = &m.place {
                 ctx.place_items(*src, path)
             } else if !m.folders.is_empty() {
-                m.folders.iter().enumerate().map(|(i, f)| item(base(f), "", Act::Go(i))).collect()
+                m.folders
+                    .iter()
+                    .enumerate()
+                    .map(|(i, f)| item(base(f), "", Act::Go(i)))
+                    .collect()
             } else if m.columns {
                 ctx.column_items(p)
             } else if m.sections {

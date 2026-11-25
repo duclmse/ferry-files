@@ -14,7 +14,10 @@ pub(super) type ReplaceRows = HashMap<String, (String, Option<String>)>;
 /// Focuses the first element matching `sel` in pane `id`, once it's drawn.
 fn focus_in(id: usize, sel: &'static str) {
     request_animation_frame(move || {
-        let found = document().query_selector(&format!(".pane[data-pane=\"{id}\"] {sel}")).ok().flatten();
+        let found = document()
+            .query_selector(&format!(".pane[data-pane=\"{id}\"] {sel}"))
+            .ok()
+            .flatten();
         if let Some(el) = found.and_then(|el| el.dyn_into::<web_sys::HtmlInputElement>().ok()) {
             let _ = el.focus();
             el.select();
@@ -30,7 +33,14 @@ impl Ctx {
         p.filters_open.set(true);
         // ⌘F while replacing goes back to just the search.
         p.replacing.set(replace);
-        focus_in(p.id, if replace { ".replace-box input" } else { ".search-box input" });
+        focus_in(
+            p.id,
+            if replace {
+                ".replace-box input"
+            } else {
+                ".search-box input"
+            },
+        );
     }
 
     /// ⌘R: shows Replace with, or hides it when it's already there.
@@ -57,7 +67,9 @@ impl Ctx {
     pub(super) fn replace_all(self, p: Pane) {
         let plan: Vec<(String, String)> = match p.replace_rows.get_untracked() {
             Ok(rows) if !rows.is_empty() && rows.values().all(|(_, problem)| problem.is_none()) => {
-                rows.into_iter().map(|(path, (new, _))| (path, new)).collect()
+                rows.into_iter()
+                    .map(|(path, (new, _))| (path, new))
+                    .collect()
             }
             _ => return,
         };
@@ -91,12 +103,24 @@ pub(super) fn SearchPane(pane: Pane) -> impl IntoView {
             let replace = p.replace.get();
             let regex = p.regex.get();
             // What else is in the folder, to catch names already taken there.
-            let shown: HashSet<String> = p.entries.with(|es| es.iter().map(|e| e.path.clone()).collect());
-            let others: HashSet<String> = p.all.with(|all| all.iter().filter(|e| !shown.contains(&e.path)).map(|e| e.name.to_lowercase()).collect());
+            let shown: HashSet<String> = p
+                .entries
+                .with(|es| es.iter().map(|e| e.path.clone()).collect());
+            let others: HashSet<String> = p.all.with(|all| {
+                all.iter()
+                    .filter(|e| !shown.contains(&e.path))
+                    .map(|e| e.name.to_lowercase())
+                    .collect()
+            });
             let taken = HashMap::from([(p.cwd.get(), others)]);
             p.entries
                 .with(|es| batch::replace_plan(es, &find, &replace, regex, &taken))
-                .map(|rows| rows.into_iter().filter(|(e, new, _)| *new != e.name).map(|(e, new, problem)| (e.path, (new, problem))).collect())
+                .map(|rows| {
+                    rows.into_iter()
+                        .filter(|(e, new, _)| *new != e.name)
+                        .map(|(e, new, problem)| (e.path, (new, problem)))
+                        .collect()
+                })
         };
         if p.replace_rows.with_untracked(|r| *r != rows) {
             p.replace_rows.set(rows);
@@ -111,7 +135,12 @@ pub(super) fn SearchPane(pane: Pane) -> impl IntoView {
         p.arrange();
     };
     let changes = move || p.replace_rows.with(|r| r.as_ref().map_or(0, HashMap::len));
-    let problems = move || p.replace_rows.with(|r| r.as_ref().map_or(0, |m| m.values().filter(|(_, x)| x.is_some()).count()));
+    let problems = move || {
+        p.replace_rows.with(|r| {
+            r.as_ref()
+                .map_or(0, |m| m.values().filter(|(_, x)| x.is_some()).count())
+        })
+    };
     // Typing filters once it pauses: each key would otherwise go through the whole folder.
     let pending = StoredValue::new_local(None::<TimeoutHandle>);
     let cancel = move || {
@@ -130,7 +159,12 @@ pub(super) fn SearchPane(pane: Pane) -> impl IntoView {
         }
     };
     let typed = move |ev: leptos::ev::Event| {
-        let Some(input) = ev.target().and_then(|t| t.dyn_into::<web_sys::HtmlInputElement>().ok()) else { return };
+        let Some(input) = ev
+            .target()
+            .and_then(|t| t.dyn_into::<web_sys::HtmlInputElement>().ok())
+        else {
+            return;
+        };
         cancel();
         if input.value().is_empty() {
             // Clearing shows everything right away.
@@ -142,7 +176,10 @@ pub(super) fn SearchPane(pane: Pane) -> impl IntoView {
     let toggle_options = move |_| {
         let on = !p.search_options.get_untracked();
         p.search_options.set(on);
-        store(&format!("{OPTIONS_KEY}.{}", p.id), if on { "1" } else { "0" });
+        store(
+            &format!("{OPTIONS_KEY}.{}", p.id),
+            if on { "1" } else { "0" },
+        );
     };
     // Some kind, size or time is chosen (shown on the options button while they're hidden).
     let narrowed = move || p.search_kind.get() + p.search_size.get() + p.search_time.get() > 0;

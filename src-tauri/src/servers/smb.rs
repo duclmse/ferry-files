@@ -21,7 +21,9 @@ pub fn share_url(text: &str) -> std::result::Result<String, String> {
     let t = t.strip_prefix("smb:").unwrap_or(&t).trim_start_matches('/');
     let mut parts = t.split('/').filter(|p| !p.is_empty());
     match (parts.next(), parts.next()) {
-        (Some(host), Some(share)) if !host.contains(char::is_whitespace) => Ok(format!("smb://{host}/{share}")),
+        (Some(host), Some(share)) if !host.contains(char::is_whitespace) => {
+            Ok(format!("smb://{host}/{share}"))
+        }
         _ => Err("Enter the server and share, like smb://nas/Photos.".into()),
     }
 }
@@ -35,7 +37,8 @@ pub fn nfs_url(text: &str) -> std::result::Result<String, String> {
         None => t.split_once(":/").unwrap_or((t, "")),
     };
     let path = path.trim_matches('/');
-    if host.is_empty() || path.is_empty() || host.contains(|c: char| c.is_whitespace() || c == '/') {
+    if host.is_empty() || path.is_empty() || host.contains(|c: char| c.is_whitespace() || c == '/')
+    {
         return Err("Enter the server and exported folder, like nfs://nas/export/photos.".into());
     }
     Ok(format!("nfs://{host}/{path}"))
@@ -51,26 +54,45 @@ fn is_nfs(text: &str) -> bool {
 /// user, in lower case, and without a Bonjour suffix) and the share (decoded; in lower case but
 /// for NFS, whose paths are a Unix computer's).
 fn key(share: &str) -> (String, String, String) {
-    let (scheme, t) = share.split_once("://").unwrap_or(("smb", share.trim_start_matches("smb:").trim_start_matches('/')));
+    let (scheme, t) = share.split_once("://").unwrap_or((
+        "smb",
+        share.trim_start_matches("smb:").trim_start_matches('/'),
+    ));
     let (host, name) = t.split_once('/').unwrap_or((t, ""));
     let host = host.rsplit('@').next().unwrap_or(host).to_lowercase();
-    let host = host.trim_end_matches("._smb._tcp.local").trim_end_matches("._afpovertcp._tcp.local").trim_end_matches(".local").to_string();
+    let host = host
+        .trim_end_matches("._smb._tcp.local")
+        .trim_end_matches("._afpovertcp._tcp.local")
+        .trim_end_matches(".local")
+        .to_string();
     let name = match scheme {
-        "smb" => percent_decode_str(name.split('/').next().unwrap_or_default()).decode_utf8_lossy().to_lowercase(),
-        "nfs" => percent_decode_str(name.trim_end_matches('/')).decode_utf8_lossy().into_owned(),
-        _ => percent_decode_str(name.trim_end_matches('/')).decode_utf8_lossy().to_lowercase(),
+        "smb" => percent_decode_str(name.split('/').next().unwrap_or_default())
+            .decode_utf8_lossy()
+            .to_lowercase(),
+        "nfs" => percent_decode_str(name.trim_end_matches('/'))
+            .decode_utf8_lossy()
+            .into_owned(),
+        _ => percent_decode_str(name.trim_end_matches('/'))
+            .decode_utf8_lossy()
+            .to_lowercase(),
     };
     (scheme.to_lowercase(), host, name)
 }
 
 fn mounted() -> Vec<SmbMount> {
-    crate::platform::net_mounted().into_iter().map(|(share, path)| SmbMount { share, path }).collect()
+    crate::platform::net_mounted()
+        .into_iter()
+        .map(|(share, path)| SmbMount { share, path })
+        .collect()
 }
 
 /// Where `share` is mounted, if it is.
 fn mounted_at(share: &str, mounts: &[SmbMount]) -> Option<String> {
     let k = key(share);
-    mounts.iter().find(|m| key(&m.share) == k).map(|m| m.path.clone())
+    mounts
+        .iter()
+        .find(|m| key(&m.share) == k)
+        .map(|m| m.path.clone())
 }
 
 /// All the network shares mounted now, those that are one of `shares` with that address; the
@@ -86,7 +108,10 @@ fn name_mounts(shares: &[String], mounts: Vec<SmbMount>) -> Vec<SmbMount> {
         .map(|m| {
             let k = key(&m.share);
             match shares.iter().find(|s| key(s) == k) {
-                Some(s) => SmbMount { share: s.clone(), path: m.path },
+                Some(s) => SmbMount {
+                    share: s.clone(),
+                    path: m.path,
+                },
                 None => m,
             }
         })
@@ -97,17 +122,35 @@ fn name_mounts(shares: &[String], mounts: Vec<SmbMount>) -> Vec<SmbMount> {
 /// `user`, logs in to an SMB share as that user (in `domain`, if given) with the password saved
 /// for connection `secret`.
 #[tauri::command(rename_all = "snake_case")]
-pub(crate) async fn smb_mount(share: String, user: Option<String>, domain: Option<String>, secret: Option<String>) -> Result<SmbMount, String> {
+pub(crate) async fn smb_mount(
+    share: String,
+    user: Option<String>,
+    domain: Option<String>,
+    secret: Option<String>,
+) -> Result<SmbMount, String> {
     blocking(move || {
         let nfs = is_nfs(&share);
-        let share = if nfs { nfs_url(&share)? } else { share_url(&share)? };
+        let share = if nfs {
+            nfs_url(&share)?
+        } else {
+            share_url(&share)?
+        };
         if let Some(path) = mounted_at(&share, &mounted()) {
             return Ok(SmbMount { share, path });
         }
-        let user = user.map(|u| u.trim().to_string()).filter(|u| !u.is_empty() && !nfs);
-        let password = secret.as_deref().and_then(crate::servers::secrets::get).unwrap_or_default();
+        let user = user
+            .map(|u| u.trim().to_string())
+            .filter(|u| !u.is_empty() && !nfs);
+        let password = secret
+            .as_deref()
+            .and_then(crate::servers::secrets::get)
+            .unwrap_or_default();
         let domain = domain.unwrap_or_default();
-        let login = user.as_deref().map(|user| crate::platform::SmbLogin { user, domain: domain.trim(), password: &password });
+        let login = user.as_deref().map(|user| crate::platform::SmbLogin {
+            user,
+            domain: domain.trim(),
+            password: &password,
+        });
         crate::platform::smb_mount(&share, login.as_ref())?;
         // The system may take a moment to show it.
         for _ in 0..20 {
@@ -116,7 +159,9 @@ pub(crate) async fn smb_mount(share: String, user: Option<String>, domain: Optio
             }
             std::thread::sleep(std::time::Duration::from_millis(250));
         }
-        Err(format!("{share} was mounted, but the app can't find where."))
+        Err(format!(
+            "{share} was mounted, but the app can't find where."
+        ))
     })
     .await
 }
@@ -139,20 +184,38 @@ mod tests {
 
     #[test]
     fn shares() {
-        assert_eq!(share_url("smb://me@nas/Photos/2024").unwrap(), "smb://me@nas/Photos");
+        assert_eq!(
+            share_url("smb://me@nas/Photos/2024").unwrap(),
+            "smb://me@nas/Photos"
+        );
         assert_eq!(share_url(r"\\nas\Photos").unwrap(), "smb://nas/Photos");
         assert_eq!(share_url("nas/Photos").unwrap(), "smb://nas/Photos");
         assert!(share_url("smb://nas").is_err());
-        assert_eq!(key("smb://me@NAS.local/My%20Photos"), ("smb".into(), "nas".into(), "my photos".into()));
-        let mounts = vec![SmbMount { share: "smb://me@nas._smb._tcp.local/Photos".into(), path: "/Volumes/Photos".into() }];
-        assert_eq!(mounted_at("smb://nas/photos", &mounts).as_deref(), Some("/Volumes/Photos"));
+        assert_eq!(
+            key("smb://me@NAS.local/My%20Photos"),
+            ("smb".into(), "nas".into(), "my photos".into())
+        );
+        let mounts = vec![SmbMount {
+            share: "smb://me@nas._smb._tcp.local/Photos".into(),
+            path: "/Volumes/Photos".into(),
+        }];
+        assert_eq!(
+            mounted_at("smb://nas/photos", &mounts).as_deref(),
+            Some("/Volumes/Photos")
+        );
         assert_eq!(mounted_at("smb://nas/Music", &mounts), None);
         assert_eq!(mounted_at("nfs://nas/Photos", &mounts), None);
         let named = name_mounts(
             &["smb://nas/Photos".into()],
             vec![
-                SmbMount { share: "smb://me@nas._smb._tcp.local/Photos".into(), path: "/Volumes/Photos".into() },
-                SmbMount { share: "smb://pc/Music".into(), path: "/Volumes/Music".into() },
+                SmbMount {
+                    share: "smb://me@nas._smb._tcp.local/Photos".into(),
+                    path: "/Volumes/Photos".into(),
+                },
+                SmbMount {
+                    share: "smb://pc/Music".into(),
+                    path: "/Volumes/Music".into(),
+                },
             ],
         );
         assert_eq!(named[0].share, "smb://nas/Photos");
@@ -161,13 +224,30 @@ mod tests {
 
     #[test]
     fn nfs_exports() {
-        assert_eq!(nfs_url("nfs://nas/export/photos/").unwrap(), "nfs://nas/export/photos");
-        assert_eq!(nfs_url("nas:/export/photos").unwrap(), "nfs://nas/export/photos");
+        assert_eq!(
+            nfs_url("nfs://nas/export/photos/").unwrap(),
+            "nfs://nas/export/photos"
+        );
+        assert_eq!(
+            nfs_url("nas:/export/photos").unwrap(),
+            "nfs://nas/export/photos"
+        );
         assert!(nfs_url("nfs://nas").is_err());
         assert!(nfs_url("nfs://nas/").is_err());
-        assert!(is_nfs("nas:/export") && is_nfs("nfs://nas/x") && !is_nfs("smb://nas/x") && !is_nfs("nas/x"));
-        let mounts = vec![SmbMount { share: "nfs://NAS.local/export/Photos".into(), path: "/Volumes/Photos".into() }];
-        assert_eq!(mounted_at("nfs://nas/export/Photos", &mounts).as_deref(), Some("/Volumes/Photos"));
+        assert!(
+            is_nfs("nas:/export")
+                && is_nfs("nfs://nas/x")
+                && !is_nfs("smb://nas/x")
+                && !is_nfs("nas/x")
+        );
+        let mounts = vec![SmbMount {
+            share: "nfs://NAS.local/export/Photos".into(),
+            path: "/Volumes/Photos".into(),
+        }];
+        assert_eq!(
+            mounted_at("nfs://nas/export/Photos", &mounts).as_deref(),
+            Some("/Volumes/Photos")
+        );
         // NFS paths keep their case.
         assert_eq!(mounted_at("nfs://nas/export/photos", &mounts), None);
     }

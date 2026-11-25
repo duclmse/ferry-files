@@ -3,26 +3,49 @@
 use super::*;
 
 /// The sidebar's sections, top to bottom: (key, title). The computer's title is its name.
-pub(super) const SECTIONS: [(&str, &str); 6] =
-    [("workspaces", "Workspaces"), ("favs", "Favourites"), ("mac", ""), ("pairs", "Sync pairs"), ("devices", "Devices"), ("servers", "Servers")];
+pub(super) const SECTIONS: [(&str, &str); 6] = [
+    ("workspaces", "Workspaces"),
+    ("favs", "Favourites"),
+    ("mac", ""),
+    ("pairs", "Sync pairs"),
+    ("devices", "Devices"),
+    ("servers", "Servers"),
+];
 
 /// The sections in the order chosen (`stored`, keys of `SECTIONS`), then any it doesn't name.
 pub(super) fn section_order(stored: &[String]) -> Vec<&'static str> {
-    let mut order: Vec<&'static str> = stored.iter().filter_map(|k| SECTIONS.iter().find(|s| s.0 == k).map(|s| s.0)).collect();
+    let mut order: Vec<&'static str> = stored
+        .iter()
+        .filter_map(|k| SECTIONS.iter().find(|s| s.0 == k).map(|s| s.0))
+        .collect();
     order.dedup();
-    order.extend(SECTIONS.iter().map(|s| s.0).filter(|k| !stored.iter().any(|s| s == k)));
+    order.extend(
+        SECTIONS
+            .iter()
+            .map(|s| s.0)
+            .filter(|k| !stored.iter().any(|s| s == k)),
+    );
     order
 }
 
 /// `order` with section `from` moved before (or `after`) section `to`.
-pub(super) fn moved_section(order: &[&'static str], from: &str, to: &str, after: bool) -> Vec<&'static str> {
+pub(super) fn moved_section(
+    order: &[&'static str],
+    from: &str,
+    to: &str,
+    after: bool,
+) -> Vec<&'static str> {
     let mut v: Vec<&'static str> = order.to_vec();
     if from == to {
         return v;
     }
-    let Some(at) = v.iter().position(|k| *k == from) else { return v };
+    let Some(at) = v.iter().position(|k| *k == from) else {
+        return v;
+    };
     let key = v.remove(at);
-    let Some(t) = v.iter().position(|k| *k == to) else { return order.to_vec() };
+    let Some(t) = v.iter().position(|k| *k == to) else {
+        return order.to_vec();
+    };
     v.insert(t + usize::from(after), key);
     v
 }
@@ -45,7 +68,12 @@ pub(super) struct Reorder {
 
 impl Reorder {
     pub(super) fn new() -> Reorder {
-        Reorder { pressed: StoredValue::new(None), dragging: RwSignal::new(None), over: RwSignal::new(None), just_moved: StoredValue::new(false) }
+        Reorder {
+            pressed: StoredValue::new(None),
+            dragging: RwSignal::new(None),
+            over: RwSignal::new(None),
+            just_moved: StoredValue::new(false),
+        }
     }
 
     /// For a grip's pointerdown.
@@ -55,29 +83,39 @@ impl Reorder {
                 return;
             }
             // Not from the buttons and boxes in a heading or row.
-            let skip =
-                ev.target().and_then(|t| t.dyn_into::<web_sys::Element>().ok()).is_some_and(|e| e.closest("[data-no-grip], input").ok().flatten().is_some());
+            let skip = ev
+                .target()
+                .and_then(|t| t.dyn_into::<web_sys::Element>().ok())
+                .is_some_and(|e| e.closest("[data-no-grip], input").ok().flatten().is_some());
             if !skip {
-                self.pressed.set_value(Some((key, ev.client_x() as f64, ev.client_y() as f64)));
+                self.pressed
+                    .set_value(Some((key, ev.client_x() as f64, ev.client_y() as f64)));
             }
         }
     }
 
     /// For the list's pointermove.
     pub(super) fn track(self, ev: web_sys::PointerEvent) {
-        let Some((key, x, y)) = self.pressed.get_value() else { return };
+        let Some((key, x, y)) = self.pressed.get_value() else {
+            return;
+        };
         let (cx, cy) = (ev.client_x() as f64, ev.client_y() as f64);
         if self.dragging.get_untracked().is_none() {
             if (cx - x).abs() + (cy - y).abs() < 5.0 {
                 return;
             }
             self.dragging.set(Some(key));
-            if let Some(el) = ev.current_target().and_then(|t| t.dyn_into::<web_sys::Element>().ok()) {
+            if let Some(el) = ev
+                .current_target()
+                .and_then(|t| t.dyn_into::<web_sys::Element>().ok())
+            {
                 let _ = el.set_pointer_capture(ev.pointer_id());
             }
         }
         ev.prevent_default();
-        let target = document().element_from_point(cx as f32, cy as f32).and_then(|e| e.closest("[data-section]").ok().flatten());
+        let target = document()
+            .element_from_point(cx as f32, cy as f32)
+            .and_then(|e| e.closest("[data-section]").ok().flatten());
         let over = target.and_then(|t| {
             let k = t.get_attribute("data-section")?;
             let key = SECTIONS.iter().find(|s| s.0 == k)?.0;
@@ -92,9 +130,16 @@ impl Reorder {
     /// For the list's pointerup and pointercancel: moves the section when it was dropped on one.
     pub(super) fn release(self, ctx: Ctx, drop: bool) {
         self.pressed.set_value(None);
-        let Some(from) = self.dragging.get_untracked() else { return };
+        let Some(from) = self.dragging.get_untracked() else {
+            return;
+        };
         if let (true, Some((to, after))) = (drop, self.over.get_untracked()) {
-            ctx.set_section_order(moved_section(&ctx.section_order.get_untracked(), from, to, after));
+            ctx.set_section_order(moved_section(
+                &ctx.section_order.get_untracked(),
+                from,
+                to,
+                after,
+            ));
         }
         self.dragging.set(None);
         self.over.set(None);
@@ -190,8 +235,16 @@ pub(super) fn Sidebar() -> impl IntoView {
     // Disks mounted on the Mac: USB drives, SD cards, disk images.
     // With whether each can be ejected (not the disks inside the computer).
     let drives = Memo::new(move |_| {
-        ctx.devices
-            .with(|d| d.as_ref().map(|d| d.drives.iter().map(|(n, p)| (n.clone(), p.clone(), d.ejectable.contains(p))).collect::<Vec<_>>()).unwrap_or_default())
+        ctx.devices.with(|d| {
+            d.as_ref()
+                .map(|d| {
+                    d.drives
+                        .iter()
+                        .map(|(n, p)| (n.clone(), p.clone(), d.ejectable.contains(p)))
+                        .collect::<Vec<_>>()
+                })
+                .unwrap_or_default()
+        })
     });
     let device = move |i: Info| {
         let src = Src::of(&i.id);
@@ -208,11 +261,22 @@ pub(super) fn Sidebar() -> impl IntoView {
                 return;
             }
             let pane = ctx.panes[ctx.active.get()];
-            if pane.src.get() == src && pane.cwd.with(|c| roots.iter().any(|r| r == c || inside(r, c))) && !open.get_untracked() {
+            if pane.src.get() == src
+                && pane
+                    .cwd
+                    .with(|c| roots.iter().any(|r| r == c || inside(r, c)))
+                && !open.get_untracked()
+            {
                 open.set(true);
             }
         });
-        let fold_tip = move || if open.get() { "Hide folders" } else { "Show folders" };
+        let fold_tip = move || {
+            if open.get() {
+                "Hide folders"
+            } else {
+                "Show folders"
+            }
+        };
         // Items dragged from a pane drop at the top of its storage.
         let (drag_over, drop) = place_drop_events(ctx, src, "/".into());
         let key = place_key(src, "/");
@@ -410,8 +474,16 @@ pub(super) fn Sidebar() -> impl IntoView {
     let off_row = move |c: servers::Conn| {
         let (id, c1) = (c.id.clone(), c.clone());
         let id2 = id.clone();
-        let usual = if c.kind.mounted() { "Click to connect." } else { "Connecting… Click to try again." };
-        let tip = move || ctx.conn_errors.with(|e| e.get(&id).cloned()).map_or_else(|| usual.to_string(), |e| e + " Click to try again.");
+        let usual = if c.kind.mounted() {
+            "Click to connect."
+        } else {
+            "Connecting… Click to try again."
+        };
+        let tip = move || {
+            ctx.conn_errors
+                .with(|e| e.get(&id).cloned())
+                .map_or_else(|| usual.to_string(), |e| e + " Click to try again.")
+        };
         view! {
             <div class="device">
                 <span class="fold none"></span>
@@ -522,7 +594,16 @@ pub(super) fn Sidebar() -> impl IntoView {
 #[component]
 pub(super) fn ActivityBar() -> impl IntoView {
     let ctx = expect_context::<Ctx>();
-    let side_title = move || ctx.with_key(&format!("{} the {}", if ctx.side.get() { "Hide" } else { "Show" }, crate::os::sidebar()), "sidebar");
+    let side_title = move || {
+        ctx.with_key(
+            &format!(
+                "{} the {}",
+                if ctx.side.get() { "Hide" } else { "Show" },
+                crate::os::sidebar()
+            ),
+            "sidebar",
+        )
+    };
     view! {
         <nav class="activity" aria-label="Tools">
             <button class="act" class:on=move || ctx.side.get() title=side_title aria-label="Sidebar"
@@ -566,7 +647,12 @@ fn TreeNode(
             let args = json!({ "src": src.key(), "path": at.get_value(), "current": false });
             let found = match call::<Vec<Entry>>("list", args).await {
                 Ok(es) => {
-                    let mut dirs: Vec<(String, String)> = ctx.visible(es).into_iter().filter(|e| e.dir).map(|e| (e.name, e.path)).collect();
+                    let mut dirs: Vec<(String, String)> = ctx
+                        .visible(es)
+                        .into_iter()
+                        .filter(|e| e.dir)
+                        .map(|e| (e.name, e.path))
+                        .collect();
                     dirs.sort_by_key(|(n, _)| n.to_lowercase());
                     dirs
                 }
@@ -577,7 +663,9 @@ fn TreeNode(
     };
     // Listed again when what's in it changed (a copy, a delete, a rename), if it's open.
     Effect::new(move |prev: Option<u32>| {
-        let n = ctx.side_changed.with(|(n, s, d)| (*s == src && at.with_value(|p| p == d)).then_some(*n));
+        let n = ctx
+            .side_changed
+            .with(|(n, s, d)| (*s == src && at.with_value(|p| p == d)).then_some(*n));
         if let (Some(n), Some(_)) = (n, prev) {
             if open.get_untracked() {
                 list();
@@ -625,7 +713,13 @@ fn TreeNode(
     });
     // Nothing to show under it once listed and empty.
     let leaf = move || kids.with(|k| k.as_ref().is_some_and(Vec::is_empty));
-    let fold_tip = move || if open.get() { "Hide folders" } else { "Show folders" };
+    let fold_tip = move || {
+        if open.get() {
+            "Hide folders"
+        } else {
+            "Show folders"
+        }
+    };
     // Items dragged from a pane drop into it; held over it a moment, a closed folder opens.
     let (drag_over, drop) = place_drop_events(ctx, src, path.clone());
     let key = StoredValue::new(place_key(src, &path));
@@ -638,14 +732,22 @@ fn TreeNode(
     on_cleanup(stop_opening);
     let drag_over = move |ev: web_sys::DragEvent| {
         drag_over(ev);
-        let here = key.with_value(|k| ctx.drop_at.with_untracked(|d| d.as_deref() == Some(k.as_str())));
+        let here = key.with_value(|k| {
+            ctx.drop_at
+                .with_untracked(|d| d.as_deref() == Some(k.as_str()))
+        });
         if !here || open.get_untracked() || opening.with_value(Option::is_some) {
             return;
         }
         let t = set_timeout_with_handle(
             move || {
                 let _ = opening.try_set_value(None);
-                let still = key.try_with_value(|k| ctx.drop_at.with_untracked(|d| d.as_deref() == Some(k.as_str()))).unwrap_or(false);
+                let still = key
+                    .try_with_value(|k| {
+                        ctx.drop_at
+                            .with_untracked(|d| d.as_deref() == Some(k.as_str()))
+                    })
+                    .unwrap_or(false);
                 if still && !open.get_untracked() {
                     open.set(true);
                     list();
@@ -658,7 +760,12 @@ fn TreeNode(
     };
     let title = tip.unwrap_or_else(|| path.clone());
     // Renamed in place (from its menu): Enter renames, Escape or clicking away doesn't.
-    let renaming = move || ctx.side_renaming.with(|r| r.as_ref().is_some_and(|(s, p)| *s == src && at.with_value(|a| a == p)));
+    let renaming = move || {
+        ctx.side_renaming.with(|r| {
+            r.as_ref()
+                .is_some_and(|(s, p)| *s == src && at.with_value(|a| a == p))
+        })
+    };
     let rename = move |name: String| {
         ctx.side_renaming.set(None);
         let old = at.get_value();
@@ -667,7 +774,12 @@ fn TreeNode(
             return;
         }
         spawn_local(async move {
-            match call::<String>("rename", json!({ "src": src.key(), "path": old, "name": name })).await {
+            match call::<String>(
+                "rename",
+                json!({ "src": src.key(), "path": old, "name": name }),
+            )
+            .await
+            {
                 Ok(new) => ctx.place_renamed(src, &old, &new),
                 Err(e) => ctx.act().error(e),
             }
@@ -755,7 +867,8 @@ pub(super) fn Settings() -> impl IntoView {
     let prefs = expect_context::<VideoPrefs>();
     let folders = RwSignal::new(None::<Result<HashMap<String, Folder>, String>>);
     let restore = RwSignal::new(stored_flag(RESTORE_KEY, true));
-    let load = move || spawn_local(async move { folders.set(Some(call("app_folders", json!({})).await)) });
+    let load =
+        move || spawn_local(async move { folders.set(Some(call("app_folders", json!({})).await)) });
     load();
     let error = RwSignal::new(None::<String>);
     let open = move |which: &'static str| {

@@ -56,7 +56,10 @@ fn folder_or_default(folder: Option<&str>) -> Result<std::path::PathBuf, String>
             if at.is_dir() {
                 Ok(at)
             } else {
-                Err(format!("The scripts folder {} isn't there. Pick another in Settings > Scripts.", at.display()))
+                Err(format!(
+                    "The scripts folder {} isn't there. Pick another in Settings > Scripts.",
+                    at.display()
+                ))
             }
         }
         None => dir(),
@@ -69,7 +72,8 @@ fn folder_or_default(folder: Option<&str>) -> Result<std::path::PathBuf, String>
 fn dir() -> Result<std::path::PathBuf, String> {
     let dir = crate::platform::scripts_dir();
     if !dir.is_dir() {
-        std::fs::create_dir_all(&dir).map_err(|e| format!("Can't make the scripts folder {}: {e}", dir.display()))?;
+        std::fs::create_dir_all(&dir)
+            .map_err(|e| format!("Can't make the scripts folder {}: {e}", dir.display()))?;
         let _ = std::fs::write(dir.join("list sizes.lua"), EXAMPLE);
     }
     let guide = dir.join(GUIDE_NAME);
@@ -97,7 +101,11 @@ pub(super) struct ScriptInfo {
 
 /// The first `--` comment of a script, if it starts with one.
 fn about(src: &str) -> String {
-    src.lines().next().and_then(|l| l.trim().strip_prefix("--")).map(|l| l.trim().to_string()).unwrap_or_default()
+    src.lines()
+        .next()
+        .and_then(|l| l.trim().strip_prefix("--"))
+        .map(|l| l.trim().to_string())
+        .unwrap_or_default()
 }
 
 /// The script at `path`, when it's a .lua file.
@@ -108,26 +116,45 @@ fn info(path: &std::path::Path) -> Option<ScriptInfo> {
         return None;
     }
     let text = std::fs::read_to_string(path).unwrap_or_default();
-    Some(ScriptInfo { name: stem, path: crate::platform::app_path(path), about: about(&text) })
+    Some(ScriptInfo {
+        name: stem,
+        path: crate::platform::app_path(path),
+        about: about(&text),
+    })
 }
 
 /// The scripts in the scripts folder (`folder`, or the app's), then in `places` (app paths of .lua files, and of folders
 /// whose .lua files are taken), each once, by name.
 #[tauri::command(rename_all = "snake_case")]
-pub(super) async fn scripts(places: Vec<String>, folder: Option<String>) -> Result<Vec<ScriptInfo>, String> {
+pub(super) async fn scripts(
+    places: Vec<String>,
+    folder: Option<String>,
+) -> Result<Vec<ScriptInfo>, String> {
     blocking(move || {
         let mut found: Vec<ScriptInfo> = vec![];
-        let folders = std::iter::once(folder_or_default(folder.as_deref())?).chain(places.iter().map(|p| crate::platform::native(p)));
+        let folders = std::iter::once(folder_or_default(folder.as_deref())?)
+            .chain(places.iter().map(|p| crate::platform::native(p)));
         for at in folders {
             if at.is_dir() {
-                found.extend(std::fs::read_dir(&at).into_iter().flatten().flatten().filter_map(|e| info(&e.path())));
+                found.extend(
+                    std::fs::read_dir(&at)
+                        .into_iter()
+                        .flatten()
+                        .flatten()
+                        .filter_map(|e| info(&e.path())),
+                );
             } else {
                 found.extend(info(&at));
             }
         }
         let mut seen = HashSet::new();
         found.retain(|s| seen.insert(s.path.clone()));
-        found.sort_by(|a, b| a.name.to_lowercase().cmp(&b.name.to_lowercase()).then_with(|| a.path.cmp(&b.path)));
+        found.sort_by(|a, b| {
+            a.name
+                .to_lowercase()
+                .cmp(&b.name.to_lowercase())
+                .then_with(|| a.path.cmp(&b.path))
+        });
         Ok(found)
     })
     .await
@@ -164,9 +191,15 @@ pub(super) async fn pick_scripts(app: AppHandle, folder: bool) -> Result<Vec<Str
         let picked = if folder {
             d.blocking_pick_folder().into_iter().collect()
         } else {
-            d.add_filter("Lua scripts", &["lua"]).blocking_pick_files().unwrap_or_default()
+            d.add_filter("Lua scripts", &["lua"])
+                .blocking_pick_files()
+                .unwrap_or_default()
         };
-        Ok(picked.into_iter().filter_map(|f| f.into_path().ok()).map(|p| crate::platform::app_path(&p)).collect())
+        Ok(picked
+            .into_iter()
+            .filter_map(|f| f.into_path().ok())
+            .map(|p| crate::platform::app_path(&p))
+            .collect())
     })
     .await
 }
@@ -184,15 +217,25 @@ pub(super) struct ScriptReport {
 /// Runs the script at `script` (an app path of a .lua file on this computer) on `items` (paths on
 /// `src`) in folder `dir`.
 #[tauri::command(rename_all = "snake_case")]
-pub(super) async fn run_script(state: State<'_, AppState>, src: String, dir: String, items: Vec<String>, script: String) -> Result<ScriptReport, String> {
+pub(super) async fn run_script(
+    state: State<'_, AppState>,
+    src: String,
+    dir: String,
+    items: Vec<String>,
+    script: String,
+) -> Result<ScriptReport, String> {
     let dev = state.source(Some(&src))?;
     blocking(move || {
         let path = crate::platform::native(&script);
         let Some(s) = info(&path) else {
-            return Err(format!("{} isn't a Lua script (a .lua file) any more.", path.display()));
+            return Err(format!(
+                "{} isn't a Lua script (a .lua file) any more.",
+                path.display()
+            ));
         };
         let name = s.name;
-        let code = std::fs::read_to_string(&path).map_err(|e| format!("Can't read the script {}: {e}", path.display()))?;
+        let code = std::fs::read_to_string(&path)
+            .map_err(|e| format!("Can't read the script {}: {e}", path.display()))?;
         if RUNNING.swap(true, Ordering::SeqCst) {
             return Err("A script is already running. Stop it first.".into());
         }
@@ -211,20 +254,30 @@ pub(super) fn stop_script() {
 }
 
 /// Runs `code` with `ferry` set up for `dev`, until it ends or `stop` is set.
-fn run(dev: Arc<Device>, dir: &str, items: &[String], name: &str, code: &str, stop: &'static AtomicBool) -> ScriptReport {
+fn run(
+    dev: Arc<Device>,
+    dir: &str,
+    items: &[String],
+    name: &str,
+    code: &str,
+    stop: &'static AtomicBool,
+) -> ScriptReport {
     let output = Arc::new(Mutex::new(Vec::<String>::new()));
     let changed = Arc::new(std::sync::atomic::AtomicU32::new(0));
     let result = (|| -> mlua::Result<()> {
         let libs = StdLib::STRING | StdLib::TABLE | StdLib::MATH | StdLib::UTF8 | StdLib::COROUTINE;
         let lua = Lua::new_with(libs, LuaOptions::default())?;
         lua.set_memory_limit(MEMORY)?;
-        lua.set_hook(HookTriggers::new().every_nth_instruction(10_000), move |_, _| {
-            if stop.load(Ordering::Relaxed) {
-                Err(mlua::Error::runtime("Stopped."))
-            } else {
-                Ok(VmState::Continue)
-            }
-        });
+        lua.set_hook(
+            HookTriggers::new().every_nth_instruction(10_000),
+            move |_, _| {
+                if stop.load(Ordering::Relaxed) {
+                    Err(mlua::Error::runtime("Stopped."))
+                } else {
+                    Ok(VmState::Continue)
+                }
+            },
+        );
         let ferry = api(&lua, dev, dir, items, &changed, stop)?;
         let g = lua.globals();
         g.set("ferry", ferry)?;
@@ -245,7 +298,11 @@ fn run(dev: Arc<Device>, dir: &str, items: &[String], name: &str, code: &str, st
         lua.load(code).set_name(format!("@{name}.lua")).exec()
     })();
     let output = std::mem::take(&mut *output.lock().unwrap_or_else(|e| e.into_inner()));
-    ScriptReport { output, error: result.err().map(|e| plain_error(&e)), changed: changed.load(Ordering::Relaxed) }
+    ScriptReport {
+        output,
+        error: result.err().map(|e| plain_error(&e)),
+        changed: changed.load(Ordering::Relaxed),
+    }
 }
 
 /// A value as `print` shows it.
@@ -266,8 +323,16 @@ fn plain_error(e: &mlua::Error) -> String {
     match e {
         mlua::Error::CallbackError { cause, .. } => plain_error(cause),
         mlua::Error::RuntimeError(m) => m.lines().next().unwrap_or_default().to_string(),
-        mlua::Error::MemoryError(_) => format!("The script used more than {} MB of memory.", MEMORY / 1024 / 1024),
-        other => other.to_string().lines().next().unwrap_or_default().to_string(),
+        mlua::Error::MemoryError(_) => format!(
+            "The script used more than {} MB of memory.",
+            MEMORY / 1024 / 1024
+        ),
+        other => other
+            .to_string()
+            .lines()
+            .next()
+            .unwrap_or_default()
+            .to_string(),
     }
 }
 
@@ -285,10 +350,19 @@ fn entry(lua: &Lua, e: &Entry) -> mlua::Result<Table> {
 /// What kind of media a file is, by its extension: "picture", "video" or "sound".
 fn media_kind(name: &str) -> Option<&'static str> {
     let ext = name.rsplit_once('.').map(|(_, x)| x.to_ascii_lowercase())?;
-    const PICTURES: &[&str] = &["jpg", "jpeg", "png", "gif", "webp", "bmp", "heic", "heif", "avif", "tif", "tiff", "svg"];
-    const VIDEOS: &[&str] = &["mp4", "m4v", "mov", "3gp", "mkv", "webm", "avi", "wmv", "mpg", "mpeg", "ts"];
-    const SOUNDS: &[&str] = &["mp3", "m4a", "aac", "wav", "flac", "ogg", "oga", "opus", "wma"];
-    [("picture", PICTURES), ("video", VIDEOS), ("sound", SOUNDS)].into_iter().find(|(_, xs)| xs.contains(&ext.as_str())).map(|(k, _)| k)
+    const PICTURES: &[&str] = &[
+        "jpg", "jpeg", "png", "gif", "webp", "bmp", "heic", "heif", "avif", "tif", "tiff", "svg",
+    ];
+    const VIDEOS: &[&str] = &[
+        "mp4", "m4v", "mov", "3gp", "mkv", "webm", "avi", "wmv", "mpg", "mpeg", "ts",
+    ];
+    const SOUNDS: &[&str] = &[
+        "mp3", "m4a", "aac", "wav", "flac", "ogg", "oga", "opus", "wma",
+    ];
+    [("picture", PICTURES), ("video", VIDEOS), ("sound", SOUNDS)]
+        .into_iter()
+        .find(|(_, xs)| xs.contains(&ext.as_str()))
+        .map(|(k, _)| k)
 }
 
 /// A device error as the script's error, which it can catch with pcall.
@@ -310,17 +384,32 @@ fn stopped(stop: &AtomicBool) -> Result<(), String> {
 /// A file copied on its device through a file on this computer, so it needn't fit in memory.
 fn copy_file(d: &Device, from: &str, to: &str, stop: &AtomicBool) -> Result<(), String> {
     static N: AtomicU32 = AtomicU32::new(0);
-    let tmp = std::env::temp_dir().join(format!("ferry-script-{}-{}", std::process::id(), N.fetch_add(1, Ordering::Relaxed)));
-    let r = d.read_to(from, &tmp, &mut |_| {}, stop).and_then(|_| d.write_from(to, &tmp, None, true));
+    let tmp = std::env::temp_dir().join(format!(
+        "ferry-script-{}-{}",
+        std::process::id(),
+        N.fetch_add(1, Ordering::Relaxed)
+    ));
+    let r = d
+        .read_to(from, &tmp, &mut |_| {}, stop)
+        .and_then(|_| d.write_from(to, &tmp, None, true));
     let _ = std::fs::remove_file(&tmp);
     r.map(|_| ()).map_err(|e| e.to_string())
 }
 
 /// Copies file or folder `from` to `to` on `d`. A folder's contents go into a folder already at
 /// `to`; a file already there isn't replaced (the copy stops, saying so).
-fn copy_tree(d: &Device, from: &str, to: &str, stop: &AtomicBool, changed: &Changed) -> Result<(), String> {
+fn copy_tree(
+    d: &Device,
+    from: &str,
+    to: &str,
+    stop: &AtomicBool,
+    changed: &Changed,
+) -> Result<(), String> {
     stopped(stop)?;
-    let e = d.stat(from).map_err(|e| e.to_string())?.ok_or_else(|| format!("No such file or folder: {from}"))?;
+    let e = d
+        .stat(from)
+        .map_err(|e| e.to_string())?
+        .ok_or_else(|| format!("No such file or folder: {from}"))?;
     if e.dir && (to == from || to.starts_with(&format!("{}/", from.trim_end_matches('/')))) {
         return Err(format!("{from} can't be copied into itself."));
     }
@@ -335,7 +424,11 @@ fn copy_tree(d: &Device, from: &str, to: &str, stop: &AtomicBool, changed: &Chan
     }
     match there {
         Some(t) if t.dir => {}
-        Some(_) => return Err(format!("A file is already at {to}, where the folder would go.")),
+        Some(_) => {
+            return Err(format!(
+                "A file is already at {to}, where the folder would go."
+            ))
+        }
         None => {
             d.mkdir(to).map_err(|e| e.to_string())?;
             changed.fetch_add(1, Ordering::Relaxed);
@@ -351,7 +444,10 @@ fn copy_tree(d: &Device, from: &str, to: &str, stop: &AtomicBool, changed: &Chan
 /// each folder deleted once it's empty.
 fn remove_tree(d: &Device, path: &str, stop: &AtomicBool, changed: &Changed) -> Result<(), String> {
     stopped(stop)?;
-    let e = d.stat(path).map_err(|e| e.to_string())?.ok_or_else(|| format!("No such file or folder: {path}"))?;
+    let e = d
+        .stat(path)
+        .map_err(|e| e.to_string())?
+        .ok_or_else(|| format!("No such file or folder: {path}"))?;
     if e.dir {
         for c in d.listdir(path).map_err(|e| e.to_string())? {
             remove_tree(d, &c.path, stop, changed)?;
@@ -365,7 +461,13 @@ fn remove_tree(d: &Device, path: &str, stop: &AtomicBool, changed: &Changed) -> 
 /// Moves file or folder `from` to `to` on `d`, which must be free: in one step where the device
 /// can (on one of the computer's disks), otherwise copied, then the original deleted with
 /// backups.
-fn move_tree(d: &Device, from: &str, to: &str, stop: &AtomicBool, changed: &Changed) -> Result<(), String> {
+fn move_tree(
+    d: &Device,
+    from: &str,
+    to: &str,
+    stop: &AtomicBool,
+    changed: &Changed,
+) -> Result<(), String> {
     if d.stat(to).map_err(|e| e.to_string())?.is_some() {
         return Err(format!("{to} is already there. Nothing was moved."));
     }
@@ -395,37 +497,59 @@ fn make_dirs(d: &Device, path: &str, parents: bool, changed: &Changed) -> Result
 }
 
 /// The `ferry` table.
-fn api(lua: &Lua, dev: Arc<Device>, dir: &str, items: &[String], changed: &Changed, stop: &'static AtomicBool) -> mlua::Result<Table> {
+fn api(
+    lua: &Lua,
+    dev: Arc<Device>,
+    dir: &str,
+    items: &[String],
+    changed: &Changed,
+    stop: &'static AtomicBool,
+) -> mlua::Result<Table> {
     let t = lua.create_table()?;
     t.set("dir", dir)?;
-    t.set("items", lua.create_sequence_from(items.iter().map(String::as_str))?)?;
+    t.set(
+        "items",
+        lua.create_sequence_from(items.iter().map(String::as_str))?,
+    )?;
     t.set("device", dev.label())?;
     let d = dev.clone();
     t.set(
         "list",
         func(lua, move |lua, dir: String| {
             let es = d.listdir(&dir).map_err(fail)?;
-            lua.create_sequence_from(es.iter().map(|e| entry(lua, e)).collect::<mlua::Result<Vec<_>>>()?)
+            lua.create_sequence_from(
+                es.iter()
+                    .map(|e| entry(lua, e))
+                    .collect::<mlua::Result<Vec<_>>>()?,
+            )
         })?,
     )?;
     let d = dev.clone();
     t.set(
         "stat",
-        func(lua, move |lua, path: String| match d.stat(&path).map_err(fail)? {
-            Some(e) => Ok(Value::Table(entry(lua, &e)?)),
-            None => Ok(Value::Nil),
+        func(lua, move |lua, path: String| {
+            match d.stat(&path).map_err(fail)? {
+                Some(e) => Ok(Value::Table(entry(lua, &e)?)),
+                None => Ok(Value::Nil),
+            }
         })?,
     )?;
     let d = dev.clone();
     t.set(
         "read",
         func(lua, move |lua, path: String| {
-            let e = d.stat(&path).map_err(fail)?.ok_or_else(|| fail(format!("No such file: {path}")))?;
+            let e = d
+                .stat(&path)
+                .map_err(fail)?
+                .ok_or_else(|| fail(format!("No such file: {path}")))?;
             if e.dir {
                 return Err(fail(format!("{path} is a folder.")));
             }
             if e.size > READ_MAX {
-                return Err(fail(format!("{path} is bigger than {} MB, which is as much as ferry.read reads.", READ_MAX / 1024 / 1024)));
+                return Err(fail(format!(
+                    "{path} is bigger than {} MB, which is as much as ferry.read reads.",
+                    READ_MAX / 1024 / 1024
+                )));
             }
             let (data, _) = d.read(&path).map_err(fail)?;
             lua.create_string(&data)
@@ -435,7 +559,8 @@ fn api(lua: &Lua, dev: Arc<Device>, dir: &str, items: &[String], changed: &Chang
     t.set(
         "write",
         func(lua, move |_, (path, data): (String, mlua::String)| {
-            d.write(&path, &data.as_bytes(), None, false).map_err(fail)?;
+            d.write(&path, &data.as_bytes(), None, false)
+                .map_err(fail)?;
             c.fetch_add(1, Ordering::Relaxed);
             Ok(())
         })?,
@@ -445,11 +570,15 @@ fn api(lua: &Lua, dev: Arc<Device>, dir: &str, items: &[String], changed: &Chang
         "media",
         func(lua, move |lua, path: String| {
             let name = device::basename(&path).to_string();
-            let Some(kind) = media_kind(&name) else { return Ok(Value::Nil) };
+            let Some(kind) = media_kind(&name) else {
+                return Ok(Value::Nil);
+            };
             let m = lua.create_table()?;
             m.set("kind", kind)?;
             // Only the header is read; a size that can't be told from it is left out.
-            if let Ok(i) = crate::preview::media::info(&name, &mut |at, len| d.read_range(&path, at, len).map_err(|e| e.to_string())) {
+            if let Ok(i) = crate::preview::media::info(&name, &mut |at, len| {
+                d.read_range(&path, at, len).map_err(|e| e.to_string())
+            }) {
                 m.set("width", i.width)?;
                 m.set("height", i.height)?;
                 m.set("duration", i.duration)?;
@@ -458,16 +587,24 @@ fn api(lua: &Lua, dev: Arc<Device>, dir: &str, items: &[String], changed: &Chang
         })?,
     )?;
     let d = dev.clone();
-    t.set("exists", func(lua, move |_, path: String| Ok(d.stat(&path).map_err(fail)?.is_some()))?)?;
+    t.set(
+        "exists",
+        func(lua, move |_, path: String| {
+            Ok(d.stat(&path).map_err(fail)?.is_some())
+        })?,
+    )?;
     let (d, c) = (dev.clone(), changed.clone());
     t.set(
         "create",
-        func(lua, move |_, (path, data): (String, Option<mlua::String>)| {
-            let bytes = data.map(|s| s.as_bytes().to_vec()).unwrap_or_default();
-            d.write(&path, &bytes, None, true).map_err(fail)?;
-            c.fetch_add(1, Ordering::Relaxed);
-            Ok(())
-        })?,
+        func(
+            lua,
+            move |_, (path, data): (String, Option<mlua::String>)| {
+                let bytes = data.map(|s| s.as_bytes().to_vec()).unwrap_or_default();
+                d.write(&path, &bytes, None, true).map_err(fail)?;
+                c.fetch_add(1, Ordering::Relaxed);
+                Ok(())
+            },
+        )?,
     )?;
     let (d, c) = (dev.clone(), changed.clone());
     t.set(
@@ -475,7 +612,12 @@ fn api(lua: &Lua, dev: Arc<Device>, dir: &str, items: &[String], changed: &Chang
         func(lua, move |_, (path, data): (String, mlua::String)| {
             let mut now = match d.stat(&path).map_err(fail)? {
                 Some(e) if e.dir => return Err(fail(format!("{path} is a folder."))),
-                Some(e) if e.size > READ_MAX => return Err(fail(format!("{path} is bigger than {} MB, too big to add to.", READ_MAX / 1024 / 1024))),
+                Some(e) if e.size > READ_MAX => {
+                    return Err(fail(format!(
+                        "{path} is bigger than {} MB, too big to add to.",
+                        READ_MAX / 1024 / 1024
+                    )))
+                }
                 Some(_) => d.read(&path).map_err(fail)?.0,
                 None => vec![],
             };
@@ -486,11 +628,26 @@ fn api(lua: &Lua, dev: Arc<Device>, dir: &str, items: &[String], changed: &Chang
         })?,
     )?;
     let (d, c) = (dev.clone(), changed.clone());
-    t.set("mkdir", func(lua, move |_, (path, parents): (String, Option<bool>)| make_dirs(&d, &path, parents.unwrap_or(false), &c).map_err(fail))?)?;
+    t.set(
+        "mkdir",
+        func(lua, move |_, (path, parents): (String, Option<bool>)| {
+            make_dirs(&d, &path, parents.unwrap_or(false), &c).map_err(fail)
+        })?,
+    )?;
     let (d, c) = (dev.clone(), changed.clone());
-    t.set("copy", func(lua, move |_, (from, to): (String, String)| copy_tree(&d, &from, &to, stop, &c).map_err(fail))?)?;
+    t.set(
+        "copy",
+        func(lua, move |_, (from, to): (String, String)| {
+            copy_tree(&d, &from, &to, stop, &c).map_err(fail)
+        })?,
+    )?;
     let (d, c) = (dev.clone(), changed.clone());
-    t.set("move", func(lua, move |_, (from, to): (String, String)| move_tree(&d, &from, &to, stop, &c).map_err(fail))?)?;
+    t.set(
+        "move",
+        func(lua, move |_, (from, to): (String, String)| {
+            move_tree(&d, &from, &to, stop, &c).map_err(fail)
+        })?,
+    )?;
     let (d, c) = (dev.clone(), changed.clone());
     t.set(
         "rename",
@@ -512,9 +669,22 @@ fn api(lua: &Lua, dev: Arc<Device>, dir: &str, items: &[String], changed: &Chang
             Ok(backup)
         })?,
     )?;
-    t.set("join", func(lua, |_, (dir, name): (String, String)| Ok(device::join(&dir, &name)))?)?;
-    t.set("basename", func(lua, |_, path: String| Ok(device::basename(&path).to_string()))?)?;
-    t.set("dirname", func(lua, |_, path: String| Ok(device::dirname(&path)))?)?;
+    t.set(
+        "join",
+        func(lua, |_, (dir, name): (String, String)| {
+            Ok(device::join(&dir, &name))
+        })?,
+    )?;
+    t.set(
+        "basename",
+        func(lua, |_, path: String| {
+            Ok(device::basename(&path).to_string())
+        })?,
+    )?;
+    t.set(
+        "dirname",
+        func(lua, |_, path: String| Ok(device::dirname(&path)))?,
+    )?;
     // Failures come back as (false, message), which LIFT turns into errors that are plain
     // strings, raised where the script called: printable, and joinable with `..`.
     lua.load(LIFT).set_name("ferry").call(t)
@@ -541,11 +711,16 @@ return t
 
 /// A function for `ferry`: its result as (true, value), or a failure (a runtime error, from
 /// `fail`) as (false, message), for LIFT.
-fn func<A: mlua::FromLuaMulti, R: mlua::IntoLuaMulti>(lua: &Lua, f: impl Fn(&Lua, A) -> mlua::Result<R> + 'static) -> mlua::Result<mlua::Function> {
+fn func<A: mlua::FromLuaMulti, R: mlua::IntoLuaMulti>(
+    lua: &Lua,
+    f: impl Fn(&Lua, A) -> mlua::Result<R> + 'static,
+) -> mlua::Result<mlua::Function> {
     lua.create_function(move |lua, a: A| {
         let mut out = match f(lua, a) {
             Ok(r) => r.into_lua_multi(lua)?,
-            Err(mlua::Error::RuntimeError(m)) => return (false, lua.create_string(&m)?).into_lua_multi(lua),
+            Err(mlua::Error::RuntimeError(m)) => {
+                return (false, lua.create_string(&m)?).into_lua_multi(lua)
+            }
             Err(e) => return Err(e),
         };
         out.push_front(Value::Boolean(true));
@@ -568,7 +743,8 @@ mod tests {
     }
 
     fn scratch(name: &str) -> (Scratch, String) {
-        let dir = std::env::temp_dir().join(format!("ferry-script-test-{name}-{}", std::process::id()));
+        let dir =
+            std::env::temp_dir().join(format!("ferry-script-test-{name}-{}", std::process::id()));
         let _ = std::fs::remove_dir_all(&dir);
         std::fs::create_dir_all(&dir).unwrap();
         let app = crate::platform::app_path(&dir);
@@ -593,7 +769,10 @@ mod tests {
         assert_eq!(r.output, ["a.txt\t5", "c.txt"]);
         assert_eq!(r.changed, 3);
         assert_eq!(dev.read(&device::join(&dir, "c.txt")).unwrap().0, b"HELLO");
-        assert!(dev.stat(&device::join(&dir, "sub")).unwrap().is_some_and(|e| e.dir));
+        assert!(dev
+            .stat(&device::join(&dir, "sub"))
+            .unwrap()
+            .is_some_and(|e| e.dir));
     }
 
     #[test]
@@ -604,8 +783,21 @@ mod tests {
             let r = run(dev.clone(), &dir, &[], "t", code, &NEVER);
             assert!(r.error.is_some(), "{code}");
         }
-        let r = run(dev.clone(), &dir, &[], "t", "ferry.read(ferry.join(ferry.dir, 'none.txt'))", &NEVER);
-        assert!(r.error.as_deref().is_some_and(|e| e.starts_with("t.lua:1: No such file") && e.contains("none.txt")), "{:?}", r.error);
+        let r = run(
+            dev.clone(),
+            &dir,
+            &[],
+            "t",
+            "ferry.read(ferry.join(ferry.dir, 'none.txt'))",
+            &NEVER,
+        );
+        assert!(
+            r.error
+                .as_deref()
+                .is_some_and(|e| e.starts_with("t.lua:1: No such file") && e.contains("none.txt")),
+            "{:?}",
+            r.error
+        );
         // Caught, the error is a string, with the script's line.
         let r = run(
             dev.clone(),
@@ -617,9 +809,20 @@ print('skipped: ' .. e)",
             &NEVER,
         );
         assert_eq!(r.error, None);
-        assert!(r.output[0].starts_with("skipped: t.lua:1: "), "{:?}", r.output);
+        assert!(
+            r.output[0].starts_with("skipped: t.lua:1: "),
+            "{:?}",
+            r.output
+        );
         // A device error can be caught.
-        let r = run(dev, &dir, &[], "t", "print(pcall(ferry.remove, ferry.join(ferry.dir, 'none')))", &NEVER);
+        let r = run(
+            dev,
+            &dir,
+            &[],
+            "t",
+            "print(pcall(ferry.remove, ferry.join(ferry.dir, 'none')))",
+            &NEVER,
+        );
         assert_eq!(r.error, None);
         assert!(r.output[0].starts_with("false"), "{:?}", r.output);
     }
@@ -647,14 +850,29 @@ print('skipped: ' .. e)",
         "#;
         let r = run(dev.clone(), &dir, &[], "t", code, &NEVER);
         assert_eq!(r.error, None, "{:?}", r.output);
-        assert!(r.output[0].starts_with("false\t") && r.output[0].contains("already exists"), "{:?}", r.output);
-        assert!(r.output[1].starts_with("false\t") && r.output[1].contains("Not replaced"), "{:?}", r.output);
+        assert!(
+            r.output[0].starts_with("false\t") && r.output[0].contains("already exists"),
+            "{:?}",
+            r.output
+        );
+        assert!(
+            r.output[1].starts_with("false\t") && r.output[1].contains("Not replaced"),
+            "{:?}",
+            r.output
+        );
         assert!(r.output[2].contains("into itself"), "{:?}", r.output);
         assert_eq!(r.output[3], "false\t1\t22");
-        assert!(r.output[4].starts_with("false\t"), "a folder with things in it isn't deleted without `true`: {:?}", r.output);
+        assert!(
+            r.output[4].starts_with("false\t"),
+            "a folder with things in it isn't deleted without `true`: {:?}",
+            r.output
+        );
         assert_eq!(r.output[5], "false");
         // The original is as it was.
-        assert_eq!(dev.read(&device::join(&dir, "a/b/c/one.txt")).unwrap().0, b"1");
+        assert_eq!(
+            dev.read(&device::join(&dir, "a/b/c/one.txt")).unwrap().0,
+            b"1"
+        );
     }
 
     /// The start of a PNG `w` × `h`: enough for its size to be read.
@@ -670,7 +888,10 @@ print('skipped: ' .. e)",
     fn the_cleanup_script_keeps_only_big_media() {
         let (_s, dir) = scratch("clean");
         let dev = Arc::new(Device::new(Box::new(crate::local::Local)));
-        let put = |name: &str, data: &[u8]| dev.write(&device::join(&dir, name), data, None, true).unwrap();
+        let put = |name: &str, data: &[u8]| {
+            dev.write(&device::join(&dir, name), data, None, true)
+                .unwrap()
+        };
         put("big.png", &png(800, 600));
         put("wide.png", &png(1200, 300));
         put("small.png", &png(120, 90));
@@ -681,10 +902,20 @@ print('skipped: ' .. e)",
         let code = include_str!("../../docs/scripts/delete non-media and small media.lua");
         let r = run(dev.clone(), &dir, &[], "t", code, &NEVER);
         assert_eq!(r.error, None, "{:?}", r.output);
-        let left: Vec<String> = dev.listdir(&dir).unwrap().into_iter().map(|e| e.name).collect::<std::collections::BTreeSet<_>>().into_iter().collect();
+        let left: Vec<String> = dev
+            .listdir(&dir)
+            .unwrap()
+            .into_iter()
+            .map(|e| e.name)
+            .collect::<std::collections::BTreeSet<_>>()
+            .into_iter()
+            .collect();
         // Folders aren't gone into unless asked, and sounds are media.
         assert_eq!(left, ["big.png", "song.mp3", "sub"], "{:?}", r.output);
-        assert!(dev.stat(&device::join(&dir, "sub/tiny.png")).unwrap().is_some());
+        assert!(dev
+            .stat(&device::join(&dir, "sub/tiny.png"))
+            .unwrap()
+            .is_some());
         assert_eq!(r.changed, 3);
     }
 
@@ -694,7 +925,12 @@ print('skipped: ' .. e)",
         let dev = Arc::new(Device::new(Box::new(crate::local::Local)));
         static STOPPED: AtomicBool = AtomicBool::new(true);
         let r = run(dev, &dir, &[], "t", "while true do end", &STOPPED);
-        assert_eq!(r.error.as_deref().map(|e| e.contains("Stopped.")), Some(true), "{:?}", r.error);
+        assert_eq!(
+            r.error.as_deref().map(|e| e.contains("Stopped.")),
+            Some(true),
+            "{:?}",
+            r.error
+        );
     }
 
     #[test]

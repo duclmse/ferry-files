@@ -84,7 +84,11 @@ impl AppState {
     pub fn source(&self, src: Option<&str>) -> Result<Arc<Device>, String> {
         match src {
             Some("mac") => Ok(self.mac.clone()),
-            Some(id) => self.devs().get(id).map(|c| c.dev.clone()).ok_or_else(|| "That device isn't connected any more.".to_string()),
+            Some(id) => self
+                .devs()
+                .get(id)
+                .map(|c| c.dev.clone())
+                .ok_or_else(|| "That device isn't connected any more.".to_string()),
             None => Err("No device given.".into()),
         }
     }
@@ -112,15 +116,28 @@ impl AppState {
     fn close(&self, ids: &[String]) {
         let devs: Vec<Arc<Device>> = {
             let mut all = self.devs();
-            ids.iter().filter_map(|id| all.remove(id)).map(|c| c.dev).collect()
+            ids.iter()
+                .filter_map(|id| all.remove(id))
+                .map(|c| c.dev)
+                .collect()
         };
-        self.viewing.lock().unwrap_or_else(|e| e.into_inner()).retain(|_, (s, _)| !ids.contains(s));
-        self.missing.lock().unwrap_or_else(|e| e.into_inner()).retain(|id| !ids.contains(id));
+        self.viewing
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .retain(|_, (s, _)| !ids.contains(s));
+        self.missing
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .retain(|id| !ids.contains(id));
         let_go(devs, std::time::Duration::from_secs(5));
     }
 
     pub fn is_viewing(&self, src: &str, dir: &str) -> bool {
-        self.viewing.lock().unwrap_or_else(|e| e.into_inner()).values().any(|(s, d)| s == src && d == dir)
+        self.viewing
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .values()
+            .any(|(s, d)| s == src && d == dir)
     }
 }
 
@@ -143,8 +160,12 @@ fn msg(e: DevError) -> String {
 }
 
 /// Runs device work off the main thread so the window stays responsive (MTP can be slow).
-async fn blocking<T: Send + 'static>(f: impl FnOnce() -> Result<T, String> + Send + 'static) -> Result<T, String> {
-    tauri::async_runtime::spawn_blocking(f).await.map_err(|e| e.to_string())?
+async fn blocking<T: Send + 'static>(
+    f: impl FnOnce() -> Result<T, String> + Send + 'static,
+) -> Result<T, String> {
+    tauri::async_runtime::spawn_blocking(f)
+        .await
+        .map_err(|e| e.to_string())?
 }
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
@@ -286,7 +307,9 @@ fn quit_on_signals(app: AppHandle) {
     let mut signals = match signal_hook::iterator::Signals::new([SIGINT, SIGTERM, SIGHUP]) {
         Ok(s) => s,
         Err(e) => {
-            eprintln!("Ferry Files: can't catch Ctrl+C ({e}); it will quit without letting go of phones.");
+            eprintln!(
+                "Ferry Files: can't catch Ctrl+C ({e}); it will quit without letting go of phones."
+            );
             return;
         }
     };

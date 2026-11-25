@@ -4,7 +4,10 @@ use super::*;
 
 /// Free and total space of each storage on a device (each disk, for the Mac).
 #[tauri::command(rename_all = "snake_case")]
-pub(super) async fn space(state: State<'_, AppState>, src: String) -> Result<Vec<device::Space>, String> {
+pub(super) async fn space(
+    state: State<'_, AppState>,
+    src: String,
+) -> Result<Vec<device::Space>, String> {
     let dev = state.source(Some(&src))?;
     blocking(move || Ok(dev.space())).await
 }
@@ -41,9 +44,22 @@ pub(super) fn list_backups(dir: &std::path::Path) -> Vec<Backup> {
                 return None;
             }
             let note = notes.get(&file).cloned();
-            let name = note.as_ref().map(|n| device::basename(&n.path).to_string()).unwrap_or_else(|| backup_name(&file));
-            let mtime = m.modified().ok().and_then(|t| t.duration_since(std::time::UNIX_EPOCH).ok()).map_or(0, |d| d.as_secs() as i64);
-            Some(Backup { file: crate::platform::app_path(&e.path()), name, size: m.len(), mtime, note })
+            let name = note
+                .as_ref()
+                .map(|n| device::basename(&n.path).to_string())
+                .unwrap_or_else(|| backup_name(&file));
+            let mtime = m
+                .modified()
+                .ok()
+                .and_then(|t| t.duration_since(std::time::UNIX_EPOCH).ok())
+                .map_or(0, |d| d.as_secs() as i64);
+            Some(Backup {
+                file: crate::platform::app_path(&e.path()),
+                name,
+                size: m.len(),
+                mtime,
+                note,
+            })
         })
         .collect();
     out.sort_by(|a, b| b.mtime.cmp(&a.mtime).then_with(|| b.file.cmp(&a.file)));
@@ -70,7 +86,12 @@ pub(super) fn backup_name(file: &str) -> String {
 /// Puts a backup back at `path` on `src`. A file there now is replaced, and backed up first like
 /// any other replaced file.
 #[tauri::command(rename_all = "snake_case")]
-pub(super) async fn restore(state: State<'_, AppState>, file: String, src: String, path: String) -> Result<WriteResult, String> {
+pub(super) async fn restore(
+    state: State<'_, AppState>,
+    file: String,
+    src: String,
+    path: String,
+) -> Result<WriteResult, String> {
     let dev = state.source(Some(&src))?;
     blocking(move || {
         let dir = device::backup_dir();
@@ -83,10 +104,13 @@ pub(super) async fn restore(state: State<'_, AppState>, file: String, src: Strin
         }
         let parent = device::dirname(&path);
         if !dev.stat(&parent).map_err(msg)?.is_some_and(|e| e.dir) {
-            return Err(format!("The folder {parent} isn't there any more. Restore it into another folder."));
+            return Err(format!(
+                "The folder {parent} isn't there any more. Restore it into another folder."
+            ));
         }
         let now = dev.version(&path).map_err(msg)?;
-        dev.write_from(&path, &f, now.as_deref(), now.is_none()).map_err(msg)
+        dev.write_from(&path, &f, now.as_deref(), now.is_none())
+            .map_err(msg)
     })
     .await
 }
@@ -100,7 +124,9 @@ pub(super) async fn clear_backups() -> Result<(), String> {
         if !dir.exists() {
             return Ok(());
         }
-        crate::platform::trash_context().delete(&dir).map_err(|e| format!("Couldn't move the backups to the Trash: {e}"))
+        crate::platform::trash_context()
+            .delete(&dir)
+            .map_err(|e| format!("Couldn't move the backups to the Trash: {e}"))
     })
     .await
 }
@@ -123,11 +149,25 @@ mod tests {
         let mac = crate::Device::new(Box::new(crate::local::Local));
         let f = crate::platform::app_path(&dir.join("note.txt"));
         let v = mac.write(&f, b"one", None, true).unwrap().version;
-        let b = mac.write(&f, b"two", Some(&v), false).unwrap().backup.unwrap();
+        let b = mac
+            .write(&f, b"two", Some(&v), false)
+            .unwrap()
+            .backup
+            .unwrap();
         let listed = super::list_backups(&crate::device::backup_dir());
-        let mine = listed.iter().find(|x| crate::platform::native(&x.file) == std::path::Path::new(&b)).expect("listed");
+        let mine = listed
+            .iter()
+            .find(|x| crate::platform::native(&x.file) == std::path::Path::new(&b))
+            .expect("listed");
         let note = mine.note.as_ref().expect("noted");
-        assert_eq!((note.place.as_str(), note.path.as_str(), note.reason.as_str()), ("mac", f.as_str(), "replaced"));
+        assert_eq!(
+            (
+                note.place.as_str(),
+                note.path.as_str(),
+                note.reason.as_str()
+            ),
+            ("mac", f.as_str(), "replaced")
+        );
         assert_eq!(mine.name, "note.txt");
         std::fs::remove_file(&b).unwrap();
         std::fs::remove_dir_all(&dir).unwrap();

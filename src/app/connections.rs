@@ -11,10 +11,20 @@ fn status(ctx: Ctx, c: &Conn) -> (bool, String) {
     match c.kind {
         ConnKind::Smb | ConnKind::Nfs => match ctx.smb_path(c) {
             Some(path) => (true, format!("Connected at {path}")),
-            None => (false, ctx.conn_errors.with(|e| e.get(&c.id).cloned()).unwrap_or_else(|| "Not connected. Click it in the sidebar to connect.".into())),
+            None => (
+                false,
+                ctx.conn_errors
+                    .with(|e| e.get(&c.id).cloned())
+                    .unwrap_or_else(|| "Not connected. Click it in the sidebar to connect.".into()),
+            ),
         },
         _ if ctx.conn_on(c) => (true, "Connected".into()),
-        _ => (false, ctx.conn_errors.with(|e| e.get(&c.id).cloned()).unwrap_or_else(|| "Connecting…".into())),
+        _ => (
+            false,
+            ctx.conn_errors
+                .with(|e| e.get(&c.id).cloned())
+                .unwrap_or_else(|| "Connecting…".into()),
+        ),
     }
 }
 
@@ -38,11 +48,24 @@ fn auth_label(c: &Conn) -> &'static str {
 /// The ways connections of `kind` can log in: (value, label).
 fn auth_choices(kind: ConnKind) -> &'static [(Auth, &'static str)] {
     match kind {
-        ConnKind::Sftp => &[(Auth::System, "This computer's ssh keys"), (Auth::Password, "Password"), (Auth::Key, "Key file")],
-        ConnKind::Smb => &[(Auth::System, "Ask when connecting"), (Auth::Password, "Password")],
+        ConnKind::Sftp => &[
+            (Auth::System, "This computer's ssh keys"),
+            (Auth::Password, "Password"),
+            (Auth::Key, "Key file"),
+        ],
+        ConnKind::Smb => &[
+            (Auth::System, "Ask when connecting"),
+            (Auth::Password, "Password"),
+        ],
         ConnKind::Nfs => &[(Auth::System, "No login")],
-        ConnKind::Everything | ConnKind::WebDav => &[(Auth::System, "No login"), (Auth::Password, "User name and password")],
-        ConnKind::Ftp => &[(Auth::System, "Anonymous"), (Auth::Password, "User name and password")],
+        ConnKind::Everything | ConnKind::WebDav => &[
+            (Auth::System, "No login"),
+            (Auth::Password, "User name and password"),
+        ],
+        ConnKind::Ftp => &[
+            (Auth::System, "Anonymous"),
+            (Auth::Password, "User name and password"),
+        ],
         ConnKind::S3 => &[(Auth::Password, "Access key")],
     }
 }
@@ -97,7 +120,9 @@ fn conn_form(ctx: Ctx, editing: RwSignal<Option<Conn>>, is_new: bool) -> impl In
     let tls = Memo::new(move |_| get().tls);
     let trust = Memo::new(move |_| get().trust);
     let save = move || {
-        let Some(c) = editing.get_untracked() else { return };
+        let Some(c) = editing.get_untracked() else {
+            return;
+        };
         if trying.get_untracked() {
             return;
         }
@@ -113,7 +138,10 @@ fn conn_form(ctx: Ctx, editing: RwSignal<Option<Conn>>, is_new: bool) -> impl In
             trying.set(false);
         });
     };
-    let text = move |label: &'static str, placeholder: &'static str, value: Signal<String>, put: fn(&mut Conn, String)| {
+    let text = move |label: &'static str,
+                     placeholder: &'static str,
+                     value: Signal<String>,
+                     put: fn(&mut Conn, String)| {
         view! {
             <label class="field">
                 <span>{label}</span>
@@ -128,7 +156,10 @@ fn conn_form(ctx: Ctx, editing: RwSignal<Option<Conn>>, is_new: bool) -> impl In
         (ConnKind::S3, _) => "Secret access key",
         _ => "Password",
     };
-    let secret_hint = move || match (editing.with(|e| e.as_ref().is_some_and(|c| c.saved)), auth.get()) {
+    let secret_hint = move || match (
+        editing.with(|e| e.as_ref().is_some_and(|c| c.saved)),
+        auth.get(),
+    ) {
         (true, _) => "Saved. Type a new one to replace it.",
         (false, Auth::Key) => "Only if the key has one",
         _ => "",
@@ -251,7 +282,12 @@ pub(super) fn ConnectionsSettings() -> impl IntoView {
     };
     let shown = Memo::new(move |_| {
         let q = query.get();
-        ctx.conns.with(|cs| cs.iter().filter(|c| c.matches(&q)).cloned().collect::<Vec<_>>())
+        ctx.conns.with(|cs| {
+            cs.iter()
+                .filter(|c| c.matches(&q))
+                .cloned()
+                .collect::<Vec<_>>()
+        })
     });
     let open_id = Memo::new(move |_| editing.with(|e| e.as_ref().map(|c| c.id.clone())));
     // The new connection's id while one is being added. A memo, so typing in the form (which

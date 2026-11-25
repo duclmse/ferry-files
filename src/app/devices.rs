@@ -8,14 +8,18 @@ const ACCESS_RETRY: std::time::Duration = std::time::Duration::from_secs(5);
 /// Whether connecting failed because the phone's storage couldn't be read: it's locked, or it
 /// hasn't been allowed to share its files yet.
 fn needs_access(e: &str) -> bool {
-    e.contains("Reading the device's storage") || e.contains("shows no storage") || e.contains("tap Trust")
+    e.contains("Reading the device's storage")
+        || e.contains("shows no storage")
+        || e.contains("tap Trust")
 }
 
 impl Ctx {
     /// A device is connected. With `show`, the active pane goes to it.
     pub(super) fn connected(self, info: Info, show: bool) {
         let src = Src::of(&info.id);
-        let fresh = self.phones.with_untracked(|ps| !ps.iter().any(|i| i.id == info.id));
+        let fresh = self
+            .phones
+            .with_untracked(|ps| !ps.iter().any(|i| i.id == info.id));
         if fresh {
             self.phones.update(|ps| ps.push(info.clone()));
             self.tabs_back(&info);
@@ -39,9 +43,14 @@ impl Ctx {
             if let Ok(d) = call::<Devices>("devices", json!({})).await {
                 for (id, name) in &d.gone {
                     self.forget(Src::of(id));
-                    self.conn_error.set(Some(format!("{name} is no longer on USB, so it was disconnected.")));
+                    self.conn_error.set(Some(format!(
+                        "{name} is no longer on USB, so it was disconnected."
+                    )));
                 }
-                if self.awaiting.with_untracked(|w| w.as_ref().is_some_and(|w| !d.found.contains(w))) {
+                if self
+                    .awaiting
+                    .with_untracked(|w| w.as_ref().is_some_and(|w| !d.found.contains(w)))
+                {
                     self.stop_awaiting();
                 }
                 let pick = self.auto_pick(&d);
@@ -68,7 +77,12 @@ impl Ctx {
 
     /// Keys of the connected phones: serial and USB place.
     pub(super) fn connected_keys(self) -> HashSet<String> {
-        self.phones.with_untracked(|ps| ps.iter().flat_map(|i| [i.serial.clone(), i.usb.clone()]).flatten().collect())
+        self.phones.with_untracked(|ps| {
+            ps.iter()
+                .flat_map(|i| [i.serial.clone(), i.usb.clone()])
+                .flatten()
+                .collect()
+        })
     }
 
     /// The phone to connect automatically, if any, and whether to show it. Phones there when the
@@ -80,7 +94,9 @@ impl Ctx {
         let (before, looks) = self.seen.get_value();
         self.seen.set_value((now.clone(), looks + 1));
         // Gone for two looks in a row: unplugged, so plugging it in again connects it again.
-        self.tried.update_value(|t| t.retain(|k| now.contains(k) || before.contains(k) || connected.contains(k)));
+        self.tried.update_value(|t| {
+            t.retain(|k| now.contains(k) || before.contains(k) || connected.contains(k))
+        });
         if !self.auto_connect.get_untracked() || self.busy.get_untracked() {
             return None;
         }
@@ -90,7 +106,9 @@ impl Ctx {
             .iter()
             .filter(|f| {
                 let k = f.key();
-                !connected.contains(&k) && !self.tried.with_value(|t| t.contains(&k)) && (first || before.contains(&k))
+                !connected.contains(&k)
+                    && !self.tried.with_value(|t| t.contains(&k))
+                    && (first || before.contains(&k))
             })
             // adb first for each phone.
             .min_by_key(|f| (f.key(), f.transport != "adb"))?
@@ -108,7 +126,12 @@ impl Ctx {
         // The last error stays until this one's done: an automatic connect (a phone that came back
         // at another USB address) mustn't wipe it before it's been read.
         spawn_local(async move {
-            match call::<Info>("connect", json!({ "transport": f.transport, "which": f.which, "serial": f.serial })).await {
+            match call::<Info>(
+                "connect",
+                json!({ "transport": f.transport, "which": f.which, "serial": f.serial }),
+            )
+            .await
+            {
                 Ok(info) => {
                     self.stop_awaiting_for(&f);
                     self.failed.set_value(None);
@@ -139,10 +162,17 @@ impl Ctx {
         let h = set_timeout_with_handle(
             move || {
                 let _ = self.access_timer.try_set_value(None);
-                if self.awaiting.try_with_untracked(|w| w.as_ref() != Some(&f)).unwrap_or(true) {
+                if self
+                    .awaiting
+                    .try_with_untracked(|w| w.as_ref() != Some(&f))
+                    .unwrap_or(true)
+                {
                     return;
                 }
-                if !self.devices.with_untracked(|d| d.as_ref().is_some_and(|d| d.found.contains(&f))) {
+                if !self
+                    .devices
+                    .with_untracked(|d| d.as_ref().is_some_and(|d| d.found.contains(&f)))
+                {
                     self.stop_awaiting();
                 } else if self.busy.get_untracked() {
                     self.await_access(f, show);
@@ -183,7 +213,11 @@ impl Ctx {
     }
 
     pub(super) fn disconnect_then(self, src: Src, then: Option<UsbDevice>) {
-        if self.editor.with_untracked(|e| e.as_ref().is_some_and(|e| e.src == src)) && self.dirty() {
+        if self
+            .editor
+            .with_untracked(|e| e.as_ref().is_some_and(|e| e.src == src))
+            && self.dirty()
+        {
             self.confirm_discard.set(true);
             return;
         }
@@ -203,7 +237,11 @@ impl Ctx {
     fn forget(self, src: Src) {
         let id = src.key();
         self.phones.update(|ps| ps.retain(|i| i.id != id));
-        if self.editor.with_untracked(|e| e.as_ref().is_some_and(|e| e.src == src)) && !self.dirty() {
+        if self
+            .editor
+            .with_untracked(|e| e.as_ref().is_some_and(|e| e.src == src))
+            && !self.dirty()
+        {
             self.leave_editor();
         }
         for p in self.panes {
@@ -231,7 +269,10 @@ impl Ctx {
 #[component]
 pub(super) fn DeviceFinder() -> impl IntoView {
     let ctx = expect_context::<Ctx>();
-    let auto = AutoDismiss::new(move || ctx.conn_error.with(Option::is_some), move || ctx.conn_error.set(None));
+    let auto = AutoDismiss::new(
+        move || ctx.conn_error.with(Option::is_some),
+        move || ctx.conn_error.set(None),
+    );
     move || {
         // With Try again, when the device that failed is still there.
         let error = move || {
@@ -268,9 +309,18 @@ pub(super) fn DeviceFinder() -> impl IntoView {
             return view! { <p class="hint">"Looking for devices…"</p> }.into_any();
         };
         // A connected phone found the other way is offered as a switch on its own row instead.
-        let connected = ctx.phones.with(|ps| ps.iter().flat_map(|i| [i.serial.clone(), i.usb.clone()]).flatten().collect::<HashSet<_>>());
-        let (iphones, found): (Vec<UsbDevice>, Vec<UsbDevice>) =
-            d.found.iter().filter(|f| !connected.contains(&f.key())).cloned().partition(|f| f.transport == "iphone");
+        let connected = ctx.phones.with(|ps| {
+            ps.iter()
+                .flat_map(|i| [i.serial.clone(), i.usb.clone()])
+                .flatten()
+                .collect::<HashSet<_>>()
+        });
+        let (iphones, found): (Vec<UsbDevice>, Vec<UsbDevice>) = d
+            .found
+            .iter()
+            .filter(|f| !connected.contains(&f.key()))
+            .cloned()
+            .partition(|f| f.transport == "iphone");
         // iPhones connect one way only: a row with one button.
         let iphones = iphones
             .into_iter()
@@ -299,7 +349,9 @@ pub(super) fn DeviceFinder() -> impl IntoView {
             .collect_view();
         let waiting = d.adb_waiting.then(|| view! { <p class="hint">"A phone is waiting: allow USB debugging on it to use adb."</p> });
         if found.is_empty() {
-            if ctx.phones.with(|p| p.iter().any(Info::is_phone)) || d.found.iter().any(|f| f.transport == "iphone") {
+            if ctx.phones.with(|p| p.iter().any(Info::is_phone))
+                || d.found.iter().any(|f| f.transport == "iphone")
+            {
                 return view! { {iphones} {waiting} {access} {error} }.into_any();
             }
             let mut notes =
@@ -320,7 +372,11 @@ pub(super) fn DeviceFinder() -> impl IntoView {
         // (name, adb, mtp) per row: one row per phone, by serial number.
         let mut rows: Vec<(String, Option<UsbDevice>, Option<UsbDevice>)> = vec![];
         for f in found {
-            let row = rows.iter_mut().find(|(_, a, m)| a.iter().chain(m.iter()).any(|g| g.serial.is_some() && g.serial == f.serial));
+            let row = rows.iter_mut().find(|(_, a, m)| {
+                a.iter()
+                    .chain(m.iter())
+                    .any(|g| g.serial.is_some() && g.serial == f.serial)
+            });
             let row = match row {
                 Some(r) => r,
                 None => {
@@ -336,14 +392,24 @@ pub(super) fn DeviceFinder() -> impl IntoView {
             }
         }
         // Without serials, one adb phone and one MTP phone are most likely the same.
-        if let [(_, Some(_), None), (_, None, Some(m))] | [(_, None, Some(m)), (_, Some(_), None)] = rows.as_slice() {
-            if m.serial.is_none() || rows.iter().any(|r| r.1.as_ref().is_some_and(|a| a.serial.is_none())) {
+        if let [(_, Some(_), None), (_, None, Some(m))] | [(_, None, Some(m)), (_, Some(_), None)] =
+            rows.as_slice()
+        {
+            if m.serial.is_none()
+                || rows
+                    .iter()
+                    .any(|r| r.1.as_ref().is_some_and(|a| a.serial.is_none()))
+            {
                 let m = m.clone();
                 let a = rows.iter().find_map(|r| r.1.clone());
                 rows = vec![(m.name.clone(), a, Some(m))];
             }
         }
-        let adb_off = if d.adb_found { "Not available: allow USB debugging on the phone" } else { "Not available: adb isn't installed" };
+        let adb_off = if d.adb_found {
+            "Not available: allow USB debugging on the phone"
+        } else {
+            "Not available: adb isn't installed"
+        };
         view! {
             {rows.into_iter().map(|(name, a, m)| {
                 let ids: Vec<String> = a.iter().chain(m.iter()).map(|f| f.usb.clone()).collect();

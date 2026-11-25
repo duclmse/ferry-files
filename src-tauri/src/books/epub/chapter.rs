@@ -4,8 +4,12 @@ use super::*;
 
 impl Book {
     pub(super) fn body_range(toks: &[Tok], path: &str) -> Result<(usize, usize)> {
-        let open = toks.iter().position(|t| t.kind == Kind::Open && t.local() == "body").ok_or_else(|| format!("{path} has no <body>."))?;
-        let close = xml::matching_close(toks, open).ok_or_else(|| format!("{path}: <body> is never closed."))?;
+        let open = toks
+            .iter()
+            .position(|t| t.kind == Kind::Open && t.local() == "body")
+            .ok_or_else(|| format!("{path} has no <body>."))?;
+        let close = xml::matching_close(toks, open)
+            .ok_or_else(|| format!("{path}: <body> is never closed."))?;
         Ok((toks[open].end, toks[close].start))
     }
 
@@ -66,7 +70,8 @@ impl Book {
         if &text[s..e] == inner {
             return Ok(());
         }
-        xml::check(&format!("<body>{inner}</body>")).map_err(|e| format!("The edited chapter isn't valid XHTML: {e}"))?;
+        xml::check(&format!("<body>{inner}</body>"))
+            .map_err(|e| format!("The edited chapter isn't valid XHTML: {e}"))?;
         let new = format!("{}{inner}{}", &text[..s], &text[e..]);
         self.set_file(path, new.into_bytes());
         Ok(())

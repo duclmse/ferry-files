@@ -27,7 +27,10 @@ mod wire;
 /// Up to `s.max` entries under `dir` (an app path) that `s.keep` accepts, and whether that's
 /// all of them.
 pub fn search(dir: &str, s: &Search) -> Option<(Vec<Entry>, bool)> {
-    let rt = tokio::runtime::Builder::new_current_thread().enable_all().build().ok()?;
+    let rt = tokio::runtime::Builder::new_current_thread()
+        .enable_all()
+        .build()
+        .ok()?;
     rt.block_on(async {
         match tokio::time::timeout(TIME + Duration::from_secs(1), ask(dir, s)).await {
             Ok(Ok(found)) => found,
@@ -73,15 +76,29 @@ async fn ask(dir: &str, s: &Search<'_>) -> Result<Option<(Vec<Entry>, bool)>, St
         dirs
     };
 
-    let query = [scope.as_str(), name.as_str(), s.terms].iter().filter(|t| !t.is_empty()).copied().collect::<Vec<_>>().join(" ");
+    let query = [scope.as_str(), name.as_str(), s.terms]
+        .iter()
+        .filter(|t| !t.is_empty())
+        .copied()
+        .collect::<Vec<_>>()
+        .join(" ");
     let mut out = vec![];
     let mut offset = 0u32;
     loop {
         let (hits, total) = page(&mut fsd, &query, offset, PAGE).await?;
         let got = hits.len() as u32;
         for hit in hits {
-            let Some(path) = within(&hit, under) else { continue };
-            let e = Entry { name: hit.name, hidden: hit.attrib_bitmask & wire::HIDDEN != 0, path, dir: hit.is_dir, size: hit.size_bytes, mtime: hit.mtime };
+            let Some(path) = within(&hit, under) else {
+                continue;
+            };
+            let e = Entry {
+                name: hit.name,
+                hidden: hit.attrib_bitmask & wire::HIDDEN != 0,
+                path,
+                dir: hit.is_dir,
+                size: hit.size_bytes,
+                mtime: hit.mtime,
+            };
             if !s.hidden && (e.hidden || in_hidden(&e.path, under, &hidden_dirs)) {
                 continue;
             }
@@ -106,7 +123,10 @@ async fn ask(dir: &str, s: &Search<'_>) -> Result<Option<(Vec<Entry>, bool)>, St
 /// or a pattern with * and ?), in fsd's order: the palette's `:`. Err says why there's nothing
 /// to search: fsd isn't running, or hasn't finished indexing.
 pub fn find(text: &str, max: u32) -> Result<Vec<Entry>, String> {
-    let rt = tokio::runtime::Builder::new_current_thread().enable_all().build().map_err(|e| e.to_string())?;
+    let rt = tokio::runtime::Builder::new_current_thread()
+        .enable_all()
+        .build()
+        .map_err(|e| e.to_string())?;
     rt.block_on(async {
         match tokio::time::timeout(TIME, find_in(text, max)).await {
             Ok(r) => r,
@@ -116,9 +136,13 @@ pub fn find(text: &str, max: u32) -> Result<Vec<Entry>, String> {
 }
 
 async fn find_in(text: &str, max: u32) -> Result<Vec<Entry>, String> {
-    let mut fsd = Client::connect().await.map_err(|_| "fsd isn't running. Start it to find files by name here.".to_string())?;
+    let mut fsd = Client::connect()
+        .await
+        .map_err(|_| "fsd isn't running. Start it to find files by name here.".to_string())?;
     match fsd.request(Request::Roots).await? {
-        Response::Roots(r) if !r.crawled => return Err("fsd is still indexing. Try again in a while.".into()),
+        Response::Roots(r) if !r.crawled => {
+            return Err("fsd is still indexing. Try again in a while.".into())
+        }
         Response::Roots(_) => {}
         _ => return Err("fsd answered something else.".into()),
     }
@@ -141,8 +165,20 @@ async fn find_in(text: &str, max: u32) -> Result<Vec<Entry>, String> {
         .collect())
 }
 
-async fn page(fsd: &mut Client, query: &str, offset: u32, limit: u32) -> Result<(Vec<SearchHit>, u64), String> {
-    match fsd.request(Request::Search { query: query.to_string(), limit, offset }).await? {
+async fn page(
+    fsd: &mut Client,
+    query: &str,
+    offset: u32,
+    limit: u32,
+) -> Result<(Vec<SearchHit>, u64), String> {
+    match fsd
+        .request(Request::Search {
+            query: query.to_string(),
+            limit,
+            offset,
+        })
+        .await?
+    {
         Response::Search(r) => Ok((r.hits, r.total_hits)),
         _ => Err("fsd answered something else".into()),
     }
@@ -163,7 +199,11 @@ fn fold(p: &str) -> String {
 fn starts_with(rest: &str, prefix: &str) -> bool {
     rest.len() >= prefix.len()
         && rest.is_char_boundary(prefix.len())
-        && if ANY_CASE { rest[..prefix.len()].eq_ignore_ascii_case(prefix) } else { rest.starts_with(prefix) }
+        && if ANY_CASE {
+            rest[..prefix.len()].eq_ignore_ascii_case(prefix)
+        } else {
+            rest.starts_with(prefix)
+        }
 }
 
 /// Whether fsd's watch path `root` holds `dir` (both the computer's paths).
@@ -194,7 +234,11 @@ fn in_hidden(path: &str, under: &str, hidden: &HashSet<String>) -> bool {
         return false;
     }
     let folded = fold(path);
-    folded.char_indices().skip(under.len() + 1).filter(|(_, c)| *c == '/').any(|(i, _)| hidden.contains(&folded[..i]))
+    folded
+        .char_indices()
+        .skip(under.len() + 1)
+        .filter(|(_, c)| *c == '/')
+        .any(|(i, _)| hidden.contains(&folded[..i]))
 }
 
 /// The query term that keeps fsd's search under `dir` (the computer's path); fsd's results are
@@ -212,9 +256,15 @@ fn scope_term(dir: &str) -> Option<String> {
     let with_sep = format!("{dir}{sep}");
     // A Windows path as one word ("C:\Users\me\") is a path prefix fsd looks up quickly. A word
     // ends at a space or |<>, and `#..:` or `quot:` in it would be read as escapes.
-    let plain = cfg!(windows) && !with_sep.contains(|c: char| c.is_whitespace() || "|<>#".contains(c)) && with_sep.matches(':').count() == 1;
+    let plain = cfg!(windows)
+        && !with_sep.contains(|c: char| c.is_whitespace() || "|<>#".contains(c))
+        && with_sep.matches(':').count() == 1;
     // In quotes, a path anywhere in the path.
-    Some(if plain { with_sep } else { format!("\"{with_sep}\"") })
+    Some(if plain {
+        with_sep
+    } else {
+        format!("\"{with_sep}\"")
+    })
 }
 
 /// The query term for the name: in any case contained, a pattern with * and ?, or a regular
@@ -227,7 +277,11 @@ fn name_term(text: &str, regex: bool) -> Option<String> {
     if text.contains('"') {
         return None;
     }
-    Some(if regex { format!("regex:\"(?i){text}\"") } else { format!("\"{text}\"") })
+    Some(if regex {
+        format!("regex:\"(?i){text}\"")
+    } else {
+        format!("\"{text}\"")
+    })
 }
 
 /// The way the walk gives them: nearest folders first, then by name.
@@ -269,7 +323,10 @@ mod tests {
     fn windows_scopes() {
         assert_eq!(scope_term(r"C:\Users\me").unwrap(), r"C:\Users\me\");
         assert_eq!(scope_term(r"C:\").unwrap(), r"C:\");
-        assert_eq!(scope_term(r"C:\Program Files").unwrap(), "\"C:\\Program Files\\\"");
+        assert_eq!(
+            scope_term(r"C:\Program Files").unwrap(),
+            "\"C:\\Program Files\\\""
+        );
         assert_eq!(scope_term(r"C:\a#1:b").unwrap(), "\"C:\\a#1:b\\\"");
         assert!(covers(r"C:\Users", r"c:\users\me"));
         assert!(covers(r"C:\", r"C:\Users"));
@@ -281,7 +338,10 @@ mod tests {
     #[cfg(windows)]
     #[test]
     fn hits_are_spelled_from_the_folder_searched() {
-        assert_eq!(within(&hit(r"C:\Users\Me\a.txt", false), "/C:/users/me").unwrap(), "/C:/users/me/a.txt");
+        assert_eq!(
+            within(&hit(r"C:\Users\Me\a.txt", false), "/C:/users/me").unwrap(),
+            "/C:/users/me/a.txt"
+        );
         assert!(within(&hit(r"C:\Users\Me\a.zip!/b.txt", true), "/C:/Users/Me").is_none());
         assert!(within(&hit(r"C:\Users\Mex\a.txt", false), "/C:/Users/Me").is_none());
         assert!(within(&hit(r"C:\Users\Me", false), "/C:/Users/Me").is_none());
@@ -294,7 +354,10 @@ mod tests {
         assert_eq!(scope_term("/home/me").unwrap(), "\"/home/me/\"");
         assert!(covers("/home", "/home/me"));
         assert!(!covers("/home/me", "/home"));
-        assert_eq!(within(&hit("/home/me/a.txt", false), "/home/me").unwrap(), "/home/me/a.txt");
+        assert_eq!(
+            within(&hit("/home/me/a.txt", false), "/home/me").unwrap(),
+            "/home/me/a.txt"
+        );
         assert!(within(&hit("/mnt/home/me/a.txt", false), "/home/me").is_none());
     }
 
@@ -315,14 +378,28 @@ mod tests {
     #[test]
     #[ignore]
     fn live() {
-        let dir = app_path(Path::new(&std::env::var("FERRY_FSD_DIR").expect("FERRY_FSD_DIR")));
+        let dir = app_path(Path::new(
+            &std::env::var("FERRY_FSD_DIR").expect("FERRY_FSD_DIR"),
+        ));
         let var = |k: &str| std::env::var(k).unwrap_or_default();
         let (text, terms) = (var("FERRY_FSD_TEXT"), var("FERRY_FSD_TERMS"));
         let keep = |_: &Entry| true;
-        let s = Search { text: &text, regex: false, hidden: !var("FERRY_FSD_HIDDEN").is_empty(), terms: &terms, keep: &keep, max: 1000 };
+        let s = Search {
+            text: &text,
+            regex: false,
+            hidden: !var("FERRY_FSD_HIDDEN").is_empty(),
+            terms: &terms,
+            keep: &keep,
+            max: 1000,
+        };
         let (found, all) = search(&dir, &s).expect("fsd didn't answer");
         for e in &found {
-            println!("found {}{} {}", e.path, if e.dir { "/" } else { "" }, e.size);
+            println!(
+                "found {}{} {}",
+                e.path,
+                if e.dir { "/" } else { "" },
+                e.size
+            );
         }
         println!("complete {all}");
     }
@@ -332,16 +409,31 @@ mod tests {
     #[test]
     #[ignore]
     fn find_live() {
-        match find(&std::env::var("FERRY_FSD_TEXT").unwrap_or_else(|_| "readme".into()), 20) {
-            Ok(found) => found.iter().for_each(|e| println!("found {}{}", e.path, if e.dir { "/" } else { "" })),
+        match find(
+            &std::env::var("FERRY_FSD_TEXT").unwrap_or_else(|_| "readme".into()),
+            20,
+        ) {
+            Ok(found) => found
+                .iter()
+                .for_each(|e| println!("found {}{}", e.path, if e.dir { "/" } else { "" })),
             Err(e) => println!("no: {e}"),
         }
     }
 
     #[test]
     fn nearest_come_first() {
-        let e = |p: &str| Entry { name: String::new(), path: p.into(), dir: false, size: 0, mtime: 0, hidden: false };
+        let e = |p: &str| Entry {
+            name: String::new(),
+            path: p.into(),
+            dir: false,
+            size: 0,
+            mtime: 0,
+            hidden: false,
+        };
         let sorted = nearest_first(vec![e("/a/b/c"), e("/a/z"), e("/a/B")]);
-        assert_eq!(sorted.iter().map(|e| e.path.as_str()).collect::<Vec<_>>(), ["/a/B", "/a/z", "/a/b/c"]);
+        assert_eq!(
+            sorted.iter().map(|e| e.path.as_str()).collect::<Vec<_>>(),
+            ["/a/B", "/a/z", "/a/b/c"]
+        );
     }
 }

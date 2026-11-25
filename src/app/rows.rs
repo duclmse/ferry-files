@@ -53,7 +53,14 @@ impl Window {
         measure: fn(&web_sys::Element) -> Option<Rows>,
         pane: Signal<Option<usize>>,
     ) -> Self {
-        let w = Window { range: RwSignal::new((0, len.get_untracked().min(60))), rows: RwSignal::new(guess), scroller, len, measure, pane };
+        let w = Window {
+            range: RwSignal::new((0, len.get_untracked().min(60))),
+            rows: RwSignal::new(guess),
+            scroller,
+            len,
+            measure,
+            pane,
+        };
         // Again once what's newly rendered can be measured.
         Effect::new(move |_| {
             w.len.track();
@@ -67,7 +74,8 @@ impl Window {
             let cb = Closure::<dyn Fn()>::new(move || w.update());
             if let Ok(ro) = web_sys::ResizeObserver::new(cb.as_ref().unchecked_ref()) {
                 ro.observe(&el);
-                if let Some((old, _)) = watcher.try_update_value(|o| o.replace((ro, cb))).flatten() {
+                if let Some((old, _)) = watcher.try_update_value(|o| o.replace((ro, cb))).flatten()
+                {
                     old.disconnect();
                 }
             }
@@ -85,9 +93,13 @@ impl Window {
 
     /// Measures again and moves the range to what's in view; for the scroller's scroll event too.
     pub(super) fn update(self) {
-        let Some(el) = self.scroller.try_get_untracked().flatten() else { return };
+        let Some(el) = self.scroller.try_get_untracked().flatten() else {
+            return;
+        };
         let el: &web_sys::Element = &el;
-        let Some(old) = self.rows.try_get_untracked() else { return };
+        let Some(old) = self.rows.try_get_untracked() else {
+            return;
+        };
         let r = (self.measure)(el).filter(|r| r.h > 0.0).unwrap_or(old);
         if r != old {
             self.rows.set(r);
@@ -101,7 +113,10 @@ impl Window {
         let pad = ((height / r.h / 2.0).ceil() as usize).max(4);
         let first = (((top - r.top) / r.h).floor().max(0.0) as usize).saturating_sub(pad);
         let end = (((top + height - r.top) / r.h).ceil().max(0.0) as usize + pad).min(r.count(n));
-        let range = ((first * r.per).min(n), (end * r.per).min(n).max((first * r.per).min(n)));
+        let range = (
+            (first * r.per).min(n),
+            (end * r.per).min(n).max((first * r.per).min(n)),
+        );
         if self.range.get_untracked() != range {
             self.range.set(range);
         }
@@ -126,9 +141,14 @@ impl Window {
 /// Scrolls `scroller`, pane `pane`'s list, so its item `idx` shows, when that item isn't rendered
 /// (`scrollIntoView` does it when it is).
 pub(super) fn reveal(pane: usize, scroller: &web_sys::Element, idx: usize) {
-    let Some(r) = SHOWN.with(|s| s.borrow().get(&pane).copied()) else { return };
+    let Some(r) = SHOWN.with(|s| s.borrow().get(&pane).copied()) else {
+        return;
+    };
     let y = r.top + (idx / r.per.max(1)) as f64 * r.h;
-    let (top, height) = (scroller.scroll_top() as f64, scroller.client_height() as f64);
+    let (top, height) = (
+        scroller.scroll_top() as f64,
+        scroller.client_height() as f64,
+    );
     if y - r.top < top {
         scroller.set_scroll_top((y - r.top) as i32);
     } else if y + r.h > top + height {
@@ -139,7 +159,13 @@ pub(super) fn reveal(pane: usize, scroller: &web_sys::Element, idx: usize) {
 /// The height of `el`'s first descendant matching `selector`, in px.
 fn height_of(el: &web_sys::Element, selector: &str) -> Option<f64> {
     // Not offsetHeight: that's rounded, and rows can be a fraction of a pixel high.
-    Some(el.query_selector(selector).ok().flatten()?.get_bounding_client_rect().height())
+    Some(
+        el.query_selector(selector)
+            .ok()
+            .flatten()?
+            .get_bounding_client_rect()
+            .height(),
+    )
 }
 
 /// How far apart the rows of `el`'s descendants matching `selector` are, in px: from the first
@@ -147,8 +173,10 @@ fn height_of(el: &web_sys::Element, selector: &str) -> Option<f64> {
 /// top loses half a border in a table) doesn't skew it. One row: its height plus `gap`.
 fn pitch(el: &web_sys::Element, selector: &str, gap: f64) -> Option<f64> {
     let found = el.query_selector_all(selector).ok()?;
-    let mut tops: Vec<f64> =
-        (0..found.length()).filter_map(|n| found.item(n)?.dyn_into::<web_sys::Element>().ok()).map(|e| e.get_bounding_client_rect().top()).collect();
+    let mut tops: Vec<f64> = (0..found.length())
+        .filter_map(|n| found.item(n)?.dyn_into::<web_sys::Element>().ok())
+        .map(|e| e.get_bounding_client_rect().top())
+        .collect();
     tops.dedup_by(|a, b| (*a - *b).abs() < 0.5);
     match tops.as_slice() {
         [] => None,
@@ -170,7 +198,11 @@ fn px(el: &web_sys::Element, prop: &str) -> f64 {
 
 /// The list view: rows under the header.
 pub(super) fn list_rows(el: &web_sys::Element) -> Option<Rows> {
-    Some(Rows { h: pitch(el, "tbody tr[data-row]", 0.0)?, per: 1, top: height_of(el, "thead")? })
+    Some(Rows {
+        h: pitch(el, "tbody tr[data-row]", 0.0)?,
+        per: 1,
+        top: height_of(el, "thead")?,
+    })
 }
 
 /// The thumbnail view: rows of tiles in a grid, after the space for the rows above.
@@ -182,10 +214,18 @@ pub(super) fn tile_rows(el: &web_sys::Element) -> Option<Rows> {
         .flatten()
         .and_then(|s| s.get_property_value("grid-template-columns").ok())
         .map_or(1, |v| v.split_whitespace().count().max(1));
-    Some(Rows { h: pitch(&grid, ".tile", px(&grid, "row-gap"))?, per, top: px(&grid, "padding-top") })
+    Some(Rows {
+        h: pitch(&grid, ".tile", px(&grid, "row-gap"))?,
+        per,
+        top: px(&grid, "padding-top"),
+    })
 }
 
 /// A column of the column view.
 pub(super) fn column_rows(el: &web_sys::Element) -> Option<Rows> {
-    Some(Rows { h: pitch(el, ".row", 0.0)?, per: 1, top: px(el, "padding-top") })
+    Some(Rows {
+        h: pitch(el, ".row", 0.0)?,
+        per: 1,
+        top: px(el, "padding-top"),
+    })
 }

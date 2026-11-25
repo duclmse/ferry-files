@@ -28,7 +28,10 @@ fn terms() -> std::sync::MutexGuard<'static, HashMap<u32, Arc<Term>>> {
 }
 
 fn term(id: u32) -> Result<Arc<Term>, String> {
-    terms().get(&id).cloned().ok_or_else(|| "This terminal has ended.".to_string())
+    terms()
+        .get(&id)
+        .cloned()
+        .ok_or_else(|| "This terminal has ended.".to_string())
 }
 
 #[derive(Clone, Serialize)]
@@ -46,7 +49,12 @@ struct TermExit {
 }
 
 fn size(rows: u16, cols: u16) -> PtySize {
-    PtySize { rows: rows.clamp(2, 500), cols: cols.clamp(10, 1000), pixel_width: 0, pixel_height: 0 }
+    PtySize {
+        rows: rows.clamp(2, 500),
+        cols: cols.clamp(10, 1000),
+        pixel_width: 0,
+        pixel_height: 0,
+    }
 }
 
 /// `c` (from `Transport::shell`) as a command for the pseudo-terminal.
@@ -69,18 +77,39 @@ fn builder(c: &std::process::Command) -> CommandBuilder {
 
 /// Starts a shell in `dir` on `src`, `rows` by `cols` characters. Answers the terminal's id.
 #[tauri::command(rename_all = "snake_case")]
-pub(super) async fn term_open(app: AppHandle, state: State<'_, AppState>, src: Option<String>, dir: String, rows: u16, cols: u16) -> Result<u32, String> {
+pub(super) async fn term_open(
+    app: AppHandle,
+    state: State<'_, AppState>,
+    src: Option<String>,
+    dir: String,
+    rows: u16,
+    cols: u16,
+) -> Result<u32, String> {
     let dev = state.source(src.as_deref())?;
     blocking(move || {
-        let cmd = dev.shell(&dir).ok_or("This device has no command line.")?.map_err(|e| e.to_string())?;
-        let pair = portable_pty::native_pty_system().openpty(size(rows, cols)).map_err(|e| format!("Couldn't open a terminal: {e}"))?;
-        let mut child = pair.slave.spawn_command(builder(&cmd)).map_err(|e| format!("Couldn't start {}: {e}", cmd.get_program().to_string_lossy()))?;
+        let cmd = dev
+            .shell(&dir)
+            .ok_or("This device has no command line.")?
+            .map_err(|e| e.to_string())?;
+        let pair = portable_pty::native_pty_system()
+            .openpty(size(rows, cols))
+            .map_err(|e| format!("Couldn't open a terminal: {e}"))?;
+        let mut child = pair.slave.spawn_command(builder(&cmd)).map_err(|e| {
+            format!(
+                "Couldn't start {}: {e}",
+                cmd.get_program().to_string_lossy()
+            )
+        })?;
         // The shell has its own copy now; holding ours would keep the terminal open after it ends.
         drop(pair.slave);
         let mut reader = pair.master.try_clone_reader().map_err(|e| e.to_string())?;
         let writer = pair.master.take_writer().map_err(|e| e.to_string())?;
         let id = NEXT.fetch_add(1, Ordering::Relaxed);
-        let t = Term { writer: Mutex::new(writer), master: Mutex::new(pair.master), killer: Mutex::new(child.clone_killer()) };
+        let t = Term {
+            writer: Mutex::new(writer),
+            master: Mutex::new(pair.master),
+            killer: Mutex::new(child.clone_killer()),
+        };
         terms().insert(id, Arc::new(t));
         std::thread::spawn(move || {
             use base64::Engine;
@@ -107,7 +136,9 @@ pub(super) async fn term_write(id: u32, data: String) -> Result<(), String> {
     let t = term(id)?;
     blocking(move || {
         let mut w = t.writer.lock().unwrap_or_else(|e| e.into_inner());
-        w.write_all(data.as_bytes()).and_then(|_| w.flush()).map_err(|e| format!("Couldn't type into the terminal: {e}"))
+        w.write_all(data.as_bytes())
+            .and_then(|_| w.flush())
+            .map_err(|e| format!("Couldn't type into the terminal: {e}"))
     })
     .await
 }
@@ -116,7 +147,11 @@ pub(super) async fn term_write(id: u32, data: String) -> Result<(), String> {
 #[tauri::command(rename_all = "snake_case")]
 pub(super) async fn term_resize(id: u32, rows: u16, cols: u16) -> Result<(), String> {
     let t = term(id)?;
-    let r = t.master.lock().unwrap_or_else(|e| e.into_inner()).resize(size(rows, cols));
+    let r = t
+        .master
+        .lock()
+        .unwrap_or_else(|e| e.into_inner())
+        .resize(size(rows, cols));
     r.map_err(|e| e.to_string())
 }
 
@@ -137,8 +172,11 @@ mod tests {
     #[test]
     fn runs_a_shell_in_a_terminal() {
         let mut c = std::process::Command::new("sh");
-        c.args(["-c", "stty size; printf 'hi\\n'; read x; echo got $x"]).current_dir("/");
-        let pair = portable_pty::native_pty_system().openpty(size(24, 80)).unwrap();
+        c.args(["-c", "stty size; printf 'hi\\n'; read x; echo got $x"])
+            .current_dir("/");
+        let pair = portable_pty::native_pty_system()
+            .openpty(size(24, 80))
+            .unwrap();
         let mut child = pair.slave.spawn_command(builder(&c)).unwrap();
         drop(pair.slave);
         let mut reader = pair.master.try_clone_reader().unwrap();

@@ -36,7 +36,14 @@ struct Screen {
 
 impl Screen {
     fn new(rows: u16, cols: u16) -> Screen {
-        Screen { parser: vt100::Parser::new(nz(rows), nz(cols), SCROLLBACK), log: vec![], session: None, place: String::new(), unsaved: false, typed: vec![] }
+        Screen {
+            parser: vt100::Parser::new(nz(rows), nz(cols), SCROLLBACK),
+            log: vec![],
+            session: None,
+            place: String::new(),
+            unsaved: false,
+            typed: vec![],
+        }
     }
 
     fn print(&mut self, bytes: &[u8]) {
@@ -45,7 +52,10 @@ impl Screen {
         if self.log.len() > KEEP {
             // From the start of a line, so it's replayed from a clean place.
             let cut = self.log.len() - KEEP;
-            let at = self.log[cut..].iter().position(|&b| b == b'\n').map_or(cut, |i| cut + i + 1);
+            let at = self.log[cut..]
+                .iter()
+                .position(|&b| b == b'\n')
+                .map_or(cut, |i| cut + i + 1);
             self.log.drain(..at);
         }
         self.unsaved = true;
@@ -66,9 +76,14 @@ fn with_screen<R>(pane: usize, f: impl FnOnce(&mut Screen) -> R) -> R {
         let mut s = s.borrow_mut();
         let screen = s.entry(pane).or_insert_with(|| {
             let mut sc = Screen::new(24, 80);
-            if let Some(kept) = stored(&keep_key(pane)).and_then(|t| B64.decode(t).ok()).filter(|k| !k.is_empty()) {
+            if let Some(kept) = stored(&keep_key(pane))
+                .and_then(|t| B64.decode(t).ok())
+                .filter(|k| !k.is_empty())
+            {
                 sc.print(&kept);
-                sc.print(b"\x1b[0m\r\n\x1b[2m[Above: output from before the app was closed]\x1b[0m\r\n");
+                sc.print(
+                    b"\x1b[0m\r\n\x1b[2m[Above: output from before the app was closed]\x1b[0m\r\n",
+                );
                 sc.unsaved = false;
             }
             sc
@@ -78,7 +93,12 @@ fn with_screen<R>(pane: usize, f: impl FnOnce(&mut Screen) -> R) -> R {
 }
 
 fn pane_of(session: u32) -> Option<usize> {
-    SCREENS.with(|s| s.borrow().iter().find(|(_, sc)| sc.session == Some(session)).map(|(p, _)| *p))
+    SCREENS.with(|s| {
+        s.borrow()
+            .iter()
+            .find(|(_, sc)| sc.session == Some(session))
+            .map(|(p, _)| *p)
+    })
 }
 
 #[derive(serde::Deserialize)]
@@ -100,7 +120,13 @@ fn key_bytes(e: &web_sys::KeyboardEvent, app_cursor: bool) -> Option<Vec<u8>> {
     }
     let key = e.key();
     let csi = |s: &str| format!("\x1b[{s}").into_bytes();
-    let arrow = |c: char| if app_cursor { format!("\x1bO{c}").into_bytes() } else { format!("\x1b[{c}").into_bytes() };
+    let arrow = |c: char| {
+        if app_cursor {
+            format!("\x1bO{c}").into_bytes()
+        } else {
+            format!("\x1b[{c}").into_bytes()
+        }
+    };
     let bytes = match key.as_str() {
         "Enter" => b"\r".to_vec(),
         "Backspace" => {
@@ -178,7 +204,12 @@ fn colour(c: vt100::Color) -> Option<String> {
         vt100::Color::Idx(i @ 16..=231) => {
             let i = i - 16;
             let level = |v: u8| if v == 0 { 0 } else { 55 + v * 40 };
-            Some(format!("rgb({},{},{})", level(i / 36), level(i / 6 % 6), level(i % 6)))
+            Some(format!(
+                "rgb({},{},{})",
+                level(i / 36),
+                level(i / 6 % 6),
+                level(i % 6)
+            ))
         }
         vt100::Color::Idx(i) => {
             let g = 8 + (i - 232) * 10;
@@ -228,7 +259,11 @@ fn screen_html(screen: &vt100::Screen, focused: bool) -> String {
             run.clear();
         };
         // The last cell with something in it, so rows don't end in spaces to copy.
-        let last = (0..cols).rev().find(|&c| screen.cell(r, c).is_some_and(|x| x.has_contents() || x.bgcolor() != vt100::Color::Default || x.inverse()));
+        let last = (0..cols).rev().find(|&c| {
+            screen.cell(r, c).is_some_and(|x| {
+                x.has_contents() || x.bgcolor() != vt100::Color::Default || x.inverse()
+            })
+        });
         let end = match (last, show_cursor && cr == r) {
             (Some(l), true) => l.max(cc),
             (Some(l), false) => l,
@@ -239,16 +274,26 @@ fn screen_html(screen: &vt100::Screen, focused: bool) -> String {
             }
         };
         for c in 0..=end.min(cols - 1) {
-            let Some(cell) = screen.cell(r, c) else { continue };
+            let Some(cell) = screen.cell(r, c) else {
+                continue;
+            };
             if cell.is_wide_continuation() {
                 continue;
             }
             let (mut fg, mut bg) = (colour(cell.fgcolor()), colour(cell.bgcolor()));
             if cell.inverse() {
-                (fg, bg) = (Some(bg.unwrap_or_else(|| "var(--panel)".into())), Some(fg.unwrap_or_else(|| "var(--ink)".into())));
+                (fg, bg) = (
+                    Some(bg.unwrap_or_else(|| "var(--panel)".into())),
+                    Some(fg.unwrap_or_else(|| "var(--ink)".into())),
+                );
             }
             let mut class = String::new();
-            for (on, name) in [(cell.bold(), "b"), (cell.dim(), "d"), (cell.italic(), "i"), (cell.underline(), "u")] {
+            for (on, name) in [
+                (cell.bold(), "b"),
+                (cell.dim(), "d"),
+                (cell.italic(), "i"),
+                (cell.underline(), "u"),
+            ] {
                 if on {
                     class.push_str(name);
                     class.push(' ');
@@ -288,7 +333,10 @@ fn screen_html(screen: &vt100::Screen, focused: bool) -> String {
 impl Ctx {
     /// Whether `src` has a command line: this computer, a phone over adb, an SFTP server.
     pub(super) fn has_shell(self, src: Src) -> bool {
-        src == Src::Mac || self.src_info(src).is_some_and(|i| matches!(i.transport.as_str(), "adb" | "sftp"))
+        src == Src::Mac
+            || self
+                .src_info(src)
+                .is_some_and(|i| matches!(i.transport.as_str(), "adb" | "sftp"))
     }
 
     /// Shows or hides the terminal under the pane. Hidden, its shell keeps running.
@@ -316,7 +364,9 @@ impl Ctx {
     /// Listens for the terminals' output, and stores what they printed now and then. Once, at launch.
     pub(super) fn watch_terminals(self) {
         crate::api::listen("term", move |o: TermOut| {
-            let Ok(bytes) = B64.decode(o.data) else { return };
+            let Ok(bytes) = B64.decode(o.data) else {
+                return;
+            };
             if let Some(pane) = pane_of(o.id) {
                 with_screen(pane, |s| s.print(&bytes));
                 self.panes[pane].term_tick.update(|t| *t += 1);
@@ -340,7 +390,9 @@ impl Ctx {
         let _ = set_interval_with_handle(
             move || {
                 for p in self.panes {
-                    let log = with_screen(p.id, |s| std::mem::take(&mut s.unsaved).then(|| B64.encode(&s.log)));
+                    let log = with_screen(p.id, |s| {
+                        std::mem::take(&mut s.unsaved).then(|| B64.encode(&s.log))
+                    });
                     if let Some(log) = log {
                         store(&keep_key(p.id), &log);
                     }
@@ -357,7 +409,9 @@ impl Ctx {
         }
         let (src, dir) = (p.src.get_untracked(), p.cwd.get_untracked());
         if !self.has_shell(src) {
-            with_screen(p.id, |s| s.print(b"\x1b[0;2m[This device has no command line.]\x1b[0m\r\n"));
+            with_screen(p.id, |s| {
+                s.print(b"\x1b[0;2m[This device has no command line.]\x1b[0m\r\n")
+            });
             p.term_tick.update(|t| *t += 1);
             return;
         }
@@ -368,7 +422,11 @@ impl Ctx {
         .unwrap_or_default();
         p.term_starting.set_value(true);
         spawn_local(async move {
-            let r = call::<u32>("term_open", json!({ "src": src.key(), "dir": dir, "rows": rows, "cols": cols })).await;
+            let r = call::<u32>(
+                "term_open",
+                json!({ "src": src.key(), "dir": dir, "rows": rows, "cols": cols }),
+            )
+            .await;
             p.term_starting.set_value(false);
             match r {
                 Ok(id) => {
@@ -383,7 +441,9 @@ impl Ctx {
                     }
                 }
                 Err(e) => {
-                    with_screen(p.id, |s| s.print(format!("\x1b[0;31m{e}\x1b[0m\r\n").as_bytes()));
+                    with_screen(p.id, |s| {
+                        s.print(format!("\x1b[0;31m{e}\x1b[0m\r\n").as_bytes())
+                    });
                     p.term_tick.update(|t| *t += 1);
                 }
             }
@@ -426,14 +486,20 @@ pub(super) fn Terminal(pane: Pane) -> impl IntoView {
     // The terminal's size in characters, from its size on screen.
     let size = RwSignal::new((24u16, 80u16));
     let fit = move || {
-        let (Some(el), Some(m)) = (screen_el.get_untracked(), measure_el.get_untracked()) else { return };
+        let (Some(el), Some(m)) = (screen_el.get_untracked(), measure_el.get_untracked()) else {
+            return;
+        };
         let r = m.get_bounding_client_rect();
         let (cw, ch) = (r.width() / 10.0, r.height());
         if cw <= 0.0 || ch <= 0.0 {
             return;
         }
-        let cols = ((el.client_width() as f64 - 16.0) / cw).floor().clamp(10.0, 1000.0) as u16;
-        let rows = ((el.client_height() as f64 - 8.0) / ch).floor().clamp(2.0, 500.0) as u16;
+        let cols = ((el.client_width() as f64 - 16.0) / cw)
+            .floor()
+            .clamp(10.0, 1000.0) as u16;
+        let rows = ((el.client_height() as f64 - 8.0) / ch)
+            .floor()
+            .clamp(2.0, 500.0) as u16;
         if size.get_untracked() != (rows, cols) {
             size.set((rows, cols));
         }
@@ -445,7 +511,11 @@ pub(super) fn Terminal(pane: Pane) -> impl IntoView {
         p.term_tick.update(|t| *t += 1);
         if let Some(id) = p.term_id.get_untracked() {
             spawn_local(async move {
-                let _ = call::<()>("term_resize", json!({ "id": id, "rows": rows, "cols": cols })).await;
+                let _ = call::<()>(
+                    "term_resize",
+                    json!({ "id": id, "rows": rows, "cols": cols }),
+                )
+                .await;
             });
         }
     });
@@ -487,7 +557,9 @@ pub(super) fn Terminal(pane: Pane) -> impl IntoView {
             return;
         }
         let app_cursor = with_screen(p.id, |s| s.parser.screen().application_cursor());
-        let Some(bytes) = key_bytes(&e, app_cursor) else { return };
+        let Some(bytes) = key_bytes(&e, app_cursor) else {
+            return;
+        };
         e.prevent_default();
         e.stop_propagation();
         // With no shell, a key starts one; keys typed while it starts are sent once it runs.
@@ -499,11 +571,20 @@ pub(super) fn Terminal(pane: Pane) -> impl IntoView {
         ctx.type_in(p, bytes);
     };
     let paste = move |e: web_sys::ClipboardEvent| {
-        let Some(text) = e.clipboard_data().and_then(|d| d.get_data("text/plain").ok()) else { return };
+        let Some(text) = e
+            .clipboard_data()
+            .and_then(|d| d.get_data("text/plain").ok())
+        else {
+            return;
+        };
         e.prevent_default();
         let bracketed = with_screen(p.id, |s| s.parser.screen().bracketed_paste());
         let text = text.replace("\r\n", "\r").replace('\n', "\r");
-        let data = if bracketed { format!("\x1b[200~{text}\x1b[201~") } else { text };
+        let data = if bracketed {
+            format!("\x1b[200~{text}\x1b[201~")
+        } else {
+            text
+        };
         ctx.type_in(p, data.into_bytes());
     };
     let wheel = move |e: web_sys::WheelEvent| {
@@ -535,7 +616,10 @@ pub(super) fn Terminal(pane: Pane) -> impl IntoView {
     };
     let cd_here = move |_| {
         let dir = p.cwd.get_untracked();
-        ctx.type_in(p, format!("cd '{}'\r", dir.replace('\'', r"'\''")).into_bytes());
+        ctx.type_in(
+            p,
+            format!("cd '{}'\r", dir.replace('\'', r"'\''")).into_bytes(),
+        );
         if let Some(el) = screen_el.get_untracked() {
             let _ = el.focus();
         }
@@ -597,7 +681,11 @@ mod tests {
     #[test]
     fn keeps_the_last_output() {
         let mut s = Screen::new(3, 20);
-        let line = [b'x'; 1023].iter().copied().chain([b'\n']).collect::<Vec<_>>();
+        let line = [b'x'; 1023]
+            .iter()
+            .copied()
+            .chain([b'\n'])
+            .collect::<Vec<_>>();
         for _ in 0..300 {
             s.print(&line);
         }

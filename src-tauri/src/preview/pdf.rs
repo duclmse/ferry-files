@@ -40,11 +40,21 @@ pub fn outline(doc: &PdfDocument) -> Result<Outline, String> {
             let page = b
                 .destination()
                 .and_then(|d| d.page_index().ok())
-                .or_else(|| b.action().and_then(|a| a.as_local_destination_action().and_then(|l| l.destination().ok()).and_then(|d| d.page_index().ok())));
+                .or_else(|| {
+                    b.action().and_then(|a| {
+                        a.as_local_destination_action()
+                            .and_then(|l| l.destination().ok())
+                            .and_then(|d| d.page_index().ok())
+                    })
+                });
             // One that goes nowhere in the PDF (a link to a web page, say) is left out; what's under
             // it isn't.
             if let Some(page) = page {
-                out.push(Heading { title: b.title().unwrap_or_default().trim().to_string(), level, page: page as usize + 1 });
+                out.push(Heading {
+                    title: b.title().unwrap_or_default().trim().to_string(),
+                    level,
+                    page: page as usize + 1,
+                });
             }
             if level < LEVELS_MAX {
                 walk(b.first_child(), level + 1, out, seen);
@@ -54,7 +64,10 @@ pub fn outline(doc: &PdfDocument) -> Result<Outline, String> {
     }
     let mut headings = vec![];
     walk(doc.bookmarks().root(), 1, &mut headings, &mut 0);
-    Ok(Outline { pages: doc.pages().len() as usize, headings })
+    Ok(Outline {
+        pages: doc.pages().len() as usize,
+        headings,
+    })
 }
 
 /// A page's matches listed with their text around them; past this, only counted.
@@ -62,7 +75,11 @@ const SNIPPETS_MAX: usize = 200;
 
 fn matches(text: &str, q: &Query, re: &Option<regex::Regex>) -> Vec<(usize, usize)> {
     match re {
-        Some(re) => re.find_iter(text).filter(|m| !m.is_empty()).map(|m| (m.start(), m.end())).collect(),
+        Some(re) => re
+            .find_iter(text)
+            .filter(|m| !m.is_empty())
+            .map(|m| (m.start(), m.end()))
+            .collect(),
         None => find_all(text, &q.find, q.match_case, q.whole_word),
     }
 }
@@ -70,8 +87,17 @@ fn matches(text: &str, q: &Query, re: &Option<regex::Regex>) -> Vec<(usize, usiz
 fn add_hit(found: &mut Found, n: usize, text: &str, ms: &[(usize, usize)]) {
     if !ms.is_empty() {
         found.total += ms.len();
-        let snippets = ms.iter().take(SNIPPETS_MAX).map(|&m| snippet(text, m)).collect();
-        found.hits.push(Hit { path: n.to_string(), label: format!("Page {n}"), count: ms.len(), snippets });
+        let snippets = ms
+            .iter()
+            .take(SNIPPETS_MAX)
+            .map(|&m| snippet(text, m))
+            .collect();
+        found.hits.push(Hit {
+            path: n.to_string(),
+            label: format!("Page {n}"),
+            count: ms.len(),
+            snippets,
+        });
     }
 }
 
@@ -100,7 +126,10 @@ pub fn marks(doc: &PdfDocument, n: usize, q: &Query) -> Result<Vec<Vec<[f32; 4]>
     }
     let re = Book::regex(q)?;
     let t = super::pdfium::text_of(doc, n.checked_sub(1).ok_or("No such page.")?)?;
-    Ok(matches(&t.text, q, &re).into_iter().map(|m| t.boxes(m)).collect())
+    Ok(matches(&t.text, q, &re)
+        .into_iter()
+        .map(|m| t.boxes(m))
+        .collect())
 }
 
 /// The text of page `n` (from 1), in runs along its lines (`PageText::runs`), and its links.
@@ -130,29 +159,50 @@ mod tests {
         let pages: ObjectId = (1, 0);
         let kids: Vec<ObjectId> = vec![(2, 0), (3, 0), (4, 0)];
         for &k in &kids {
-            doc.objects.insert(k, Object::Dictionary(dictionary! { "Type" => "Page", "Parent" => pages }));
+            doc.objects.insert(
+                k,
+                Object::Dictionary(dictionary! { "Type" => "Page", "Parent" => pages }),
+            );
         }
         doc.objects.insert(
             pages,
             Object::Dictionary(dictionary! { "Type" => "Pages", "Kids" => kids.iter().map(|&k| k.into()).collect::<Vec<Object>>(), "Count" => 3 }),
         );
-        doc.objects.insert((5, 0), Object::Dictionary(dictionary! { "Type" => "Catalog", "Pages" => pages }));
+        doc.objects.insert(
+            (5, 0),
+            Object::Dictionary(dictionary! { "Type" => "Catalog", "Pages" => pages }),
+        );
         doc.trailer.set("Root", (5, 0));
         doc.max_id = 5;
         let one = doc.add_bookmark(Bookmark::new("One".into(), [0.0; 3], 0, kids[0]), None);
-        doc.add_bookmark(Bookmark::new("One, part two".into(), [0.0; 3], 0, kids[1]), Some(one));
+        doc.add_bookmark(
+            Bookmark::new("One, part two".into(), [0.0; 3], 0, kids[1]),
+            Some(one),
+        );
         doc.add_bookmark(Bookmark::new("Two".into(), [0.0; 3], 0, kids[2]), None);
         let at = doc.build_outline().unwrap();
-        doc.get_object_mut((5, 0)).unwrap().as_dict_mut().unwrap().set("Outlines", at);
+        doc.get_object_mut((5, 0))
+            .unwrap()
+            .as_dict_mut()
+            .unwrap()
+            .set("Outlines", at);
         let mut file = Vec::new();
         doc.save_to(&mut file).unwrap();
 
         let o = super::outline(&opened(&file)).unwrap();
         assert_eq!(o.pages, 3);
-        let got: Vec<_> = o.headings.iter().map(|h| (h.title.as_str(), h.level, h.page)).collect();
+        let got: Vec<_> = o
+            .headings
+            .iter()
+            .map(|h| (h.title.as_str(), h.level, h.page))
+            .collect();
         assert_eq!(got, [("One", 1, 1), ("One, part two", 2, 2), ("Two", 1, 3)]);
 
-        assert!(crate::preview::pdfium::open(crate::preview::pdfium::pdfium().unwrap(), b"not a pdf").is_err());
+        assert!(crate::preview::pdfium::open(
+            crate::preview::pdfium::pdfium().unwrap(),
+            b"not a pdf"
+        )
+        .is_err());
     }
 
     /// A PDF with one page per text, in Courier.
@@ -173,7 +223,10 @@ mod tests {
                     Operation::new("ET", vec![]),
                 ],
             };
-            let stream = doc.add_object(lopdf::Stream::new(dictionary! {}, content.encode().unwrap()));
+            let stream = doc.add_object(lopdf::Stream::new(
+                dictionary! {},
+                content.encode().unwrap(),
+            ));
             kids.push(
                 doc.add_object(
                     dictionary! { "Type" => "Page", "Parent" => pages, "Contents" => stream, "MediaBox" => vec![0.into(), 0.into(), 612.into(), 792.into()] },
@@ -203,7 +256,11 @@ mod tests {
         let file = opened(&file);
         let f = super::find(&file, &query("cat")).unwrap();
         assert_eq!(f.total, 3);
-        let got: Vec<_> = f.hits.iter().map(|h| (h.path.as_str(), h.label.as_str(), h.count)).collect();
+        let got: Vec<_> = f
+            .hits
+            .iter()
+            .map(|h| (h.path.as_str(), h.label.as_str(), h.count))
+            .collect();
         assert_eq!(got, [("1", "Page 1", 1), ("3", "Page 3", 2)]);
         assert_eq!(f.hits[0].snippets[0].text, "cat");
 
@@ -223,10 +280,16 @@ mod tests {
         }
         let bytes = with_text(&["The cat sat.", "A cat and a Cat."]);
         let file = opened(&bytes);
-        assert_eq!(crate::preview::pdfium::sizes(&file), [[612.0, 792.0], [612.0, 792.0]]);
+        assert_eq!(
+            crate::preview::pdfium::sizes(&file),
+            [[612.0, 792.0], [612.0, 792.0]]
+        );
 
         let drawn = crate::preview::pdfium::render(&file, 0, 300, None).unwrap();
-        let (w, h) = (u32::from_le_bytes(drawn[..4].try_into().unwrap()), u32::from_le_bytes(drawn[4..8].try_into().unwrap()));
+        let (w, h) = (
+            u32::from_le_bytes(drawn[..4].try_into().unwrap()),
+            u32::from_le_bytes(drawn[4..8].try_into().unwrap()),
+        );
         assert_eq!((w, h), (300, 388));
         assert_eq!(drawn.len(), 8 + 300 * 388 * 4);
         // White and opaque in the corner, with the text drawn somewhere.
@@ -238,7 +301,8 @@ mod tests {
         // A piece of the page drawn 3000 wide: the text's corner, 72 points in and 92 down, is
         // as dark as where it is in the whole page drawn that wide.
         let whole = crate::preview::pdfium::render(&file, 0, 3000, None).unwrap();
-        let piece = crate::preview::pdfium::render(&file, 0, 3000, Some([300, 300, 400, 200])).unwrap();
+        let piece =
+            crate::preview::pdfium::render(&file, 0, 3000, Some([300, 300, 400, 200])).unwrap();
         assert_eq!(piece[..8], [144, 1, 0, 0, 200, 0, 0, 0]);
         assert_eq!(piece.len(), 8 + 400 * 200 * 4);
         let at = |px: &[u8], w: usize, x: usize, y: usize| px[8 + (y * w + x) * 4];
@@ -257,7 +321,14 @@ mod tests {
         for m in &marks {
             assert_eq!(m.len(), 1);
             let [x, y, w, h] = m[0];
-            assert!(x > 72.0 / 612.0 - 0.01 && y > 80.0 / 792.0 && y < 100.0 / 792.0 && w > 0.0 && h > 0.0, "{m:?}");
+            assert!(
+                x > 72.0 / 612.0 - 0.01
+                    && y > 80.0 / 792.0
+                    && y < 100.0 / 792.0
+                    && w > 0.0
+                    && h > 0.0,
+                "{m:?}"
+            );
         }
         assert!(marks[0][0][0] < marks[1][0][0]);
         assert!(super::marks(&file, 9, &query("cat")).is_err());
@@ -275,7 +346,10 @@ mod tests {
         assert_eq!(t.trim_end(), "A cat and a Cat.");
         for r in &runs {
             let [x, y, w, h] = r.b;
-            assert!(x > 0.1 && y > 0.1 && y < 0.13 && w > 0.0 && h > 0.0, "{r:?}");
+            assert!(
+                x > 0.1 && y > 0.1 && y < 0.13 && w > 0.0 && h > 0.0,
+                "{r:?}"
+            );
         }
         assert!(super::layer(&file, 0).is_err() && super::layer(&file, 3).is_err());
     }
@@ -288,16 +362,21 @@ mod tests {
         let mut doc = Document::with_version("1.5");
         let pages: ObjectId = doc.new_object_id();
         let second: ObjectId = doc.new_object_id();
-        let box_of = |x: i64| -> Object { vec![x.into(), 600.into(), (x + 100).into(), 620.into()].into() };
+        let box_of =
+            |x: i64| -> Object { vec![x.into(), 600.into(), (x + 100).into(), 620.into()].into() };
         let web = doc.add_object(dictionary! { "Type" => "Annot", "Subtype" => "Link", "Rect" => box_of(72),
         "A" => dictionary! { "S" => "URI", "URI" => Object::string_literal("https://example.com/a") } });
-        let to_page = doc.add_object(dictionary! { "Type" => "Annot", "Subtype" => "Link", "Rect" => box_of(200),
-        "Dest" => vec![second.into(), "Fit".into()] });
+        let to_page = doc.add_object(
+            dictionary! { "Type" => "Annot", "Subtype" => "Link", "Rect" => box_of(200),
+            "Dest" => vec![second.into(), "Fit".into()] },
+        );
         let file = doc.add_object(dictionary! { "Type" => "Annot", "Subtype" => "Link", "Rect" => box_of(330),
         "A" => dictionary! { "S" => "URI", "URI" => Object::string_literal("file:///etc/passwd") } });
         let media: Object = vec![0.into(), 0.into(), 612.into(), 792.into()].into();
-        let first = doc.add_object(dictionary! { "Type" => "Page", "Parent" => pages, "MediaBox" => media.clone(),
-        "Annots" => vec![web.into(), to_page.into(), file.into()] });
+        let first = doc.add_object(
+            dictionary! { "Type" => "Page", "Parent" => pages, "MediaBox" => media.clone(),
+            "Annots" => vec![web.into(), to_page.into(), file.into()] },
+        );
         doc.objects.insert(second, Object::Dictionary(dictionary! { "Type" => "Page", "Parent" => pages, "MediaBox" => media, "Rotate" => 90 }));
         doc.objects.insert(pages, Object::Dictionary(dictionary! { "Type" => "Pages", "Kids" => vec![first.into(), second.into()], "Count" => 2 }));
         let catalog = doc.add_object(dictionary! { "Type" => "Catalog", "Pages" => pages });
@@ -307,14 +386,28 @@ mod tests {
 
         let bytes = opened(&bytes);
         // The second page is turned on its side.
-        assert_eq!(crate::preview::pdfium::sizes(&bytes), [[612.0, 792.0], [792.0, 612.0]]);
+        assert_eq!(
+            crate::preview::pdfium::sizes(&bytes),
+            [[612.0, 792.0], [792.0, 612.0]]
+        );
         let links = super::layer(&bytes, 1).unwrap().links;
         let to: Vec<_> = links.iter().map(|l| (l.page, l.uri.as_deref())).collect();
         assert_eq!(to, [(None, Some("https://example.com/a")), (Some(2), None)]);
         let [x, y, w, h] = links[0].b;
-        assert!((x - 72.0 / 612.0).abs() < 0.01 && (y - 172.0 / 792.0).abs() < 0.01, "{:?}", links[0]);
-        assert!((w - 100.0 / 612.0).abs() < 0.01 && (h - 20.0 / 792.0).abs() < 0.01, "{:?}", links[0]);
+        assert!(
+            (x - 72.0 / 612.0).abs() < 0.01 && (y - 172.0 / 792.0).abs() < 0.01,
+            "{:?}",
+            links[0]
+        );
+        assert!(
+            (w - 100.0 / 612.0).abs() < 0.01 && (h - 20.0 / 792.0).abs() < 0.01,
+            "{:?}",
+            links[0]
+        );
         assert!(super::layer(&bytes, 2).unwrap().links.is_empty());
-        assert!(crate::preview::pdfium::openable("MAILTO:a@b.c") && !crate::preview::pdfium::openable("javascript:x"));
+        assert!(
+            crate::preview::pdfium::openable("MAILTO:a@b.c")
+                && !crate::preview::pdfium::openable("javascript:x")
+        );
     }
 }

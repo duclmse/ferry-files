@@ -23,15 +23,25 @@ pub fn list() -> Vec<UsbDev> {
 /// a phone isn't taken to be gone when it's only that ioreg didn't run).
 #[cfg(target_os = "macos")]
 pub fn try_list() -> Option<Vec<UsbDev>> {
-    let out = crate::platform::command("ioreg").args(["-p", "IOUSB", "-l", "-w0"]).stdin(std::process::Stdio::null()).output().ok()?;
-    out.status.success().then(|| parse(&String::from_utf8_lossy(&out.stdout)))
+    let out = crate::platform::command("ioreg")
+        .args(["-p", "IOUSB", "-l", "-w0"])
+        .stdin(std::process::Stdio::null())
+        .output()
+        .ok()?;
+    out.status
+        .success()
+        .then(|| parse(&String::from_utf8_lossy(&out.stdout)))
 }
 
 /// Each device in /sys/bus/usb/devices that has a serial: its bus and address are the ones
 /// libusb (and so libmtp) reports on Linux.
 #[cfg(not(target_os = "macos"))]
 pub fn try_list() -> Option<Vec<UsbDev>> {
-    let read = |d: &std::path::Path, name: &str| std::fs::read_to_string(d.join(name)).ok().map(|s| s.trim().to_string());
+    let read = |d: &std::path::Path, name: &str| {
+        std::fs::read_to_string(d.join(name))
+            .ok()
+            .map(|s| s.trim().to_string())
+    };
     let dir = std::fs::read_dir("/sys/bus/usb/devices").ok()?;
     let devs = dir
         .flatten()
@@ -53,8 +63,12 @@ pub fn try_list() -> Option<Vec<UsbDev>> {
 /// Names of what's on USB now, to notice something plugged in or taken out.
 #[cfg(not(target_os = "macos"))]
 pub fn snapshot() -> Vec<String> {
-    let mut v: Vec<String> =
-        std::fs::read_dir("/sys/bus/usb/devices").into_iter().flatten().flatten().map(|e| e.file_name().to_string_lossy().into_owned()).collect();
+    let mut v: Vec<String> = std::fs::read_dir("/sys/bus/usb/devices")
+        .into_iter()
+        .flatten()
+        .flatten()
+        .map(|e| e.file_name().to_string_lossy().into_owned())
+        .collect();
     v.sort();
     v
 }
@@ -72,8 +86,16 @@ pub(crate) fn parse(text: &str) -> Vec<UsbDev> {
         serial: Option<String>,
     }
     fn finish(p: Part, out: &mut Vec<UsbDev>) {
-        if let (true, Some(loc), Some(address), Some(serial)) = (p.device, p.location, p.address, p.serial) {
-            out.push(UsbDev { bus: loc >> 24, address, vendor: p.vendor.unwrap_or(0), product: p.product.unwrap_or(0), serial });
+        if let (true, Some(loc), Some(address), Some(serial)) =
+            (p.device, p.location, p.address, p.serial)
+        {
+            out.push(UsbDev {
+                bus: loc >> 24,
+                address,
+                vendor: p.vendor.unwrap_or(0),
+                product: p.product.unwrap_or(0),
+                serial,
+            });
         }
     }
     let mut out = vec![];
@@ -81,10 +103,13 @@ pub(crate) fn parse(text: &str) -> Vec<UsbDev> {
     for line in text.lines() {
         if let Some(rest) = line.split_once("+-o ").map(|(_, r)| r) {
             finish(std::mem::take(&mut cur), &mut out);
-            cur.device = rest.contains("<class IOUSBHostDevice") || rest.contains("<class IOUSBDevice");
+            cur.device =
+                rest.contains("<class IOUSBHostDevice") || rest.contains("<class IOUSBDevice");
             continue;
         }
-        let Some((key, value)) = line.split_once(" = ") else { continue };
+        let Some((key, value)) = line.split_once(" = ") else {
+            continue;
+        };
         let key = key.trim_start_matches([' ', '|']).trim_matches('"');
         let num = || value.trim().parse::<u64>().ok();
         match key {
@@ -119,13 +144,31 @@ pub struct Holder {
 /// with this vendor and product id.
 #[cfg(target_os = "macos")]
 pub fn holders(bus: u32, address: u32, vendor: u16, product: u16) -> Option<Vec<Holder>> {
-    let out = crate::platform::command("ioreg").args(["-r", "-c", "IOUSBHostDevice", "-l", "-w0"]).stdin(std::process::Stdio::null()).output().ok()?;
-    out.status.success().then(|| parse_holders(&String::from_utf8_lossy(&out.stdout), bus, address, vendor, product))
+    let out = crate::platform::command("ioreg")
+        .args(["-r", "-c", "IOUSBHostDevice", "-l", "-w0"])
+        .stdin(std::process::Stdio::null())
+        .output()
+        .ok()?;
+    out.status.success().then(|| {
+        parse_holders(
+            &String::from_utf8_lossy(&out.stdout),
+            bus,
+            address,
+            vendor,
+            product,
+        )
+    })
 }
 
 /// `holders` from ioreg's text: each device entry, its properties, then the entries under it
 /// (interfaces) with theirs.
-pub(crate) fn parse_holders(text: &str, bus: u32, address: u32, vendor: u16, product: u16) -> Vec<Holder> {
+pub(crate) fn parse_holders(
+    text: &str,
+    bus: u32,
+    address: u32,
+    vendor: u16,
+    product: u16,
+) -> Vec<Holder> {
     #[derive(Default)]
     struct Dev {
         location: Option<u32>,
@@ -143,7 +186,9 @@ pub(crate) fn parse_holders(text: &str, bus: u32, address: u32, vendor: u16, pro
             continue;
         }
         let Some(d) = devs.last_mut() else { continue };
-        let Some((key, value)) = line.split_once(" = ") else { continue };
+        let Some((key, value)) = line.split_once(" = ") else {
+            continue;
+        };
         let key = key.trim_start_matches([' ', '|']).trim_matches('"');
         let num = || value.trim().parse::<u64>().ok();
         // The device's own properties come first; its interfaces repeat some of them.
@@ -157,7 +202,10 @@ pub(crate) fn parse_holders(text: &str, bus: u32, address: u32, vendor: u16, pro
                 let v = value.trim().trim_matches('"');
                 if let Some((pid, name)) = v.strip_prefix("pid ").and_then(|r| r.split_once(", ")) {
                     if let Ok(pid) = pid.parse() {
-                        let h = Holder { pid, name: name.to_string() };
+                        let h = Holder {
+                            pid,
+                            name: name.to_string(),
+                        };
                         if !d.holders.contains(&h) {
                             d.holders.push(h);
                         }
@@ -171,7 +219,9 @@ pub(crate) fn parse_holders(text: &str, bus: u32, address: u32, vendor: u16, pro
     if let Some(i) = devs.iter().position(|d| d.address == Some(address)) {
         return devs.swap_remove(i).holders;
     }
-    let mut same = devs.into_iter().filter(|d| d.vendor == Some(vendor) && d.product == Some(product));
+    let mut same = devs
+        .into_iter()
+        .filter(|d| d.vendor == Some(vendor) && d.product == Some(product));
     match (same.next(), same.next()) {
         (Some(d), None) => d.holders,
         _ => vec![],
@@ -180,11 +230,22 @@ pub(crate) fn parse_holders(text: &str, bus: u32, address: u32, vendor: u16, pro
 
 /// The serial of the USB device at libusb's (bus, address), or failing that, of the only device
 /// with this vendor and product id.
-pub fn serial_of(devs: &[UsbDev], bus: u32, address: u32, vendor: u16, product: u16) -> Option<String> {
-    if let Some(d) = devs.iter().find(|d| d.bus == bus && d.address == address && d.vendor == vendor) {
+pub fn serial_of(
+    devs: &[UsbDev],
+    bus: u32,
+    address: u32,
+    vendor: u16,
+    product: u16,
+) -> Option<String> {
+    if let Some(d) = devs
+        .iter()
+        .find(|d| d.bus == bus && d.address == address && d.vendor == vendor)
+    {
         return Some(d.serial.clone());
     }
-    let mut same = devs.iter().filter(|d| d.vendor == vendor && d.product == product);
+    let mut same = devs
+        .iter()
+        .filter(|d| d.vendor == vendor && d.product == product);
     match (same.next(), same.next()) {
         (Some(d), None) => Some(d.serial.clone()),
         _ => None,
@@ -247,12 +308,21 @@ mod tests {
   |   "UsbExclusiveOwner" = "pid 500, other"
   |   "locationID" = 34603008
 "#;
-        let h = |pid, name: &str| Holder { pid, name: name.into() };
-        assert_eq!(parse_holders(text, 1, 1, 0x04e8, 0x6860), [h(91884, "ferry-files"), h(13235, "ptpcamerad")]);
+        let h = |pid, name: &str| Holder {
+            pid,
+            name: name.into(),
+        };
+        assert_eq!(
+            parse_holders(text, 1, 1, 0x04e8, 0x6860),
+            [h(91884, "ferry-files"), h(13235, "ptpcamerad")]
+        );
         assert_eq!(parse_holders(text, 2, 1, 0, 0), [h(500, "other")]);
         assert_eq!(parse_holders(text, 1, 2, 0, 0), []);
         // libusb still has the address from before the phone was reset: the only one with its id.
-        assert_eq!(parse_holders(text, 1, 2, 0x04e8, 0x6860), [h(91884, "ferry-files"), h(13235, "ptpcamerad")]);
+        assert_eq!(
+            parse_holders(text, 1, 2, 0x04e8, 0x6860),
+            [h(91884, "ferry-files"), h(13235, "ptpcamerad")]
+        );
         assert_eq!(parse_holders(text, 2, 2, 0x04e8, 0x6860), []);
     }
 
@@ -262,13 +332,31 @@ mod tests {
         assert_eq!(
             devs,
             [
-                UsbDev { bus: 0, address: 1, vendor: 0x04e8, product: 0x6860, serial: "R3CR406TEMA".into() },
-                UsbDev { bus: 2, address: 1, vendor: 13372, product: 0, serial: "000000000000".into() },
+                UsbDev {
+                    bus: 0,
+                    address: 1,
+                    vendor: 0x04e8,
+                    product: 0x6860,
+                    serial: "R3CR406TEMA".into()
+                },
+                UsbDev {
+                    bus: 2,
+                    address: 1,
+                    vendor: 13372,
+                    product: 0,
+                    serial: "000000000000".into()
+                },
             ]
         );
-        assert_eq!(serial_of(&devs, 0, 1, 0x04e8, 0x6860).as_deref(), Some("R3CR406TEMA"));
+        assert_eq!(
+            serial_of(&devs, 0, 1, 0x04e8, 0x6860).as_deref(),
+            Some("R3CR406TEMA")
+        );
         // Address unknown to ioreg: falls back to the only device with that id.
-        assert_eq!(serial_of(&devs, 5, 9, 0x04e8, 0x6860).as_deref(), Some("R3CR406TEMA"));
+        assert_eq!(
+            serial_of(&devs, 5, 9, 0x04e8, 0x6860).as_deref(),
+            Some("R3CR406TEMA")
+        );
         assert_eq!(serial_of(&devs, 5, 9, 1, 2), None);
     }
 }

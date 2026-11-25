@@ -82,16 +82,24 @@ pub trait Transport: Send + Sync {
     /// Copies the file into `to` on this computer, so a big file isn't held in memory, and
     /// returns its version. `read` is told the size of each piece read, and `stop` cancels
     /// between pieces. By default the whole file is read first.
-    fn read_to(&self, path: &str, to: &Path, read: &mut dyn FnMut(u64), _stop: &AtomicBool) -> Result<String> {
+    fn read_to(
+        &self,
+        path: &str,
+        to: &Path,
+        read: &mut dyn FnMut(u64),
+        _stop: &AtomicBool,
+    ) -> Result<String> {
         let (data, version) = self.read(path)?;
         read(data.len() as u64);
-        std::fs::write(to, &data).map_err(|e| DevError::Msg(format!("Can't write {}: {e}", to.display())))?;
+        std::fs::write(to, &data)
+            .map_err(|e| DevError::Msg(format!("Can't write {}: {e}", to.display())))?;
         Ok(version)
     }
     /// As `replace`, with the new contents in file `from` on this computer. By default the whole
     /// file is read first.
     fn replace_from(&self, path: &str, from: &Path, exists: bool) -> Result<String> {
-        let data = std::fs::read(from).map_err(|e| DevError::Msg(format!("Can't read {}: {e}", from.display())))?;
+        let data = std::fs::read(from)
+            .map_err(|e| DevError::Msg(format!("Can't read {}: {e}", from.display())))?;
         self.replace(path, &data, exists)
     }
     fn delete(&self, path: &str, is_dir: bool) -> Result<()>;
@@ -138,7 +146,13 @@ pub trait Transport: Send + Sync {
     /// too big to list at once. None when the transport lists whole folders.
     /// `sort` is ("name", "size", "date" or "kind", ascending), and the second item of the
     /// answer how many items the folder has in all.
-    fn listdir_page(&self, _path: &str, _offset: u64, _count: u64, _sort: (&str, bool)) -> Option<Result<(Vec<Entry>, u64)>> {
+    fn listdir_page(
+        &self,
+        _path: &str,
+        _offset: u64,
+        _count: u64,
+        _sort: (&str, bool),
+    ) -> Option<Result<(Vec<Entry>, u64)>> {
         None
     }
     /// The command that starts an interactive shell in `dir`, for the terminal (which runs it in
@@ -159,9 +173,16 @@ pub struct Space {
 
 /// Copies `from` into a new file `to`, a piece at a time, for `Transport::read_to`: `read` is told
 /// each piece's size, and `stop` cancels. `what` names the file in errors. Gives the bytes copied.
-pub fn pour(from: &mut dyn std::io::Read, to: &Path, what: &str, read: &mut dyn FnMut(u64), stop: &AtomicBool) -> Result<u64> {
+pub fn pour(
+    from: &mut dyn std::io::Read,
+    to: &Path,
+    what: &str,
+    read: &mut dyn FnMut(u64),
+    stop: &AtomicBool,
+) -> Result<u64> {
     use std::io::Write;
-    let mut f = std::fs::File::create(to).map_err(|e| DevError::Msg(format!("Can't write {}: {e}", to.display())))?;
+    let mut f = std::fs::File::create(to)
+        .map_err(|e| DevError::Msg(format!("Can't write {}: {e}", to.display())))?;
     let mut buf = vec![0u8; 1 << 20];
     let mut total = 0u64;
     loop {
@@ -176,7 +197,8 @@ pub fn pour(from: &mut dyn std::io::Read, to: &Path, what: &str, read: &mut dyn 
         if n == 0 {
             return Ok(total);
         }
-        f.write_all(&buf[..n]).map_err(|e| DevError::Msg(format!("Can't write {}: {e}", to.display())))?;
+        f.write_all(&buf[..n])
+            .map_err(|e| DevError::Msg(format!("Can't write {}: {e}", to.display())))?;
         total += n as u64;
         read(n as u64);
     }
@@ -232,15 +254,26 @@ pub struct BackupNote {
 const INDEX: &str = "index.tsv";
 
 fn file_name(p: &std::path::Path) -> String {
-    p.file_name().map(|n| n.to_string_lossy().into_owned()).unwrap_or_default()
+    p.file_name()
+        .map(|n| n.to_string_lossy().into_owned())
+        .unwrap_or_default()
 }
 
 impl BackupNote {
     fn append(&self, dir: &std::path::Path) -> std::io::Result<()> {
         use std::io::Write;
         let clean = |s: &str| s.replace(['\t', '\n', '\r'], " ");
-        let line = format!("{}\t{}\t{}\t{}\n", clean(&self.file), clean(&self.place), clean(&self.path), clean(&self.reason));
-        let mut f = std::fs::OpenOptions::new().create(true).append(true).open(dir.join(INDEX))?;
+        let line = format!(
+            "{}\t{}\t{}\t{}\n",
+            clean(&self.file),
+            clean(&self.place),
+            clean(&self.path),
+            clean(&self.reason)
+        );
+        let mut f = std::fs::OpenOptions::new()
+            .create(true)
+            .append(true)
+            .open(dir.join(INDEX))?;
         // One write per line: with O_APPEND it lands whole, even when two backups are noted at
         // once (writeln! may split it into several writes that interleave).
         f.write_all(line.as_bytes())
@@ -252,7 +285,12 @@ impl BackupNote {
         text.lines()
             .filter_map(|l| {
                 let mut c = l.split('\t');
-                let n = BackupNote { file: c.next()?.into(), place: c.next()?.into(), path: c.next()?.into(), reason: c.next()?.into() };
+                let n = BackupNote {
+                    file: c.next()?.into(),
+                    place: c.next()?.into(),
+                    path: c.next()?.into(),
+                    reason: c.next()?.into(),
+                };
                 Some((n.file.clone(), n))
             })
             .collect()
@@ -278,7 +316,10 @@ pub struct Device {
 
 impl Device {
     pub fn new(t: Box<dyn Transport>) -> Self {
-        Device { t, op: Mutex::new(()) }
+        Device {
+            t,
+            op: Mutex::new(()),
+        }
     }
 
     fn lock(&self) -> std::sync::MutexGuard<'_, ()> {
@@ -319,7 +360,13 @@ impl Device {
     /// Up to `count` of the folder's items from `offset` in the order `sort` (see
     /// `Transport::listdir_page`), and how many it has in all. The whole folder when the
     /// transport doesn't page, from `offset` 0 only.
-    pub fn listdir_page(&self, path: &str, offset: u64, count: u64, sort: (&str, bool)) -> Result<(Vec<Entry>, u64)> {
+    pub fn listdir_page(
+        &self,
+        path: &str,
+        offset: u64,
+        count: u64,
+        sort: (&str, bool),
+    ) -> Result<(Vec<Entry>, u64)> {
         let norm_path = norm(path)?;
         let paged = {
             let _g = self.lock();
@@ -374,7 +421,13 @@ impl Device {
     }
 
     /// Copies a file into `to` on this computer (see `Transport::read_to`). Returns its version.
-    pub fn read_to(&self, path: &str, to: &Path, read: &mut dyn FnMut(u64), stop: &AtomicBool) -> Result<String> {
+    pub fn read_to(
+        &self,
+        path: &str,
+        to: &Path,
+        read: &mut dyn FnMut(u64),
+        stop: &AtomicBool,
+    ) -> Result<String> {
         let path = norm(path)?;
         let _g = self.lock();
         let got = self.t.read_to(&path, to, read, stop);
@@ -386,14 +439,30 @@ impl Device {
 
     /// Writes a file. With `base_version`, refuses if the device copy changed since it was read.
     /// With `create`, refuses if the file already exists.
-    pub fn write(&self, path: &str, data: &[u8], base_version: Option<&str>, create: bool) -> Result<WriteResult> {
-        self.write_with(path, base_version, create, |t, p, exists| t.replace(p, data, exists))
+    pub fn write(
+        &self,
+        path: &str,
+        data: &[u8],
+        base_version: Option<&str>,
+        create: bool,
+    ) -> Result<WriteResult> {
+        self.write_with(path, base_version, create, |t, p, exists| {
+            t.replace(p, data, exists)
+        })
     }
 
     /// As `write`, with the new contents in file `from` on this computer, which isn't read into
     /// memory where the transport can help it.
-    pub fn write_from(&self, path: &str, from: &Path, base_version: Option<&str>, create: bool) -> Result<WriteResult> {
-        self.write_with(path, base_version, create, |t, p, exists| t.replace_from(p, from, exists))
+    pub fn write_from(
+        &self,
+        path: &str,
+        from: &Path,
+        base_version: Option<&str>,
+        create: bool,
+    ) -> Result<WriteResult> {
+        self.write_with(path, base_version, create, |t, p, exists| {
+            t.replace_from(p, from, exists)
+        })
     }
 
     fn write_with(
@@ -409,22 +478,37 @@ impl Device {
         if st.as_ref().is_some_and(|e| e.dir) {
             return err(format!("{path} is a folder."));
         }
-        let current = if st.is_some() { self.t.version(&path)? } else { None };
+        let current = if st.is_some() {
+            self.t.version(&path)?
+        } else {
+            None
+        };
         if create && current.is_some() {
-            return Err(DevError::Conflict(format!("{path} already exists on the device.")));
+            return Err(DevError::Conflict(format!(
+                "{path} already exists on the device."
+            )));
         }
         if let Some(base) = base_version {
             if current.as_deref() != Some(base) {
-                return Err(DevError::Conflict(format!("{path} changed on the device since it was opened. Not overwritten.")));
+                return Err(DevError::Conflict(format!(
+                    "{path} changed on the device since it was opened. Not overwritten."
+                )));
             }
         }
         let parent = dirname(&path);
         if !self.t.stat(&parent)?.is_some_and(|e| e.dir) {
             return err(format!("Folder doesn't exist: {parent}"));
         }
-        let backup = if current.is_some() { Some(self.backup(&path, "replaced")?) } else { None };
+        let backup = if current.is_some() {
+            Some(self.backup(&path, "replaced")?)
+        } else {
+            None
+        };
         let version = put(self.t.as_ref(), &path, current.is_some())?;
-        Ok(WriteResult { version, backup: backup.map(|p| p.display().to_string()) })
+        Ok(WriteResult {
+            version,
+            backup: backup.map(|p| p.display().to_string()),
+        })
     }
 
     /// Deletes a file (backed up first) or an empty folder. Returns the backup path.
@@ -436,7 +520,9 @@ impl Device {
         };
         if st.dir {
             if !self.t.listdir(&path)?.is_empty() {
-                return err(format!("{path} isn't empty. Only empty folders can be removed."));
+                return err(format!(
+                    "{path} isn't empty. Only empty folders can be removed."
+                ));
             }
             self.t.delete(&path, true)?;
             return Ok(None);
@@ -459,7 +545,10 @@ impl Device {
             return err(format!("No such file or folder: {from}"));
         }
         if self.t.stat(&to)?.is_some() {
-            return Err(DevError::Conflict(format!("{} already exists there.", basename(&to))));
+            return Err(DevError::Conflict(format!(
+                "{} already exists there.",
+                basename(&to)
+            )));
         }
         let parent = dirname(&to);
         if !self.t.stat(&parent)?.is_some_and(|e| e.dir) {
@@ -524,7 +613,9 @@ impl Device {
         }
         // A change of case only ("a.txt" to "A.txt") is the same file on the Mac's disk.
         if target.to_lowercase() != path.to_lowercase() && self.t.stat(&target)?.is_some() {
-            return Err(DevError::Conflict(format!("{new_name} already exists there.")));
+            return Err(DevError::Conflict(format!(
+                "{new_name} already exists there."
+            )));
         }
         self.t.rename(&path, new_name)?;
         self.t.refresh();
@@ -559,7 +650,8 @@ impl Device {
 
     fn backup(&self, path: &str, reason: &str) -> Result<PathBuf> {
         let dir = backup_dir();
-        std::fs::create_dir_all(&dir).map_err(|e| DevError::Msg(format!("Can't create {}: {e}", dir.display())))?;
+        std::fs::create_dir_all(&dir)
+            .map_err(|e| DevError::Msg(format!("Can't create {}: {e}", dir.display())))?;
         let stamp = chrono::Local::now().format("%Y%m%d-%H%M%S");
         let name = basename(path);
         let mut dest = dir.join(format!("{stamp}-{name}"));
@@ -569,13 +661,21 @@ impl Device {
             n += 1;
         }
         // Copied straight into the backup, so a big file isn't held in memory.
-        if let Err(e) = self.t.read_to(path, &dest, &mut |_| {}, &AtomicBool::new(false)) {
+        if let Err(e) = self
+            .t
+            .read_to(path, &dest, &mut |_| {}, &AtomicBool::new(false))
+        {
             let _ = std::fs::remove_file(&dest);
             return Err(e);
         }
         // Where it came from, so it can be put back. The backup itself is what matters, so a
         // failure to note it isn't an error.
-        let line = BackupNote { file: file_name(&dest), place: self.place(), path: path.to_string(), reason: reason.into() };
+        let line = BackupNote {
+            file: file_name(&dest),
+            place: self.place(),
+            path: path.to_string(),
+            reason: reason.into(),
+        };
         let _ = line.append(&dir);
         Ok(dest)
     }
@@ -585,19 +685,31 @@ impl Device {
 /// device: an adb serial, or an MTP location from `mtp::detect`; None takes the first one.
 pub fn connect(transport: &str, which: Option<String>) -> Result<Device> {
     let serial = which;
-    let use_adb = transport == "adb" || (transport == "auto" && (serial.is_some() || !crate::devices::adb::ready_serials().is_empty()));
+    let use_adb = transport == "adb"
+        || (transport == "auto"
+            && (serial.is_some() || !crate::devices::adb::ready_serials().is_empty()));
     if use_adb {
-        return Ok(Device::new(Box::new(crate::devices::adb::Adb::open(serial)?)));
+        return Ok(Device::new(Box::new(crate::devices::adb::Adb::open(
+            serial,
+        )?)));
     }
     match transport {
         "iphone" => match serial {
-            Some(udid) => Ok(Device::new(Box::new(crate::devices::iphone::IPhone::open(&udid)?))),
+            Some(udid) => Ok(Device::new(Box::new(crate::devices::iphone::IPhone::open(
+                &udid,
+            )?))),
             None => err("Which iPhone?"),
         },
-        "mtp" => Ok(Device::new(Box::new(crate::devices::mtp::Mtp::open(serial.as_deref())?))),
+        "mtp" => Ok(Device::new(Box::new(crate::devices::mtp::Mtp::open(
+            serial.as_deref(),
+        )?))),
         "auto" => crate::devices::mtp::Mtp::open(None)
             .map(|d| Device::new(Box::new(d)))
-            .map_err(|e| DevError::Msg(format!("No device found. For adb: turn on USB debugging. For MTP: {e}"))),
+            .map_err(|e| {
+                DevError::Msg(format!(
+                    "No device found. For adb: turn on USB debugging. For MTP: {e}"
+                ))
+            }),
         other => err(format!("Unknown transport {other:?}.")),
     }
 }

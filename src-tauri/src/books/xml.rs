@@ -28,16 +28,29 @@ pub struct Tok {
 
 impl Tok {
     fn plain(kind: Kind, start: usize, end: usize) -> Tok {
-        Tok { kind, start, end, name: String::new(), attrs: vec![], vals: vec![] }
+        Tok {
+            kind,
+            start,
+            end,
+            name: String::new(),
+            attrs: vec![],
+            vals: vec![],
+        }
     }
 
     pub fn attr(&self, name: &str) -> Option<&str> {
-        self.attrs.iter().find(|(k, _)| k == name).map(|(_, v)| v.as_str())
+        self.attrs
+            .iter()
+            .find(|(k, _)| k == name)
+            .map(|(_, v)| v.as_str())
     }
 
     /// An attribute matched by local name, whatever its prefix (`epub:type` or `type`).
     pub fn attr_local(&self, local_name: &str) -> Option<&str> {
-        self.attrs.iter().find(|(k, _)| local(k) == local_name).map(|(_, v)| v.as_str())
+        self.attrs
+            .iter()
+            .find(|(k, _)| local(k) == local_name)
+            .map(|(_, v)| v.as_str())
     }
 
     pub fn local(&self) -> &str {
@@ -89,8 +102,13 @@ pub fn tokenize(s: &str) -> Result<Vec<Tok>, String> {
             None
         };
         if let Some((pat, kind, what)) = special {
-            let end = if kind == Kind::Doctype { doctype_end(rest) } else { rest[2..].find(pat).map(|k| k + 2 + pat.len()) };
-            let end = end.ok_or_else(|| format!("Line {}: this {what} never ends.", line_of(s, i)))?;
+            let end = if kind == Kind::Doctype {
+                doctype_end(rest)
+            } else {
+                rest[2..].find(pat).map(|k| k + 2 + pat.len())
+            };
+            let end =
+                end.ok_or_else(|| format!("Line {}: this {what} never ends.", line_of(s, i)))?;
             out.push(Tok::plain(kind, i, i + end));
             i += end;
             continue;
@@ -122,7 +140,12 @@ fn doctype_end(s: &str) -> Option<usize> {
 
 fn tag(s: &str, start: usize) -> Result<Tok, String> {
     let b = s.as_bytes();
-    let unclosed = || format!("Line {}: this tag never ends (no \">\").", line_of(s, start));
+    let unclosed = || {
+        format!(
+            "Line {}: this tag never ends (no \">\").",
+            line_of(s, start)
+        )
+    };
     let mut i = start + 1;
     let closing = b.get(i) == Some(&b'/');
     if closing {
@@ -134,7 +157,10 @@ fn tag(s: &str, start: usize) -> Result<Tok, String> {
     }
     let name = s[name_start..i].to_string();
     if name.is_empty() {
-        return Err(format!("Line {}: a \"<\" that doesn't start a tag. Write &lt; for a literal <.", line_of(s, start)));
+        return Err(format!(
+            "Line {}: a \"<\" that doesn't start a tag. Write &lt; for a literal <.",
+            line_of(s, start)
+        ));
     }
     let (mut attrs, mut vals) = (vec![], vec![]);
     loop {
@@ -145,15 +171,32 @@ fn tag(s: &str, start: usize) -> Result<Tok, String> {
             None => return Err(unclosed()),
             Some(b'>') => {
                 let kind = if closing { Kind::Close } else { Kind::Open };
-                return Ok(Tok { kind, start, end: i + 1, name, attrs, vals });
+                return Ok(Tok {
+                    kind,
+                    start,
+                    end: i + 1,
+                    name,
+                    attrs,
+                    vals,
+                });
             }
             Some(b'/') if b.get(i + 1) == Some(&b'>') && !closing => {
-                return Ok(Tok { kind: Kind::Empty, start, end: i + 2, name, attrs, vals });
+                return Ok(Tok {
+                    kind: Kind::Empty,
+                    start,
+                    end: i + 2,
+                    name,
+                    attrs,
+                    vals,
+                });
             }
             Some(b'/') => i += 1,
             Some(_) => {
                 let an = i;
-                while i < b.len() && !b[i].is_ascii_whitespace() && !matches!(b[i], b'=' | b'>' | b'/') {
+                while i < b.len()
+                    && !b[i].is_ascii_whitespace()
+                    && !matches!(b[i], b'=' | b'>' | b'/')
+                {
                     i += 1;
                 }
                 let aname = s[an..i].to_string();
@@ -170,7 +213,10 @@ fn tag(s: &str, start: usize) -> Result<Tok, String> {
                     match b.get(i) {
                         Some(&q @ (b'"' | b'\'')) => {
                             let vs = i + 1;
-                            let ve = s[vs..].find(q as char).map(|k| vs + k).ok_or_else(unclosed)?;
+                            let ve = s[vs..]
+                                .find(q as char)
+                                .map(|k| vs + k)
+                                .ok_or_else(unclosed)?;
                             value = unescape(&s[vs..ve]);
                             span = (vs, ve);
                             i = ve + 1;
@@ -226,16 +272,39 @@ pub fn check(s: &str) -> Result<(), String> {
             Kind::Empty if stack.is_empty() => roots += 1,
             Kind::Close => match stack.pop() {
                 Some((n, _)) if n == t.name => {}
-                Some((n, at)) => return Err(format!("Line {}: </{}> doesn't match <{n}> opened on line {}.", line_of(s, t.start), t.name, line_of(s, at))),
-                None => return Err(format!("Line {}: </{}> has no start tag.", line_of(s, t.start), t.name)),
+                Some((n, at)) => {
+                    return Err(format!(
+                        "Line {}: </{}> doesn't match <{n}> opened on line {}.",
+                        line_of(s, t.start),
+                        t.name,
+                        line_of(s, at)
+                    ))
+                }
+                None => {
+                    return Err(format!(
+                        "Line {}: </{}> has no start tag.",
+                        line_of(s, t.start),
+                        t.name
+                    ))
+                }
             },
             Kind::Text => {
                 let text = &s[t.start..t.end];
-                if stack.is_empty() && !text.trim_matches(|c: char| c.is_whitespace() || c == '\u{feff}').is_empty() {
-                    return Err(format!("Line {}: text outside the root element.", line_of(s, t.start)));
+                if stack.is_empty()
+                    && !text
+                        .trim_matches(|c: char| c.is_whitespace() || c == '\u{feff}')
+                        .is_empty()
+                {
+                    return Err(format!(
+                        "Line {}: text outside the root element.",
+                        line_of(s, t.start)
+                    ));
                 }
                 if let Some(k) = bare_ampersand(text) {
-                    return Err(format!("Line {}: a bare \"&\". Write &amp; for a literal &.", line_of(s, t.start + k)));
+                    return Err(format!(
+                        "Line {}: a bare \"&\". Write &amp; for a literal &.",
+                        line_of(s, t.start + k)
+                    ));
                 }
             }
             _ => {}
@@ -254,15 +323,21 @@ pub fn check(s: &str) -> Result<(), String> {
 fn bare_ampersand(text: &str) -> Option<usize> {
     text.match_indices('&').map(|(k, _)| k).find(|&k| {
         let rest = &text[k + 1..];
-        let Some(end) = rest.find(';') else { return true };
+        let Some(end) = rest.find(';') else {
+            return true;
+        };
         let name = &rest[..end];
         let ok = if let Some(n) = name.strip_prefix("#x").or_else(|| name.strip_prefix("#X")) {
             !n.is_empty() && n.chars().all(|c| c.is_ascii_hexdigit())
         } else if let Some(n) = name.strip_prefix('#') {
             !n.is_empty() && n.chars().all(|c| c.is_ascii_digit())
         } else {
-            name.chars().next().is_some_and(|c| c.is_alphabetic() || c == '_')
-                && name.chars().all(|c| c.is_alphanumeric() || matches!(c, '_' | '-' | '.' | ':'))
+            name.chars()
+                .next()
+                .is_some_and(|c| c.is_alphabetic() || c == '_')
+                && name
+                    .chars()
+                    .all(|c| c.is_alphanumeric() || matches!(c, '_' | '-' | '.' | ':'))
         };
         !ok
     })
@@ -287,7 +362,10 @@ fn entity(name: &str) -> Option<char> {
 /// The length of the entity reference at the start of `s` (which starts with `&`), if it is
 /// one, and its character, if it's one this file knows.
 fn entity_at(s: &str) -> Option<(usize, Option<char>)> {
-    let end = s.get(1..)?.find(';').filter(|&e| e <= 32 && !s[1..e + 1].contains(char::is_whitespace))?;
+    let end = s
+        .get(1..)?
+        .find(';')
+        .filter(|&e| e <= 32 && !s[1..e + 1].contains(char::is_whitespace))?;
     Some((end + 2, entity(&s[1..end + 1])))
 }
 
@@ -296,7 +374,10 @@ fn entity_at(s: &str) -> Option<(usize, Option<char>)> {
 /// neither has one inside a reference that isn't decoded (`&custom;`, kept as written), so an
 /// edit never starts or ends there.
 pub fn decode_at(s: &str, from: usize, to: usize) -> (String, Vec<Option<usize>>) {
-    let (mut out, mut at) = (String::with_capacity(to - from), Vec::with_capacity(to - from + 1));
+    let (mut out, mut at) = (
+        String::with_capacity(to - from),
+        Vec::with_capacity(to - from + 1),
+    );
     let mut i = from;
     while i < to {
         let rest = &s[i..to];
@@ -345,7 +426,9 @@ pub fn unescape(s: &str) -> String {
 }
 
 pub fn escape_text(s: &str) -> String {
-    s.replace('&', "&amp;").replace('<', "&lt;").replace('>', "&gt;")
+    s.replace('&', "&amp;")
+        .replace('<', "&lt;")
+        .replace('>', "&gt;")
 }
 
 pub fn escape_attr(s: &str) -> String {
@@ -384,7 +467,17 @@ mod tests {
         let s = r#"<?xml version="1.0"?><a x='1 &amp; 2'><b/>hi &amp; bye<!-- c --></a>"#;
         let t = tokenize(s).unwrap();
         let kinds: Vec<Kind> = t.iter().map(|t| t.kind).collect();
-        assert_eq!(kinds, [Kind::Pi, Kind::Open, Kind::Empty, Kind::Text, Kind::Comment, Kind::Close]);
+        assert_eq!(
+            kinds,
+            [
+                Kind::Pi,
+                Kind::Open,
+                Kind::Empty,
+                Kind::Text,
+                Kind::Comment,
+                Kind::Close
+            ]
+        );
         assert_eq!(t[1].attr("x"), Some("1 & 2"));
         assert_eq!(&s[t[3].start..t[3].end], "hi &amp; bye");
         assert_eq!(unescape("hi &amp; bye &foo; &#x41;"), "hi & bye &foo; A");
@@ -404,12 +497,18 @@ mod tests {
 
     #[test]
     fn decodes_with_places() {
-        assert_eq!(unescape("&eacute;t&eacute; &custom; &#233;"), "été &custom; é");
+        assert_eq!(
+            unescape("&eacute;t&eacute; &custom; &#233;"),
+            "été &custom; é"
+        );
         let s = "a&eacute;&x;b";
         let (plain, at) = decode_at(s, 0, s.len());
         assert_eq!(plain, "aé&x;b");
         assert_eq!(at.len(), plain.len() + 1);
-        assert_eq!((at[0], at[1], at[2], at[3], at[4]), (Some(0), Some(1), None, Some(9), None));
+        assert_eq!(
+            (at[0], at[1], at[2], at[3], at[4]),
+            (Some(0), Some(1), None, Some(9), None)
+        );
         assert_eq!((at[6], at[7]), (Some(12), Some(13)));
         let t = tokenize(r#"<a href="x.html" b='1'/>"#).unwrap();
         assert_eq!(t[0].attr_at("href"), Some(("x.html", (9, 15))));
@@ -417,6 +516,12 @@ mod tests {
 
     #[test]
     fn splices() {
-        assert_eq!(splice("abcdef", vec![(1, 2, "X".into()), (4, 4, "Y".into()), (5, 6, "".into())]), "aXcdYe");
+        assert_eq!(
+            splice(
+                "abcdef",
+                vec![(1, 2, "X".into()), (4, 4, "Y".into()), (5, 6, "".into())]
+            ),
+            "aXcdYe"
+        );
     }
 }

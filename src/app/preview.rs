@@ -4,7 +4,9 @@
 
 use super::sidebar::chev;
 use super::*;
-use crate::api::{Bytes, EpubContents, Listing, MediaInfo, Packed, PdfLayer, PdfLink, PdfOutline, PdfRun, Peek};
+use crate::api::{
+    Bytes, EpubContents, Listing, MediaInfo, Packed, PdfLayer, PdfLink, PdfOutline, PdfRun, Peek,
+};
 use crate::api::{Found, Query};
 use wasm_bindgen::closure::Closure;
 
@@ -31,7 +33,11 @@ impl PeekAs {
 }
 
 /// Under a file shown another way: back to how its type shows, or another way.
-fn peek_as_buttons(now: PeekAs, zip: bool, set: impl Fn(Option<PeekAs>) + Clone + Send + Sync + 'static) -> impl IntoView {
+fn peek_as_buttons(
+    now: PeekAs,
+    zip: bool,
+    set: impl Fn(Option<PeekAs>) + Clone + Send + Sync + 'static,
+) -> impl IntoView {
     view! {
         <div class="peek-as">
             <OpenAs now=now zip small=true pick=move |h| set(Some(h))/>
@@ -50,7 +56,10 @@ fn OpenAs(
 ) -> impl IntoView {
     // Where the list is, under the arrow; None while closed.
     let at = RwSignal::new(None::<(f64, f64)>);
-    let ways: Vec<PeekAs> = [PeekAs::Text, PeekAs::Hex, PeekAs::Image, PeekAs::Video].into_iter().chain(zip.then_some(PeekAs::Zip)).collect();
+    let ways: Vec<PeekAs> = [PeekAs::Text, PeekAs::Hex, PeekAs::Image, PeekAs::Video]
+        .into_iter()
+        .chain(zip.then_some(PeekAs::Zip))
+        .collect();
     let rows = ways.len();
     let wrap = NodeRef::<html::Span>::new();
     // Under the whole button, or over it when there's no room below; kept in the window.
@@ -63,11 +72,16 @@ fn OpenAs(
             return;
         };
         let r = el.get_bounding_client_rect();
-        let size = |v: Result<wasm_bindgen::JsValue, _>| v.ok().and_then(|v| v.as_f64()).unwrap_or(800.0);
+        let size =
+            |v: Result<wasm_bindgen::JsValue, _>| v.ok().and_then(|v| v.as_f64()).unwrap_or(800.0);
         let (vw, vh) = (size(window().inner_width()), size(window().inner_height()));
         let (w, h) = (140.0_f64.max(r.width()), rows as f64 * 26.0 + 12.0);
         let x = r.left().min(vw - w - 4.0).max(4.0);
-        let y = if r.bottom() + 4.0 + h <= vh - 4.0 { r.bottom() + 4.0 } else { (r.top() - 4.0 - h).max(4.0) };
+        let y = if r.bottom() + 4.0 + h <= vh - 4.0 {
+            r.bottom() + 4.0
+        } else {
+            (r.top() - 4.0 - h).max(4.0)
+        };
         at.set(Some((x, y)));
     };
     view! {
@@ -94,7 +108,9 @@ fn OpenAs(
 
 const PDF_EXTS: &[&str] = &["pdf"];
 const FONT_EXTS: &[&str] = &["ttf", "otf", "woff", "woff2"];
-pub(super) const ZIP_EXTS: &[&str] = &["zip", "apk", "jar", "cbz", "xapk", "ipa", "aar", "war", "whl", "vsix", "nupkg"];
+pub(super) const ZIP_EXTS: &[&str] = &[
+    "zip", "apk", "jar", "cbz", "xapk", "ipa", "aar", "war", "whl", "vsix", "nupkg",
+];
 
 /// Asks the built-in viewer for the pages only: no toolbar or side panes. Edge on Windows does as
 /// asked; WebKit (macOS, Linux) ignores it and keeps its own controls.
@@ -131,7 +147,11 @@ fn run_width(t: &str) -> f64 {
             .and_then(|c| c.dyn_into().ok())
             .inspect(|c: &web_sys::CanvasRenderingContext2d| c.set_font("100px sans-serif"));
     }
-    PEN.with(|p| p.as_ref().and_then(|p| p.measure_text(t).ok()).map_or(0.0, |m| m.width()))
+    PEN.with(|p| {
+        p.as_ref()
+            .and_then(|p| p.measure_text(t).ok())
+            .map_or(0.0, |m| m.width())
+    })
 }
 
 /// A page's text laid over it, transparent: each run in its box, its font as tall as the box and
@@ -143,8 +163,16 @@ fn pdf_text_layer(runs: &[PdfRun], aspect: f64) -> impl IntoView {
         .map(|r| {
             let [x, y, w, h] = r.b;
             let m = run_width(&r.t);
-            let k = if m > 0.0 && h > 0.0 { w * 100.0 * aspect / (m * h) } else { 1.0 };
-            let at = format!("left: {}%; top: {}%; font-size: calc(var(--ih) * {h}); transform: scaleX({k})", x * 100.0, y * 100.0);
+            let k = if m > 0.0 && h > 0.0 {
+                w * 100.0 * aspect / (m * h)
+            } else {
+                1.0
+            };
+            let at = format!(
+                "left: {}%; top: {}%; font-size: calc(var(--ih) * {h}); transform: scaleX({k})",
+                x * 100.0,
+                y * 100.0
+            );
             view! { <span style=at>{format!("{}{}", r.t, r.e)}</span> }
         })
         .collect_view();
@@ -192,7 +220,13 @@ fn pdf_link_layer(links: &[PdfLink], go: impl Fn(usize) + Copy + 'static) -> imp
 /// the web view's own viewer shows the PDF instead; it's out of the app's reach, so a page is gone
 /// to through the address (#page=), zoom scales the whole viewer, and matches aren't marked.
 #[component]
-fn PdfView(pane: Pane, src: Src, entry: Entry, url: String, #[prop(optional)] inner: Option<Inner>) -> impl IntoView {
+fn PdfView(
+    pane: Pane,
+    src: Src,
+    entry: Entry,
+    url: String,
+    #[prop(optional)] inner: Option<Inner>,
+) -> impl IntoView {
     let ctx = expect_context::<Ctx>();
     let p = pane;
     let frame = NodeRef::<html::Iframe>::new();
@@ -210,7 +244,9 @@ fn PdfView(pane: Pane, src: Src, entry: Entry, url: String, #[prop(optional)] in
     let args = move || {
         let (path, inner) = what.get_value();
         match &inner {
-            Some(i) => json!({ "src": src.key(), "path": i.zip_path, "size": size, "mtime": mtime, "inner": i.name, "zip_size": i.zip_size }),
+            Some(i) => {
+                json!({ "src": src.key(), "path": i.zip_path, "size": size, "mtime": mtime, "inner": i.name, "zip_size": i.zip_size })
+            }
             None => json!({ "src": src.key(), "path": path, "size": size, "mtime": mtime }),
         }
     };
@@ -263,13 +299,19 @@ fn PdfView(pane: Pane, src: Src, entry: Entry, url: String, #[prop(optional)] in
     let scrolled = RwSignal::new((0.0f64, 0.0f64));
     // The pages drawn: their width, each one's top and height, and the height of them all.
     let layout = Memo::new(move |_| {
-        let Some((w, _)) = room.get() else { return (0.0, vec![], 0.0) };
+        let Some((w, _)) = room.get() else {
+            return (0.0, vec![], 0.0);
+        };
         let cw = (w - 2.0 * PDF_PAD).max(50.0) * zoom.get();
         let odd = turns.get() % 2 == 1;
         let mut y = PDF_PAD;
         let mut at = vec![];
         sizes.with(|s| {
-            for &[pw, ph] in s.as_ref().and_then(|s| s.as_ref()).map_or(&[][..], |s| &s[..]) {
+            for &[pw, ph] in s
+                .as_ref()
+                .and_then(|s| s.as_ref())
+                .map_or(&[][..], |s| &s[..])
+            {
                 let (pw, ph) = (pw.max(1.0), ph.max(1.0));
                 let h = cw * if odd { pw / ph } else { ph / pw };
                 at.push((y, h));
@@ -282,19 +324,29 @@ fn PdfView(pane: Pane, src: Src, entry: Entry, url: String, #[prop(optional)] in
     let near = Memo::new(move |_| {
         let (top, ch) = scrolled.get();
         let (lo, hi) = (top - ch, top + 2.0 * ch);
-        layout.with(|(_, at, _)| (at.partition_point(|&(y, h)| y + h < lo), at.partition_point(|&(y, _)| y <= hi)))
+        layout.with(|(_, at, _)| {
+            (
+                at.partition_point(|&(y, h)| y + h < lo),
+                at.partition_point(|&(y, _)| y <= hi),
+            )
+        })
     });
     // The page at the top third of what's shown, from 0.
     let here = Memo::new(move |_| {
         let (top, ch) = scrolled.get();
-        layout.with(|(_, at, _)| at.partition_point(|&(y, h)| y + h < top + ch / 3.0).min(at.len().saturating_sub(1)))
+        layout.with(|(_, at, _)| {
+            at.partition_point(|&(y, h)| y + h < top + ch / 3.0)
+                .min(at.len().saturating_sub(1))
+        })
     });
     Effect::new(move |_| {
         let n = here.get();
         if !drawn() {
             return;
         }
-        let typing = page_input.get_untracked().is_some_and(|i| document().active_element().is_some_and(|a| a == **i));
+        let typing = page_input
+            .get_untracked()
+            .is_some_and(|i| document().active_element().is_some_and(|a| a == **i));
         if !typing {
             typed.set((n + 1).to_string());
         }
@@ -302,12 +354,18 @@ fn PdfView(pane: Pane, src: Src, entry: Entry, url: String, #[prop(optional)] in
     let go = move |n: usize| {
         let n = pages().map_or(n, |last| n.min(last)).max(1);
         if drawn() {
-            if let (Some(s), Some(y)) = (stage.get_untracked(), layout.with_untracked(|(_, at, _)| at.get(n - 1).map(|a| a.0))) {
+            if let (Some(s), Some(y)) = (
+                stage.get_untracked(),
+                layout.with_untracked(|(_, at, _)| at.get(n - 1).map(|a| a.0)),
+            ) {
                 s.set_scroll_top((y - PDF_PAD / 2.0).max(0.0) as i32);
             }
         } else if let Some(f) = frame.get_untracked() {
             // Set again even when it's the same, so a second click goes back to the page.
-            let _ = f.set_attribute("src", &format!("{}#page={n}&{PDF_PLAIN}", page_url.get_value()));
+            let _ = f.set_attribute(
+                "src",
+                &format!("{}#page={n}&{PDF_PLAIN}", page_url.get_value()),
+            );
         }
     };
     // Find: the PDF's text is read page by page in the backend, and a match picked goes to its
@@ -369,7 +427,9 @@ fn PdfView(pane: Pane, src: Src, entry: Entry, url: String, #[prop(optional)] in
         if now {
             run_search();
         } else {
-            timer.set_value(set_timeout_with_handle(run_search, std::time::Duration::from_millis(300)).ok());
+            timer.set_value(
+                set_timeout_with_handle(run_search, std::time::Duration::from_millis(300)).ok(),
+            );
         }
     };
     on_cleanup(move || {
@@ -377,8 +437,13 @@ fn PdfView(pane: Pane, src: Src, entry: Entry, url: String, #[prop(optional)] in
             h.clear();
         }
     });
-    let has_hits =
-        move |page: usize| found.with(|f| f.as_ref().and_then(|f| f.as_ref().ok()).is_some_and(|f| f.hits.iter().any(|h| h.path == page.to_string())));
+    let has_hits = move |page: usize| {
+        found.with(|f| {
+            f.as_ref()
+                .and_then(|f| f.as_ref().ok())
+                .is_some_and(|f| f.hits.iter().any(|h| h.path == page.to_string()))
+        })
+    };
     // The marks of `page` (from 1), asked for once a search.
     let ask_marks = move |page: usize| {
         if !has_hits(page) || marks.with_untracked(|m| m.contains_key(&page)) {
@@ -392,7 +457,9 @@ fn PdfView(pane: Pane, src: Src, entry: Entry, url: String, #[prop(optional)] in
         args["page"] = json!(page);
         args["query"] = json!(fq.get_untracked());
         spawn_local(async move {
-            let r = call::<Vec<Vec<[f64; 4]>>>("pdf_marks", args).await.unwrap_or_default();
+            let r = call::<Vec<Vec<[f64; 4]>>>("pdf_marks", args)
+                .await
+                .unwrap_or_default();
             if marks_for.try_get_value() == Some(n) {
                 marks.update(|m| {
                     m.insert(page, r);
@@ -415,7 +482,12 @@ fn PdfView(pane: Pane, src: Src, entry: Entry, url: String, #[prop(optional)] in
             return;
         }
         request_animation_frame(move || {
-            let Some(el) = stage.get_untracked().and_then(|s| s.query_selector(".pdf-mark.here").ok().flatten()) else { return };
+            let Some(el) = stage
+                .get_untracked()
+                .and_then(|s| s.query_selector(".pdf-mark.here").ok().flatten())
+            else {
+                return;
+            };
             reveal_mark.set_value(false);
             let opts = web_sys::ScrollIntoViewOptions::new();
             opts.set_block(web_sys::ScrollLogicalPosition::Center);
@@ -495,7 +567,8 @@ fn PdfView(pane: Pane, src: Src, entry: Entry, url: String, #[prop(optional)] in
         if cw <= 0.0 {
             return;
         }
-        let want = (cw * window().device_pixel_ratio().max(1.0) / PDF_RES_STEP).ceil() * PDF_RES_STEP;
+        let want =
+            (cw * window().device_pixel_ratio().max(1.0) / PDF_RES_STEP).ceil() * PDF_RES_STEP;
         if let Some(h) = res_timer.try_update_value(Option::take).flatten() {
             h.clear();
         }
@@ -520,13 +593,22 @@ fn PdfView(pane: Pane, src: Src, entry: Entry, url: String, #[prop(optional)] in
     });
     // Zoomed or turned, the same part of the PDF stays in the middle of what's shown.
     let keep_place = move |change: &dyn Fn()| {
-        let Some(s) = stage.get_untracked() else { return change() };
+        let Some(s) = stage.get_untracked() else {
+            return change();
+        };
         let (sh, ch) = (s.scroll_height() as f64, s.client_height() as f64);
-        let mid = if sh > 0.0 { (s.scroll_top() as f64 + ch / 2.0) / sh } else { 0.0 };
+        let mid = if sh > 0.0 {
+            (s.scroll_top() as f64 + ch / 2.0) / sh
+        } else {
+            0.0
+        };
         change();
         request_animation_frame(move || {
             if let Some(s) = stage.get_untracked() {
-                s.set_scroll_top((mid * s.scroll_height() as f64 - s.client_height() as f64 / 2.0).max(0.0) as i32);
+                s.set_scroll_top(
+                    (mid * s.scroll_height() as f64 - s.client_height() as f64 / 2.0).max(0.0)
+                        as i32,
+                );
                 s.set_scroll_left((s.scroll_width() - s.client_width()).max(0) / 2);
             }
         });
@@ -549,16 +631,26 @@ fn PdfView(pane: Pane, src: Src, entry: Entry, url: String, #[prop(optional)] in
     };
     // (The box it takes up, the viewer's own size and how it's moved and turned into that box.)
     let placed = move || {
-        let Some((w, h)) = room.get() else { return (String::new(), "width: 100%; height: 100%".to_string()) };
+        let Some((w, h)) = room.get() else {
+            return (String::new(), "width: 100%; height: 100%".to_string());
+        };
         let z = zoom.get();
         let t = turns.get();
         // The viewer fills the stage (its sides swapped when turned on its side) at the width it
         // was first laid out at, scaled to fit, then zoomed: a real zoom, not a wider page column.
         let (own_w, own_h) = if t % 2 == 1 { (h, w) } else { (w, h) };
         let laid_w = base.get().unwrap_or(own_w);
-        let fit = if laid_w > 0.0 && own_w > 0.0 { own_w / laid_w } else { 1.0 };
+        let fit = if laid_w > 0.0 && own_w > 0.0 {
+            own_w / laid_w
+        } else {
+            1.0
+        };
         let (big_w, big_h) = (own_w * z, own_h * z);
-        let (box_w, box_h) = if t % 2 == 1 { (big_h, big_w) } else { (big_w, big_h) };
+        let (box_w, box_h) = if t % 2 == 1 {
+            (big_h, big_w)
+        } else {
+            (big_w, big_h)
+        };
         let turn = match t {
             1 => format!("translateX({big_h}px) rotate(90deg) "),
             2 => format!("translate({big_w}px, {big_h}px) rotate(180deg) "),
@@ -566,7 +658,10 @@ fn PdfView(pane: Pane, src: Src, entry: Entry, url: String, #[prop(optional)] in
             _ => String::new(),
         };
         let (laid_h, s) = (own_h / fit, z * fit);
-        (format!("width: {box_w}px; height: {box_h}px"), format!("width: {laid_w}px; height: {laid_h}px; transform: {turn}scale({s})"))
+        (
+            format!("width: {box_w}px; height: {box_h}px"),
+            format!("width: {laid_w}px; height: {laid_h}px; transform: {turn}scale({s})"),
+        )
     };
     // Where the reader is, kept through zooming, turning and resizing, which move everything
     // else: the page at the middle of what's shown (from 0), how far down it that is (a fraction
@@ -576,12 +671,19 @@ fn PdfView(pane: Pane, src: Src, entry: Entry, url: String, #[prop(optional)] in
     let restoring = StoredValue::new(false);
     let note_anchor = move |s: &web_sys::HtmlElement| {
         let (top, ch) = (s.scroll_top() as f64, s.client_height() as f64);
-        let across = (s.scroll_left() as f64 + s.client_width() as f64 / 2.0) / (s.scroll_width() as f64).max(1.0);
+        let across = (s.scroll_left() as f64 + s.client_width() as f64 / 2.0)
+            / (s.scroll_width() as f64).max(1.0);
         let at = layout.with_untracked(|(_, at, _)| {
             let mid = top + ch / 2.0;
-            let i = at.partition_point(|&(y, h)| y + h < mid).min(at.len().checked_sub(1)?);
+            let i = at
+                .partition_point(|&(y, h)| y + h < mid)
+                .min(at.len().checked_sub(1)?);
             let (y, h) = at[i];
-            Some((i, ((mid - y) / h.max(1.0)).clamp(0.0, 1.0), across.clamp(0.0, 1.0)))
+            Some((
+                i,
+                ((mid - y) / h.max(1.0)).clamp(0.0, 1.0),
+                across.clamp(0.0, 1.0),
+            ))
         });
         if at.is_some() {
             anchor.set_value(at);
@@ -589,16 +691,25 @@ fn PdfView(pane: Pane, src: Src, entry: Entry, url: String, #[prop(optional)] in
     };
     Effect::new(move |_| {
         layout.track();
-        let Some((i, down, across)) = anchor.get_value() else { return };
+        let Some((i, down, across)) = anchor.get_value() else {
+            return;
+        };
         restoring.set_value(true);
         // After the pages are laid out again, so the stage is as tall as they are.
         request_animation_frame(move || {
             if let Some(s) = stage.get_untracked() {
-                if let Some((y, h)) = layout.try_with_untracked(|(_, at, _)| at.get(i).copied()).flatten() {
+                if let Some((y, h)) = layout
+                    .try_with_untracked(|(_, at, _)| at.get(i).copied())
+                    .flatten()
+                {
                     let ch = s.client_height() as f64;
                     s.set_scroll_top((y + down * h - ch / 2.0).max(0.0).round() as i32);
                     let cw = s.client_width() as f64;
-                    s.set_scroll_left((across * s.scroll_width() as f64 - cw / 2.0).max(0.0).round() as i32);
+                    s.set_scroll_left(
+                        (across * s.scroll_width() as f64 - cw / 2.0)
+                            .max(0.0)
+                            .round() as i32,
+                    );
                     let _ = scrolled.try_set((s.scroll_top() as f64, ch));
                 }
             }
@@ -638,11 +749,21 @@ fn PdfView(pane: Pane, src: Src, entry: Entry, url: String, #[prop(optional)] in
     let picture_url = move |n: usize, px: u32, tile: Option<[u32; 4]>| {
         let (path, inner) = what.get_value();
         let at = match &inner {
-            Some(i) => format!("p={}&s={size}&m={mtime}&e={}&z={}", uri_part(&i.zip_path), uri_part(&i.name), i.zip_size),
+            Some(i) => format!(
+                "p={}&s={size}&m={mtime}&e={}&z={}",
+                uri_part(&i.zip_path),
+                uri_part(&i.name),
+                i.zip_size
+            ),
             None => format!("p={}&s={size}&m={mtime}", uri_part(&path)),
         };
-        let tile = tile.map(|[x, y, w, h]| format!("&t={x},{y},{w},{h}")).unwrap_or_default();
-        crate::os::served(&format!("pdfpage?src={}&{at}&n={n}&w={px}{tile}", src.key()))
+        let tile = tile
+            .map(|[x, y, w, h]| format!("&t={x},{y},{w},{h}"))
+            .unwrap_or_default();
+        crate::os::served(&format!(
+            "pdfpage?src={}&{at}&n={n}&w={px}{tile}",
+            src.key()
+        ))
     };
     // Page `i` (from 0): a box of its size, with the page drawn in it when it's near what's shown.
     let page_view = move |i: usize| {
@@ -651,13 +772,30 @@ fn PdfView(pane: Pane, src: Src, entry: Entry, url: String, #[prop(optional)] in
             i >= a && i < b
         });
         let place = move || {
-            layout.with(|(cw, at, _)| at.get(i).map(|&(y, h)| format!("top: {y}px; left: {PDF_PAD}px; width: {cw}px; height: {h}px")).unwrap_or_default())
+            layout.with(|(cw, at, _)| {
+                at.get(i)
+                    .map(|&(y, h)| {
+                        format!("top: {y}px; left: {PDF_PAD}px; width: {cw}px; height: {h}px")
+                    })
+                    .unwrap_or_default()
+            })
         };
-        let sheet = move || layout.with(|(cw, at, _)| at.get(i).map(|&(_, h)| pdf_sheet(turns.get(), *cw, h)).unwrap_or_default());
+        let sheet = move || {
+            layout.with(|(cw, at, _)| {
+                at.get(i)
+                    .map(|&(_, h)| pdf_sheet(turns.get(), *cw, h))
+                    .unwrap_or_default()
+            })
+        };
         // Device pixels across the unturned page: the step's, its sides swapped when it's turned.
         let page = i + 1;
         let aspect = move || {
-            let [pw, ph] = sizes.with(|s| s.as_ref().and_then(|s| s.as_ref()).and_then(|s| s.get(i).copied()).unwrap_or([1.0, 1.0]));
+            let [pw, ph] = sizes.with(|s| {
+                s.as_ref()
+                    .and_then(|s| s.as_ref())
+                    .and_then(|s| s.get(i).copied())
+                    .unwrap_or([1.0, 1.0])
+            });
             pw.max(1.0) / ph.max(1.0)
         };
         view! {
@@ -807,12 +945,17 @@ fn PdfView(pane: Pane, src: Src, entry: Entry, url: String, #[prop(optional)] in
     let heading_list = move || match outline.get() {
         None => view! { <span class="hint">"Loading…"</span> }.into_any(),
         Some(Err(e)) => view! { <span class="hint">{e}</span> }.into_any(),
-        Some(Ok(o)) if o.headings.is_empty() => view! { <span class="hint">"This PDF has no outline."</span> }.into_any(),
+        Some(Ok(o)) if o.headings.is_empty() => {
+            view! { <span class="hint">"This PDF has no outline."</span> }.into_any()
+        }
         Some(Ok(o)) => o
             .headings
             .into_iter()
             .map(|h| {
-                let indent = format!("padding-left: {}px", 8 + 12 * h.level.saturating_sub(1).min(8));
+                let indent = format!(
+                    "padding-left: {}px",
+                    8 + 12 * h.level.saturating_sub(1).min(8)
+                );
                 let (page, tip) = (h.page, h.title.clone());
                 view! {
                     <button class="pdf-head" style=indent title=tip on:click=move |_| go(page)>
@@ -832,7 +975,8 @@ fn PdfView(pane: Pane, src: Src, entry: Entry, url: String, #[prop(optional)] in
             }
         }
     };
-    let stage_body = move || match sizes.get().map(|s| s.map(|s| s.len())) {
+    let stage_body = move || {
+        match sizes.get().map(|s| s.map(|s| s.len())) {
         None => view! { <span class="hint pdf-wait">"Loading…"</span> }.into_any(),
         Some(Some(n)) => view! {
             <div class="pdf-col" style=move || layout.with(|(cw, _, total)| format!("width: {}px; height: {total}px", cw + 2.0 * PDF_PAD))>
@@ -846,6 +990,7 @@ fn PdfView(pane: Pane, src: Src, entry: Entry, url: String, #[prop(optional)] in
             </div>
         }
         .into_any(),
+    }
     };
     view! {
         <div class="viewer-bar pdf-bar pdf-reader">
@@ -957,11 +1102,18 @@ fn EpubView(pane: Pane, src: Src, entry: Entry, line: AnyView) -> impl IntoView 
         if !reading.get() {
             return;
         }
-        let Some(ch) = contents.with(|c| c.as_ref().and_then(|c| c.as_ref().ok()).and_then(|c| c.chapters.get(at.get()).cloned())) else { return };
+        let Some(ch) = contents.with(|c| {
+            c.as_ref()
+                .and_then(|c| c.as_ref().ok())
+                .and_then(|c| c.chapters.get(at.get()).cloned())
+        }) else {
+            return;
+        };
         let n = asked.get_value() + 1;
         asked.set_value(n);
         page.set(None);
-        let args = json!({ "src": src.key(), "path": path.get_value(), "size": size, "chapter": ch.path });
+        let args =
+            json!({ "src": src.key(), "path": path.get_value(), "size": size, "chapter": ch.path });
         spawn_local(async move {
             let r = call::<String>("epub_peek", args).await;
             if asked.try_get_value() == Some(n) {
@@ -969,7 +1121,13 @@ fn EpubView(pane: Pane, src: Src, entry: Entry, line: AnyView) -> impl IntoView 
             }
         });
     });
-    let count = move || contents.with(|c| c.as_ref().and_then(|c| c.as_ref().ok()).map_or(0, |c| c.chapters.len()));
+    let count = move || {
+        contents.with(|c| {
+            c.as_ref()
+                .and_then(|c| c.as_ref().ok())
+                .map_or(0, |c| c.chapters.len())
+        })
+    };
     let go = move |d: i32| {
         let to = at.get_untracked() as i32 + d;
         if to >= 0 && (to as usize) < count() {
@@ -987,7 +1145,12 @@ fn EpubView(pane: Pane, src: Src, entry: Entry, line: AnyView) -> impl IntoView 
         reading.set(on);
         store(EPUB_READ_KEY, if on { "1" } else { "0" });
     };
-    let zoom = RwSignal::new(stored(EPUB_ZOOM_KEY).and_then(|z| z.parse::<u32>().ok()).unwrap_or(100).clamp(60, 250));
+    let zoom = RwSignal::new(
+        stored(EPUB_ZOOM_KEY)
+            .and_then(|z| z.parse::<u32>().ok())
+            .unwrap_or(100)
+            .clamp(60, 250),
+    );
     let set_zoom = move |z: u32| {
         let z = z.clamp(60, 250);
         zoom.set(z);
@@ -999,9 +1162,19 @@ fn EpubView(pane: Pane, src: Src, entry: Entry, line: AnyView) -> impl IntoView 
     // A new zoom builds the page again.
     let doc = move || {
         let html = page.get()?.ok()?;
-        let style = super::reading::page_style(&ctx.theme.get(), 15, zoom.get(), "16px 20px 60px", "1.55");
-        let next = contents.with(|c| c.as_ref().and_then(|c| c.as_ref().ok()).and_then(|c| c.chapters.get(at.get() + 1)).map(|ch| ch.label.clone()));
-        Some(super::reading::page(&html, &style, next.as_deref().map(|l| (l, at.get() + 1))))
+        let style =
+            super::reading::page_style(&ctx.theme.get(), 15, zoom.get(), "16px 20px 60px", "1.55");
+        let next = contents.with(|c| {
+            c.as_ref()
+                .and_then(|c| c.as_ref().ok())
+                .and_then(|c| c.chapters.get(at.get() + 1))
+                .map(|ch| ch.label.clone())
+        });
+        Some(super::reading::page(
+            &html,
+            &style,
+            next.as_deref().map(|l| (l, at.get() + 1)),
+        ))
     };
     // Scrolling on past a chapter's end turns to the next; back past its start, to the previous
     // one's end.
@@ -1062,7 +1235,8 @@ fn EpubView(pane: Pane, src: Src, entry: Entry, line: AnyView) -> impl IntoView 
             return;
         }
         searching.set(true);
-        let args = json!({ "src": src.key(), "path": path.get_value(), "size": size, "query": query });
+        let args =
+            json!({ "src": src.key(), "path": path.get_value(), "size": size, "query": query });
         spawn_local(async move {
             let r = call::<Found>("epub_peek_find", args).await;
             if asked_search.try_get_value() != Some(n) {
@@ -1082,15 +1256,22 @@ fn EpubView(pane: Pane, src: Src, entry: Entry, line: AnyView) -> impl IntoView 
         if now {
             run_search();
         } else {
-            timer.set_value(set_timeout_with_handle(run_search, std::time::Duration::from_millis(300)).ok());
+            timer.set_value(
+                set_timeout_with_handle(run_search, std::time::Duration::from_millis(300)).ok(),
+            );
         }
     };
     // A match picked in the results: its chapter, with that match the current one. In another
     // chapter, it's marked once that one has loaded.
     let current = RwSignal::new(None::<(String, usize)>);
     let pending_hit = StoredValue::new(None::<usize>);
-    let chapter_at =
-        move |p: &str| contents.with_untracked(|c| c.as_ref().and_then(|c| c.as_ref().ok()).and_then(|c| c.chapters.iter().position(|ch| ch.path == p)));
+    let chapter_at = move |p: &str| {
+        contents.with_untracked(|c| {
+            c.as_ref()
+                .and_then(|c| c.as_ref().ok())
+                .and_then(|c| c.chapters.iter().position(|ch| ch.path == p))
+        })
+    };
     let pick = move |p: String, hit: usize| {
         let Some(k) = chapter_at(&p) else { return };
         current.set(Some((p, hit)));
@@ -1109,12 +1290,24 @@ fn EpubView(pane: Pane, src: Src, entry: Entry, line: AnyView) -> impl IntoView 
     // out of the book aren't followed.
     let anchor = StoredValue::new(None::<String>);
     let link = move |href: String| {
-        let Ok(u) = web_sys::Url::new(&href) else { return };
-        let decode = |s: String| js_sys::decode_uri_component(&s).ok().and_then(|v| v.as_string()).unwrap_or(s);
-        let frag = Some(decode(u.hash().trim_start_matches('#').to_string())).filter(|f| !f.is_empty());
+        let Ok(u) = web_sys::Url::new(&href) else {
+            return;
+        };
+        let decode = |s: String| {
+            js_sys::decode_uri_component(&s)
+                .ok()
+                .and_then(|v| v.as_string())
+                .unwrap_or(s)
+        };
+        let frag =
+            Some(decode(u.hash().trim_start_matches('#').to_string())).filter(|f| !f.is_empty());
         let target = decode(u.pathname());
         let k = contents.with_untracked(|c| {
-            c.as_ref().and_then(|c| c.as_ref().ok()).and_then(|c| c.chapters.iter().position(|ch| target.ends_with(&format!("/{}", ch.path))))
+            c.as_ref().and_then(|c| c.as_ref().ok()).and_then(|c| {
+                c.chapters
+                    .iter()
+                    .position(|ch| target.ends_with(&format!("/{}", ch.path)))
+            })
         });
         match k {
             Some(k) if k == at.get_untracked() => {
@@ -1170,9 +1363,13 @@ fn EpubView(pane: Pane, src: Src, entry: Entry, line: AnyView) -> impl IntoView 
     };
     let chapter_list = move || {
         contents.with(|c| match c {
-            Some(Ok(c)) => {
-                c.chapters.iter().enumerate().map(|(k, ch)| view! { <option value=k.to_string()>{ch.label.clone()}</option> }).collect_view().into_any()
-            }
+            Some(Ok(c)) => c
+                .chapters
+                .iter()
+                .enumerate()
+                .map(|(k, ch)| view! { <option value=k.to_string()>{ch.label.clone()}</option> })
+                .collect_view()
+                .into_any(),
             _ => ().into_any(),
         })
     };
@@ -1200,7 +1397,8 @@ fn EpubView(pane: Pane, src: Src, entry: Entry, line: AnyView) -> impl IntoView 
     // Narrow, the bar drops the zoom percentage, then the chapter list, then the zoom.
     let bar = NodeRef::<html::Div>::new();
     fold_bar(bar, 3);
-    let chapter = move || match (contents.get(), page.get()) {
+    let chapter = move || {
+        match (contents.get(), page.get()) {
         (Some(Err(e)), _) | (_, Some(Err(e))) => view! { <p class="hint">{e}</p> }.into_any(),
         (Some(Ok(c)), _) if c.chapters.is_empty() => view! { <p class="hint">"This book lists no chapters."</p> }.into_any(),
         (Some(Ok(_)), Some(Ok(_))) => view! {
@@ -1209,6 +1407,7 @@ fn EpubView(pane: Pane, src: Src, entry: Entry, line: AnyView) -> impl IntoView 
         }
         .into_any(),
         _ => view! { <p class="hint">"Opening…"</p> }.into_any(),
+    }
     };
     view! {
         <div class="meta">
@@ -1325,7 +1524,11 @@ pub(super) fn has_ext(e: &Entry, exts: &[&str]) -> bool {
 /// `entry`: this file instead of the pane's selected item (the Editor view's preview tab), with
 /// no ‹ › (the files around it aren't the pane's); `src`, where it is, if not the pane's place.
 #[component]
-pub(super) fn Preview(pane: Pane, #[prop(optional)] entry: Option<Entry>, #[prop(optional)] src: Option<Src>) -> impl IntoView {
+pub(super) fn Preview(
+    pane: Pane,
+    #[prop(optional)] entry: Option<Entry>,
+    #[prop(optional)] src: Option<Src>,
+) -> impl IntoView {
     let src_of = src;
     let p = pane;
     let alone = entry.is_some();
@@ -1339,10 +1542,16 @@ pub(super) fn Preview(pane: Pane, #[prop(optional)] entry: Option<Entry>, #[prop
             None => p.selected_entry(),
         };
         picked.map(|e| {
-            let forced = p.peek_as.with(|f| f.as_ref().filter(|(path, _)| *path == e.path).map(|f| f.1));
+            let forced = p
+                .peek_as
+                .with(|f| f.as_ref().filter(|(path, _)| *path == e.path).map(|f| f.1));
             // A file picked in this ZIP's columns.
             let src = p.src.get();
-            let inner = p.zip_pick.with(|z| z.as_ref().filter(|z| z.0 == src && z.1 == e.path).map(|z| (z.2.clone(), z.3, z.4)));
+            let inner = p.zip_pick.with(|z| {
+                z.as_ref()
+                    .filter(|z| z.0 == src && z.1 == e.path)
+                    .map(|z| (z.2.clone(), z.3, z.4))
+            });
             // A file picked in the columns of something opened as a ZIP (an EPUB, say) is what
             // shows, not the ZIP again.
             let forced = forced.filter(|f| !(inner.is_some() && *f == PeekAs::Zip));
@@ -1358,11 +1567,19 @@ pub(super) fn Preview(pane: Pane, #[prop(optional)] entry: Option<Entry>, #[prop
         if shown.with_untracked(|s| *s == w) {
             return;
         }
-        let read = (!alone && shown.with_untracked(Option::is_some)).then(|| picture_url(p, &w)).flatten();
+        let read = (!alone && shown.with_untracked(Option::is_some))
+            .then(|| picture_url(p, &w))
+            .flatten();
         match read {
             Some((path, url)) => {
                 let target = StoredValue::new(w);
-                when_read(p, path, url, move || target.with_value(|t| wanted.with_untracked(|now| now == t)), move || shown.set(target.get_value()));
+                when_read(
+                    p,
+                    path,
+                    url,
+                    move || target.with_value(|t| wanted.with_untracked(|now| now == t)),
+                    move || shown.set(target.get_value()),
+                );
             }
             None => {
                 p.coming.set(None);
@@ -1503,9 +1720,14 @@ pub(super) fn step_media(p: Pane, e: &Entry, delta: isize) {
     let picked = p.selected.get_untracked();
     let next = p.entries.with_untracked(|es| {
         let same: Vec<&Entry> = es.iter().filter(|x| media(x) == Some(m)).collect();
-        let at = picked.as_ref().and_then(|s| same.iter().position(|x| x.path == *s)).or_else(|| same.iter().position(|x| x.path == e.path))?;
+        let at = picked
+            .as_ref()
+            .and_then(|s| same.iter().position(|x| x.path == *s))
+            .or_else(|| same.iter().position(|x| x.path == e.path))?;
         let i = at as isize + delta;
-        (i >= 0).then(|| same.get(i as usize).map(|x| x.path.clone())).flatten()
+        (i >= 0)
+            .then(|| same.get(i as usize).map(|x| x.path.clone()))
+            .flatten()
     });
     if let Some(path) = next {
         p.select_only(Some(path));
@@ -1514,17 +1736,35 @@ pub(super) fn step_media(p: Pane, e: &Entry, delta: isize) {
 
 /// The picture the preview would show for `w` in full, and the URL it reads it from (the photo
 /// shrunk to the preview, or the file; in a ZIP, the file unpacked). None for anything else.
-fn picture_url(p: Pane, w: &Option<(Entry, Option<PeekAs>, Option<(String, u64, bool)>)>) -> Option<(String, String)> {
+fn picture_url(
+    p: Pane,
+    w: &Option<(Entry, Option<PeekAs>, Option<(String, u64, bool)>)>,
+) -> Option<(String, String)> {
     let (e, forced, inner) = w.as_ref()?;
     if forced.is_some() {
         return None;
     }
     let src = p.src.get_untracked();
-    let is_picture =
-        |name: &str| media(&Entry { name: base(name), path: name.to_string(), dir: false, size: 0, mtime: 0, hidden: false }) == Some(Media::Image);
+    let is_picture = |name: &str| {
+        media(&Entry {
+            name: base(name),
+            path: name.to_string(),
+            dir: false,
+            size: 0,
+            mtime: 0,
+            hidden: false,
+        }) == Some(Media::Image)
+    };
     match inner {
-        Some((name, _, _)) => is_picture(name).then(|| (name.clone(), super::views::zipped_url(src, e, name))),
-        None => (!e.dir && media(e) == Some(Media::Image)).then(|| (e.path.clone(), fit_url(src, e).unwrap_or_else(|| stream_url(src, e)))),
+        Some((name, _, _)) => {
+            is_picture(name).then(|| (name.clone(), super::views::zipped_url(src, e, name)))
+        }
+        None => (!e.dir && media(e) == Some(Media::Image)).then(|| {
+            (
+                e.path.clone(),
+                fit_url(src, e).unwrap_or_else(|| stream_url(src, e)),
+            )
+        }),
     }
 }
 
@@ -1533,7 +1773,13 @@ fn picture_url(p: Pane, w: &Option<(Entry, Option<PeekAs>, Option<(String, u64, 
 /// picture shown stays; a picture read ahead is shown at once.
 /// Only the last one asked for is shown, and only if `still()` (nothing else was picked
 /// meanwhile). One that can't be read is shown anyway, to say why.
-pub(super) fn when_read(p: Pane, path: String, url: String, still: impl Fn() -> bool + 'static, show: impl FnOnce() + 'static) {
+pub(super) fn when_read(
+    p: Pane,
+    path: String,
+    url: String,
+    still: impl Fn() -> bool + 'static,
+    show: impl FnOnce() + 'static,
+) {
     if read_copy(p, &url).is_some() {
         p.coming.set(None);
         p.pending.set_value(None);
@@ -1578,7 +1824,9 @@ fn read_pic(p: Pane, url: String) {
         }) else {
             return;
         };
-        if p.coming.with_untracked(|c| c.as_ref().is_some_and(|(_, u)| *u == url)) {
+        if p.coming
+            .with_untracked(|c| c.as_ref().is_some_and(|(_, u)| *u == url))
+        {
             p.coming.set(None);
             if let Some(show) = p.pending.try_update_value(Option::take).flatten() {
                 show();
@@ -1590,13 +1838,19 @@ fn read_pic(p: Pane, url: String) {
 /// Reads the next picture after `e` in the pane ahead of time, so › shows it at once.
 fn read_ahead(p: Pane, e: &Entry) {
     let next = p.entries.with_untracked(|es| {
-        let same: Vec<&Entry> = es.iter().filter(|x| media(x) == Some(Media::Image)).collect();
+        let same: Vec<&Entry> = es
+            .iter()
+            .filter(|x| media(x) == Some(Media::Image))
+            .collect();
         let i = same.iter().position(|x| x.path == e.path)?;
         same.get(i + 1).map(|&x| x.clone())
     });
     if let Some(next) = next {
         let src = p.src.get_untracked();
-        read_pic(p, fit_url(src, &next).unwrap_or_else(|| stream_url(src, &next)));
+        read_pic(
+            p,
+            fit_url(src, &next).unwrap_or_else(|| stream_url(src, &next)),
+        );
     }
 }
 
@@ -1604,11 +1858,19 @@ fn read_ahead(p: Pane, e: &Entry) {
 /// so showing it doesn't hold up the window; None when it can't be read.
 async fn read_decoded(url: &str) -> Option<String> {
     use wasm_bindgen_futures::JsFuture;
-    let resp: web_sys::Response = JsFuture::from(window().fetch_with_str(url)).await.ok()?.dyn_into().ok()?;
+    let resp: web_sys::Response = JsFuture::from(window().fetch_with_str(url))
+        .await
+        .ok()?
+        .dyn_into()
+        .ok()?;
     if !resp.ok() {
         return None;
     }
-    let blob: web_sys::Blob = JsFuture::from(resp.blob().ok()?).await.ok()?.dyn_into().ok()?;
+    let blob: web_sys::Blob = JsFuture::from(resp.blob().ok()?)
+        .await
+        .ok()?
+        .dyn_into()
+        .ok()?;
     let copy = web_sys::Url::create_object_url_with_blob(&blob).ok()?;
     // Decoded now, off the window's way; a picture the web view can't decode is shown anyway.
     if let Ok(img) = web_sys::HtmlImageElement::new() {
@@ -1620,7 +1882,11 @@ async fn read_decoded(url: &str) -> Option<String> {
 
 /// The copy in memory of the picture at `url`, when it's been read.
 fn read_copy(p: Pane, url: &str) -> Option<String> {
-    p.pics.with_value(|v| v.iter().find(|(u, _)| u == url).and_then(|(_, c)| c.clone()))
+    p.pics.with_value(|v| {
+        v.iter()
+            .find(|(u, _)| u == url)
+            .and_then(|(_, c)| c.clone())
+    })
 }
 
 /// ‹ and › for the previous and next file of the same kind: `go` steps by -1 or 1.
@@ -1693,7 +1959,11 @@ fn BigCover(src: Src, entry: Entry) -> impl IntoView {
     let pic = NodeRef::<html::Div>::new();
     // The space the cover could take is the preview's, above the details.
     request_animation_frame(move || {
-        let Some(room) = pic.try_get_untracked().flatten().and_then(|d| d.parent_element()) else {
+        let Some(room) = pic
+            .try_get_untracked()
+            .flatten()
+            .and_then(|d| d.parent_element())
+        else {
             return;
         };
         let dpr = window().device_pixel_ratio().max(1.0);
@@ -1702,7 +1972,12 @@ fn BigCover(src: Src, entry: Entry) -> impl IntoView {
         }
     });
     let p = uri_part(&entry.path);
-    let url = crate::os::served(&format!("cover?src={}&p={p}&s={}&m={}", src.key(), entry.size, entry.mtime));
+    let url = crate::os::served(&format!(
+        "cover?src={}&p={p}&s={}&m={}",
+        src.key(),
+        entry.size,
+        entry.mtime
+    ));
     view! {
         <div class="pic" class:whole=loaded node_ref=pic>
             {let e = entry.clone(); move || (!loaded.get()).then(|| view! { <Thumbnail src entry=e.clone()/> })}
@@ -1786,7 +2061,10 @@ fn FullImage(
     let measure = move || {
         if let Some(img) = img_ref.try_get_untracked().flatten() {
             if img.natural_width() > 0 && img.offset_width() > 0 {
-                fit.set(img.offset_width() as f64 / (img.natural_width() as f64 * per_px.get_untracked()));
+                fit.set(
+                    img.offset_width() as f64
+                        / (img.natural_width() as f64 * per_px.get_untracked()),
+                );
             }
         }
     };
@@ -1812,7 +2090,10 @@ fn FullImage(
         }
     });
     let load = move |ev: web_sys::Event| {
-        if let Some(img) = ev.target().and_then(|t| t.dyn_into::<web_sys::HtmlImageElement>().ok()) {
+        if let Some(img) = ev
+            .target()
+            .and_then(|t| t.dyn_into::<web_sys::HtmlImageElement>().ok())
+        {
             let (w, h) = (img.natural_width(), img.natural_height());
             if shrunk.get_untracked() {
                 raw.set((w, h)); // The effect above works out the photo's size.
@@ -1846,16 +2127,32 @@ fn FullImage(
     };
     // The picture's size on screen at zoom `z`, turn included, and the stage's.
     let sizes = move |z: f64| {
-        let (Some(img), Some(st)) = (img_ref.try_get_untracked().flatten(), stage.try_get_untracked().flatten()) else { return None };
+        let (Some(img), Some(st)) = (
+            img_ref.try_get_untracked().flatten(),
+            stage.try_get_untracked().flatten(),
+        ) else {
+            return None;
+        };
         let (w, h) = natural.get_untracked();
         let t = turn.get_untracked();
         let s = z * turn_fit(t, w, h);
-        let (iw, ih) = (img.offset_width() as f64 * s, img.offset_height() as f64 * s);
-        let shown = if t.rem_euclid(2) == 0 { (iw, ih) } else { (ih, iw) };
+        let (iw, ih) = (
+            img.offset_width() as f64 * s,
+            img.offset_height() as f64 * s,
+        );
+        let shown = if t.rem_euclid(2) == 0 {
+            (iw, ih)
+        } else {
+            (ih, iw)
+        };
         Some((shown, (st.client_width() as f64, st.client_height() as f64)))
     };
     // How far the picture can be moved: until its edge reaches the stage's.
-    let reach = move || sizes(zoom.get_untracked()).map_or((0.0, 0.0), |((w, h), (sw, sh))| (((w - sw) / 2.0).max(0.0), ((h - sh) / 2.0).max(0.0)));
+    let reach = move || {
+        sizes(zoom.get_untracked()).map_or((0.0, 0.0), |((w, h), (sw, sh))| {
+            (((w - sw) / 2.0).max(0.0), ((h - sh) / 2.0).max(0.0))
+        })
+    };
     let move_to = move |(x, y): (f64, f64)| {
         let (rx, ry) = reach();
         pan.set((x.clamp(-rx, rx), y.clamp(-ry, ry)));
@@ -1883,7 +2180,9 @@ fn FullImage(
         let z = match m {
             PicFit::Whole => 1.0,
             PicFit::Actual => 1.0 / base(),
-            PicFit::Width => sizes(1.0).map_or(1.0, |((w, _), (sw, _))| if w > 0.0 { sw / w } else { 1.0 }),
+            PicFit::Width => {
+                sizes(1.0).map_or(1.0, |((w, _), (sw, _))| if w > 0.0 { sw / w } else { 1.0 })
+            }
         };
         set_zoom(z);
         move_to((f64::INFINITY, f64::INFINITY));
@@ -1907,8 +2206,12 @@ fn FullImage(
     // Full screen: the picture and its buttons, on black.
     viewer.on_load(move |v| {
         let cb = Closure::<dyn Fn()>::new(move || {
-            let on = super::video::full_screen_element()
-                .is_some_and(|el| viewer.try_get_untracked().flatten().is_some_and(|v| wasm_bindgen::JsValue::from(v) == el));
+            let on = super::video::full_screen_element().is_some_and(|el| {
+                viewer
+                    .try_get_untracked()
+                    .flatten()
+                    .is_some_and(|v| wasm_bindgen::JsValue::from(v) == el)
+            });
             let _ = full_screen.try_set(on);
         });
         for name in ["fullscreenchange", "webkitfullscreenchange"] {
@@ -1954,8 +2257,15 @@ fn FullImage(
         let (x, y) = pan.get();
         let (w, h) = natural.get();
         let s = zoom.get() * turn_fit(turn.get(), w, h);
-        let instant = if settled.get() { turn.css() } else { "; transition: none" };
-        format!("transform: translate({x}px, {y}px) scale({s}) rotate({}deg){instant}", turn.get() * 90)
+        let instant = if settled.get() {
+            turn.css()
+        } else {
+            "; transition: none"
+        };
+        format!(
+            "transform: translate({x}px, {y}px) scale({s}) rotate({}deg){instant}",
+            turn.get() * 90
+        )
     };
     // Dragging a zoomed picture around.
     let listeners = StoredValue::new_local(None::<(WindowListenerHandle, WindowListenerHandle)>);
@@ -2121,7 +2431,8 @@ fn Player(
             });
         });
         let near = (!alone).then(|| (pane.src.get_untracked(), entry.path.clone()));
-        view! { <VideoPlayer url key title=entry.name.clone() info turn pane=pane.id pop near/> }.into_any()
+        view! { <VideoPlayer url key title=entry.name.clone() info turn pane=pane.id pop near/> }
+            .into_any()
     } else {
         view! { <SoundPlayer url key info pane=pane.id/> }.into_any()
     };
@@ -2136,7 +2447,10 @@ fn Player(
 fn FontSample(src: Src, entry: Entry) -> impl IntoView {
     // A name of its own for each preview, so a font shown earlier isn't reused.
     let family = format!("ferry-peek-{}", js_sys::Date::now() as u64);
-    let css = format!("@font-face {{ font-family: \"{family}\"; src: url(\"{}\"); }}", stream_url(src, &entry));
+    let css = format!(
+        "@font-face {{ font-family: \"{family}\"; src: url(\"{}\"); }}",
+        stream_url(src, &entry)
+    );
     let face = format!("font-family: \"{family}\", system-ui");
     view! {
         <style>{css}</style>
@@ -2172,7 +2486,10 @@ fn zip_tree(items: &[Packed]) -> Vec<ZipRow> {
         size: u64,
         kids: std::collections::BTreeMap<String, Node>,
     }
-    let mut top = Node { dir: true, ..Default::default() };
+    let mut top = Node {
+        dir: true,
+        ..Default::default()
+    };
     for i in items {
         let parts: Vec<&str> = i.name.split('/').filter(|s| !s.is_empty()).collect();
         let Some((last, dirs)) = parts.split_last() else {
@@ -2201,7 +2518,13 @@ fn zip_tree(items: &[Packed]) -> Vec<ZipRow> {
         kids.sort_by_key(|(name, k)| (!k.dir, name.to_lowercase()));
         for (name, k) in kids {
             let path = format!("{prefix}{name}{}", if k.dir { "/" } else { "" });
-            out.push(ZipRow { path: path.clone(), name: name.clone(), depth, dir: k.dir, size: k.size });
+            out.push(ZipRow {
+                path: path.clone(),
+                name: name.clone(),
+                depth,
+                dir: k.dir,
+                size: k.size,
+            });
             if k.dir {
                 walk(k, &path, depth + 1, out);
             }
@@ -2304,7 +2627,10 @@ struct Piece {
 impl Piece {
     /// Where the piece after this one starts counting lines.
     fn next_line(&self) -> (usize, bool) {
-        (self.line + self.text.matches('\n').count(), !self.text.is_empty() && !self.text.ends_with('\n'))
+        (
+            self.line + self.text.matches('\n').count(),
+            !self.text.is_empty() && !self.text.ends_with('\n'),
+        )
     }
 }
 
@@ -2362,7 +2688,11 @@ fn segment_view(class: &'static str, s: &str) -> AnyView {
 fn piece_text(p: &Piece, lines: bool) -> AnyView {
     let segs = segments(p);
     if !lines {
-        return segs.into_iter().map(|(c, s)| segment_view(c, s)).collect_view().into_any();
+        return segs
+            .into_iter()
+            .map(|(c, s)| segment_view(c, s))
+            .collect_view()
+            .into_any();
     }
     let mut out = vec![];
     let mut line = vec![];
@@ -2383,7 +2713,11 @@ fn piece_text(p: &Piece, lines: bool) -> AnyView {
     out.into_iter()
         .enumerate()
         .map(|(k, segs)| {
-            let n = if k == 0 && p.cont { String::new() } else { (p.line + k).to_string() };
+            let n = if k == 0 && p.cont {
+                String::new()
+            } else {
+                (p.line + k).to_string()
+            };
             view! { <span class="ln" data-n=n>{segs.collect_view()}</span> }
         })
         .collect_view()
@@ -2429,7 +2763,10 @@ where
     };
     fetch(0);
     let scrolled = move |ev: web_sys::Event| {
-        let Some(el) = ev.target().and_then(|t| t.dyn_into::<web_sys::Element>().ok()) else {
+        let Some(el) = ev
+            .target()
+            .and_then(|t| t.dyn_into::<web_sys::Element>().ok())
+        else {
             return;
         };
         let left = el.scroll_height() - el.scroll_top() - el.client_height();
@@ -2441,7 +2778,11 @@ where
     // After a failed read, a button reads it again: the start, or the piece after the last.
     let retry = move || {
         error.set(None);
-        fetch(if pieces.with_untracked(Vec::is_empty) { 0 } else { next.get_untracked().unwrap_or(0) });
+        fetch(if pieces.with_untracked(Vec::is_empty) {
+            0
+        } else {
+            next.get_untracked().unwrap_or(0)
+        });
     };
     piece_view(pieces, next, error, loading, scrolled, retry, cap)
 }
@@ -2484,10 +2825,17 @@ fn piece_view(
     cap: u64,
 ) -> impl IntoView {
     let ctx = expect_context::<Ctx>();
-    let empty = move || pieces.with(|v| v.len() == 1 && v[0].text.trim().is_empty()) && next.get().is_none();
+    let empty = move || {
+        pieces.with(|v| v.len() == 1 && v[0].text.trim().is_empty()) && next.get().is_none()
+    };
     let stopped = move || pieces.with(|v| v.iter().any(|p| p.stopped));
     // Room for the longest line number so far.
-    let digits = move || pieces.with(|v| v.last().map_or(1, |p| p.next_line().0.max(1).to_string().len()));
+    let digits = move || {
+        pieces.with(|v| {
+            v.last()
+                .map_or(1, |p| p.next_line().0.max(1).to_string().len())
+        })
+    };
     let (wrap, numbers) = (ctx.wrap_text, ctx.line_numbers);
     view! {
         <div class="peek">
@@ -2537,14 +2885,39 @@ const UNPACK_MAX: u64 = 64 * 1024 * 1024;
 /// A file picked in a ZIP's columns, `size` bytes unpacked: shown like any other file, from the
 /// ZIP unpacked, or read in place when it's `stored` without compression.
 #[component]
-fn Zipped(pane: Pane, src: Src, zip: Entry, name: String, size: u64, stored: bool) -> impl IntoView {
+fn Zipped(
+    pane: Pane,
+    src: Src,
+    zip: Entry,
+    name: String,
+    size: u64,
+    stored: bool,
+) -> impl IntoView {
     let p = pane;
     let short = name.rsplit('/').next().unwrap_or(&name).to_string();
-    let e = Entry { name: short.clone(), path: name.clone(), dir: false, size, mtime: 0, hidden: false };
+    let e = Entry {
+        name: short.clone(),
+        path: name.clone(),
+        dir: false,
+        size,
+        mtime: 0,
+        hidden: false,
+    };
     let url = super::views::zipped_url(src, &zip, &name);
     // An EPUB in the ZIP shows its cover.
-    let cover = crate::os::served(&format!("cover?src={}&p={}&s={}&m={}&e={}", src.key(), uri_part(&zip.path), zip.size, zip.mtime, uri_part(&name),));
-    let inner = Inner { name: name.clone(), zip_path: zip.path.clone(), zip_size: zip.size };
+    let cover = crate::os::served(&format!(
+        "cover?src={}&p={}&s={}&m={}&e={}",
+        src.key(),
+        uri_part(&zip.path),
+        zip.size,
+        zip.mtime,
+        uri_part(&name),
+    ));
+    let inner = Inner {
+        name: name.clone(),
+        zip_path: zip.path.clone(),
+        zip_size: zip.size,
+    };
     let (pic_turn, video_turn) = (Turn::new(), Turn::new());
     let info = RwSignal::new(MediaInfo::default());
     let forced = RwSignal::new(None::<PeekAs>);
@@ -2555,7 +2928,8 @@ fn Zipped(pane: Pane, src: Src, zip: Entry, name: String, size: u64, stored: boo
     let body = move || {
         let (e, url, inner, cover) = (e.clone(), url.clone(), inner.clone(), cover.clone());
         if size > UNPACK_MAX && !stored {
-            return view! { <span class="hint">"Too big to show from inside the ZIP."</span> }.into_any();
+            return view! { <span class="hint">"Too big to show from inside the ZIP."</span> }
+                .into_any();
         }
         match (forced.get(), media(&e)) {
             (Some(PeekAs::Text), _) => view! { <TextPeek src entry=e inner/> }.into_any(),
@@ -2584,7 +2958,12 @@ fn Zipped(pane: Pane, src: Src, zip: Entry, name: String, size: u64, stored: boo
         }
         match forced.get() {
             Some(how) => how == PeekAs::Text,
-            None => media(&text_e).is_none() && !has_ext(&text_e, PDF_EXTS) && !has_ext(&text_e, &["epub"]) && is_text(&text_e),
+            None => {
+                media(&text_e).is_none()
+                    && !has_ext(&text_e, PDF_EXTS)
+                    && !has_ext(&text_e, &["epub"])
+                    && is_text(&text_e)
+            }
         }
     });
     let folder = match name.rfind('/') {
@@ -2622,7 +3001,15 @@ fn TextPeek(src: Src, entry: Entry, #[prop(optional)] inner: Option<Inner>) -> i
         let get = move |start: u64| async move {
             let path = path.try_get_value().unwrap_or_default();
             let p = call::<Peek>("peek_text", json!({ "src": src.key(), "path": path, "start": start, "inner": inner.try_get_value().flatten().map(|i| i.name), "zip_size": inner.try_get_value().flatten().map(|i| i.zip_size), "colour": colour })).await?;
-            Ok((Piece { text: p.text, runs: p.runs, stopped: p.colours_stopped, ..Piece::default() }, p.next))
+            Ok((
+                Piece {
+                    text: p.text,
+                    runs: p.runs,
+                    stopped: p.colours_stopped,
+                    ..Piece::default()
+                },
+                p.next,
+            ))
         };
         pieces(get, TEXT_CAP)
     }
@@ -2654,7 +3041,13 @@ impl HexGeom {
         let rows = size.div_ceil(16);
         let fit = (((view_h - ROW_PAD) / ROW_H).floor() as u64).max(1);
         let space = (rows as f64 * ROW_H + ROW_PAD).min(SPACE_MAX).max(view_h);
-        HexGeom { rows, fit, last: rows.saturating_sub(fit), space, max_px: (space - view_h).max(0.0) }
+        HexGeom {
+            rows,
+            fit,
+            last: rows.saturating_sub(fit),
+            space,
+            max_px: (space - view_h).max(0.0),
+        }
     }
     /// The row at the top when scrolled `px`.
     fn row_at(&self, px: f64) -> u64 {
@@ -2710,8 +3103,7 @@ fn HexPeek(src: Src, entry: Entry, #[prop(optional)] inner: Option<Inner>) -> im
             let start = k * CHUNK;
             let path = path.try_get_value().unwrap_or_default();
             let i = inner.try_get_value().flatten();
-            let args =
-                json!({ "src": src.key(), "path": path, "start": start, "inner": i.as_ref().map(|i| i.name.clone()), "zip_size": i.map(|i| i.zip_size) });
+            let args = json!({ "src": src.key(), "path": path, "start": start, "inner": i.as_ref().map(|i| i.name.clone()), "zip_size": i.map(|i| i.zip_size) });
             // The preview may show something else by now: then these are gone and nothing is set.
             match call::<Bytes>("peek_bytes", args).await {
                 Ok(b) => {
@@ -2769,7 +3161,9 @@ fn HexPeek(src: Src, entry: Entry, #[prop(optional)] inner: Option<Inner>) -> im
         }
     };
     let scrolled = move |_| {
-        let Some(el) = scroller.get_untracked() else { return };
+        let Some(el) = scroller.get_untracked() else {
+            return;
+        };
         let px = el.scroll_top() as f64;
         if (px - synced.get_value()).abs() >= 1.5 {
             synced.set_value(px);
@@ -2796,7 +3190,11 @@ fn HexPeek(src: Src, entry: Entry, #[prop(optional)] inner: Option<Inner>) -> im
         }
     };
     let keys = move |ev: web_sys::KeyboardEvent| {
-        let (t, fit, last) = (top.get_untracked(), geom.get_untracked().fit, geom.get_untracked().last);
+        let (t, fit, last) = (
+            top.get_untracked(),
+            geom.get_untracked().fit,
+            geom.get_untracked().last,
+        );
         let to = match ev.key().as_str() {
             "ArrowDown" => t + 1,
             "ArrowUp" => t.saturating_sub(1),
@@ -2858,7 +3256,9 @@ fn HexPeek(src: Src, entry: Entry, #[prop(optional)] inner: Option<Inner>) -> im
                 let at = row * 16;
                 let (k, off) = (at / CHUNK, (at % CHUNK) as usize);
                 match c.get(&k).filter(|b| off < b.len()) {
-                    Some(b) => out.push_str(&hex_lines(at, &b[off..(off + 16).min(b.len())], width)),
+                    Some(b) => {
+                        out.push_str(&hex_lines(at, &b[off..(off + 16).min(b.len())], width))
+                    }
                     None => {
                         out.push_str(&format!("{at:0width$x}\n"));
                     }
@@ -2916,7 +3316,13 @@ fn hex_lines(start: u64, bytes: &[u8], width: usize) -> String {
             }
         }
         out.push(' ');
-        out.extend(row.iter().map(|&b| if b.is_ascii_graphic() || b == b' ' { b as char } else { '.' }));
+        out.extend(row.iter().map(|&b| {
+            if b.is_ascii_graphic() || b == b' ' {
+                b as char
+            } else {
+                '.'
+            }
+        }));
         out.push('\n');
     }
     out
@@ -2959,13 +3365,26 @@ mod tests {
     }
 
     fn packed(name: &str, size: u64) -> Packed {
-        Packed { name: name.into(), size, dir: name.ends_with('/'), stored: false }
+        Packed {
+            name: name.into(),
+            size,
+            dir: name.ends_with('/'),
+            stored: false,
+        }
     }
 
     #[test]
     fn zip_tree_nests_and_sorts() {
-        let items = [packed("b.txt", 1), packed("a/z.txt", 2), packed("a/c/d.txt", 3), packed("A2/", 0)];
-        let rows: Vec<(String, usize, bool, u64)> = zip_tree(&items).into_iter().map(|r| (r.path, r.depth, r.dir, r.size)).collect();
+        let items = [
+            packed("b.txt", 1),
+            packed("a/z.txt", 2),
+            packed("a/c/d.txt", 3),
+            packed("A2/", 0),
+        ];
+        let rows: Vec<(String, usize, bool, u64)> = zip_tree(&items)
+            .into_iter()
+            .map(|r| (r.path, r.depth, r.dir, r.size))
+            .collect();
         assert_eq!(
             rows,
             [

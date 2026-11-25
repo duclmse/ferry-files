@@ -52,7 +52,10 @@ impl Drawer {
 
     /// Drops the drawings waiting for `page` (gone from view); the sharp one only, with `sharp`.
     pub fn forget(self, page: usize, sharp_only: bool) {
-        let _ = self.0.try_update_value(|q| q.waiting.retain(|w| w.page != page || (sharp_only && !w.sharp)));
+        let _ = self.0.try_update_value(|q| {
+            q.waiting
+                .retain(|w| w.page != page || (sharp_only && !w.sharp))
+        });
     }
 
     fn pump(self) {
@@ -81,9 +84,15 @@ impl Drawer {
 
 /// Page pixels from `ferry://…/pdfpage`: its width and height (u32, little-endian), then RGBA.
 async fn page_pixels(url: &str) -> Result<web_sys::ImageData, JsValue> {
-    let r: web_sys::Response = JsFuture::from(window().fetch_with_str(url)).await?.dyn_into()?;
+    let r: web_sys::Response = JsFuture::from(window().fetch_with_str(url))
+        .await?
+        .dyn_into()?;
     if !r.ok() {
-        let why = JsFuture::from(r.text()?).await.ok().and_then(|t| t.as_string()).unwrap_or_default();
+        let why = JsFuture::from(r.text()?)
+            .await
+            .ok()
+            .and_then(|t| t.as_string())
+            .unwrap_or_default();
         return Err(format!("{} {why}", r.status()).into());
     }
     let buf: js_sys::ArrayBuffer = JsFuture::from(r.array_buffer()?).await?.dyn_into()?;
@@ -91,7 +100,10 @@ async fn page_pixels(url: &str) -> Result<web_sys::ImageData, JsValue> {
         return Err("No page drawn.".into());
     }
     let head = js_sys::DataView::new(&buf, 0, 8);
-    let (w, h) = (head.get_uint32_endian(0, true), head.get_uint32_endian(4, true));
+    let (w, h) = (
+        head.get_uint32_endian(0, true),
+        head.get_uint32_endian(4, true),
+    );
     let len = w as u64 * h as u64 * 4;
     if w == 0 || h == 0 || buf.byte_length() as u64 != 8 + len {
         return Err("The page drawn is the wrong size.".into());
@@ -100,8 +112,12 @@ async fn page_pixels(url: &str) -> Result<web_sys::ImageData, JsValue> {
     web_sys::ImageData::new_with_js_u8_clamped_array_and_sh(&px, w, h)
 }
 
-pub(super) fn put_pixels(canvas: &web_sys::HtmlCanvasElement, img: &web_sys::ImageData) -> Result<(), JsValue> {
-    let pen: web_sys::CanvasRenderingContext2d = canvas.get_context("2d")?.ok_or("No canvas.")?.dyn_into()?;
+pub(super) fn put_pixels(
+    canvas: &web_sys::HtmlCanvasElement,
+    img: &web_sys::ImageData,
+) -> Result<(), JsValue> {
+    let pen: web_sys::CanvasRenderingContext2d =
+        canvas.get_context("2d")?.ok_or("No canvas.")?.dyn_into()?;
     // Sized only now the pixels are in: resizing clears the canvas, and what was drawn before
     // stays up (stretched) until then.
     canvas.set_width(img.width());
@@ -136,11 +152,23 @@ mod tests {
     fn leaf_boxes_in_the_unturned_page() {
         // A 100 × 200 page; its leaf is 200 × 100 when on its side.
         let top_left_of_leaf = [0.0, 0.0, 10.0, 20.0];
-        assert_eq!(leaf_to_sheet(0, 100.0, 200.0, top_left_of_leaf), [0.0, 0.0, 10.0, 20.0]);
+        assert_eq!(
+            leaf_to_sheet(0, 100.0, 200.0, top_left_of_leaf),
+            [0.0, 0.0, 10.0, 20.0]
+        );
         // Turned right, the leaf's top left is the page's bottom left.
-        assert_eq!(leaf_to_sheet(1, 200.0, 100.0, top_left_of_leaf), [0.0, 190.0, 20.0, 200.0]);
-        assert_eq!(leaf_to_sheet(2, 100.0, 200.0, top_left_of_leaf), [90.0, 180.0, 100.0, 200.0]);
+        assert_eq!(
+            leaf_to_sheet(1, 200.0, 100.0, top_left_of_leaf),
+            [0.0, 190.0, 20.0, 200.0]
+        );
+        assert_eq!(
+            leaf_to_sheet(2, 100.0, 200.0, top_left_of_leaf),
+            [90.0, 180.0, 100.0, 200.0]
+        );
         // Turned left, it's the page's top right.
-        assert_eq!(leaf_to_sheet(3, 200.0, 100.0, top_left_of_leaf), [80.0, 0.0, 100.0, 10.0]);
+        assert_eq!(
+            leaf_to_sheet(3, 200.0, 100.0, top_left_of_leaf),
+            [80.0, 0.0, 100.0, 10.0]
+        );
     }
 }

@@ -35,12 +35,19 @@ pub(super) fn ListView(pane: Pane) -> impl IntoView {
             }
             dragged.set_value(true);
             // Before the first header (after the name) whose middle is right of the pointer.
-            let Some(tr) = head.get_untracked() else { return };
+            let Some(tr) = head.get_untracked() else {
+                return;
+            };
             let ths = tr.query_selector_all("th[data-col]").ok();
             let mut at = 0;
             if let Some(ths) = ths {
                 for n in 0..ths.length() {
-                    let Some(th) = ths.item(n).and_then(|t| t.dyn_into::<web_sys::Element>().ok()) else { continue };
+                    let Some(th) = ths
+                        .item(n)
+                        .and_then(|t| t.dyn_into::<web_sys::Element>().ok())
+                    else {
+                        continue;
+                    };
                     let r = th.get_bounding_client_rect();
                     if (e.client_x() as f64) > r.left() + r.width() / 2.0 {
                         at = n as usize + 1;
@@ -79,14 +86,23 @@ pub(super) fn ListView(pane: Pane) -> impl IntoView {
     // Its rows: items, and the groups' headings when it's grouped.
     let rows = Memo::new(move |_| p.list_rows());
     let len = Signal::derive(move || rows.with(Vec::len));
-    let win = rows::Window::new(scroller, len, rows::Rows { h: 29.0, per: 1, top: 30.0 }, rows::list_rows, Signal::derive(move || Some(p.id)));
+    let win = rows::Window::new(
+        scroller,
+        len,
+        rows::Rows {
+            h: 29.0,
+            per: 1,
+            top: 30.0,
+        },
+        rows::list_rows,
+        Signal::derive(move || Some(p.id)),
+    );
     top_on_new_folder(p, scroller, win);
-    let gap =
-        move |h: f64| {
-            (h > 0.0).then(|| view! {
+    let gap = move |h: f64| {
+        (h > 0.0).then(|| view! {
         <tr class="gap" aria-hidden="true"><td colspan=move || (1 + p.list_cols.with(Vec::len)).to_string() style=format!("height: {h}px")></td></tr>
     })
-        };
+    };
     view! {
         <div class="list" node_ref=scroller data-rows="" class:tree=move || tree.with(Option::is_some) class:drop=move || ctx.drop_at.get().as_deref() == Some(here.as_str())
             on:click=move |_| p.select_only(None) on:contextmenu=move |ev| ctx.show_menu(p, &ev, None)
@@ -244,7 +260,10 @@ pub(super) fn stored_cols(id: usize) -> Vec<usize> {
 
 impl Pane {
     pub(super) fn set_list_cols(self, v: Vec<usize>) {
-        store(&format!("ferry-files.list-cols.{}", self.id), &v.iter().map(usize::to_string).collect::<Vec<_>>().join(","));
+        store(
+            &format!("ferry-files.list-cols.{}", self.id),
+            &v.iter().map(usize::to_string).collect::<Vec<_>>().join(","),
+        );
         self.list_cols.set(v);
     }
 }
@@ -252,7 +271,10 @@ impl Pane {
 /// Whether `e` is being renamed (tracked).
 fn renaming(p: Pane, e: &Entry) -> impl Fn() -> bool + Copy + 'static {
     let path = StoredValue::new(e.path.clone());
-    move || p.renaming.with(|r| path.with_value(|x| r.as_ref() == Some(x)))
+    move || {
+        p.renaming
+            .with(|r| path.with_value(|x| r.as_ref() == Some(x)))
+    }
 }
 
 /// How long a tile stays in view before its thumbnail is asked for.
@@ -333,7 +355,17 @@ pub(super) fn ThumbView(pane: Pane) -> impl IntoView {
     // Only the rows of tiles in view (and a little either side) are rendered.
     let scroller = NodeRef::<html::Div>::new();
     let len = Signal::derive(move || p.entries.with(Vec::len));
-    let win = rows::Window::new(scroller, len, rows::Rows { h: 160.0, per: 4, top: 12.0 }, rows::tile_rows, Signal::derive(move || Some(p.id)));
+    let win = rows::Window::new(
+        scroller,
+        len,
+        rows::Rows {
+            h: 160.0,
+            per: 4,
+            top: 12.0,
+        },
+        rows::tile_rows,
+        Signal::derive(move || Some(p.id)),
+    );
     top_on_new_folder(p, scroller, win);
     view! {
         <div class="list" node_ref=scroller data-rows="" class:drop=move || ctx.drop_at.get().as_deref() == Some(here.as_str())
@@ -390,7 +422,15 @@ pub(super) fn ColumnView(pane: Pane) -> impl IntoView {
                 continue;
             }
             spawn_local(async move {
-                if let Ok((es, _)) = ctx.list_first(src, &dir, p.sort.get_untracked(), json!({ "current": false })).await {
+                if let Ok((es, _)) = ctx
+                    .list_first(
+                        src,
+                        &dir,
+                        p.sort.get_untracked(),
+                        json!({ "current": false }),
+                    )
+                    .await
+                {
                     if p.src.get_untracked() == src {
                         let mut es = ctx.visible(es);
                         p.sort.get_untracked().apply(&mut es);
@@ -406,8 +446,11 @@ pub(super) fn ColumnView(pane: Pane) -> impl IntoView {
     // A ZIP file picked in the last column: what's in it, as more columns.
     // Also any file the menu's Open as ZIP in columns (or the preview's Show as ZIP) was used on.
     let zip = Memo::new(move |_| {
-        p.selected_entry()
-            .filter(|e| super::preview::has_ext(e, super::preview::ZIP_EXTS) || p.peek_as.with(|f| matches!(f, Some((path, PeekAs::Zip)) if *path == e.path)))
+        p.selected_entry().filter(|e| {
+            super::preview::has_ext(e, super::preview::ZIP_EXTS)
+                || p.peek_as
+                    .with(|f| matches!(f, Some((path, PeekAs::Zip)) if *path == e.path))
+        })
     });
     let zip_open = RwSignal::new(Vec::<String>::new());
     // Show the newest column: scroll to the right end when the folder changes.
@@ -461,10 +504,24 @@ struct ZipItem {
 fn zip_items(items: &[Packed], prefix: &str) -> Vec<ZipItem> {
     let mut out: Vec<ZipItem> = Vec::new();
     for i in items {
-        let Some(rest) = i.name.strip_prefix(prefix).filter(|r| !r.is_empty()) else { continue };
+        let Some(rest) = i.name.strip_prefix(prefix).filter(|r| !r.is_empty()) else {
+            continue;
+        };
         let item = match rest.find('/') {
-            Some(at) => ZipItem { path: format!("{prefix}{}/", &rest[..at]), name: rest[..at].to_string(), dir: true, size: 0, stored: false },
-            None => ZipItem { path: i.name.clone(), name: rest.to_string(), dir: false, size: i.size, stored: i.stored },
+            Some(at) => ZipItem {
+                path: format!("{prefix}{}/", &rest[..at]),
+                name: rest[..at].to_string(),
+                dir: true,
+                size: 0,
+                stored: false,
+            },
+            None => ZipItem {
+                path: i.name.clone(),
+                name: rest.to_string(),
+                dir: false,
+                size: i.size,
+                stored: i.stored,
+            },
         };
         if !out.iter().any(|o| o.path == item.path) {
             out.push(item);
@@ -477,13 +534,29 @@ fn zip_items(items: &[Packed], prefix: &str) -> Vec<ZipItem> {
 /// Picks the picture, video or sound before (`-1`) or after (`1`) the file picked in a ZIP, in
 /// the same folder of the ZIP and as its column lists them, skipping other files.
 pub(super) fn step_zipped(p: Pane, delta: isize) {
-    let Some((src, zip, name, _, _)) = p.zip_pick.get_untracked() else { return };
-    let entry = |path: &str, size: u64| Entry { name: base(path), path: path.to_string(), dir: false, size, mtime: 0, hidden: false };
-    let Some(m) = media(&entry(&name, 0)) else { return };
-    let prefix = name.rfind('/').map_or(String::new(), |at| name[..=at].to_string());
+    let Some((src, zip, name, _, _)) = p.zip_pick.get_untracked() else {
+        return;
+    };
+    let entry = |path: &str, size: u64| Entry {
+        name: base(path),
+        path: path.to_string(),
+        dir: false,
+        size,
+        mtime: 0,
+        hidden: false,
+    };
+    let Some(m) = media(&entry(&name, 0)) else {
+        return;
+    };
+    let prefix = name
+        .rfind('/')
+        .map_or(String::new(), |at| name[..=at].to_string());
     let next = p.zip_list.with_value(|l| {
         let (_, items) = l.as_ref().filter(|(at, _)| *at == (src, zip.clone()))?;
-        let same: Vec<ZipItem> = zip_items(items, &prefix).into_iter().filter(|i| !i.dir && media(&entry(&i.path, i.size)) == Some(m)).collect();
+        let same: Vec<ZipItem> = zip_items(items, &prefix)
+            .into_iter()
+            .filter(|i| !i.dir && media(&entry(&i.path, i.size)) == Some(m))
+            .collect();
         let i = same.iter().position(|x| x.path == name)? as isize + delta;
         (i >= 0).then(|| same.get(i as usize).cloned()).flatten()
     });
@@ -495,7 +568,14 @@ pub(super) fn step_zipped(p: Pane, delta: isize) {
 
 /// Where the backend serves file `name` in the ZIP `zip`.
 pub(super) fn zipped_url(src: Src, zip: &Entry, name: &str) -> String {
-    crate::os::served(&format!("zipped?src={}&p={}&s={}&m={}&e={}", src.key(), uri_part(&zip.path), zip.size, zip.mtime, uri_part(name)))
+    crate::os::served(&format!(
+        "zipped?src={}&p={}&s={}&m={}&e={}",
+        src.key(),
+        uri_part(&zip.path),
+        zip.size,
+        zip.mtime,
+        uri_part(name)
+    ))
 }
 
 /// A ZIP's folders as columns after the column view's own: the top, then each folder opened.
@@ -521,11 +601,14 @@ fn ZipColumns(pane: Pane, src: Src, entry: Entry, open: RwSignal<Vec<String>>) -
     spawn_local(async move {
         let r = call::<Listing>("zip_list", args).await;
         if let Ok(l) = &r {
-            let _ = pane.zip_list.try_set_value(Some(((src, zip_path.get_value()), l.items.clone())));
+            let _ = pane
+                .zip_list
+                .try_set_value(Some(((src, zip_path.get_value()), l.items.clone())));
         }
         let _ = got.try_set(Some(r));
     });
-    move || match got.get() {
+    move || {
+        match got.get() {
         None => view! { <div class="col zip-col"><div class="empty"><span class="spin"></span></div></div> }.into_any(),
         Some(Err(e)) => view! { <div class="col zip-col"><div class="empty">{e}</div></div> }.into_any(),
         Some(Ok(l)) => {
@@ -575,25 +658,53 @@ fn ZipColumns(pane: Pane, src: Src, entry: Entry, open: RwSignal<Vec<String>>) -
             }.into_any()
         }
     }
+    }
 }
 
 #[component]
-pub(super) fn Column(pane: Pane, dir: String, chain: Memo<Vec<String>>, width: RwSignal<f64>) -> impl IntoView {
+pub(super) fn Column(
+    pane: Pane,
+    dir: String,
+    chain: Memo<Vec<String>>,
+    width: RwSignal<f64>,
+) -> impl IntoView {
     let ctx = expect_context::<Ctx>();
     let p = pane;
     let d = dir.clone();
     let current = Memo::new(move |_| p.cwd.get() == d);
     let d = dir.clone();
     // The folder open to the right of this column, if any.
-    let open_child = Memo::new(move |_| chain.with(|c| c.iter().position(|x| *x == d).and_then(|i| c.get(i + 1).cloned())));
+    let open_child = Memo::new(move |_| {
+        chain.with(|c| {
+            c.iter()
+                .position(|x| *x == d)
+                .and_then(|i| c.get(i + 1).cloned())
+        })
+    });
     let d = dir.clone();
-    let all = Memo::new(move |_| if current.get() { Some(p.entries.get()) } else { p.cols.with(|c| c.get(&d).cloned()) });
+    let all = Memo::new(move |_| {
+        if current.get() {
+            Some(p.entries.get())
+        } else {
+            p.cols.with(|c| c.get(&d).cloned())
+        }
+    });
     // Only the rows in view (and a little either side) are rendered. Keys and arrows move in the
     // current column, so that's the one `rows::reveal` scrolls.
     let scroller = NodeRef::<html::Div>::new();
     let len = Signal::derive(move || all.with(|a| a.as_ref().map_or(0, Vec::len)));
     let pane = Signal::derive(move || current.get().then_some(p.id));
-    let win = rows::Window::new(scroller, len, rows::Rows { h: 26.0, per: 1, top: 4.0 }, rows::column_rows, pane);
+    let win = rows::Window::new(
+        scroller,
+        len,
+        rows::Rows {
+            h: 26.0,
+            per: 1,
+            top: 4.0,
+        },
+        rows::column_rows,
+        pane,
+    );
     let dir_v = StoredValue::new(dir.clone());
     let d = dir.clone();
     let bg_menu = move |ev: web_sys::MouseEvent| {

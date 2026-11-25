@@ -29,7 +29,9 @@ fn observer() -> Option<IntersectionObserver> {
                     .filter_map(|e| {
                         let e: IntersectionObserverEntry = e.unchecked_into();
                         let id: u32 = e.target().get_attribute(ATTR)?.parse().ok()?;
-                        WATCHED.with(|w| w.borrow().get(&id).cloned()).map(|f| (f, e.is_intersecting()))
+                        WATCHED
+                            .with(|w| w.borrow().get(&id).cloned())
+                            .map(|f| (f, e.is_intersecting()))
                     })
                     .collect();
                 for (f, on) in calls {

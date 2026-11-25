@@ -16,18 +16,29 @@ fn io(path: &str, e: std::io::Error) -> DevError {
 }
 
 fn secs(m: &fs::Metadata) -> i64 {
-    m.modified().ok().and_then(|t| t.duration_since(UNIX_EPOCH).ok()).map_or(0, |d| d.as_secs() as i64)
+    m.modified()
+        .ok()
+        .and_then(|t| t.duration_since(UNIX_EPOCH).ok())
+        .map_or(0, |d| d.as_secs() as i64)
 }
 
 /// Size and modification time to the nanosecond: changes whenever the file is written.
 fn version_of(m: &fs::Metadata) -> String {
-    let ns = m.modified().ok().and_then(|t| t.duration_since(UNIX_EPOCH).ok()).map_or(0, |d| d.as_nanos());
+    let ns = m
+        .modified()
+        .ok()
+        .and_then(|t| t.duration_since(UNIX_EPOCH).ok())
+        .map_or(0, |d| d.as_nanos());
     format!("{}-{ns}", m.len())
 }
 
 /// Writes the file next to `path` with `write`, then renames it over `path`, so a failed write
 /// leaves the old file intact. Checks the new file has `size` bytes; returns its version.
-fn swap_in(path: &str, size: u64, write: impl FnOnce(&Path) -> std::io::Result<()>) -> Result<String> {
+fn swap_in(
+    path: &str,
+    size: u64,
+    write: impl FnOnce(&Path) -> std::io::Result<()>,
+) -> Result<String> {
     let tmp = crate::device::join(&dirname(path), &format!(".{}.ferry-tmp", basename(path)));
     if let Err(e) = write(&native(&tmp)) {
         let _ = fs::remove_file(native(&tmp));
@@ -39,7 +50,10 @@ fn swap_in(path: &str, size: u64, write: impl FnOnce(&Path) -> std::io::Result<(
     }
     let m = fs::metadata(native(path)).map_err(|e| io(path, e))?;
     if m.len() != size {
-        return err(format!("{path}: wrote {size} bytes but the file has {}.", m.len()));
+        return err(format!(
+            "{path}: wrote {size} bytes but the file has {}.",
+            m.len()
+        ));
     }
     Ok(version_of(&m))
 }
@@ -92,7 +106,9 @@ impl Transport for Local {
     }
 
     fn default_dir(&self) -> String {
-        dirs::home_dir().map(|h| app_path(&h)).unwrap_or_else(|| "/".into())
+        dirs::home_dir()
+            .map(|h| app_path(&h))
+            .unwrap_or_else(|| "/".into())
     }
 
     fn quick_dirs(&self) -> Vec<(String, String)> {
@@ -157,7 +173,10 @@ impl Transport for Local {
     }
 
     fn version(&self, path: &str) -> Result<Option<String>> {
-        Ok(fs::metadata(native(path)).ok().filter(|m| m.is_file()).map(|m| version_of(&m)))
+        Ok(fs::metadata(native(path))
+            .ok()
+            .filter(|m| m.is_file())
+            .map(|m| version_of(&m)))
     }
 
     /// Writes next to the file, then renames over it, so a failed write leaves the old file intact.
@@ -166,7 +185,13 @@ impl Transport for Local {
     }
 
     /// Copied by the system (a clone on APFS, which takes no time or space).
-    fn read_to(&self, path: &str, to: &Path, read: &mut dyn FnMut(u64), _stop: &AtomicBool) -> Result<String> {
+    fn read_to(
+        &self,
+        path: &str,
+        to: &Path,
+        read: &mut dyn FnMut(u64),
+        _stop: &AtomicBool,
+    ) -> Result<String> {
         let m = fs::metadata(native(path)).map_err(|e| io(path, e))?;
         if m.is_dir() {
             return err(format!("{path} is a folder."));
@@ -177,12 +202,18 @@ impl Transport for Local {
     }
 
     fn replace_from(&self, path: &str, from: &Path, _exists: bool) -> Result<String> {
-        let size = fs::metadata(from).map_err(|e| DevError::Msg(format!("{}: {e}", from.display())))?.len();
+        let size = fs::metadata(from)
+            .map_err(|e| DevError::Msg(format!("{}: {e}", from.display())))?
+            .len();
         swap_in(path, size, |tmp| fs::copy(from, tmp).map(|_| ()))
     }
 
     fn delete(&self, path: &str, is_dir: bool) -> Result<()> {
-        let r = if is_dir { fs::remove_dir(native(path)) } else { fs::remove_file(native(path)) };
+        let r = if is_dir {
+            fs::remove_dir(native(path))
+        } else {
+            fs::remove_file(native(path))
+        };
         r.map_err(|e| io(path, e))
     }
 
@@ -208,7 +239,13 @@ impl Transport for Local {
         let r = if meta.is_dir() {
             fs::remove_dir_all(&p)
         } else {
-            fs::remove_file(&p).or_else(|e| if meta.file_type().is_symlink() { fs::remove_dir(&p) } else { Err(e) })
+            fs::remove_file(&p).or_else(|e| {
+                if meta.file_type().is_symlink() {
+                    fs::remove_dir(&p)
+                } else {
+                    Err(e)
+                }
+            })
         };
         r.map_err(|e| io(path, e))?;
         Ok(true)
@@ -230,7 +267,11 @@ impl Transport for Local {
         if cfg!(windows) && new_name.contains(['\\', ':', '*', '?', '"', '<', '>', '|']) {
             return err("Enter a name without \\ : * ? \" < > or |.");
         }
-        fs::rename(native(path), native(&crate::device::join(&dirname(path), new_name))).map_err(|e| io(path, e))
+        fs::rename(
+            native(path),
+            native(&crate::device::join(&dirname(path), new_name)),
+        )
+        .map_err(|e| io(path, e))
     }
 
     /// The user's shell (a login shell, so PATH is as in a terminal), or PowerShell on Windows.
@@ -240,7 +281,10 @@ impl Transport for Local {
             c.arg("-NoLogo");
             c
         } else {
-            let shell = std::env::var("SHELL").ok().filter(|s| !s.is_empty()).unwrap_or_else(|| "/bin/sh".into());
+            let shell = std::env::var("SHELL")
+                .ok()
+                .filter(|s| !s.is_empty())
+                .unwrap_or_else(|| "/bin/sh".into());
             let mut c = std::process::Command::new(shell);
             c.arg("-l");
             c
@@ -254,22 +298,47 @@ impl Transport for Local {
         let home = self.default_dir();
         let mut dirs = vec![(crate::platform::COMPUTER.to_string(), home.clone())];
         // On Windows the home folder's drive is among the drives: it's there once.
-        dirs.extend(crate::platform::drives().into_iter().filter(|(_, d)| !home.starts_with(&format!("{}/", d.trim_end_matches('/')))));
+        dirs.extend(
+            crate::platform::drives()
+                .into_iter()
+                .filter(|(_, d)| !home.starts_with(&format!("{}/", d.trim_end_matches('/')))),
+        );
         dirs.into_iter()
-            .filter_map(|(name, dir)| crate::platform::free_space(&dir).map(|(free, total)| crate::device::Space { name, free, total, path: dir }))
+            .filter_map(|(name, dir)| {
+                crate::platform::free_space(&dir).map(|(free, total)| crate::device::Space {
+                    name,
+                    free,
+                    total,
+                    path: dir,
+                })
+            })
             .collect()
     }
 }
 
 /// The drives, "C:" and so on, on Windows; nothing elsewhere.
 fn drive_letters() -> Vec<String> {
-    (b'A'..=b'Z').map(|c| format!("{}:", c as char)).filter(|d| cfg!(windows) && native(&format!("/{d}")).is_dir()).collect()
+    (b'A'..=b'Z')
+        .map(|c| format!("{}:", c as char))
+        .filter(|d| cfg!(windows) && native(&format!("/{d}")).is_dir())
+        .collect()
 }
 
 /// "/" on Windows, which holds the drives, or one of the drives in it.
 fn top(name: &str) -> Entry {
-    let path = if name == "/" { "/".to_string() } else { format!("/{name}") };
-    Entry { name: name.to_string(), path, dir: true, size: 0, mtime: 0, hidden: false }
+    let path = if name == "/" {
+        "/".to_string()
+    } else {
+        format!("/{name}")
+    };
+    Entry {
+        name: name.to_string(),
+        path,
+        dir: true,
+        size: 0,
+        mtime: 0,
+        hidden: false,
+    }
 }
 
 #[cfg(test)]
@@ -283,12 +352,25 @@ mod tests {
         std::fs::create_dir_all(&dir).unwrap();
         std::fs::write(dir.join("shown"), b"").unwrap();
         std::fs::write(dir.join("flagged"), b"").unwrap();
-        assert!(std::process::Command::new("chflags").arg("hidden").arg(dir.join("flagged")).status().unwrap().success());
+        assert!(std::process::Command::new("chflags")
+            .arg("hidden")
+            .arg(dir.join("flagged"))
+            .status()
+            .unwrap()
+            .success());
         let dev = Device::new(Box::new(super::Local));
-        let mut got: Vec<_> = dev.listdir(&crate::platform::app_path(&dir)).unwrap().into_iter().map(|e| (e.name.clone(), e.is_hidden())).collect();
+        let mut got: Vec<_> = dev
+            .listdir(&crate::platform::app_path(&dir))
+            .unwrap()
+            .into_iter()
+            .map(|e| (e.name.clone(), e.is_hidden()))
+            .collect();
         got.sort();
         std::fs::remove_dir_all(&dir).unwrap();
-        assert_eq!(got, [("flagged".to_string(), true), ("shown".to_string(), false)]);
+        assert_eq!(
+            got,
+            [("flagged".to_string(), true), ("shown".to_string(), false)]
+        );
     }
 
     #[test]
@@ -317,18 +399,32 @@ mod tests {
         let dev = Device::new(Box::new(super::Local));
         let f = format!("{root}/a.txt");
         let w = dev.write(&f, b"one", None, true).unwrap();
-        assert!(dev.write(&f, b"x", None, true).is_err(), "create refuses an existing file");
+        assert!(
+            dev.write(&f, b"x", None, true).is_err(),
+            "create refuses an existing file"
+        );
         let (data, v) = dev.read(&f).unwrap();
         assert_eq!((data.as_slice(), &v), (&b"one"[..], &w.version));
         std::thread::sleep(std::time::Duration::from_millis(5));
         let w2 = dev.write(&f, b"two!", Some(&v), false).unwrap();
         assert!(w2.backup.is_some());
-        assert!(dev.write(&f, b"three", Some(&v), false).is_err(), "stale version refused");
+        assert!(
+            dev.write(&f, b"three", Some(&v), false).is_err(),
+            "stale version refused"
+        );
         dev.mkdir(&format!("{root}/sub")).unwrap();
         std::fs::write(dir.join(".hidden"), b"").unwrap();
-        let names: Vec<_> = dev.listdir(&root).unwrap().into_iter().map(|e| e.name).collect();
+        let names: Vec<_> = dev
+            .listdir(&root)
+            .unwrap()
+            .into_iter()
+            .map(|e| e.name)
+            .collect();
         assert_eq!(names, ["sub", ".hidden", "a.txt"]);
-        let backups: Vec<_> = [w2.backup, dev.remove(&f).unwrap()].into_iter().flatten().collect();
+        let backups: Vec<_> = [w2.backup, dev.remove(&f).unwrap()]
+            .into_iter()
+            .flatten()
+            .collect();
         dev.remove(&format!("{root}/sub")).unwrap();
         std::fs::remove_file(dir.join(".hidden")).unwrap();
         for b in backups {

@@ -21,11 +21,16 @@ pub struct Info {
 }
 
 pub fn cache_dir() -> PathBuf {
-    dirs::cache_dir().unwrap_or_else(|| PathBuf::from("/tmp")).join("ferry-files/library")
+    dirs::cache_dir()
+        .unwrap_or_else(|| PathBuf::from("/tmp"))
+        .join("ferry-files/library")
 }
 
 fn key(src: &str, path: &str, size: u64, mtime: i64) -> PathBuf {
-    cache_dir().join(format!("{:x}.json", md5::compute(format!("{src}\n{path}\n{size}\n{mtime}"))))
+    cache_dir().join(format!(
+        "{:x}.json",
+        md5::compute(format!("{src}\n{path}\n{size}\n{mtime}"))
+    ))
 }
 
 pub fn cached(src: &str, path: &str, size: u64, mtime: i64) -> Option<Info> {
@@ -41,8 +46,18 @@ pub fn remember(src: &str, path: &str, size: u64, mtime: i64, info: &Info) {
 
 pub fn info(data: &[u8], path: &str) -> Info {
     match Book::open(data, path.to_string(), String::new()).and_then(|b| b.meta()) {
-        Ok(m) => Info { title: m.title, creators: m.creators, language: m.language, publisher: m.publisher, subjects: m.subjects, problem: None },
-        Err(e) => Info { problem: Some(e), ..Info::default() },
+        Ok(m) => Info {
+            title: m.title,
+            creators: m.creators,
+            language: m.language,
+            publisher: m.publisher,
+            subjects: m.subjects,
+            problem: None,
+        },
+        Err(e) => Info {
+            problem: Some(e),
+            ..Info::default()
+        },
     }
 }
 
@@ -52,7 +67,12 @@ fn zip_issues(data: &[u8]) -> Vec<Issue> {
     let mut out = vec![];
     let mut zip = match zip::ZipArchive::new(Cursor::new(data)) {
         Ok(z) => z,
-        Err(e) => return vec![Issue { serious: true, text: format!("Not a readable zip: {e}") }],
+        Err(e) => {
+            return vec![Issue {
+                serious: true,
+                text: format!("Not a readable zip: {e}"),
+            }]
+        }
     };
     let first = zip.by_index(0).ok().map(|mut f| {
         let mut s = String::new();
@@ -60,16 +80,28 @@ fn zip_issues(data: &[u8]) -> Vec<Issue> {
         (f.name().to_string(), f.compression(), s)
     });
     match first {
-        Some((name, _, _)) if name != "mimetype" => out.push(Issue { serious: true, text: "The first file in the zip isn't “mimetype”.".into() }),
+        Some((name, _, _)) if name != "mimetype" => out.push(Issue {
+            serious: true,
+            text: "The first file in the zip isn't “mimetype”.".into(),
+        }),
         Some((_, method, text)) => {
             if method != zip::CompressionMethod::Stored {
-                out.push(Issue { serious: true, text: "“mimetype” is compressed; it must be stored as is.".into() });
+                out.push(Issue {
+                    serious: true,
+                    text: "“mimetype” is compressed; it must be stored as is.".into(),
+                });
             }
             if text.trim() != "application/epub+zip" {
-                out.push(Issue { serious: true, text: "“mimetype” doesn't say application/epub+zip.".into() });
+                out.push(Issue {
+                    serious: true,
+                    text: "“mimetype” doesn't say application/epub+zip.".into(),
+                });
             }
         }
-        None => out.push(Issue { serious: true, text: "The zip is empty.".into() }),
+        None => out.push(Issue {
+            serious: true,
+            text: "The zip is empty.".into(),
+        }),
     }
     out
 }
@@ -78,7 +110,10 @@ pub fn check(data: &[u8], path: &str) -> Vec<Issue> {
     let mut out = zip_issues(data);
     match Book::open(data, path.to_string(), String::new()) {
         Ok(b) => out.extend(b.check()),
-        Err(e) => out.push(Issue { serious: true, text: e }),
+        Err(e) => out.push(Issue {
+            serious: true,
+            text: e,
+        }),
     }
     out
 }
@@ -137,7 +172,12 @@ pub struct Shrunk {
 /// Makes the book smaller: JPEG and PNG images larger than `max_side` pixels are scaled down,
 /// JPEGs are saved again at `quality`, and everything is compressed. Each image keeps its type
 /// and name, and is only replaced when the new one is smaller.
-pub fn shrink(data: &[u8], path: &str, max_side: u32, quality: u8) -> Result<(Vec<u8>, Shrunk), String> {
+pub fn shrink(
+    data: &[u8],
+    path: &str,
+    max_side: u32,
+    quality: u8,
+) -> Result<(Vec<u8>, Shrunk), String> {
     let mut b = Book::open(data, path.to_string(), String::new())?;
     let mut changes = vec![];
     for (name, bytes) in b.files() {
@@ -152,12 +192,19 @@ pub fn shrink(data: &[u8], path: &str, max_side: u32, quality: u8) -> Result<(Ve
         if format == ImageFormat::Png && !big {
             continue;
         }
-        let img = if big { img.resize(max_side, max_side, image::imageops::FilterType::Lanczos3) } else { img };
+        let img = if big {
+            img.resize(max_side, max_side, image::imageops::FilterType::Lanczos3)
+        } else {
+            img
+        };
         let mut out = Vec::new();
         let ok = if format == ImageFormat::Jpeg {
-            JpegEncoder::new_with_quality(&mut out, quality).encode_image(&img.to_rgb8()).is_ok()
+            JpegEncoder::new_with_quality(&mut out, quality)
+                .encode_image(&img.to_rgb8())
+                .is_ok()
         } else {
-            img.write_to(&mut Cursor::new(&mut out), ImageFormat::Png).is_ok()
+            img.write_to(&mut Cursor::new(&mut out), ImageFormat::Png)
+                .is_ok()
         };
         if ok && out.len() < bytes.len() {
             changes.push((name.to_string(), out));
@@ -168,7 +215,11 @@ pub fn shrink(data: &[u8], path: &str, max_side: u32, quality: u8) -> Result<(Ve
         b.put_file(&name, out);
     }
     let bytes = b.to_bytes()?;
-    let s = Shrunk { before: data.len() as u64, after: bytes.len() as u64, images };
+    let s = Shrunk {
+        before: data.len() as u64,
+        after: bytes.len() as u64,
+        images,
+    };
     Ok((bytes, s))
 }
 

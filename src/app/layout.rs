@@ -59,7 +59,9 @@ pub(super) fn Grip(
         }
         ev.prevent_default();
         ev.stop_propagation();
-        let Some(grip) = el.get_untracked() else { return };
+        let Some(grip) = el.get_untracked() else {
+            return;
+        };
         let grip: web_sys::Element = grip.into();
         let measured = match target {
             Target::Prev => grip.previous_element_sibling(),
@@ -72,8 +74,15 @@ pub(super) fn Grip(
         // How far the grip may go before the space on the side it moves to is less than `room`.
         let max = match (room, grip.parent_element()) {
             (Some(room), Some(parent)) => {
-                let (outer, g) = (parent.get_bounding_client_rect(), grip.get_bounding_client_rect());
-                let free = if target == Target::Next { g.left() - outer.left() } else { outer.right() - g.right() } - room;
+                let (outer, g) = (
+                    parent.get_bounding_client_rect(),
+                    grip.get_bounding_client_rect(),
+                );
+                let free = if target == Target::Next {
+                    g.left() - outer.left()
+                } else {
+                    outer.right() - g.right()
+                } - room;
                 max.min(start + free.max(0.0))
             }
             _ => max,

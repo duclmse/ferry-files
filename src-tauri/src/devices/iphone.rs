@@ -47,11 +47,18 @@ fn plain(e: IdeviceError) -> DevError {
     DevError::Msg(match e {
         // No pair record yet (usbmuxd has none), or the iPhone refusing a session: it hasn't
         // trusted this computer, or it's locked.
-        IdeviceError::InvalidHostID | IdeviceError::DeviceLocked | IdeviceError::SessionInactive => TRUST_HINT.into(),
+        IdeviceError::InvalidHostID
+        | IdeviceError::DeviceLocked
+        | IdeviceError::SessionInactive => TRUST_HINT.into(),
         IdeviceError::UnexpectedResponse(m) if m.contains("PairRecord") => TRUST_HINT.into(),
-        IdeviceError::UnknownErrorType(m) if m.contains("Pairing") || m.contains("PasswordProtected") || m.contains("InvalidHostID") => {
+        IdeviceError::UnknownErrorType(m)
+            if m.contains("Pairing")
+                || m.contains("PasswordProtected")
+                || m.contains("InvalidHostID") =>
+        {
             if m.contains("UserDenied") {
-                "The iPhone didn't trust this computer. Unplug it, plug it in again and tap Trust.".into()
+                "The iPhone didn't trust this computer. Unplug it, plug it in again and tap Trust."
+                    .into()
             } else {
                 TRUST_HINT.into()
             }
@@ -60,7 +67,9 @@ fn plain(e: IdeviceError) -> DevError {
         IdeviceError::Afc(AfcError::ObjectNotFound) => "Not found on the iPhone.".into(),
         IdeviceError::Afc(AfcError::PermDenied) => "The iPhone doesn't allow that here.".into(),
         IdeviceError::Afc(AfcError::NoSpaceLeft) => "The iPhone is full.".into(),
-        IdeviceError::Afc(AfcError::ObjectExists) => "Something with that name is already there.".into(),
+        IdeviceError::Afc(AfcError::ObjectExists) => {
+            "Something with that name is already there.".into()
+        }
         IdeviceError::Afc(AfcError::DirNotEmpty) => "The folder isn't empty.".into(),
         e => format!("The iPhone said: {e}"),
     })
@@ -87,18 +96,32 @@ static NAMES: Mutex<Option<HashMap<String, String>>> = Mutex::new(None);
 pub fn detect() -> Result<Vec<Detected>> {
     let rt = runtime()?;
     rt.block_on(async {
-        let mut mux = UsbmuxdConnection::default().await.map_err(|_| DevError::Msg(crate::platform::IPHONE_HINT.into()))?;
+        let mut mux = UsbmuxdConnection::default()
+            .await
+            .map_err(|_| DevError::Msg(crate::platform::IPHONE_HINT.into()))?;
         let devs = mux.get_devices().await.map_err(plain)?;
         let mut out = vec![];
-        for d in devs.into_iter().filter(|d| matches!(d.connection_type, Connection::Usb)) {
-            let known = NAMES.lock().unwrap_or_else(|e| e.into_inner()).get_or_insert_with(HashMap::new).get(&d.udid).cloned();
+        for d in devs
+            .into_iter()
+            .filter(|d| matches!(d.connection_type, Connection::Usb))
+        {
+            let known = NAMES
+                .lock()
+                .unwrap_or_else(|e| e.into_inner())
+                .get_or_insert_with(HashMap::new)
+                .get(&d.udid)
+                .cloned();
             let name = match known {
                 Some(n) => n,
                 None => {
                     let provider = d.to_provider(UsbmuxdAddr::default(), LABEL);
                     match device_name(&provider).await {
                         Some(n) => {
-                            NAMES.lock().unwrap_or_else(|e| e.into_inner()).get_or_insert_with(HashMap::new).insert(d.udid.clone(), n.clone());
+                            NAMES
+                                .lock()
+                                .unwrap_or_else(|e| e.into_inner())
+                                .get_or_insert_with(HashMap::new)
+                                .insert(d.udid.clone(), n.clone());
                             n
                         }
                         // Asked again next time: it may tell once it trusts this computer.
@@ -119,7 +142,12 @@ pub fn listed() -> Option<Vec<String>> {
     rt.block_on(async {
         let mut mux = UsbmuxdConnection::default().await.ok()?;
         let devs = mux.get_devices().await.ok()?;
-        Some(devs.into_iter().filter(|d| matches!(d.connection_type, Connection::Usb)).map(|d| d.udid).collect())
+        Some(
+            devs.into_iter()
+                .filter(|d| matches!(d.connection_type, Connection::Usb))
+                .map(|d| d.udid)
+                .collect(),
+        )
     })
 }
 
@@ -164,14 +192,31 @@ impl IPhone {
     pub fn open(udid: &str) -> Result<IPhone> {
         let rt = runtime()?;
         let (provider, name, afc) = rt.block_on(async {
-            let mut mux = UsbmuxdConnection::default().await.map_err(|_| DevError::Msg(crate::platform::IPHONE_HINT.into()))?;
-            let dev = mux.get_device(udid).await.map_err(|_| DevError::Msg("The iPhone isn't connected any more.".into()))?;
+            let mut mux = UsbmuxdConnection::default()
+                .await
+                .map_err(|_| DevError::Msg(crate::platform::IPHONE_HINT.into()))?;
+            let dev = mux
+                .get_device(udid)
+                .await
+                .map_err(|_| DevError::Msg("The iPhone isn't connected any more.".into()))?;
             let provider = dev.to_provider(UsbmuxdAddr::default(), LABEL);
             let afc = AfcClient::connect(&provider).await.map_err(plain)?;
-            let name = device_name(&provider).await.unwrap_or_else(|| "iPhone".into());
+            let name = device_name(&provider)
+                .await
+                .unwrap_or_else(|| "iPhone".into());
             Ok::<_, DevError>((provider, name, afc))
         })?;
-        Ok(IPhone { name, conn: Mutex::new(Conn { rt, provider, afc: Some(afc), apps: None, vended: HashMap::new() }), stop: AtomicBool::new(false) })
+        Ok(IPhone {
+            name,
+            conn: Mutex::new(Conn {
+                rt,
+                provider,
+                afc: Some(afc),
+                apps: None,
+                vended: HashMap::new(),
+            }),
+            stop: AtomicBool::new(false),
+        })
     }
 
     fn conn(&self) -> std::sync::MutexGuard<'_, Conn> {
@@ -184,7 +229,12 @@ impl IPhone {
         let mut guard = self.conn();
         let c = &mut *guard;
         match bundle {
-            None if c.afc.is_none() => c.afc = Some(c.rt.block_on(AfcClient::connect(&c.provider)).map_err(plain)?),
+            None if c.afc.is_none() => {
+                c.afc = Some(
+                    c.rt.block_on(AfcClient::connect(&c.provider))
+                        .map_err(plain)?,
+                )
+            }
             Some(b) if !c.vended.contains_key(b) => {
                 let afc =
                     c.rt.block_on(async {
@@ -196,7 +246,10 @@ impl IPhone {
             }
             _ => {}
         }
-        Ok(Session { guard, bundle: bundle.map(str::to_string) })
+        Ok(Session {
+            guard,
+            bundle: bundle.map(str::to_string),
+        })
     }
 
     /// The apps that share their files, by name, asked for once per connection.
@@ -218,7 +271,10 @@ impl IPhone {
     }
 
     fn place(&self, path: &str) -> Result<Place> {
-        let Some(rest) = path.strip_prefix(APPS).filter(|r| r.is_empty() || r.starts_with('/')) else {
+        let Some(rest) = path
+            .strip_prefix(APPS)
+            .filter(|r| r.is_empty() || r.starts_with('/'))
+        else {
             return Ok(Place::Media(path.to_string()));
         };
         let rest = rest.trim_start_matches('/');
@@ -230,7 +286,14 @@ impl IPhone {
         let Some(app) = apps.iter().find(|a| a.name == name) else {
             return err(format!("No app named {name} shares its files."));
         };
-        Ok(Place::App { bundle: app.bundle.clone(), inner: if tail.is_empty() { "/Documents".into() } else { format!("/Documents/{tail}") } })
+        Ok(Place::App {
+            bundle: app.bundle.clone(),
+            inner: if tail.is_empty() {
+                "/Documents".into()
+            } else {
+                format!("/Documents/{tail}")
+            },
+        })
     }
 
     /// The app (None: the media area) and AFC path for a file: refuses `/Apps` and an app's own
@@ -240,7 +303,9 @@ impl IPhone {
             Place::Media(p) if p == "/" => err("That's the top of the iPhone."),
             Place::Media(p) => Ok((None, p)),
             Place::Apps => err("Apps is where apps' shared files are; it can't be changed."),
-            Place::App { inner, .. } if inner == "/Documents" => err("That's an app's own folder; it can't be changed."),
+            Place::App { inner, .. } if inner == "/Documents" => {
+                err("That's an app's own folder; it can't be changed.")
+            }
             Place::App { bundle, inner } => Ok((Some(bundle), inner)),
         }
     }
@@ -273,10 +338,20 @@ impl IPhone {
 
     /// Writes a new file through a temporary name in the same folder, swapped in when complete,
     /// with `size` bytes from `src`.
-    fn put(&self, path: &str, exists: bool, size: u64, src: &mut dyn Read, what: &str) -> Result<String> {
+    fn put(
+        &self,
+        path: &str,
+        exists: bool,
+        size: u64,
+        src: &mut dyn Read,
+        what: &str,
+    ) -> Result<String> {
         let (bundle, inner) = self.file_place(path)?;
         let b = bundle.as_deref();
-        let tmp = join(&dirname(&inner), &format!(".{}.ferry-tmp", basename(&inner)));
+        let tmp = join(
+            &dirname(&inner),
+            &format!(".{}.ferry-tmp", basename(&inner)),
+        );
         let stop = &self.stop;
         let mut s = self.session(b)?;
         let (rt, afc) = s.parts();
@@ -311,7 +386,10 @@ impl IPhone {
             (_, Some(e)) | (Err(e), None) => Err(e),
             (Ok(()), None) => match self.info(b, &tmp)? {
                 Some(i) if i.size == size => Ok(()),
-                Some(i) => err(format!("The iPhone has {} of {size} bytes; nothing was changed.", i.size)),
+                Some(i) => err(format!(
+                    "The iPhone has {} of {size} bytes; nothing was changed.",
+                    i.size
+                )),
                 None => err("The new file didn't arrive; nothing was changed."),
             },
         };
@@ -343,7 +421,11 @@ impl IPhone {
     fn ask<T>(
         &self,
         bundle: Option<&str>,
-        f: impl FnOnce(&mut AfcClient) -> std::pin::Pin<Box<dyn std::future::Future<Output = std::result::Result<T, IdeviceError>> + '_>>,
+        f: impl FnOnce(
+            &mut AfcClient,
+        ) -> std::pin::Pin<
+            Box<dyn std::future::Future<Output = std::result::Result<T, IdeviceError>> + '_>,
+        >,
     ) -> Result<T> {
         let mut s = self.session(bundle)?;
         let (rt, afc) = s.parts();
@@ -391,18 +473,33 @@ fn sharing_apps(found: HashMap<String, plist::Value>) -> Vec<App> {
         .into_iter()
         .filter_map(|(bundle, v)| {
             let d = v.as_dictionary()?;
-            let shares = d.get("UIFileSharingEnabled").and_then(|v| v.as_boolean().or_else(|| v.as_string().map(|s| s == "YES" || s == "true")));
+            let shares = d.get("UIFileSharingEnabled").and_then(|v| {
+                v.as_boolean()
+                    .or_else(|| v.as_string().map(|s| s == "YES" || s == "true"))
+            });
             if shares != Some(true) {
                 return None;
             }
             let name = ["CFBundleDisplayName", "CFBundleName"]
                 .iter()
-                .find_map(|k| d.get(*k).and_then(|v| v.as_string()).filter(|s| !s.trim().is_empty()))
+                .find_map(|k| {
+                    d.get(*k)
+                        .and_then(|v| v.as_string())
+                        .filter(|s| !s.trim().is_empty())
+                })
                 .unwrap_or(&bundle);
-            Some(App { name: name.trim().replace('/', "-"), bundle })
+            Some(App {
+                name: name.trim().replace('/', "-"),
+                bundle,
+            })
         })
         .collect();
-    apps.sort_by(|a, b| a.name.to_lowercase().cmp(&b.name.to_lowercase()).then(a.bundle.cmp(&b.bundle)));
+    apps.sort_by(|a, b| {
+        a.name
+            .to_lowercase()
+            .cmp(&b.name.to_lowercase())
+            .then(a.bundle.cmp(&b.bundle))
+    });
     let names: Vec<String> = apps.iter().map(|a| a.name.clone()).collect();
     for a in apps.iter_mut() {
         if names.iter().filter(|n| **n == a.name).count() > 1 {
@@ -424,7 +521,11 @@ struct Info {
 impl Info {
     fn of(kv: &HashMap<String, String>) -> Info {
         let num = |k: &str| kv.get(k).and_then(|v| v.parse::<i64>().ok()).unwrap_or(0);
-        Info { dir: kv.get("st_ifmt").is_some_and(|t| t == "S_IFDIR"), size: num("st_size").max(0) as u64, mtime_ns: num("st_mtime") }
+        Info {
+            dir: kv.get("st_ifmt").is_some_and(|t| t == "S_IFDIR"),
+            size: num("st_size").max(0) as u64,
+            mtime_ns: num("st_mtime"),
+        }
     }
 
     fn version(&self) -> String {
@@ -444,7 +545,14 @@ impl Info {
 }
 
 fn folder(path: &str) -> Entry {
-    Entry { name: basename(path).to_string(), path: path.to_string(), dir: true, size: 0, mtime: 0, hidden: false }
+    Entry {
+        name: basename(path).to_string(),
+        path: path.to_string(),
+        dir: true,
+        size: 0,
+        mtime: 0,
+        hidden: false,
+    }
 }
 
 impl Transport for IPhone {
@@ -461,7 +569,12 @@ impl Transport for IPhone {
     }
 
     fn quick_dirs(&self) -> Vec<(String, String)> {
-        vec![("Photos".into(), "/DCIM".into()), ("Downloads".into(), "/Downloads".into()), ("Books".into(), "/Books".into()), ("Apps".into(), APPS.into())]
+        vec![
+            ("Photos".into(), "/DCIM".into()),
+            ("Downloads".into(), "/Downloads".into()),
+            ("Books".into(), "/Books".into()),
+            ("Apps".into(), APPS.into()),
+        ]
     }
 
     fn refresh(&self) {
@@ -474,7 +587,13 @@ impl Transport for IPhone {
 
     fn listdir(&self, path: &str) -> Result<Vec<Entry>> {
         let (bundle, dir) = match self.place(path)? {
-            Place::Apps => return Ok(self.apps()?.iter().map(|a| folder(&join(APPS, &a.name))).collect()),
+            Place::Apps => {
+                return Ok(self
+                    .apps()?
+                    .iter()
+                    .map(|a| folder(&join(APPS, &a.name)))
+                    .collect())
+            }
             Place::Media(p) => (None, p),
             Place::App { bundle, inner } => (Some(bundle), inner),
         };
@@ -502,7 +621,14 @@ impl Transport for IPhone {
                 match info {
                     Some(kv) => Info::of(&kv).entry(&p),
                     // Listed but can't be looked at: shown as a file of unknown size.
-                    None => Entry { name, path: p, dir: false, size: 0, mtime: 0, hidden: false },
+                    None => Entry {
+                        name,
+                        path: p,
+                        dir: false,
+                        size: 0,
+                        mtime: 0,
+                        hidden: false,
+                    },
                 }
             })
             .collect();
@@ -516,7 +642,9 @@ impl Transport for IPhone {
         match self.place(path) {
             Ok(Place::Apps) => Ok(Some(folder(APPS))),
             Ok(Place::App { inner, .. }) if inner == "/Documents" => Ok(Some(folder(path))),
-            Ok(Place::App { bundle, inner }) => Ok(self.info(Some(&bundle), &inner)?.map(|i| i.entry(path))),
+            Ok(Place::App { bundle, inner }) => {
+                Ok(self.info(Some(&bundle), &inner)?.map(|i| i.entry(path)))
+            }
             Ok(Place::Media(p)) => Ok(self.info(None, &p)?.map(|i| i.entry(path))),
             // An app that isn't there (any more).
             Err(_) => Ok(None),
@@ -526,7 +654,9 @@ impl Transport for IPhone {
     fn read(&self, path: &str) -> Result<(Vec<u8>, String)> {
         let (bundle, inner) = self.file_place(path)?;
         let b = bundle.as_deref();
-        let before = self.info(b, &inner)?.ok_or_else(|| DevError::Msg(format!("Not found: {path}")))?;
+        let before = self
+            .info(b, &inner)?
+            .ok_or_else(|| DevError::Msg(format!("Not found: {path}")))?;
         if before.dir {
             return err(format!("{path} is a folder."));
         }
@@ -540,7 +670,11 @@ impl Transport for IPhone {
             })
         })?;
         if data.len() as u64 != before.size {
-            return err(format!("Read {} of {} bytes of {path}; try again.", data.len(), before.size));
+            return err(format!(
+                "Read {} of {} bytes of {path}; try again.",
+                data.len(),
+                before.size
+            ));
         }
         Ok((data, before.version()))
     }
@@ -569,24 +703,43 @@ impl Transport for IPhone {
     }
 
     fn replace(&self, path: &str, data: &[u8], exists: bool) -> Result<String> {
-        self.put(path, exists, data.len() as u64, &mut &data[..], "the new contents")
+        self.put(
+            path,
+            exists,
+            data.len() as u64,
+            &mut &data[..],
+            "the new contents",
+        )
     }
 
     fn replace_from(&self, path: &str, from: &Path, exists: bool) -> Result<String> {
         let what = from.display().to_string();
-        let mut src = std::fs::File::open(from).map_err(|e| DevError::Msg(format!("Can't read {what}: {e}")))?;
-        let size = src.metadata().map_err(|e| DevError::Msg(format!("Can't read {what}: {e}")))?.len();
+        let mut src = std::fs::File::open(from)
+            .map_err(|e| DevError::Msg(format!("Can't read {what}: {e}")))?;
+        let size = src
+            .metadata()
+            .map_err(|e| DevError::Msg(format!("Can't read {what}: {e}")))?
+            .len();
         self.put(path, exists, size, &mut src, &what)
     }
 
-    fn read_to(&self, path: &str, to: &Path, read: &mut dyn FnMut(u64), stop: &AtomicBool) -> Result<String> {
+    fn read_to(
+        &self,
+        path: &str,
+        to: &Path,
+        read: &mut dyn FnMut(u64),
+        stop: &AtomicBool,
+    ) -> Result<String> {
         let (bundle, inner) = self.file_place(path)?;
         let b = bundle.as_deref();
-        let before = self.info(b, &inner)?.ok_or_else(|| DevError::Msg(format!("Not found: {path}")))?;
+        let before = self
+            .info(b, &inner)?
+            .ok_or_else(|| DevError::Msg(format!("Not found: {path}")))?;
         if before.dir {
             return err(format!("{path} is a folder."));
         }
-        let mut out = std::fs::File::create(to).map_err(|e| DevError::Msg(format!("Can't write {}: {e}", to.display())))?;
+        let mut out = std::fs::File::create(to)
+            .map_err(|e| DevError::Msg(format!("Can't write {}: {e}", to.display())))?;
         let mine = &self.stop;
         let mut failed: Option<DevError> = None;
         let mut s = self.session(b)?;
@@ -622,7 +775,10 @@ impl Transport for IPhone {
             return Err(e);
         }
         if total != before.size {
-            return err(format!("Read {total} of {} bytes of {path}; try again.", before.size));
+            return err(format!(
+                "Read {total} of {} bytes of {path}; try again.",
+                before.size
+            ));
         }
         Ok(before.version())
     }
@@ -642,18 +798,29 @@ impl Transport for IPhone {
 
     fn make_dir(&self, path: &str) -> Result<()> {
         let (bundle, inner) = self.file_place(path)?;
-        self.ask(bundle.as_deref(), |afc| Box::pin(async move { afc.mk_dir(inner).await }))
+        self.ask(bundle.as_deref(), |afc| {
+            Box::pin(async move { afc.mk_dir(inner).await })
+        })
     }
 
     fn rename(&self, path: &str, new_name: &str) -> Result<()> {
         let (bundle, inner) = self.file_place(path)?;
         let to = join(&dirname(&inner), new_name);
-        self.ask(bundle.as_deref(), |afc| Box::pin(async move { afc.rename(inner, to).await }))
+        self.ask(bundle.as_deref(), |afc| {
+            Box::pin(async move { afc.rename(inner, to).await })
+        })
     }
 
     fn space(&self) -> Vec<Space> {
-        match self.ask(None, |afc| Box::pin(async move { afc.get_device_info().await })) {
-            Ok(d) => vec![Space { name: self.name.clone(), free: d.free_bytes as u64, total: d.total_bytes as u64, path: "/".into() }],
+        match self.ask(None, |afc| {
+            Box::pin(async move { afc.get_device_info().await })
+        }) {
+            Ok(d) => vec![Space {
+                name: self.name.clone(),
+                free: d.free_bytes as u64,
+                total: d.total_bytes as u64,
+                path: "/".into(),
+            }],
             Err(_) => vec![],
         }
     }
@@ -664,7 +831,10 @@ mod tests {
     use super::*;
 
     fn kv(pairs: &[(&str, &str)]) -> HashMap<String, String> {
-        pairs.iter().map(|(k, v)| (k.to_string(), v.to_string())).collect()
+        pairs
+            .iter()
+            .map(|(k, v)| (k.to_string(), v.to_string()))
+            .collect()
     }
 
     /// The app runs device work in tokio's blocking threads (`blocking()`); each connection's
@@ -672,7 +842,9 @@ mod tests {
     /// None where there's no usbmuxd).
     #[test]
     fn runs_in_the_apps_blocking_threads() {
-        let outer = tokio::runtime::Builder::new_current_thread().build().unwrap();
+        let outer = tokio::runtime::Builder::new_current_thread()
+            .build()
+            .unwrap();
         let listed = outer.block_on(async { tokio::task::spawn_blocking(listed).await.unwrap() });
         if cfg!(target_os = "macos") {
             assert!(listed.is_some(), "macOS has usbmuxd");
@@ -682,16 +854,37 @@ mod tests {
 
     #[test]
     fn reads_what_afc_tells_about_a_file() {
-        let f = Info::of(&kv(&[("st_ifmt", "S_IFREG"), ("st_size", "1234"), ("st_mtime", "1700000000123456789")]));
-        assert_eq!(f, Info { dir: false, size: 1234, mtime_ns: 1_700_000_000_123_456_789 });
+        let f = Info::of(&kv(&[
+            ("st_ifmt", "S_IFREG"),
+            ("st_size", "1234"),
+            ("st_mtime", "1700000000123456789"),
+        ]));
+        assert_eq!(
+            f,
+            Info {
+                dir: false,
+                size: 1234,
+                mtime_ns: 1_700_000_000_123_456_789
+            }
+        );
         assert_eq!(f.version(), "1234:1700000000123456789");
         let e = f.entry("/DCIM/100APPLE/IMG_0001.HEIC");
-        assert_eq!((e.name.as_str(), e.dir, e.size, e.mtime), ("IMG_0001.HEIC", false, 1234, 1_700_000_000));
+        assert_eq!(
+            (e.name.as_str(), e.dir, e.size, e.mtime),
+            ("IMG_0001.HEIC", false, 1234, 1_700_000_000)
+        );
         let d = Info::of(&kv(&[("st_ifmt", "S_IFDIR"), ("st_size", "96")]));
         assert!(d.dir);
         assert_eq!(d.entry("/DCIM").size, 0);
         // Missing or odd values don't fail.
-        assert_eq!(Info::of(&kv(&[("st_size", "x")])), Info { dir: false, size: 0, mtime_ns: 0 });
+        assert_eq!(
+            Info::of(&kv(&[("st_size", "x")])),
+            Info {
+                dir: false,
+                size: 0,
+                mtime_ns: 0
+            }
+        );
     }
 
     #[test]
@@ -710,10 +903,19 @@ mod tests {
             plist::Value::Dictionary(d)
         };
         let found: HashMap<String, plist::Value> = [
-            ("org.videolan.vlc-ios", app(Some("VLC"), Some("VLC"), Some(true.into()))),
-            ("com.example.notes", app(Some("Notes"), None, Some(false.into()))),
+            (
+                "org.videolan.vlc-ios",
+                app(Some("VLC"), Some("VLC"), Some(true.into())),
+            ),
+            (
+                "com.example.notes",
+                app(Some("Notes"), None, Some(false.into())),
+            ),
             ("com.example.plain", app(Some("Plain"), None, None)),
-            ("com.example.reader", app(Some("Reader"), Some("Books/PDF"), Some("YES".into()))),
+            (
+                "com.example.reader",
+                app(Some("Reader"), Some("Books/PDF"), Some("YES".into())),
+            ),
             ("com.a.twin", app(Some("Twin"), None, Some(true.into()))),
             ("com.b.twin", app(Some("Twin"), None, Some(true.into()))),
             ("com.example.nameless", app(None, None, Some(true.into()))),
@@ -722,6 +924,15 @@ mod tests {
         .map(|(k, v)| (k.to_string(), v))
         .collect();
         let names: Vec<String> = sharing_apps(found).into_iter().map(|a| a.name).collect();
-        assert_eq!(names, ["Books-PDF", "com.example.nameless", "Twin (com.a.twin)", "Twin (com.b.twin)", "VLC"]);
+        assert_eq!(
+            names,
+            [
+                "Books-PDF",
+                "com.example.nameless",
+                "Twin (com.a.twin)",
+                "Twin (com.b.twin)",
+                "VLC"
+            ]
+        );
     }
 }

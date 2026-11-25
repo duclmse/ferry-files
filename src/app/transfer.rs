@@ -10,7 +10,11 @@ impl Ctx {
             return;
         }
         let o = self.other(p);
-        let (from_src, to_src, to_dir) = (p.src.get_untracked(), o.src.get_untracked(), o.cwd.get_untracked());
+        let (from_src, to_src, to_dir) = (
+            p.src.get_untracked(),
+            o.src.get_untracked(),
+            o.cwd.get_untracked(),
+        );
         if to_src == from_src && to_dir == p.cwd.get_untracked() {
             p.error("Both panes show this folder. Open another folder in the other pane first.");
             return;
@@ -21,7 +25,15 @@ impl Ctx {
     /// Copies (or moves) files and folders into `to_dir`, with progress below the panes. Files
     /// already there are skipped, never replaced. Queued behind any copy already running; the
     /// report shows in pane `p`.
-    pub(super) fn transfer(self, p: Pane, from_src: Src, items: Vec<String>, to_src: Src, to_dir: String, moving: bool) {
+    pub(super) fn transfer(
+        self,
+        p: Pane,
+        from_src: Src,
+        items: Vec<String>,
+        to_src: Src,
+        to_dir: String,
+        moving: bool,
+    ) {
         if self.read_only(to_src) {
             p.error("Files on an Everything server can only be read: copy from it, not to it.");
             return;
@@ -34,7 +46,14 @@ impl Ctx {
             p.error("Open a storage first: files can't go at the top level over MTP.");
             return;
         }
-        let work = Work::Copy { from: self.side(from_src), items, to: self.side(to_src), to_dir, moving, replace: false };
+        let work = Work::Copy {
+            from: self.side(from_src),
+            items,
+            to: self.side(to_src),
+            to_dir,
+            moving,
+            replace: false,
+        };
         self.enqueue(p.id, work, false);
     }
 
@@ -47,21 +66,35 @@ impl Ctx {
     }
 
     /// Compares `from` with `to` and shows in pane `p` what syncing would do, to confirm.
-    pub(super) fn preview_sync(self, p: Pane, from: (Src, String), to: (Src, String), mode: String) {
+    pub(super) fn preview_sync(
+        self,
+        p: Pane,
+        from: (Src, String),
+        to: (Src, String),
+        mode: String,
+    ) {
         if self.read_only(to.0) {
             p.error("Files on an Everything server can only be read: compare the other way round.");
             return;
         }
         if to.1 == "/" && self.src_info(to.0).is_some_and(|i| i.transport == "mtp") {
-            p.error("Open a storage in the other pane first: files can't go at the top level over MTP.");
+            p.error(
+                "Open a storage in the other pane first: files can't go at the top level over MTP.",
+            );
             return;
         }
-        p.notice.set(Notice::Ok("Comparing the two folders…".into()));
+        p.notice
+            .set(Notice::Ok("Comparing the two folders…".into()));
         let hidden = self.show_hidden.get_untracked();
         spawn_local(async move {
             let args = json!({ "from_src": from.0.key(), "from_dir": from.1, "to_src": to.0.key(), "to_dir": to.1, "hidden": hidden });
             match call::<CompareReport>("compare", args).await {
-                Ok(report) => p.notice.set(Notice::Sync { report, from, to, mode }),
+                Ok(report) => p.notice.set(Notice::Sync {
+                    report,
+                    from,
+                    to,
+                    mode,
+                }),
                 Err(e) => p.error(e),
             }
         });
@@ -69,24 +102,53 @@ impl Ctx {
 
     /// Syncs as `preview_sync` showed, as a queued job. `remove`: in mirror mode, what the
     /// preview listed to remove (nothing else is).
-    pub(super) fn sync(self, p: Pane, from: (Src, String), to: (Src, String), mode: String, remove: Vec<String>) {
+    pub(super) fn sync(
+        self,
+        p: Pane,
+        from: (Src, String),
+        to: (Src, String),
+        mode: String,
+        remove: Vec<String>,
+    ) {
         p.notice.set(Notice::None);
         let hidden = self.show_hidden.get_untracked();
-        let work = Work::Sync { from: self.side(from.0), from_dir: from.1, to: self.side(to.0), to_dir: to.1, hidden, mode, remove };
+        let work = Work::Sync {
+            from: self.side(from.0),
+            from_dir: from.1,
+            to: self.side(to.0),
+            to_dir: to.1,
+            hidden,
+            mode,
+            remove,
+        };
         self.enqueue(p.id, work, false);
     }
 
     /// Saves a sync to the sidebar, to run again; a pair already saved gets the new mode.
     pub(super) fn save_pair(self, from: (Src, String), to: (Src, String), mode: String) {
-        let pair = SyncPair { from: self.side(from.0), from_dir: from.1, to: self.side(to.0), to_dir: to.1, mode };
+        let pair = SyncPair {
+            from: self.side(from.0),
+            from_dir: from.1,
+            to: self.side(to.0),
+            to_dir: to.1,
+            mode,
+        };
         let mut pairs = self.sync_pairs.get_untracked();
-        pairs.retain(|x| !(x.from == pair.from && x.from_dir == pair.from_dir && x.to == pair.to && x.to_dir == pair.to_dir));
+        pairs.retain(|x| {
+            !(x.from == pair.from
+                && x.from_dir == pair.from_dir
+                && x.to == pair.to
+                && x.to_dir == pair.to_dir)
+        });
         pairs.push(pair);
         self.set_pairs(pairs);
     }
 
     pub(super) fn set_pairs(self, pairs: Vec<SyncPair>) {
-        store(SYNC_PAIRS_KEY, &serde_json::to_string(&pairs).unwrap_or_default());
+        store(
+            SYNC_PAIRS_KEY,
+            &serde_json::to_string(&pairs).unwrap_or_default(),
+        );
         self.sync_pairs.set(pairs);
     }
 
@@ -94,7 +156,12 @@ impl Ctx {
     pub(super) fn open_pair(self, pair: &SyncPair) {
         let p = self.act();
         match (self.src_of(&pair.from), self.src_of(&pair.to)) {
-            (Ok(a), Ok(b)) => self.preview_sync(p, (a, pair.from_dir.clone()), (b, pair.to_dir.clone()), pair.mode.clone()),
+            (Ok(a), Ok(b)) => self.preview_sync(
+                p,
+                (a, pair.from_dir.clone()),
+                (b, pair.to_dir.clone()),
+                pair.mode.clone(),
+            ),
             (Err(e), _) | (_, Err(e)) => p.error(e),
         }
     }
@@ -109,13 +176,18 @@ impl Ctx {
 
     /// Whether a job is running now.
     pub(super) fn running(self) -> bool {
-        self.jobs.with_untracked(|js| js.iter().any(|j| j.state == JobState::Running))
+        self.jobs
+            .with_untracked(|js| js.iter().any(|j| j.state == JobState::Running))
     }
 
     /// How a job finds `src` again.
     pub(super) fn side(self, src: Src) -> Side {
         match (src, self.src_info(src)) {
-            (Src::Dev(_), Some(i)) => Side::Phone { serial: i.serial, id: i.id, label: i.label },
+            (Src::Dev(_), Some(i)) => Side::Phone {
+                serial: i.serial,
+                id: i.id,
+                label: i.label,
+            },
             _ => Side::Mac,
         }
     }
@@ -126,7 +198,17 @@ impl Ctx {
             Side::Mac => Ok(Src::Mac),
             Side::Phone { serial, id, label } => self
                 .phones
-                .with_untracked(|ps| ps.iter().find(|i| if serial.is_some() { i.serial == *serial } else { i.id == *id }).map(|i| Src::of(&i.id)))
+                .with_untracked(|ps| {
+                    ps.iter()
+                        .find(|i| {
+                            if serial.is_some() {
+                                i.serial == *serial
+                            } else {
+                                i.id == *id
+                            }
+                        })
+                        .map(|i| Src::of(&i.id))
+                })
                 .ok_or_else(|| format!("{label} isn't connected. Connect it, then retry.")),
         }
     }
@@ -134,9 +216,20 @@ impl Ctx {
     pub(super) fn enqueue(self, pane: usize, work: Work, resume: bool) {
         let id = self.next_job.get_value();
         self.next_job.set_value(id + 1);
-        self.jobs.update(|js| js.push(Job { id, work, pane, state: JobState::Queued, progress: None, resume }));
+        self.jobs.update(|js| {
+            js.push(Job {
+                id,
+                work,
+                pane,
+                state: JobState::Queued,
+                progress: None,
+                resume,
+            })
+        });
         if self.running() {
-            self.panes[pane].notice.set(Notice::Ok("Queued: it starts when the copy before it is done.".into()));
+            self.panes[pane].notice.set(Notice::Ok(
+                "Queued: it starts when the copy before it is done.".into(),
+            ));
         }
         self.save_jobs();
         self.pump();
@@ -147,7 +240,12 @@ impl Ctx {
         if self.running() {
             return;
         }
-        let Some(job) = self.jobs.with_untracked(|js| js.iter().find(|j| j.state == JobState::Queued).cloned()) else { return };
+        let Some(job) = self
+            .jobs
+            .with_untracked(|js| js.iter().find(|j| j.state == JobState::Queued).cloned())
+        else {
+            return;
+        };
         self.set_state(job.id, JobState::Running);
         spawn_local(async move { self.run_job(job).await });
     }
@@ -164,7 +262,9 @@ impl Ctx {
     async fn run_job(self, job: Job) {
         let p = self.panes[job.pane];
         let (from, to) = match &job.work {
-            Work::Copy { from, to, .. } | Work::Sync { from, to, .. } | Work::Import { from, to, .. } => (self.src_of(from), self.src_of(to)),
+            Work::Copy { from, to, .. }
+            | Work::Sync { from, to, .. }
+            | Work::Import { from, to, .. } => (self.src_of(from), self.src_of(to)),
         };
         let (from_src, to_src) = match (from, to) {
             (Ok(a), Ok(b)) => (a, b),
@@ -176,7 +276,13 @@ impl Ctx {
             }
         };
         let r = match &job.work {
-            Work::Copy { items, to_dir, moving, replace, .. } => {
+            Work::Copy {
+                items,
+                to_dir,
+                moving,
+                replace,
+                ..
+            } => {
                 let mode = if *moving {
                     "move"
                 } else if *replace {
@@ -190,14 +296,27 @@ impl Ctx {
                 });
                 call::<TransferReport>("transfer", args).await
             }
-            Work::Sync { from_dir, to_dir, hidden, mode, remove, .. } => {
+            Work::Sync {
+                from_dir,
+                to_dir,
+                hidden,
+                mode,
+                remove,
+                ..
+            } => {
                 let args = json!({
                     "job": job.id, "from_src": from_src.key(), "from_dir": from_dir, "to_src": to_src.key(), "to_dir": to_dir, "hidden": hidden,
                     "verify": self.verify.get_untracked(), "mode": if mode.is_empty() { "copy" } else { mode }, "remove": remove,
                 });
                 call::<TransferReport>("sync", args).await
             }
-            Work::Import { from_dir, to_dir, pattern, moving, .. } => {
+            Work::Import {
+                from_dir,
+                to_dir,
+                pattern,
+                moving,
+                ..
+            } => {
                 let args = json!({
                     "job": job.id, "from_src": from_src.key(), "from_dir": from_dir, "to_src": to_src.key(), "to_dir": to_dir,
                     "pattern": pattern, "hidden": self.show_hidden.get_untracked(), "moving": moving, "verify": self.verify.get_untracked(),
@@ -210,20 +329,57 @@ impl Ctx {
                 let lines = report_lines(&job.work, &r);
                 match &job.work {
                     Work::Copy { moving: false, .. } if !r.made.is_empty() => {
-                        self.log_undo(lines[0].clone(), Undo::Copy { to: to_src, made: r.made.clone() });
+                        self.log_undo(
+                            lines[0].clone(),
+                            Undo::Copy {
+                                to: to_src,
+                                made: r.made.clone(),
+                            },
+                        );
                     }
                     // A move goes back only when it went whole into new places: otherwise moving
                     // back would take files that were there before too.
-                    Work::Copy { moving: true, items, .. } if !r.cancelled && r.skipped.is_empty() && r.already == 0 && r.made.len() == items.len() => {
-                        let back = r.made.iter().cloned().zip(items.iter().map(|x| parent(x))).collect();
-                        self.log_undo(lines[0].clone(), Undo::Move { from: from_src, to: to_src, back });
+                    Work::Copy {
+                        moving: true,
+                        items,
+                        ..
+                    } if !r.cancelled
+                        && r.skipped.is_empty()
+                        && r.already == 0
+                        && r.made.len() == items.len() =>
+                    {
+                        let back = r
+                            .made
+                            .iter()
+                            .cloned()
+                            .zip(items.iter().map(|x| parent(x)))
+                            .collect();
+                        self.log_undo(
+                            lines[0].clone(),
+                            Undo::Move {
+                                from: from_src,
+                                to: to_src,
+                                back,
+                            },
+                        );
                     }
                     _ => self.log(lines[0].clone()),
                 }
                 let msg = lines.join("\n");
                 let left = r.cancelled || !r.skipped.is_empty();
-                p.notice.set(if r.skipped.is_empty() { Notice::Ok(msg) } else { Notice::Error(msg) });
-                left.then(|| JobState::Stopped(lines[1..].first().cloned().unwrap_or_else(|| lines[0].clone())))
+                p.notice.set(if r.skipped.is_empty() {
+                    Notice::Ok(msg)
+                } else {
+                    Notice::Error(msg)
+                });
+                left.then(|| {
+                    JobState::Stopped(
+                        lines[1..]
+                            .first()
+                            .cloned()
+                            .unwrap_or_else(|| lines[0].clone()),
+                    )
+                })
             }
             Err(e) => {
                 p.error(e.clone());
@@ -237,7 +393,12 @@ impl Ctx {
             None => self.drop_job(job.id),
         }
         match &job.work {
-            Work::Copy { items, to_dir, moving, .. } => {
+            Work::Copy {
+                items,
+                to_dir,
+                moving,
+                ..
+            } => {
                 self.changed(to_src, to_dir);
                 // Open files that moved on the same side follow them.
                 if *moving && finished && from_src == to_src {
@@ -247,7 +408,9 @@ impl Ctx {
                         // A pane inside a folder that moved (one opened in the column view) stays
                         // where the folder was: in the folder that held it.
                         for q in self.panes {
-                            if q.src.get_untracked() == from_src && within(&q.cwd.get_untracked(), x) {
+                            if q.src.get_untracked() == from_src
+                                && within(&q.cwd.get_untracked(), x)
+                            {
                                 self.navigate(q, parent(x));
                             }
                         }
@@ -264,7 +427,12 @@ impl Ctx {
                 }
             }
             Work::Sync { to_dir, .. } => self.changed(to_src, to_dir),
-            Work::Import { from_dir, to_dir, moving, .. } => {
+            Work::Import {
+                from_dir,
+                to_dir,
+                moving,
+                ..
+            } => {
                 self.changed(to_src, to_dir);
                 if *moving {
                     self.changed(from_src, from_dir);
@@ -277,14 +445,22 @@ impl Ctx {
     /// Runs a stopped, failed or interrupted job again, at the end of the queue. Files it already
     /// copied are counted as done, not copied again.
     pub(super) fn retry_job(self, id: u32) {
-        let Some(j) = self.jobs.with_untracked(|js| js.iter().find(|j| j.id == id).cloned()) else { return };
+        let Some(j) = self
+            .jobs
+            .with_untracked(|js| js.iter().find(|j| j.id == id).cloned())
+        else {
+            return;
+        };
         self.drop_job(id);
         self.enqueue(j.pane, j.work, true);
     }
 
     /// Cancels a job: a waiting one leaves the queue; a running one stops after its current file.
     pub(super) fn cancel_job(self, id: u32) {
-        let running = self.jobs.with_untracked(|js| js.iter().any(|j| j.id == id && j.state == JobState::Running));
+        let running = self.jobs.with_untracked(|js| {
+            js.iter()
+                .any(|j| j.id == id && j.state == JobState::Running)
+        });
         if running {
             spawn_local(async move {
                 let _ = call::<()>("cancel_transfer", json!({ "job": id })).await;
@@ -304,13 +480,22 @@ impl Ctx {
     fn save_jobs(self) {
         let keep: Vec<Work> = self.jobs.with_untracked(|js| {
             js.iter()
-                .filter(|j| matches!(j.state, JobState::Queued | JobState::Running | JobState::Paused))
+                .filter(|j| {
+                    matches!(
+                        j.state,
+                        JobState::Queued | JobState::Running | JobState::Paused
+                    )
+                })
                 .map(|j| j.work.clone())
                 .filter(|w| {
                     let (a, b) = match w {
-                        Work::Copy { from, to, .. } | Work::Sync { from, to, .. } | Work::Import { from, to, .. } => (from, to),
+                        Work::Copy { from, to, .. }
+                        | Work::Sync { from, to, .. }
+                        | Work::Import { from, to, .. } => (from, to),
                     };
-                    [a, b].iter().all(|s| !matches!(s, Side::Phone { serial: None, .. }))
+                    [a, b]
+                        .iter()
+                        .all(|s| !matches!(s, Side::Phone { serial: None, .. }))
                 })
                 .collect()
         });
@@ -319,11 +504,22 @@ impl Ctx {
 
     /// At launch: jobs the app quit during, offered to resume.
     pub(super) fn load_jobs(self) {
-        let works: Vec<Work> = stored(JOBS_KEY).and_then(|s| serde_json::from_str(&s).ok()).unwrap_or_default();
+        let works: Vec<Work> = stored(JOBS_KEY)
+            .and_then(|s| serde_json::from_str(&s).ok())
+            .unwrap_or_default();
         for work in works {
             let id = self.next_job.get_value();
             self.next_job.set_value(id + 1);
-            self.jobs.update(|js| js.push(Job { id, work, pane: 0, state: JobState::Paused, progress: None, resume: true }));
+            self.jobs.update(|js| {
+                js.push(Job {
+                    id,
+                    work,
+                    pane: 0,
+                    state: JobState::Paused,
+                    progress: None,
+                    resume: true,
+                })
+            });
         }
     }
 }
@@ -332,31 +528,97 @@ impl Ctx {
 fn report_lines(work: &Work, r: &TransferReport) -> Vec<String> {
     let n = |c: u32| format!("{c} {}", if c == 1 { "file" } else { "files" });
     let mut lines = vec![match work {
-        Work::Copy { replace: true, to_dir, .. } => format!("Replaced {} in {}. The files that were there are in Backups.", n(r.copied), to_dir),
-        Work::Copy { moving: true, to_dir, .. } if r.moved > 0 => {
-            let items = format!("{} {}", r.moved, if r.moved == 1 { "item" } else { "items" });
-            let files = if r.copied > 0 { format!(" and {}", n(r.copied)) } else { String::new() };
+        Work::Copy {
+            replace: true,
+            to_dir,
+            ..
+        } => format!(
+            "Replaced {} in {}. The files that were there are in Backups.",
+            n(r.copied),
+            to_dir
+        ),
+        Work::Copy {
+            moving: true,
+            to_dir,
+            ..
+        } if r.moved > 0 => {
+            let items = format!(
+                "{} {}",
+                r.moved,
+                if r.moved == 1 { "item" } else { "items" }
+            );
+            let files = if r.copied > 0 {
+                format!(" and {}", n(r.copied))
+            } else {
+                String::new()
+            };
             format!("Moved {items}{files} to {to_dir}.")
         }
-        Work::Copy { moving, to_dir, .. } => format!("{} {} to {}.", if *moving { "Moved" } else { "Copied" }, n(r.copied), to_dir),
-        Work::Sync { from_dir, to_dir, .. } => {
-            let removed = if r.removed > 0 { format!(", removed {} {}", r.removed, if r.removed == 1 { "item" } else { "items" }) } else { String::new() };
-            format!("Synced {} into {}: copied {}{removed}.", base(from_dir), to_dir, n(r.copied))
+        Work::Copy { moving, to_dir, .. } => format!(
+            "{} {} to {}.",
+            if *moving { "Moved" } else { "Copied" },
+            n(r.copied),
+            to_dir
+        ),
+        Work::Sync {
+            from_dir, to_dir, ..
+        } => {
+            let removed = if r.removed > 0 {
+                format!(
+                    ", removed {} {}",
+                    r.removed,
+                    if r.removed == 1 { "item" } else { "items" }
+                )
+            } else {
+                String::new()
+            };
+            format!(
+                "Synced {} into {}: copied {}{removed}.",
+                base(from_dir),
+                to_dir,
+                n(r.copied)
+            )
         }
-        Work::Import { to_dir, moving, .. } => format!("{} {} into {}.", if *moving { "Imported and removed" } else { "Imported" }, n(r.copied), to_dir),
+        Work::Import { to_dir, moving, .. } => format!(
+            "{} {} into {}.",
+            if *moving {
+                "Imported and removed"
+            } else {
+                "Imported"
+            },
+            n(r.copied),
+            to_dir
+        ),
     }];
     if matches!(work, Work::Sync { .. }) && (!r.backups.is_empty() || r.removed > 0) {
-        lines.push(format!("What was replaced or removed is in Backups on {}.", crate::os::the_computer()));
+        lines.push(format!(
+            "What was replaced or removed is in Backups on {}.",
+            crate::os::the_computer()
+        ));
     }
-    let moving = matches!(work, Work::Copy { moving: true, .. } | Work::Import { moving: true, .. });
+    let moving = matches!(
+        work,
+        Work::Copy { moving: true, .. } | Work::Import { moving: true, .. }
+    );
     if r.already > 0 {
-        lines.push(format!("{} already there from before{}.", n(r.already), if moving { "; their originals were kept" } else { "" }));
+        lines.push(format!(
+            "{} already there from before{}.",
+            n(r.already),
+            if moving {
+                "; their originals were kept"
+            } else {
+                ""
+            }
+        ));
     }
     if r.cancelled {
         lines.push("Cancelled: the rest wasn't copied.".into());
     }
     if moving && !r.backups.is_empty() {
-        lines.push(format!("The originals are backed up on {}.", crate::os::the_computer()));
+        lines.push(format!(
+            "The originals are backed up on {}.",
+            crate::os::the_computer()
+        ));
     }
     let shown = 5;
     for (name, why) in r.skipped.iter().take(shown) {
@@ -371,7 +633,13 @@ fn report_lines(work: &Work, r: &TransferReport) -> Vec<String> {
 /// A job in a few words: "Copy 3 items to Download".
 fn job_title(w: &Work) -> String {
     match w {
-        Work::Copy { items, to_dir, moving, replace, .. } => {
+        Work::Copy {
+            items,
+            to_dir,
+            moving,
+            replace,
+            ..
+        } => {
             let what = match items.as_slice() {
                 [one] => base(one),
                 many => format!("{} items", many.len()),
@@ -379,9 +647,18 @@ fn job_title(w: &Work) -> String {
             if *replace {
                 return format!("Replace {what} in {}", base(to_dir));
             }
-            format!("{} {what} to {}", if *moving { "Move" } else { "Copy" }, base(to_dir))
+            format!(
+                "{} {what} to {}",
+                if *moving { "Move" } else { "Copy" },
+                base(to_dir)
+            )
         }
-        Work::Sync { from_dir, to_dir, mode, .. } => {
+        Work::Sync {
+            from_dir,
+            to_dir,
+            mode,
+            ..
+        } => {
             let verb = match mode.as_str() {
                 "update" => "Update",
                 "mirror" => "Mirror",
@@ -389,7 +666,13 @@ fn job_title(w: &Work) -> String {
             };
             format!("{verb} {} into {}", base(from_dir), base(to_dir))
         }
-        Work::Import { from_dir, to_dir, .. } => format!("Import photos from {} into {}", base(from_dir), base(to_dir)),
+        Work::Import {
+            from_dir, to_dir, ..
+        } => format!(
+            "Import photos from {} into {}",
+            base(from_dir),
+            base(to_dir)
+        ),
     }
 }
 

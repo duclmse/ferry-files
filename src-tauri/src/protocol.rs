@@ -18,10 +18,17 @@ use tauri::http::{Request, Response, StatusCode};
 use tauri::AppHandle;
 
 /// Keep these unescaped in path segments; everything else is percent-encoded.
-const SEGMENT: &AsciiSet = &NON_ALPHANUMERIC.remove(b'-').remove(b'_').remove(b'.').remove(b'~');
+const SEGMENT: &AsciiSet = &NON_ALPHANUMERIC
+    .remove(b'-')
+    .remove(b'_')
+    .remove(b'.')
+    .remove(b'~');
 
 fn encode_path(p: &str) -> String {
-    p.split('/').map(|s| utf8_percent_encode(s, SEGMENT).to_string()).collect::<Vec<_>>().join("/")
+    p.split('/')
+        .map(|s| utf8_percent_encode(s, SEGMENT).to_string())
+        .collect::<Vec<_>>()
+        .join("/")
 }
 
 use crate::platform::SCHEME_ORIGIN as ORIGIN;
@@ -41,7 +48,12 @@ pub fn book_base(id: u32, chapter: &str) -> String {
 /// book, under a path naming the book, so its relative links are files in the same book.
 pub fn inzip_base(src: &str, size: u64, zip: &str, chapter: &str) -> String {
     let dir = chapter.rfind('/').map_or("", |k| &chapter[..=k]);
-    format!("{ORIGIN}/inzip/{}/{size}/{}/{}", utf8_percent_encode(src, SEGMENT), utf8_percent_encode(zip, SEGMENT), encode_path(dir))
+    format!(
+        "{ORIGIN}/inzip/{}/{size}/{}/{}",
+        utf8_percent_encode(src, SEGMENT),
+        utf8_percent_encode(zip, SEGMENT),
+        encode_path(dir)
+    )
 }
 
 fn respond(status: StatusCode, ctype: &str, body: Vec<u8>) -> Response<Vec<u8>> {
@@ -62,23 +74,48 @@ fn respond_with(status: StatusCode, ctype: &str, cache: &str, body: Vec<u8>) -> 
 pub fn handle(app: &AppHandle, req: Request<Vec<u8>>) -> Response<Vec<u8>> {
     let not_found = || respond(StatusCode::NOT_FOUND, "text/plain", b"Not found.".to_vec());
     if req.method() != "GET" {
-        return respond(StatusCode::METHOD_NOT_ALLOWED, "text/plain", b"Method not allowed.".to_vec());
+        return respond(
+            StatusCode::METHOD_NOT_ALLOWED,
+            "text/plain",
+            b"Method not allowed.".to_vec(),
+        );
     }
     let path = req.uri().path().to_string();
     if path == "/thumb" {
         return thumb(app, req.uri().query().unwrap_or(""));
     }
     if path == "/zipped" {
-        let range = req.headers().get("range").and_then(|v| v.to_str().ok()).map(str::to_string);
+        let range = req
+            .headers()
+            .get("range")
+            .and_then(|v| v.to_str().ok())
+            .map(str::to_string);
         return zipped(app, req.uri().query().unwrap_or(""), range.as_deref());
     }
     if let Some(rest) = path.strip_prefix("/inzip/") {
-        let range = req.headers().get("range").and_then(|v| v.to_str().ok()).map(str::to_string);
+        let range = req
+            .headers()
+            .get("range")
+            .and_then(|v| v.to_str().ok())
+            .map(str::to_string);
         let part = |s: &str| percent_decode_str(s).decode_utf8_lossy().into_owned();
         let mut it = rest.splitn(4, '/');
-        let (Some(src), Some(size), Some(zip), Some(name)) = (it.next(), it.next(), it.next(), it.next()) else { return not_found() };
-        let Ok(size) = size.parse::<u64>() else { return not_found() };
-        return zipped_at(app, &part(zip), &part(src), size, &part(name), range.as_deref());
+        let (Some(src), Some(size), Some(zip), Some(name)) =
+            (it.next(), it.next(), it.next(), it.next())
+        else {
+            return not_found();
+        };
+        let Ok(size) = size.parse::<u64>() else {
+            return not_found();
+        };
+        return zipped_at(
+            app,
+            &part(zip),
+            &part(src),
+            size,
+            &part(name),
+            range.as_deref(),
+        );
     }
     if path == "/fit" {
         return fit(app, req.uri().query().unwrap_or(""));
@@ -90,16 +127,28 @@ pub fn handle(app: &AppHandle, req: Request<Vec<u8>>) -> Response<Vec<u8>> {
         return pdf_page(app, req.uri().query().unwrap_or(""));
     }
     if path == "/file" {
-        let range = req.headers().get("range").and_then(|v| v.to_str().ok()).map(str::to_string);
+        let range = req
+            .headers()
+            .get("range")
+            .and_then(|v| v.to_str().ok())
+            .map(str::to_string);
         return file(app, req.uri().query().unwrap_or(""), range.as_deref());
     }
-    let Some(rest) = path.strip_prefix("/book/") else { return not_found() };
-    let Some((id, file)) = rest.split_once('/') else { return not_found() };
-    let Ok(id) = id.parse::<u32>() else { return not_found() };
+    let Some(rest) = path.strip_prefix("/book/") else {
+        return not_found();
+    };
+    let Some((id, file)) = rest.split_once('/') else {
+        return not_found();
+    };
+    let Ok(id) = id.parse::<u32>() else {
+        return not_found();
+    };
     let file = percent_decode_str(file).decode_utf8_lossy().into_owned();
     let state = crate::state(app);
     let books = state.books.lock().unwrap_or_else(|e| e.into_inner());
-    let Some(book) = books.get(&id) else { return not_found() };
+    let Some(book) = books.get(&id) else {
+        return not_found();
+    };
     match book.file(&file) {
         Some(data) => respond(StatusCode::OK, &book.media_type(&file), data.to_vec()),
         None => not_found(),
@@ -117,7 +166,11 @@ fn thumb_response(t: Thumb) -> Response<Vec<u8>> {
     match t {
         // The URL changes when the file does (size and mtime are in it), so the webview may keep it.
         Thumb::Image(data, mime) => respond_with(StatusCode::OK, mime, "max-age=86400", data),
-        Thumb::None => respond(StatusCode::NOT_FOUND, "text/plain", b"No thumbnail.".to_vec()),
+        Thumb::None => respond(
+            StatusCode::NOT_FOUND,
+            "text/plain",
+            b"No thumbnail.".to_vec(),
+        ),
     }
 }
 
@@ -125,11 +178,25 @@ fn thumb_response(t: Thumb) -> Response<Vec<u8>> {
 /// the user's own actions, and requests for a folder no pane shows any more are dropped instead of
 /// read. Mac files are quick to read, so their thumbnails skip both.
 fn thumb(app: &AppHandle, q: &str) -> Response<Vec<u8>> {
-    let bad = || respond(StatusCode::BAD_REQUEST, "text/plain", b"Bad thumbnail request.".to_vec());
-    let Some(path) = query_param(q, "p") else { return bad() };
-    let Some(size) = query_param(q, "s").and_then(|s| s.parse::<u64>().ok()) else { return bad() };
-    let Some(mtime) = query_param(q, "m").and_then(|s| s.parse::<i64>().ok()) else { return bad() };
-    let Some(src) = query_param(q, "src") else { return bad() };
+    let bad = || {
+        respond(
+            StatusCode::BAD_REQUEST,
+            "text/plain",
+            b"Bad thumbnail request.".to_vec(),
+        )
+    };
+    let Some(path) = query_param(q, "p") else {
+        return bad();
+    };
+    let Some(size) = query_param(q, "s").and_then(|s| s.parse::<u64>().ok()) else {
+        return bad();
+    };
+    let Some(mtime) = query_param(q, "m").and_then(|s| s.parse::<i64>().ok()) else {
+        return bad();
+    };
+    let Some(src) = query_param(q, "src") else {
+        return bad();
+    };
     let state = crate::state(app);
     let dev = match state.source(Some(&src)) {
         Ok(d) => d,
@@ -137,7 +204,11 @@ fn thumb(app: &AppHandle, q: &str) -> Response<Vec<u8>> {
     };
     let phone = src != "mac";
     // The cache key names the device rather than its id, which changes on every connection.
-    let key = if phone { format!("{}:{}", dev.kind(), dev.label()) } else { "mac".to_string() };
+    let key = if phone {
+        format!("{}:{}", dev.kind(), dev.label())
+    } else {
+        "mac".to_string()
+    };
     if let Some(t) = thumbs::cached(&key, &path, size, mtime) {
         return thumb_response(t);
     }
@@ -147,58 +218,123 @@ fn thumb(app: &AppHandle, q: &str) -> Response<Vec<u8>> {
             return thumb_response(t);
         }
         if !state.is_viewing(&src, &crate::device::dirname(&path)) {
-            return respond(StatusCode::SERVICE_UNAVAILABLE, "text/plain", b"Folder no longer shown.".to_vec());
+            return respond(
+                StatusCode::SERVICE_UNAVAILABLE,
+                "text/plain",
+                b"Folder no longer shown.".to_vec(),
+            );
         }
     }
     let made = thumbs::make(&key, &dev, &path, size, mtime);
     match made {
         Ok(t) => thumb_response(t),
-        Err(e) => respond(StatusCode::INTERNAL_SERVER_ERROR, "text/plain", e.into_bytes()),
+        Err(e) => respond(
+            StatusCode::INTERNAL_SERVER_ERROR,
+            "text/plain",
+            e.into_bytes(),
+        ),
     }
 }
 
 /// A photo for the preview: shrunk (and cached) when it's big, otherwise the file itself.
 fn fit(app: &AppHandle, q: &str) -> Response<Vec<u8>> {
-    let bad = || respond(StatusCode::BAD_REQUEST, "text/plain", b"Bad request.".to_vec());
-    let (Some(path), Some(src)) = (query_param(q, "p"), query_param(q, "src")) else { return bad() };
-    let Some(size) = query_param(q, "s").and_then(|s| s.parse::<u64>().ok()) else { return bad() };
-    let Some(mtime) = query_param(q, "m").and_then(|s| s.parse::<i64>().ok()) else { return bad() };
+    let bad = || {
+        respond(
+            StatusCode::BAD_REQUEST,
+            "text/plain",
+            b"Bad request.".to_vec(),
+        )
+    };
+    let (Some(path), Some(src)) = (query_param(q, "p"), query_param(q, "src")) else {
+        return bad();
+    };
+    let Some(size) = query_param(q, "s").and_then(|s| s.parse::<u64>().ok()) else {
+        return bad();
+    };
+    let Some(mtime) = query_param(q, "m").and_then(|s| s.parse::<i64>().ok()) else {
+        return bad();
+    };
     let dev = match crate::state(app).source(Some(&src)) {
         Ok(d) => d,
         Err(e) => return respond(StatusCode::NOT_FOUND, "text/plain", e.into_bytes()),
     };
-    let key = if src != "mac" { format!("{}:{}", dev.kind(), dev.label()) } else { "mac".to_string() };
+    let key = if src != "mac" {
+        format!("{}:{}", dev.kind(), dev.label())
+    } else {
+        "mac".to_string()
+    };
     match thumbs::fitted(&key, &dev, &path, size, mtime) {
         Ok(thumbs::Fitted::Smaller(data, mime)) => respond(StatusCode::OK, mime, data),
         Ok(thumbs::Fitted::Original(data)) => respond(StatusCode::OK, media_type(&path), data),
-        Err(e) => respond(StatusCode::INTERNAL_SERVER_ERROR, "text/plain", e.into_bytes()),
+        Err(e) => respond(
+            StatusCode::INTERNAL_SERVER_ERROR,
+            "text/plain",
+            e.into_bytes(),
+        ),
     }
 }
 
 /// A file packed in a ZIP (`e`, its name in it), unpacked whole, then sent in the parts asked
 /// for, as `file` does.
 fn zipped(app: &AppHandle, q: &str, range: Option<&str>) -> Response<Vec<u8>> {
-    let bad = || respond(StatusCode::BAD_REQUEST, "text/plain", b"Bad request.".to_vec());
-    let (Some(path), Some(src), Some(name)) = (query_param(q, "p"), query_param(q, "src"), query_param(q, "e")) else { return bad() };
-    let Some(size) = query_param(q, "s").and_then(|s| s.parse::<u64>().ok()) else { return bad() };
+    let bad = || {
+        respond(
+            StatusCode::BAD_REQUEST,
+            "text/plain",
+            b"Bad request.".to_vec(),
+        )
+    };
+    let (Some(path), Some(src), Some(name)) = (
+        query_param(q, "p"),
+        query_param(q, "src"),
+        query_param(q, "e"),
+    ) else {
+        return bad();
+    };
+    let Some(size) = query_param(q, "s").and_then(|s| s.parse::<u64>().ok()) else {
+        return bad();
+    };
     zipped_at(app, &path, &src, size, &name, range)
 }
 
 /// The file `name` packed in the ZIP at `path` (`size` bytes) on `src`.
-fn zipped_at(app: &AppHandle, path: &str, src: &str, size: u64, name: &str, range: Option<&str>) -> Response<Vec<u8>> {
+fn zipped_at(
+    app: &AppHandle,
+    path: &str,
+    src: &str,
+    size: u64,
+    name: &str,
+    range: Option<&str>,
+) -> Response<Vec<u8>> {
     let dev = match crate::state(app).source(Some(src)) {
         Ok(d) => d,
         Err(e) => return respond(StatusCode::NOT_FOUND, "text/plain", e.into_bytes()),
     };
     // Stored as it is (videos usually are): read the range from the ZIP itself.
     match crate::files::stored_span(&dev, path, size, name) {
-        Ok(Some((at, len))) => return ranged(len, media_type(name), range, |start, n| dev.read_range(path, at + start, n)),
+        Ok(Some((at, len))) => {
+            return ranged(len, media_type(name), range, |start, n| {
+                dev.read_range(path, at + start, n)
+            })
+        }
         Ok(None) => {}
-        Err(e) => return respond(StatusCode::INTERNAL_SERVER_ERROR, "text/plain", e.into_bytes()),
+        Err(e) => {
+            return respond(
+                StatusCode::INTERNAL_SERVER_ERROR,
+                "text/plain",
+                e.into_bytes(),
+            )
+        }
     }
     let data = match crate::files::unpacked(&dev, path, size, name) {
         Ok(d) => d,
-        Err(e) => return respond(StatusCode::INTERNAL_SERVER_ERROR, "text/plain", e.into_bytes()),
+        Err(e) => {
+            return respond(
+                StatusCode::INTERNAL_SERVER_ERROR,
+                "text/plain",
+                e.into_bytes(),
+            )
+        }
     };
     let len = data.len() as u64;
     let base = || {
@@ -209,7 +345,10 @@ fn zipped_at(app: &AppHandle, path: &str, src: &str, size: u64, name: &str, rang
             .header("Access-Control-Allow-Origin", "*")
     };
     let body = match range.and_then(|h| parse_range(h, len)) {
-        Some(Err(())) => base().status(StatusCode::RANGE_NOT_SATISFIABLE).header("Content-Range", format!("bytes */{len}")).body(vec![]),
+        Some(Err(())) => base()
+            .status(StatusCode::RANGE_NOT_SATISFIABLE)
+            .header("Content-Range", format!("bytes */{len}"))
+            .body(vec![]),
         Some(Ok((start, end))) => base()
             .status(StatusCode::PARTIAL_CONTENT)
             .header("Content-Range", format!("bytes {start}-{end}/{len}"))
@@ -223,22 +362,34 @@ fn zipped_at(app: &AppHandle, path: &str, src: &str, size: u64, name: &str, rang
 /// the book is that file packed in the ZIP at `p`, unpacked whole first.
 fn cover(app: &AppHandle, q: &str) -> Response<Vec<u8>> {
     let (Some(path), Some(src)) = (query_param(q, "p"), query_param(q, "src")) else {
-        return respond(StatusCode::BAD_REQUEST, "text/plain", b"Bad cover request.".to_vec());
+        return respond(
+            StatusCode::BAD_REQUEST,
+            "text/plain",
+            b"Bad cover request.".to_vec(),
+        );
     };
-    let size = query_param(q, "s").and_then(|s| s.parse::<u64>().ok()).unwrap_or(u64::MAX);
+    let size = query_param(q, "s")
+        .and_then(|s| s.parse::<u64>().ok())
+        .unwrap_or(u64::MAX);
     let dev = match crate::state(app).source(Some(&src)) {
         Ok(d) => d,
         Err(e) => return respond(StatusCode::NOT_FOUND, "text/plain", e.into_bytes()),
     };
     let found = match query_param(q, "e") {
-        Some(name) => crate::files::unpacked(&dev, &path, size, &name).map(|d| thumbs::cover_in(&d, &name)),
+        Some(name) => {
+            crate::files::unpacked(&dev, &path, size, &name).map(|d| thumbs::cover_in(&d, &name))
+        }
         None => thumbs::cover(&dev, &path, size),
     };
     match found {
         // Size and mtime are in the URL, so it changes when the book does.
         Ok(Some((data, mime))) => respond_with(StatusCode::OK, &mime, "max-age=86400", data),
         Ok(None) => respond(StatusCode::NOT_FOUND, "text/plain", b"No cover.".to_vec()),
-        Err(e) => respond(StatusCode::INTERNAL_SERVER_ERROR, "text/plain", e.into_bytes()),
+        Err(e) => respond(
+            StatusCode::INTERNAL_SERVER_ERROR,
+            "text/plain",
+            e.into_bytes(),
+        ),
     }
 }
 
@@ -246,33 +397,62 @@ fn cover(app: &AppHandle, q: &str) -> Response<Vec<u8>> {
 /// in those pixels), only that piece of it. With `e`, the PDF is that file packed in the ZIP at
 /// `p` (`z` bytes); `s` and `m` are then the PDF's own.
 fn pdf_page(app: &AppHandle, q: &str) -> Response<Vec<u8>> {
-    let bad = || respond(StatusCode::BAD_REQUEST, "text/plain", b"Bad page request.".to_vec());
-    let (Some(path), Some(src)) = (query_param(q, "p"), query_param(q, "src")) else { return bad() };
+    let bad = || {
+        respond(
+            StatusCode::BAD_REQUEST,
+            "text/plain",
+            b"Bad page request.".to_vec(),
+        )
+    };
+    let (Some(path), Some(src)) = (query_param(q, "p"), query_param(q, "src")) else {
+        return bad();
+    };
     let num = |k: &str| query_param(q, k).and_then(|s| s.parse::<u64>().ok());
-    let (Some(size), Some(n), Some(w)) = (num("s"), num("n"), num("w")) else { return bad() };
-    let Some(mtime) = query_param(q, "m").and_then(|s| s.parse::<i64>().ok()) else { return bad() };
+    let (Some(size), Some(n), Some(w)) = (num("s"), num("n"), num("w")) else {
+        return bad();
+    };
+    let Some(mtime) = query_param(q, "m").and_then(|s| s.parse::<i64>().ok()) else {
+        return bad();
+    };
     let (inner, zip_size) = (query_param(q, "e"), num("z"));
     let tile = match query_param(q, "t") {
         None => None,
         Some(t) => {
             let v: Vec<u32> = t.split(',').filter_map(|x| x.parse().ok()).collect();
-            let Ok(t) = <[u32; 4]>::try_from(v) else { return bad() };
+            let Ok(t) = <[u32; 4]>::try_from(v) else {
+                return bad();
+            };
             Some(t)
         }
     };
     if crate::preview::pdfium::pdfium().is_none() {
-        return respond(StatusCode::NOT_FOUND, "text/plain", b"PDFium isn't there.".to_vec());
+        return respond(
+            StatusCode::NOT_FOUND,
+            "text/plain",
+            b"PDFium isn't there.".to_vec(),
+        );
     }
     let dev = match crate::state(app).source(Some(&src)) {
         Ok(d) => d,
         Err(e) => return respond(StatusCode::NOT_FOUND, "text/plain", e.into_bytes()),
     };
     let drawn = crate::files::pdf_doc(&dev, &src, &path, size, mtime, inner.as_deref(), zip_size)
-        .and_then(|doc| crate::preview::pdfium::render(&doc, (n as usize).saturating_sub(1), w.min(u32::MAX as u64) as u32, tile));
+        .and_then(|doc| {
+            crate::preview::pdfium::render(
+                &doc,
+                (n as usize).saturating_sub(1),
+                w.min(u32::MAX as u64) as u32,
+                tile,
+            )
+        });
     match drawn {
         // Kept by the preview while shown, not by the web view: each is megabytes of pixels.
         Ok(px) => respond(StatusCode::OK, "application/octet-stream", px),
-        Err(e) => respond(StatusCode::INTERNAL_SERVER_ERROR, "text/plain", e.into_bytes()),
+        Err(e) => respond(
+            StatusCode::INTERNAL_SERVER_ERROR,
+            "text/plain",
+            e.into_bytes(),
+        ),
     }
 }
 
@@ -294,7 +474,10 @@ fn parse_range(h: &str, size: u64) -> Option<std::result::Result<(u64, u64), ()>
             (size.saturating_sub(n), size.saturating_sub(1))
         }
         (a, "") => (a.parse().ok()?, size.saturating_sub(1)),
-        (a, b) => (a.parse().ok()?, b.parse::<u64>().ok()?.min(size.saturating_sub(1))),
+        (a, b) => (
+            a.parse().ok()?,
+            b.parse::<u64>().ok()?.min(size.saturating_sub(1)),
+        ),
     };
     if size == 0 || start >= size || end < start {
         return Some(Err(()));
@@ -303,7 +486,10 @@ fn parse_range(h: &str, size: u64) -> Option<std::result::Result<(u64, u64), ()>
 }
 
 fn media_type(path: &str) -> &'static str {
-    let ext = path.rsplit_once('.').map(|(_, e)| e.to_ascii_lowercase()).unwrap_or_default();
+    let ext = path
+        .rsplit_once('.')
+        .map(|(_, e)| e.to_ascii_lowercase())
+        .unwrap_or_default();
     match ext.as_str() {
         "jpg" | "jpeg" => "image/jpeg",
         "png" => "image/png",
@@ -332,21 +518,46 @@ fn media_type(path: &str) -> &'static str {
 }
 
 fn file(app: &AppHandle, q: &str, range: Option<&str>) -> Response<Vec<u8>> {
-    let bad = || respond(StatusCode::BAD_REQUEST, "text/plain", b"Bad file request.".to_vec());
-    let Some(path) = query_param(q, "p") else { return bad() };
-    let Some(size) = query_param(q, "s").and_then(|s| s.parse::<u64>().ok()) else { return bad() };
-    let Some(src) = query_param(q, "src") else { return bad() };
+    let bad = || {
+        respond(
+            StatusCode::BAD_REQUEST,
+            "text/plain",
+            b"Bad file request.".to_vec(),
+        )
+    };
+    let Some(path) = query_param(q, "p") else {
+        return bad();
+    };
+    let Some(size) = query_param(q, "s").and_then(|s| s.parse::<u64>().ok()) else {
+        return bad();
+    };
+    let Some(src) = query_param(q, "src") else {
+        return bad();
+    };
     let dev = match crate::state(app).source(Some(&src)) {
         Ok(d) => d,
         Err(e) => return respond(StatusCode::NOT_FOUND, "text/plain", e.into_bytes()),
     };
-    ranged(size, media_type(&path), range, |start, n| dev.read_range(&path, start, n))
+    ranged(size, media_type(&path), range, |start, n| {
+        dev.read_range(&path, start, n)
+    })
 }
 
 /// A file of `size` bytes, read through `read(start, len)`: the range asked for (at most CHUNK), or
 /// the whole file when no range is asked for and it's small enough.
-fn ranged(size: u64, ctype: &str, range: Option<&str>, read: impl Fn(u64, u64) -> crate::device::Result<Vec<u8>>) -> Response<Vec<u8>> {
-    let fail = |e: crate::device::DevError| respond(StatusCode::INTERNAL_SERVER_ERROR, "text/plain", e.to_string().into_bytes());
+fn ranged(
+    size: u64,
+    ctype: &str,
+    range: Option<&str>,
+    read: impl Fn(u64, u64) -> crate::device::Result<Vec<u8>>,
+) -> Response<Vec<u8>> {
+    let fail = |e: crate::device::DevError| {
+        respond(
+            StatusCode::INTERNAL_SERVER_ERROR,
+            "text/plain",
+            e.to_string().into_bytes(),
+        )
+    };
     let base = || {
         Response::builder()
             .header("Content-Type", ctype)
@@ -378,9 +589,16 @@ fn ranged(size: u64, ctype: &str, range: Option<&str>, read: impl Fn(u64, u64) -
                 .unwrap_or_else(|_| Response::new(Vec::new())),
             Err(e) => fail(e),
         },
-        None if size > WHOLE_MAX => respond(StatusCode::PAYLOAD_TOO_LARGE, "text/plain", b"Too big to show whole.".to_vec()),
+        None if size > WHOLE_MAX => respond(
+            StatusCode::PAYLOAD_TOO_LARGE,
+            "text/plain",
+            b"Too big to show whole.".to_vec(),
+        ),
         None => match read(0, size) {
-            Ok(data) => base().status(StatusCode::OK).body(data).unwrap_or_else(|_| Response::new(Vec::new())),
+            Ok(data) => base()
+                .status(StatusCode::OK)
+                .body(data)
+                .unwrap_or_else(|_| Response::new(Vec::new())),
             Err(e) => fail(e),
         },
     }
@@ -392,14 +610,32 @@ mod tests {
 
     #[test]
     fn book_urls_use_the_web_views_address() {
-        let at = if cfg!(windows) { "http://ferry.localhost" } else { "ferry://localhost" };
-        assert_eq!(super::book_url(3, "OEBPS/a b.png", 7), format!("{at}/book/3/OEBPS/a%20b.png?v=7"));
-        assert_eq!(super::book_base(3, "OEBPS/text/ch1.xhtml"), format!("{at}/book/3/OEBPS/text/"));
+        let at = if cfg!(windows) {
+            "http://ferry.localhost"
+        } else {
+            "ferry://localhost"
+        };
         assert_eq!(
-            super::inzip_base("adb:R5C", 99, "/sdcard/My Books/a.epub", "OEBPS/text/ch1.xhtml"),
+            super::book_url(3, "OEBPS/a b.png", 7),
+            format!("{at}/book/3/OEBPS/a%20b.png?v=7")
+        );
+        assert_eq!(
+            super::book_base(3, "OEBPS/text/ch1.xhtml"),
+            format!("{at}/book/3/OEBPS/text/")
+        );
+        assert_eq!(
+            super::inzip_base(
+                "adb:R5C",
+                99,
+                "/sdcard/My Books/a.epub",
+                "OEBPS/text/ch1.xhtml"
+            ),
             format!("{at}/inzip/adb%3AR5C/99/%2Fsdcard%2FMy%20Books%2Fa.epub/OEBPS/text/")
         );
-        assert_eq!(super::inzip_base("mac", 1, "/b.epub", "ch1.xhtml"), format!("{at}/inzip/mac/1/%2Fb.epub/"));
+        assert_eq!(
+            super::inzip_base("mac", 1, "/b.epub", "ch1.xhtml"),
+            format!("{at}/inzip/mac/1/%2Fb.epub/")
+        );
     }
 
     #[test]
@@ -409,7 +645,10 @@ mod tests {
         assert_eq!(parse_range("bytes=-10", 100), Some(Ok((90, 99))));
         assert_eq!(parse_range("bytes=50-500", 100), Some(Ok((50, 99))));
         assert_eq!(parse_range("bytes=100-", 100), Some(Err(())));
-        assert_eq!(parse_range("bytes=0-", 10 * CHUNK), Some(Ok((0, CHUNK - 1))));
+        assert_eq!(
+            parse_range("bytes=0-", 10 * CHUNK),
+            Some(Ok((0, CHUNK - 1)))
+        );
         assert_eq!(parse_range("items=0-1", 100), None);
         assert_eq!(parse_range("bytes=x-1", 100), None);
     }

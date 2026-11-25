@@ -17,7 +17,13 @@ impl Ctx {
     /// Lists `path` on `src` (`more` are added to the arguments): all of it, or on a read-only
     /// server the first page in `sort` order, sorted by the server. With the folder's total
     /// when it's listed a page at a time.
-    pub(super) async fn list_first(self, src: Src, path: &str, sort: Sort, more: serde_json::Value) -> Result<(Vec<Entry>, Option<u64>), String> {
+    pub(super) async fn list_first(
+        self,
+        src: Src,
+        path: &str,
+        sort: Sort,
+        more: serde_json::Value,
+    ) -> Result<(Vec<Entry>, Option<u64>), String> {
         let mut args = json!({ "src": src.key(), "path": path });
         if let (Some(a), serde_json::Value::Object(m)) = (args.as_object_mut(), more) {
             a.extend(m);
@@ -29,7 +35,9 @@ impl Ctx {
         args["count"] = json!(PAGE);
         args["sort"] = json!(sort.0.key());
         args["asc"] = json!(sort.1);
-        call::<Page>("list_page", args).await.map(|pg| (pg.entries, Some(pg.total)))
+        call::<Page>("list_page", args)
+            .await
+            .map(|pg| (pg.entries, Some(pg.total)))
     }
 
     /// Loads the next page of pane `p`'s folder, when it was listed a page at a time and has more.
@@ -37,7 +45,12 @@ impl Ctx {
         if !p.more.get_untracked() || p.loading_more.get_untracked() || p.loading.get_untracked() {
             return;
         }
-        let (src, path, seq, offset) = (p.src.get_untracked(), p.cwd.get_untracked(), p.load_seq.get_value(), p.got.get_value());
+        let (src, path, seq, offset) = (
+            p.src.get_untracked(),
+            p.cwd.get_untracked(),
+            p.load_seq.get_value(),
+            p.got.get_value(),
+        );
         let Sort(key, asc) = p.sort.get_untracked();
         p.loading_more.set(true);
         spawn_local(async move {
@@ -45,11 +58,17 @@ impl Ctx {
             let listed = call::<Page>("list_page", args).await;
             p.loading_more.set(false);
             // Went somewhere else meanwhile.
-            if p.load_seq.get_value() != seq || p.src.get_untracked() != src || p.cwd.get_untracked() != path {
+            if p.load_seq.get_value() != seq
+                || p.src.get_untracked() != src
+                || p.cwd.get_untracked() != path
+            {
                 return;
             }
             match listed {
-                Ok(Page { entries: page, total }) => {
+                Ok(Page {
+                    entries: page,
+                    total,
+                }) => {
                     let got = offset + page.len();
                     p.more.set(!page.is_empty() && (got as u64) < total);
                     p.got.set_value(got);
@@ -79,13 +98,22 @@ impl Ctx {
     }
 
     /// Like `load_select`, but if `path` can't be listed, lists `fallback` instead.
-    pub(super) fn load_or(self, p: Pane, src: Src, path: String, select: Option<String>, fallback: Option<String>) {
+    pub(super) fn load_or(
+        self,
+        p: Pane,
+        src: Src,
+        path: String,
+        select: Option<String>,
+        fallback: Option<String>,
+    ) {
         p.loading.set(true);
         let seq = p.load_seq.with_value(|n| n + 1);
         p.load_seq.set_value(seq);
         p.going_to.set_value(Some((src, path.clone())));
         spawn_local(async move {
-            let listed = self.list_first(src, &path, p.sort.get_untracked(), json!({ "pane": p.id })).await;
+            let listed = self
+                .list_first(src, &path, p.sort.get_untracked(), json!({ "pane": p.id }))
+                .await;
             // A newer listing was asked for meanwhile: it decides what the pane shows (and
             // clears `loading`), so this one changes nothing.
             if p.load_seq.get_value() != seq {
@@ -94,7 +122,8 @@ impl Ctx {
             p.going_to.set_value(None);
             match listed {
                 Ok((entries, total)) => {
-                    p.more.set(total.is_some_and(|t| (entries.len() as u64) < t));
+                    p.more
+                        .set(total.is_some_and(|t| (entries.len() as u64) < t));
                     p.got.set_value(entries.len());
                     p.total.set(total.unwrap_or(entries.len() as u64));
                     let mut entries = self.visible(entries);
@@ -186,15 +215,22 @@ impl Ctx {
     pub(super) fn place_key(self, src: Src) -> String {
         match src {
             Src::Mac => "mac".into(),
-            _ => self.src_info(src).map_or_else(String::new, |i| format!("{}:{}", i.transport, i.label)),
+            _ => self
+                .src_info(src)
+                .map_or_else(String::new, |i| format!("{}:{}", i.transport, i.label)),
         }
     }
 
     /// Shows `src` in pane `p`, in the folder the pane last showed there (this session or before),
     /// or its default folder.
     pub(super) fn open_remembered(self, p: Pane, src: Src) {
-        let Some(info) = self.src_info(src) else { return };
-        let path = p.last.with_value(|l| l.get(&src).cloned()).or_else(|| stored(&self.last_key(p, src)));
+        let Some(info) = self.src_info(src) else {
+            return;
+        };
+        let path = p
+            .last
+            .with_value(|l| l.get(&src).cloned())
+            .or_else(|| stored(&self.last_key(p, src)));
         match path {
             Some(path) => self.load_or(p, src, path, None, Some(info.default_dir)),
             None => self.load_select(p, src, info.default_dir, None),
@@ -205,7 +241,11 @@ impl Ctx {
     /// fitting it, with * and ?, or matching it with regex on), with the pane's search filters.
     pub(super) fn find(self, p: Pane) {
         let query = p.filter.get_untracked().trim().to_string();
-        let (k, s, t) = (p.search_kind.get_untracked(), p.search_size.get_untracked(), p.search_time.get_untracked());
+        let (k, s, t) = (
+            p.search_kind.get_untracked(),
+            p.search_size.get_untracked(),
+            p.search_time.get_untracked(),
+        );
         let filtered = k + s + t > 0;
         if query.is_empty() && !filtered {
             return;
@@ -224,9 +264,17 @@ impl Ctx {
         // How the status bar names it: the text, then the filters in use.
         let mut label = vec![];
         if !query.is_empty() {
-            label.push(if p.regex.get_untracked() { format!("/{query}/") } else { format!("“{query}”") });
+            label.push(if p.regex.get_untracked() {
+                format!("/{query}/")
+            } else {
+                format!("“{query}”")
+            });
         }
-        for (i, name) in [(k, SEARCH_KINDS[k].0), (s, SEARCH_SIZES[s].0), (t, SEARCH_TIMES[t].0)] {
+        for (i, name) in [
+            (k, SEARCH_KINDS[k].0),
+            (s, SEARCH_SIZES[s].0),
+            (t, SEARCH_TIMES[t].0),
+        ] {
             if i > 0 {
                 label.push(name.to_lowercase());
             }
@@ -274,7 +322,9 @@ impl Ctx {
         let e = e.clone();
         let src = p.src.get_untracked();
         spawn_local(async move {
-            if let Err(err) = call::<()>("quick_look", json!({ "src": src.key(), "path": e.path })).await {
+            if let Err(err) =
+                call::<()>("quick_look", json!({ "src": src.key(), "path": e.path })).await
+            {
                 p.error(err);
             }
         });
@@ -305,7 +355,8 @@ impl Ctx {
 
     pub(super) fn is_fav(self, src: Src, path: &str) -> bool {
         let place = self.place_key(src);
-        self.favs.with_untracked(|f| f.iter().any(|f| f.place == place && f.path == path))
+        self.favs
+            .with_untracked(|f| f.iter().any(|f| f.place == place && f.path == path))
     }
 
     /// The connected device (or the Mac) a favourite is on.
@@ -313,7 +364,11 @@ impl Ctx {
         if f.place == "mac" {
             return Some(Src::Mac);
         }
-        self.phones.with(|ps| ps.iter().find(|i| format!("{}:{}", i.transport, i.label) == f.place).map(|i| Src::of(&i.id)))
+        self.phones.with(|ps| {
+            ps.iter()
+                .find(|i| format!("{}:{}", i.transport, i.label) == f.place)
+                .map(|i| Src::of(&i.id))
+        })
     }
 
     /// Lists the pane's folder again, keeping the selection. Other folders' listings are dropped too.
@@ -330,7 +385,10 @@ impl Ctx {
     /// A folder renamed from the sidebar: its folder is listed again, and panes and Favourites
     /// in it follow the new name.
     pub(super) fn place_renamed(self, src: Src, old: &str, new: &str) {
-        let moved = |p: &str| (p == old || p.starts_with(&format!("{old}/"))).then(|| format!("{new}{}", &p[old.len()..]));
+        let moved = |p: &str| {
+            (p == old || p.starts_with(&format!("{old}/")))
+                .then(|| format!("{new}{}", &p[old.len()..]))
+        };
         self.log(format!("Renamed {} to {}", base(old), base(new)));
         for q in self.panes {
             if q.src.get_untracked() == src {
@@ -341,7 +399,10 @@ impl Ctx {
         }
         let place = self.place_key(src);
         let favs = self.favs.get_untracked();
-        if favs.iter().any(|f| f.place == place && moved(&f.path).is_some()) {
+        if favs
+            .iter()
+            .any(|f| f.place == place && moved(&f.path).is_some())
+        {
             self.set_favs(
                 favs.into_iter()
                     .map(|mut f| {
@@ -487,9 +548,19 @@ impl Ctx {
         // While a listing is on its way, the tab is where it's going, not the folder still shown.
         let (src, cwd, selected) = match p.going_to.get_value() {
             Some((src, path)) => (src, path, None),
-            None => (p.src.get_untracked(), p.cwd.get_untracked(), p.selected.get_untracked()),
+            None => (
+                p.src.get_untracked(),
+                p.cwd.get_untracked(),
+                p.selected.get_untracked(),
+            ),
         };
-        let here = Tab { src, cwd, selected, view: p.view.get_untracked(), root: p.root.get_untracked() };
+        let here = Tab {
+            src,
+            cwd,
+            selected,
+            view: p.view.get_untracked(),
+            root: p.root.get_untracked(),
+        };
         let i = p.tab.get_untracked();
         p.tabs.update(|ts| {
             if let Some(t) = ts.get_mut(i) {
@@ -506,7 +577,18 @@ impl Ctx {
         self.save_tab(p);
         let at = p.tab.get_untracked() + 1;
         let view = p.view.get_untracked();
-        p.tabs.update(|ts| ts.insert(at, Tab { src, cwd: path.clone(), selected: None, view, root: path.clone() }));
+        p.tabs.update(|ts| {
+            ts.insert(
+                at,
+                Tab {
+                    src,
+                    cwd: path.clone(),
+                    selected: None,
+                    view,
+                    root: path.clone(),
+                },
+            )
+        });
         p.tab.set(at);
         p.reroot.set_value(Some(path.clone()));
         self.load_select(p, src, path, None);
@@ -526,7 +608,10 @@ impl Ctx {
     pub(super) fn step_tab(self, p: Pane, delta: isize) {
         let n = p.tabs.with_untracked(Vec::len) as isize;
         if n > 1 {
-            self.show_tab(p, (p.tab.get_untracked() as isize + delta).rem_euclid(n) as usize);
+            self.show_tab(
+                p,
+                (p.tab.get_untracked() as isize + delta).rem_euclid(n) as usize,
+            );
         }
     }
 
@@ -590,7 +675,9 @@ impl Ctx {
         if i == shown {
             self.save_tab(from);
         }
-        let Some(t) = from.tabs.with_untracked(|ts| ts.get(i).cloned()) else { return };
+        let Some(t) = from.tabs.with_untracked(|ts| ts.get(i).cloned()) else {
+            return;
+        };
         if n == 1 && stored_flag(super::workspace::LAST_TAB_CLOSES_KEY, true) {
             self.close_after_last_tab(t, into, to);
             return;
@@ -624,12 +711,19 @@ impl Ctx {
 
     /// Lists the shown tab's folder. A tab whose device is gone opens the Mac instead.
     pub(super) fn go_to_tab(self, p: Pane) {
-        let Some(t) = p.tabs.with_untracked(|ts| ts.get(p.tab.get_untracked()).cloned()) else { return };
+        let Some(t) = p
+            .tabs
+            .with_untracked(|ts| ts.get(p.tab.get_untracked()).cloned())
+        else {
+            return;
+        };
         p.view.set(t.view);
         p.root.set(t.root);
         p.root_src.set_value(Some(t.src));
         match self.src_info(t.src) {
-            Some(info) if !t.cwd.is_empty() => self.load_or(p, t.src, t.cwd, t.selected, Some(info.default_dir)),
+            Some(info) if !t.cwd.is_empty() => {
+                self.load_or(p, t.src, t.cwd, t.selected, Some(info.default_dir))
+            }
             Some(_) => self.open_remembered(p, t.src),
             None => self.open_remembered(p, Src::Mac),
         }
@@ -638,6 +732,10 @@ impl Ctx {
     /// New files and folders can't go in "/" over MTP: it lists the device's storages. Nor
     /// anywhere on an Everything server.
     pub(super) fn in_storage(self, p: Pane) -> bool {
-        !self.read_only(p.src.get()) && (p.cwd.get() != "/" || self.src_info(p.src.get()).is_some_and(|i| i.transport != "mtp"))
+        !self.read_only(p.src.get())
+            && (p.cwd.get() != "/"
+                || self
+                    .src_info(p.src.get())
+                    .is_some_and(|i| i.transport != "mtp"))
     }
 }

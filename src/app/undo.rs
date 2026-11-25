@@ -7,15 +7,29 @@ use super::*;
 #[derive(Clone)]
 pub(super) enum Undo {
     /// Renamed items: (path now, name before).
-    Renames { src: Src, items: Vec<(String, String)> },
+    Renames {
+        src: Src,
+        items: Vec<(String, String)>,
+    },
     /// A new, empty file or folder.
-    Create { src: Src, path: String, folder: bool },
+    Create {
+        src: Src,
+        path: String,
+        folder: bool,
+    },
     /// Deleted items, in the order they went: (path, was a folder, backup of a file).
-    Delete { src: Src, items: Vec<(String, bool, Option<String>)> },
+    Delete {
+        src: Src,
+        items: Vec<(String, bool, Option<String>)>,
+    },
     /// What a copy made (files, or folders with everything in them).
     Copy { to: Src, made: Vec<String> },
     /// Moved items: (path now, folder they came from).
-    Move { from: Src, to: Src, back: Vec<(String, String)> },
+    Move {
+        from: Src,
+        to: Src,
+        back: Vec<(String, String)>,
+    },
 }
 
 /// An action in the session's history.
@@ -29,7 +43,11 @@ pub(super) struct Op {
 
 /// The file at `path` on `src`, if there is one.
 async fn stat(src: Src, path: &str) -> Result<Option<Entry>, String> {
-    let list = call::<Vec<Entry>>("list", json!({ "src": src.key(), "path": parent(path), "current": false })).await?;
+    let list = call::<Vec<Entry>>(
+        "list",
+        json!({ "src": src.key(), "path": parent(path), "current": false }),
+    )
+    .await?;
     Ok(list.into_iter().find(|e| e.path == path))
 }
 
@@ -41,13 +59,31 @@ impl Ctx {
 
     pub(super) fn push_op(self, text: String, undo: Option<Undo>) {
         let d = js_sys::Date::new_0();
-        let at = format!("{:02}:{:02}:{:02}", d.get_hours(), d.get_minutes(), d.get_seconds());
-        self.history.update(|h| h.push(Op { at, text, undo, undone: false }));
+        let at = format!(
+            "{:02}:{:02}:{:02}",
+            d.get_hours(),
+            d.get_minutes(),
+            d.get_seconds()
+        );
+        self.history.update(|h| {
+            h.push(Op {
+                at,
+                text,
+                undo,
+                undone: false,
+            })
+        });
     }
 
     /// The newest action that can still be undone (its index in `history`).
     pub(super) fn last_undo(self) -> Option<(usize, String)> {
-        self.history.with_untracked(|h| h.iter().enumerate().rev().find(|(_, o)| o.undo.is_some() && !o.undone).map(|(i, o)| (i, o.text.clone())))
+        self.history.with_untracked(|h| {
+            h.iter()
+                .enumerate()
+                .rev()
+                .find(|(_, o)| o.undo.is_some() && !o.undone)
+                .map(|(i, o)| (i, o.text.clone()))
+        })
     }
 
     /// ⌘Z: undoes the newest action that can be, with the result in the active pane.
@@ -61,7 +97,9 @@ impl Ctx {
 
     /// Undoes action `i` of the history; says how it went in pane `p`.
     pub(super) fn undo(self, i: usize, p: Pane) {
-        let Some(op) = self.history.with_untracked(|h| h.get(i).cloned()) else { return };
+        let Some(op) = self.history.with_untracked(|h| h.get(i).cloned()) else {
+            return;
+        };
         let Some(u) = op.undo.clone() else { return };
         if op.undone {
             return;
@@ -90,7 +128,14 @@ impl Ctx {
                         return Err(format!("{} isn't there any more.", base(now)));
                     }
                 }
-                let (back, err) = batch::rename_all(src, items.iter().map(|(now, old)| (now.clone(), old.clone())).collect()).await;
+                let (back, err) = batch::rename_all(
+                    src,
+                    items
+                        .iter()
+                        .map(|(now, old)| (now.clone(), old.clone()))
+                        .collect(),
+                )
+                .await;
                 let mut dirs: Vec<String> = back.iter().map(|(now, _)| parent(now)).collect();
                 dirs.sort();
                 dirs.dedup();
@@ -98,7 +143,11 @@ impl Ctx {
                     self.changed(src, &d);
                 }
                 if let Some(e) = err {
-                    return Err(if back.is_empty() { e } else { format!("Renamed {} back, then: {e}", back.len()) });
+                    return Err(if back.is_empty() {
+                        e
+                    } else {
+                        format!("Renamed {} back, then: {e}", back.len())
+                    });
                 }
                 Ok(match items.as_slice() {
                     [(_, old)] => format!("Renamed back to {old}."),
@@ -108,7 +157,12 @@ impl Ctx {
             Undo::Create { src, path, folder } => {
                 match stat(src, &path).await? {
                     None => return Err(format!("{} isn't there any more.", base(&path))),
-                    Some(e) if !folder && e.size > 0 => return Err(format!("{} has been written to since. Delete it yourself if you mean to.", base(&path))),
+                    Some(e) if !folder && e.size > 0 => {
+                        return Err(format!(
+                            "{} has been written to since. Delete it yourself if you mean to.",
+                            base(&path)
+                        ))
+                    }
                     Some(_) => {}
                 }
                 call::<Option<String>>("remove", json!({ "src": src.key(), "path": path })).await?;
@@ -128,8 +182,14 @@ impl Ctx {
                     call::<()>("mkdir", json!({ "src": src.key(), "path": d })).await?;
                 }
                 for (path, _, backup) in items.iter().filter(|x| !x.1) {
-                    let Some(file) = backup else { return Err(format!("There's no backup of {}.", base(path))) };
-                    call::<WriteResult>("restore", json!({ "file": file, "src": src.key(), "path": path })).await?;
+                    let Some(file) = backup else {
+                        return Err(format!("There's no backup of {}.", base(path)));
+                    };
+                    call::<WriteResult>(
+                        "restore",
+                        json!({ "file": file, "src": src.key(), "path": path }),
+                    )
+                    .await?;
                 }
                 if let Some((path, _, _)) = items.first() {
                     self.changed(src, &parent(path));
@@ -149,7 +209,10 @@ impl Ctx {
                     call::<u32>("remove_tree", json!({ "src": to.key(), "path": path })).await?;
                     self.changed(to, &parent(path));
                 }
-                Ok(format!("Removed the copies. Their files are in Backups on {}.", crate::os::the_computer()))
+                Ok(format!(
+                    "Removed the copies. Their files are in Backups on {}.",
+                    crate::os::the_computer()
+                ))
             }
             Undo::Move { from, to, back } => {
                 for (now, _) in &back {

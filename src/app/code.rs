@@ -8,7 +8,11 @@ const TREE_MIN: f64 = 140.0;
 
 /// Folders first, then by name.
 fn tree_order(mut es: Vec<Entry>) -> Vec<Entry> {
-    es.sort_by(|a, b| b.dir.cmp(&a.dir).then_with(|| a.name.to_lowercase().cmp(&b.name.to_lowercase())));
+    es.sort_by(|a, b| {
+        b.dir
+            .cmp(&a.dir)
+            .then_with(|| a.name.to_lowercase().cmp(&b.name.to_lowercase()))
+    });
     es
 }
 
@@ -21,7 +25,9 @@ pub(super) fn CodeView(pane: Pane) -> impl IntoView {
     let root = move || {
         let place = p.cwd.get();
         match place.as_str() {
-            "/" => ctx.src_info(p.src.get()).map_or_else(|| "/".into(), |i| i.label),
+            "/" => ctx
+                .src_info(p.src.get())
+                .map_or_else(|| "/".into(), |i| i.label),
             _ => base(&place),
         }
     };
@@ -33,7 +39,9 @@ pub(super) fn CodeView(pane: Pane) -> impl IntoView {
             return p.doc_peek.get().map(|e| (p.src.get(), e));
         }
         p.docs.with(|ds| match ds.get(p.doc_at.get()) {
-            Some(Doc::File { src, entry }) if p.doc.with(Option::is_none) => Some((*src, entry.clone())),
+            Some(Doc::File { src, entry }) if p.doc.with(Option::is_none) => {
+                Some((*src, entry.clone()))
+            }
             _ => None,
         })
     });
@@ -91,8 +99,12 @@ fn CodeNode(pane: Pane, entry: Entry, depth: usize) -> impl IntoView {
     let title = entry.path.clone();
     let name = entry.name.clone();
     let row_entry = StoredValue::new(entry.clone());
-    let menu = move |ev: web_sys::MouseEvent| ctx.show_tree_menu(p, &ev, Some(row_entry.get_value()));
-    let editing = Memo::new(move |_| p.renaming.with(|r| path.with_value(|x| r.as_ref() == Some(x))));
+    let menu =
+        move |ev: web_sys::MouseEvent| ctx.show_tree_menu(p, &ev, Some(row_entry.get_value()));
+    let editing = Memo::new(move |_| {
+        p.renaming
+            .with(|r| path.with_value(|x| r.as_ref() == Some(x)))
+    });
     // Dragged, it moves (or copies) like a pane's item. Folders take drops; a file's row passes
     // them to its folder.
     let drag = move |ev: web_sys::DragEvent| {
@@ -103,7 +115,11 @@ fn CodeNode(pane: Pane, entry: Entry, depth: usize) -> impl IntoView {
         }
         ctx.drag.set_value(Some((p.src.get_untracked(), vec![x])));
     };
-    let into = if entry.dir { entry.path.clone() } else { parent(&entry.path) };
+    let into = if entry.dir {
+        entry.path.clone()
+    } else {
+        parent(&entry.path)
+    };
     let key = format!("{}:{}", p.id, into);
     let (over, drop) = drop_events(ctx, p, Some(into));
     let rename_box = move || view! { <NameEdit pane=p entry=row_entry.get_value()/> };
@@ -118,7 +134,10 @@ fn CodeNode(pane: Pane, entry: Entry, depth: usize) -> impl IntoView {
             }
             spawn_local(async move {
                 let args = json!({ "src": src.key(), "path": path.get_value(), "current": false });
-                let found = call::<Vec<Entry>>("list", args).await.map(|es| tree_order(ctx.visible(es))).unwrap_or_default();
+                let found = call::<Vec<Entry>>("list", args)
+                    .await
+                    .map(|es| tree_order(ctx.visible(es)))
+                    .unwrap_or_default();
                 let _ = kids.try_set(Some(found));
             });
         });
@@ -150,14 +169,24 @@ fn CodeNode(pane: Pane, entry: Entry, depth: usize) -> impl IntoView {
     } else {
         let active = Memo::new(move |_| {
             if p.peek_on.get() {
-                return p.doc_peek.with(|e| e.as_ref().is_some_and(|e| path.with_value(|x| *x == e.path)));
+                return p.doc_peek.with(|e| {
+                    e.as_ref()
+                        .is_some_and(|e| path.with_value(|x| *x == e.path))
+                });
             }
             if p.doc.with(Option::is_none) {
-                return p
-                    .docs
-                    .with(|ds| ds.get(p.doc_at.get()).is_some_and(|d| matches!(d, Doc::File { .. }) && d.src() == src && path.with_value(|x| x == d.path())));
+                return p.docs.with(|ds| {
+                    ds.get(p.doc_at.get()).is_some_and(|d| {
+                        matches!(d, Doc::File { .. })
+                            && d.src() == src
+                            && path.with_value(|x| x == d.path())
+                    })
+                });
             }
-            p.doc.with(|d| d.as_ref().is_some_and(|d| d.src == src && path.with_value(|x| *x == d.path)))
+            p.doc.with(|d| {
+                d.as_ref()
+                    .is_some_and(|d| d.src == src && path.with_value(|x| *x == d.path))
+            })
         });
         let row = NodeRef::<html::Button>::new();
         // The open file's row is scrolled to, when it's opened and when it's first shown.

@@ -36,7 +36,12 @@ const MAX_FILES: usize = 200_000;
 const HEAD: u64 = 64 << 10;
 
 /// md5 of `len` bytes of `path` from the start, read in parts.
-fn digest(dev: &Device, path: &str, len: u64, stop: &std::sync::atomic::AtomicBool) -> Option<[u8; 16]> {
+fn digest(
+    dev: &Device,
+    path: &str,
+    len: u64,
+    stop: &std::sync::atomic::AtomicBool,
+) -> Option<[u8; 16]> {
     const PART: u64 = 4 << 20;
     let mut ctx = md5::Context::new();
     let mut at = 0;
@@ -56,7 +61,10 @@ fn digest(dev: &Device, path: &str, len: u64, stop: &std::sync::atomic::AtomicBo
 }
 
 /// Splits each group by `key` (files it can't read drop out), keeping groups of two or more.
-fn split<K: std::hash::Hash + Eq>(groups: Vec<Vec<(usize, Entry)>>, mut key: impl FnMut(&(usize, Entry)) -> Option<K>) -> Vec<Vec<(usize, Entry)>> {
+fn split<K: std::hash::Hash + Eq>(
+    groups: Vec<Vec<(usize, Entry)>>,
+    mut key: impl FnMut(&(usize, Entry)) -> Option<K>,
+) -> Vec<Vec<(usize, Entry)>> {
     let mut out = vec![];
     for g in groups {
         let mut by: HashMap<K, Vec<(usize, Entry)>> = HashMap::new();
@@ -70,8 +78,17 @@ fn split<K: std::hash::Hash + Eq>(groups: Vec<Vec<(usize, Entry)>>, mut key: imp
     out
 }
 
-pub(super) fn find_dupes(devs: &[(Arc<Device>, String)], hidden: bool, min_size: u64, stop: &std::sync::atomic::AtomicBool, emit: impl Fn(String)) -> Dupes {
-    let mut report = Dupes { complete: true, ..Default::default() };
+pub(super) fn find_dupes(
+    devs: &[(Arc<Device>, String)],
+    hidden: bool,
+    min_size: u64,
+    stop: &std::sync::atomic::AtomicBool,
+    emit: impl Fn(String),
+) -> Dupes {
+    let mut report = Dupes {
+        complete: true,
+        ..Default::default()
+    };
     // Every file, by size.
     let mut by_size: HashMap<u64, Vec<(usize, Entry)>> = HashMap::new();
     let mut seen = std::collections::HashSet::new();
@@ -107,11 +124,17 @@ pub(super) fn find_dupes(devs: &[(Arc<Device>, String)], hidden: bool, min_size:
     let groups = split(groups, |(at, e)| {
         done += 1;
         if done % 50 == 0 {
-            emit(format!("Comparing the starts of {n} files of the same size: {done}…"));
+            emit(format!(
+                "Comparing the starts of {n} files of the same size: {done}…"
+            ));
         }
         digest(&devs[*at].0, &e.path, e.size.min(HEAD), stop)
     });
-    let n: usize = groups.iter().filter(|g| g[0].1.size > HEAD).map(Vec::len).sum();
+    let n: usize = groups
+        .iter()
+        .filter(|g| g[0].1.size > HEAD)
+        .map(Vec::len)
+        .sum();
     let mut done = 0;
     let mut groups = split(groups, |(at, e)| {
         if e.size <= HEAD {
@@ -129,7 +152,15 @@ pub(super) fn find_dupes(devs: &[(Arc<Device>, String)], hidden: bool, min_size:
         .into_iter()
         .map(|mut g| {
             g.sort_by(|a, b| (a.0, &a.1.path).cmp(&(b.0, &b.1.path)));
-            g.into_iter().map(|(at, e)| Dupe { at, path: e.path, name: e.name, size: e.size, mtime: e.mtime }).collect()
+            g.into_iter()
+                .map(|(at, e)| Dupe {
+                    at,
+                    path: e.path,
+                    name: e.name,
+                    size: e.size,
+                    mtime: e.mtime,
+                })
+                .collect()
         })
         .collect();
     report
@@ -190,8 +221,18 @@ mod tests {
         let stop = std::sync::atomic::AtomicBool::new(false);
         let r = super::find_dupes(&devs, false, 0, &stop, |_| {});
         assert!(r.complete);
-        let names: Vec<Vec<&str>> = r.groups.iter().map(|g| g.iter().map(|d| d.name.as_str()).collect()).collect();
-        assert_eq!(names, vec![vec!["one.bin", "two.bin", "three.bin"], vec!["x.txt", "y.txt"]]);
+        let names: Vec<Vec<&str>> = r
+            .groups
+            .iter()
+            .map(|g| g.iter().map(|d| d.name.as_str()).collect())
+            .collect();
+        assert_eq!(
+            names,
+            vec![
+                vec!["one.bin", "two.bin", "three.bin"],
+                vec!["x.txt", "y.txt"]
+            ]
+        );
         assert_eq!(r.groups[0][2].at, 1);
         let _ = std::fs::remove_dir_all(&root);
     }

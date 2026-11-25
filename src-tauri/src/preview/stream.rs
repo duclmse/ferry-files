@@ -41,17 +41,21 @@ static COPIES: Copies = Mutex::new(Vec::new());
 
 /// Lets go of the copies unread for `IDLE`; ends once there are none.
 fn watch(copies: &'static Copies) {
-    let spawned = std::thread::Builder::new().name("stream-idle".into()).spawn(move || loop {
-        std::thread::sleep(IDLE / 4);
-        let mut all = lock(copies);
-        let old: Vec<_> = all.extract_if(.., |(_, used)| used.elapsed() >= IDLE).collect();
-        let empty = all.is_empty();
-        drop(all);
-        drop(old);
-        if empty {
-            return;
-        }
-    });
+    let spawned = std::thread::Builder::new()
+        .name("stream-idle".into())
+        .spawn(move || loop {
+            std::thread::sleep(IDLE / 4);
+            let mut all = lock(copies);
+            let old: Vec<_> = all
+                .extract_if(.., |(_, used)| used.elapsed() >= IDLE)
+                .collect();
+            let empty = all.is_empty();
+            drop(all);
+            drop(old);
+            if empty {
+                return;
+            }
+        });
     if let Err(e) = spawned {
         eprintln!("Can't start the stream-idle thread: {e}");
     }
@@ -69,7 +73,11 @@ pub fn read(
     fill: impl FnOnce(&Path, &AtomicBool) -> Result<(), String> + Send + 'static,
 ) -> Result<Vec<u8>, String> {
     // Tests stay out of the app's own copies.
-    let dir = if cfg!(test) { std::env::temp_dir().join(format!("ferry-stream-{}", std::process::id())) } else { crate::files::opened_dir().join("stream") };
+    let dir = if cfg!(test) {
+        std::env::temp_dir().join(format!("ferry-stream-{}", std::process::id()))
+    } else {
+        crate::files::opened_dir().join("stream")
+    };
     read_in(&COPIES, &dir, key, ext, size, start, len, fill)
 }
 
@@ -91,7 +99,11 @@ fn read_in(
     let (file, stop, done) = {
         let mut all = lock(copies);
         // A failed copy is tried again.
-        let failed: Vec<_> = all.extract_if(.., |(c, _)| c.key == key && matches!(*lock(&c.done), Some(Err(_)))).collect();
+        let failed: Vec<_> = all
+            .extract_if(.., |(c, _)| {
+                c.key == key && matches!(*lock(&c.done), Some(Err(_)))
+            })
+            .collect();
         let at = match all.iter().position(|(c, _)| c.key == key) {
             Some(at) => at,
             None => {
@@ -168,7 +180,8 @@ fn start_copy(
             }
         }
     });
-    std::fs::create_dir_all(dir).map_err(|e| format!("Couldn't make a folder for the copy: {e}"))?;
+    std::fs::create_dir_all(dir)
+        .map_err(|e| format!("Couldn't make a folder for the copy: {e}"))?;
     let (f, s, d) = (file.clone(), stop.clone(), done.clone());
     std::thread::Builder::new()
         .name("stream-copy".into())
@@ -183,7 +196,12 @@ fn start_copy(
             *lock(&d) = Some(r);
         })
         .map_err(|e| format!("Couldn't start the copy: {e}"))?;
-    Ok(Copy { key: key.to_string(), file, stop, done })
+    Ok(Copy {
+        key: key.to_string(),
+        file,
+        stop,
+        done,
+    })
 }
 
 /// Copies `from` into the file at `to`, stopping when `stop` is set.
@@ -195,11 +213,14 @@ pub fn copy_until(from: &mut impl Read, to: &Path, stop: &AtomicBool) -> Result<
         if stop.load(Ordering::Relaxed) {
             return Err("Stopped.".into());
         }
-        let n = from.read(&mut buf).map_err(|e| format!("Couldn't read the file: {e}"))?;
+        let n = from
+            .read(&mut buf)
+            .map_err(|e| format!("Couldn't read the file: {e}"))?;
         if n == 0 {
             return Ok(());
         }
-        f.write_all(&buf[..n]).map_err(|e| format!("Couldn't write the copy: {e}"))?;
+        f.write_all(&buf[..n])
+            .map_err(|e| format!("Couldn't write the copy: {e}"))?;
     }
 }
 
@@ -234,24 +255,54 @@ mod tests {
 
         // The start is there long before the whole file.
         let t = Instant::now();
-        assert_eq!(read_in(&MINE, &dir, "a", ".bin", size, 10, 5, slow(&data)).unwrap(), &data[10..15]);
-        assert!(t.elapsed() < Duration::from_millis(500), "{:?}", t.elapsed());
+        assert_eq!(
+            read_in(&MINE, &dir, "a", ".bin", size, 10, 5, slow(&data)).unwrap(),
+            &data[10..15]
+        );
+        assert!(
+            t.elapsed() < Duration::from_millis(500),
+            "{:?}",
+            t.elapsed()
+        );
         // Later parts come from the same copy (this fill isn't used), and stop at the end.
         let unused = |_: &Path, _: &AtomicBool| -> Result<(), String> { panic!("copied twice") };
-        assert_eq!(read_in(&MINE, &dir, "a", ".bin", size, 150_000, 100_000, unused).unwrap(), &data[150_000..]);
-        assert_eq!(read_in(&MINE, &dir, "a", ".bin", size, size, 10, unused).unwrap(), b"");
+        assert_eq!(
+            read_in(&MINE, &dir, "a", ".bin", size, 150_000, 100_000, unused).unwrap(),
+            &data[150_000..]
+        );
+        assert_eq!(
+            read_in(&MINE, &dir, "a", ".bin", size, size, 10, unused).unwrap(),
+            b""
+        );
 
         // Copies of other files are kept beside it, up to KEEP; then the one read longest ago
         // is stopped and deleted.
-        let find = |key: &str| lock(&MINE).iter().find(|(c, _)| c.key == key).map(|(c, _)| (c.stop.clone(), c.file.clone()));
+        let find = |key: &str| {
+            lock(&MINE)
+                .iter()
+                .find(|(c, _)| c.key == key)
+                .map(|(c, _)| (c.stop.clone(), c.file.clone()))
+        };
         let (first, first_file) = find("a").unwrap();
         let other: Vec<u8> = vec![9; 3000];
-        assert_eq!(read_in(&MINE, &dir, "b", ".bin", 3000, 0, 4, slow(&other)).unwrap(), [9; 4]);
+        assert_eq!(
+            read_in(&MINE, &dir, "b", ".bin", 3000, 0, 4, slow(&other)).unwrap(),
+            [9; 4]
+        );
         assert!(!first.load(Ordering::Relaxed));
-        assert_eq!(read_in(&MINE, &dir, "a", ".bin", size, 0, 2, unused).unwrap(), &data[..2]);
-        assert_eq!(read_in(&MINE, &dir, "b2", ".bin", 3000, 0, 4, slow(&other)).unwrap(), [9; 4]);
+        assert_eq!(
+            read_in(&MINE, &dir, "a", ".bin", size, 0, 2, unused).unwrap(),
+            &data[..2]
+        );
+        assert_eq!(
+            read_in(&MINE, &dir, "b2", ".bin", 3000, 0, 4, slow(&other)).unwrap(),
+            [9; 4]
+        );
         let (second, _) = find("b").unwrap();
-        assert_eq!(read_in(&MINE, &dir, "b3", ".bin", 3000, 0, 4, slow(&other)).unwrap(), [9; 4]);
+        assert_eq!(
+            read_in(&MINE, &dir, "b3", ".bin", 3000, 0, 4, slow(&other)).unwrap(),
+            [9; 4]
+        );
         assert!(second.load(Ordering::Relaxed), "b was read longest ago");
         assert!(!first.load(Ordering::Relaxed));
         assert_eq!(lock(&MINE).len(), KEEP);
@@ -263,13 +314,24 @@ mod tests {
 
         // A failed copy says why, and the next read tries again.
         let fails = |_: &Path, _: &AtomicBool| -> Result<(), String> { Err("unplugged".into()) };
-        assert_eq!(read_in(&MINE, &dir, "c", ".bin", 10, 0, 4, fails).unwrap_err(), "unplugged");
-        let ok = |to: &Path, _: &AtomicBool| std::fs::write(to, b"0123456789").map_err(|e| e.to_string());
-        assert_eq!(read_in(&MINE, &dir, "c", ".bin", 10, 2, 3, ok).unwrap(), b"234");
+        assert_eq!(
+            read_in(&MINE, &dir, "c", ".bin", 10, 0, 4, fails).unwrap_err(),
+            "unplugged"
+        );
+        let ok = |to: &Path, _: &AtomicBool| {
+            std::fs::write(to, b"0123456789").map_err(|e| e.to_string())
+        };
+        assert_eq!(
+            read_in(&MINE, &dir, "c", ".bin", 10, 2, 3, ok).unwrap(),
+            b"234"
+        );
 
         // A copy of the wrong size fails.
-        let short = |to: &Path, _: &AtomicBool| std::fs::write(to, b"0123").map_err(|e| e.to_string());
-        assert!(read_in(&MINE, &dir, "d", ".bin", 10, 8, 2, short).unwrap_err().contains("4 bytes"));
+        let short =
+            |to: &Path, _: &AtomicBool| std::fs::write(to, b"0123").map_err(|e| e.to_string());
+        assert!(read_in(&MINE, &dir, "d", ".bin", 10, 8, 2, short)
+            .unwrap_err()
+            .contains("4 bytes"));
 
         lock(&MINE).clear();
         let _ = std::fs::remove_dir_all(&dir);

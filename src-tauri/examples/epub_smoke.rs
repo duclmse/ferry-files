@@ -8,13 +8,20 @@ use ferry_files_lib::device::{self, join, Device, Entry};
 
 fn find_epub(dev: &Device, dir: &str, depth: u32) -> Option<Entry> {
     let entries = dev.listdir(dir).ok()?;
-    if let Some(e) = entries.iter().find(|e| !e.dir && e.name.to_lowercase().ends_with(".epub") && !e.name.starts_with("ferry-epub-smoke")) {
+    if let Some(e) = entries.iter().find(|e| {
+        !e.dir
+            && e.name.to_lowercase().ends_with(".epub")
+            && !e.name.starts_with("ferry-epub-smoke")
+    }) {
         return Some(e.clone());
     }
     if depth == 0 {
         return None;
     }
-    entries.iter().filter(|e| e.dir && !e.name.starts_with('.') && e.name != "Android").find_map(|e| find_epub(dev, &e.path, depth - 1))
+    entries
+        .iter()
+        .filter(|e| e.dir && !e.name.starts_with('.') && e.name != "Android")
+        .find_map(|e| find_epub(dev, &e.path, depth - 1))
 }
 
 fn main() {
@@ -23,11 +30,18 @@ fn main() {
     let dev = device::connect(&transport, None).unwrap_or_else(|e| panic!("connect: {e}"));
     println!("connected: {} over {}", dev.label(), dev.kind());
     let start = dev.default_dir();
-    let src = find_epub(&dev, &start, 2).expect("no .epub found within two folders of the start folder");
-    println!("using {} ({} bytes) — only a copy is edited", src.path, src.size);
+    let src =
+        find_epub(&dev, &start, 2).expect("no .epub found within two folders of the start folder");
+    println!(
+        "using {} ({} bytes) — only a copy is edited",
+        src.path, src.size
+    );
     let (data, _) = dev.read(&src.path).expect("read original");
 
-    let scratch = join(&join(&start, "Download"), &format!("ferry-epub-smoke-{}.epub", std::process::id()));
+    let scratch = join(
+        &join(&start, "Download"),
+        &format!("ferry-epub-smoke-{}.epub", std::process::id()),
+    );
     let created = dev.write(&scratch, &data, None, true).expect("create copy");
     let mut backups = vec![];
     let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
@@ -36,7 +50,13 @@ fn main() {
         let mut book = Book::open(&bytes, scratch.clone(), version.clone()).expect("open");
         let chapters = book.chapters().expect("chapters");
         let stats = book.stats().expect("stats");
-        println!("EPUB {}: {} chapters, {} files, cover {:?}", stats.version, chapters.len(), stats.files, book.cover_path());
+        println!(
+            "EPUB {}: {} chapters, {} files, cover {:?}",
+            stats.version,
+            chapters.len(),
+            stats.files,
+            book.cover_path()
+        );
         for c in chapters.iter().take(5) {
             println!("  {} — {}", c.path, c.label);
         }
@@ -49,37 +69,66 @@ fn main() {
                     let before = book.text(&c.path).unwrap();
                     let inner = book.body_inner(&c.path).unwrap();
                     book.set_body(&c.path, &inner).unwrap();
-                    assert_eq!(book.text(&c.path).unwrap(), before, "body round trip changed {}", c.path);
+                    assert_eq!(
+                        book.text(&c.path).unwrap(),
+                        before,
+                        "body round trip changed {}",
+                        c.path
+                    );
                     shown += 1;
                 }
                 Err(e) => broken.push(format!("{}: {e}", c.path)),
             }
         }
-        println!("visual view: {shown} chapters OK, {} not well-formed {:?}", broken.len(), broken);
+        println!(
+            "visual view: {shown} chapters OK, {} not well-formed {:?}",
+            broken.len(),
+            broken
+        );
 
         let mut meta = book.meta().expect("meta");
-        println!("meta: {:?} by {:?}, lang {}", meta.title, meta.creators, meta.language);
+        println!(
+            "meta: {:?} by {:?}, lang {}",
+            meta.title, meta.creators, meta.language
+        );
         meta.title = format!("{} [ferry smoke]", meta.title);
         meta.subjects.push("ferry-smoke-subject".into());
         book.set_meta(&meta).expect("set meta");
 
         // Replace a common word with a marker, if the book has one.
-        let word = ["the", "và", "の", "a"]
-            .into_iter()
-            .find(|w| book.find(&Query { find: w.to_string(), replace: String::new(), match_case: false, whole_word: true }).is_ok_and(|f| f.total > 0));
+        let word = ["the", "và", "の", "a"].into_iter().find(|w| {
+            book.find(&Query {
+                find: w.to_string(),
+                replace: String::new(),
+                match_case: false,
+                whole_word: true,
+            })
+            .is_ok_and(|f| f.total > 0)
+        });
         let mut replaced = 0;
         if let Some(w) = word {
-            let q = Query { find: w.to_string(), replace: "FERRYSMOKE".into(), match_case: false, whole_word: true };
+            let q = Query {
+                find: w.to_string(),
+                replace: "FERRYSMOKE".into(),
+                match_case: false,
+                whole_word: true,
+            };
             let f = book.find(&q).unwrap();
             replaced = book.replace_all(&q).expect("replace");
-            println!("replaced {replaced} of {} matches of {w:?} in {} chapters", f.total, f.hits.len());
+            println!(
+                "replaced {replaced} of {} matches of {w:?} in {} chapters",
+                f.total,
+                f.hits.len()
+            );
             assert_eq!(replaced, f.total);
             assert_eq!(book.find(&q).unwrap().total, 0);
         }
 
         book.touch_modified();
         let out = book.to_bytes().expect("zip");
-        let saved = dev.write(&scratch, &out, Some(&version), false).expect("save");
+        let saved = dev
+            .write(&scratch, &out, Some(&version), false)
+            .expect("save");
         backups.extend(saved.backup.clone());
         println!("saved {} bytes, backup {:?}", out.len(), saved.backup);
         match dev.write(&scratch, &out, Some(&version), false) {
@@ -93,11 +142,19 @@ fn main() {
         assert_eq!(m2.title, meta.title);
         assert!(m2.subjects.contains(&"ferry-smoke-subject".to_string()));
         if replaced > 0 {
-            let q = Query { find: "FERRYSMOKE".into(), replace: String::new(), match_case: true, whole_word: false };
+            let q = Query {
+                find: "FERRYSMOKE".into(),
+                replace: String::new(),
+                match_case: true,
+                whole_word: false,
+            };
             assert_eq!(again.find(&q).unwrap().total, replaced);
         }
         assert_eq!(again.chapters().unwrap().len(), chapters.len());
-        println!("re-read from the phone: title {:?}, edits present", m2.title);
+        println!(
+            "re-read from the phone: title {:?}, edits present",
+            m2.title
+        );
     }));
     let removed = dev.remove(&scratch).expect("delete copy");
     backups.extend(removed);

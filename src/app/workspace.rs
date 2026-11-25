@@ -69,8 +69,18 @@ thread_local! {
 }
 
 fn tab_of(src: Src, t: &SavedTab) -> Tab {
-    let root = if t.root.is_empty() || !within(&t.cwd, &t.root) { &t.cwd } else { &t.root };
-    Tab { src, cwd: t.cwd.clone(), selected: None, view: view_of(&t.view), root: root.clone() }
+    let root = if t.root.is_empty() || !within(&t.cwd, &t.root) {
+        &t.cwd
+    } else {
+        &t.root
+    };
+    Tab {
+        src,
+        cwd: t.cwd.clone(),
+        selected: None,
+        view: view_of(&t.view),
+        root: root.clone(),
+    }
 }
 
 /// A hidden pane given other tabs: it lists its shown tab when it's shown (`set_split`), and
@@ -83,28 +93,41 @@ fn forget(p: Pane) {
 }
 
 fn view_of(key: &str) -> ViewMode {
-    ViewMode::ALL.into_iter().find(|v| v.key() == key).unwrap_or(ViewMode::List)
+    ViewMode::ALL
+        .into_iter()
+        .find(|v| v.key() == key)
+        .unwrap_or(ViewMode::List)
 }
 
 /// Whether a saved tab's side is the phone `info`: by serial, else by name (ids are handed out
 /// afresh each launch).
 fn is_on(side: &Side, info: &Info) -> bool {
     match side {
-        Side::Phone { serial: Some(s), .. } => info.serial.as_deref() == Some(s.as_str()),
-        Side::Phone { serial: None, label, .. } => *label == info.label,
+        Side::Phone {
+            serial: Some(s), ..
+        } => info.serial.as_deref() == Some(s.as_str()),
+        Side::Phone {
+            serial: None,
+            label,
+            ..
+        } => *label == info.label,
         Side::Mac => false,
     }
 }
 
 pub(super) fn saved_workspaces() -> Vec<Workspace> {
-    stored(WORKSPACES_KEY).and_then(|s| serde_json::from_str(&s).ok()).unwrap_or_default()
+    stored(WORKSPACES_KEY)
+        .and_then(|s| serde_json::from_str(&s).ok())
+        .unwrap_or_default()
 }
 
 impl Ctx {
     /// The pane's tabs as `apply` left them, while it hasn't been used since.
     fn as_applied(self, i: usize) -> Option<Applied> {
         let p = self.panes[i];
-        APPLIED.with_borrow(|a| a[i].clone()).filter(|a| a.tab == p.tab.get_untracked() && a.order.len() == p.tabs.with_untracked(Vec::len))
+        APPLIED.with_borrow(|a| a[i].clone()).filter(|a| {
+            a.tab == p.tab.get_untracked() && a.order.len() == p.tabs.with_untracked(Vec::len)
+        })
     }
 
     /// Pane `p` went to another folder: the first time after `apply`, that's it landing on the
@@ -126,7 +149,8 @@ impl Ctx {
             let p = self.panes[i];
             let shown = p.tab.get_untracked();
             // A pane not listed yet (hidden since its tabs were set) is where its shown tab says.
-            let live = p.going_to.with_value(Option::is_some) || p.cwd.with_untracked(|c| !c.is_empty());
+            let live =
+                p.going_to.with_value(Option::is_some) || p.cwd.with_untracked(|c| !c.is_empty());
             let applied = self.as_applied(i);
             // Each tab with where it goes and how much it wants to be the one shown: a waiting tab
             // that was shown beats the tab shown in its place.
@@ -136,7 +160,10 @@ impl Ctx {
                     // The shown tab's entry is brought up to date only when leaving it.
                     // While a listing is on its way, the tab is where it's going.
                     let (src, cwd, view, root) = if at == shown && live {
-                        let (src, cwd) = p.going_to.get_value().unwrap_or_else(|| (p.src.get_untracked(), p.cwd.get_untracked()));
+                        let (src, cwd) = p
+                            .going_to
+                            .get_value()
+                            .unwrap_or_else(|| (p.src.get_untracked(), p.cwd.get_untracked()));
                         (src, cwd, p.view.get_untracked(), p.root.get_untracked())
                     } else {
                         (t.src, t.cwd.clone(), t.view, t.root.clone())
@@ -152,7 +179,16 @@ impl Ctx {
                         },
                         None => at,
                     };
-                    all.push((place, SavedTab { side: self.side(src), cwd, view: view.key().into(), root }, u8::from(at == shown)));
+                    all.push((
+                        place,
+                        SavedTab {
+                            side: self.side(src),
+                            cwd,
+                            view: view.key().into(),
+                            root,
+                        },
+                        u8::from(at == shown),
+                    ));
                 }
             });
             WAITING.with_borrow(|w| {
@@ -165,8 +201,15 @@ impl Ctx {
                 }
             });
             all.sort_by_key(|x| x.0);
-            let tab = all.iter().enumerate().max_by_key(|(k, x)| (x.2, std::cmp::Reverse(*k))).map_or(0, |(k, _)| k);
-            SavedPane { tabs: all.into_iter().map(|x| x.1).collect(), tab }
+            let tab = all
+                .iter()
+                .enumerate()
+                .max_by_key(|(k, x)| (x.2, std::cmp::Reverse(*k)))
+                .map_or(0, |(k, _)| k);
+            SavedPane {
+                tabs: all.into_iter().map(|x| x.1).collect(),
+                tab,
+            }
         });
         Workspace {
             name,
@@ -198,7 +241,9 @@ impl Ctx {
             for (at, t) in saved.tabs.into_iter().enumerate() {
                 let src = match &t.side {
                     Side::Mac => Some(Src::Mac),
-                    side => self.phones.with_untracked(|ps| ps.iter().find(|i| is_on(side, i)).map(|i| Src::of(&i.id))),
+                    side => self.phones.with_untracked(|ps| {
+                        ps.iter().find(|i| is_on(side, i)).map(|i| Src::of(&i.id))
+                    }),
                 };
                 match src {
                     Some(src) => {
@@ -208,11 +253,24 @@ impl Ctx {
                         tabs.push(tab_of(src, &t));
                         order.push(Some(at));
                     }
-                    None => WAITING.with_borrow_mut(|wt| wt.push(Waiting { pane: i, at, shown: at == saved.tab, tab: t })),
+                    None => WAITING.with_borrow_mut(|wt| {
+                        wt.push(Waiting {
+                            pane: i,
+                            at,
+                            shown: at == saved.tab,
+                            tab: t,
+                        })
+                    }),
                 }
             }
             if tabs.is_empty() {
-                tabs.push(Tab { src: Src::Mac, cwd: String::new(), selected: None, view: p.view.get_untracked(), root: String::new() });
+                tabs.push(Tab {
+                    src: Src::Mac,
+                    cwd: String::new(),
+                    selected: None,
+                    view: p.view.get_untracked(),
+                    root: String::new(),
+                });
                 order.push(None);
             }
             p.tabs.set(tabs);
@@ -222,7 +280,13 @@ impl Ctx {
             } else {
                 forget(p);
             }
-            APPLIED.with_borrow_mut(|a| a[i] = Some(Applied { order, tab: shown, landed: false }));
+            APPLIED.with_borrow_mut(|a| {
+                a[i] = Some(Applied {
+                    order,
+                    tab: shown,
+                    landed: false,
+                })
+            });
         }
         self.active.set(if w.split { w.active.min(1) } else { 0 });
     }
@@ -230,7 +294,9 @@ impl Ctx {
     /// At launch: the last session's tabs when the setting is on, else the remembered folders.
     /// From then on, the session is kept as it changes.
     pub(super) fn restore_session(self) {
-        let last = stored_flag(RESTORE_KEY, true).then(|| stored(SESSION_KEY).and_then(|s| serde_json::from_str::<Workspace>(&s).ok())).flatten();
+        let last = stored_flag(RESTORE_KEY, true)
+            .then(|| stored(SESSION_KEY).and_then(|s| serde_json::from_str::<Workspace>(&s).ok()))
+            .flatten();
         match last {
             Some(w) => self.apply(w),
             None => {
@@ -260,7 +326,10 @@ impl Ctx {
             self.side_w.track();
             self.pane_w.track();
             if READY.get() {
-                store(SESSION_KEY, &serde_json::to_string(&self.snapshot(String::new())).unwrap_or_default());
+                store(
+                    SESSION_KEY,
+                    &serde_json::to_string(&self.snapshot(String::new())).unwrap_or_default(),
+                );
             }
         });
     }
@@ -281,8 +350,12 @@ impl Ctx {
                 continue;
             }
             let p = self.panes[i];
-            let Some(a) = self.as_applied(i).filter(|_| self.editor.with_untracked(Option::is_none)) else {
-                p.tabs.update(|ts| ts.extend(mine.iter().map(|x| tab_of(src, &x.tab))));
+            let Some(a) = self
+                .as_applied(i)
+                .filter(|_| self.editor.with_untracked(Option::is_none))
+            else {
+                p.tabs
+                    .update(|ts| ts.extend(mine.iter().map(|x| tab_of(src, &x.tab))));
                 continue;
             };
             let visible = i == 0 || self.split.get_untracked();
@@ -298,14 +371,19 @@ impl Ctx {
                 order.clear();
             }
             for x in mine {
-                let pos = order.iter().position(|o| o.is_some_and(|k| k > x.at)).unwrap_or(order.len());
+                let pos = order
+                    .iter()
+                    .position(|o| o.is_some_and(|k| k > x.at))
+                    .unwrap_or(order.len());
                 order.insert(pos, Some(x.at));
                 tabs.insert(pos, tab_of(src, &x.tab));
                 if x.shown {
                     (shown, switch) = (Some(x.at), true);
                 }
             }
-            let tab = shown.and_then(|k| order.iter().position(|o| *o == Some(k))).unwrap_or(0);
+            let tab = shown
+                .and_then(|k| order.iter().position(|o| *o == Some(k)))
+                .unwrap_or(0);
             p.tabs.set(tabs);
             p.tab.set(tab);
             if switch {
@@ -315,12 +393,21 @@ impl Ctx {
                     forget(p);
                 }
             }
-            APPLIED.with_borrow_mut(|ap| ap[i] = Some(Applied { order, tab, landed: a.landed && !switch }));
+            APPLIED.with_borrow_mut(|ap| {
+                ap[i] = Some(Applied {
+                    order,
+                    tab,
+                    landed: a.landed && !switch,
+                })
+            });
         }
     }
 
     pub(super) fn set_workspaces(self, list: Vec<Workspace>) {
-        store(WORKSPACES_KEY, &serde_json::to_string(&list).unwrap_or_default());
+        store(
+            WORKSPACES_KEY,
+            &serde_json::to_string(&list).unwrap_or_default(),
+        );
         self.workspaces.set(list);
     }
 
@@ -356,7 +443,14 @@ impl Ctx {
                     Side::Mac => crate::os::the_computer().to_string(),
                     s => self.side_name(s),
                 };
-                format!("{} on {on}", if t.cwd.is_empty() || t.cwd == "/" { "All storage".into() } else { base(&t.cwd) })
+                format!(
+                    "{} on {on}",
+                    if t.cwd.is_empty() || t.cwd == "/" {
+                        "All storage".into()
+                    } else {
+                        base(&t.cwd)
+                    }
+                )
             })
             .collect();
         format!("Open: {}", tabs.join(", "))

@@ -67,16 +67,29 @@ impl Address {
     /// From "host", "user@host", "user@host:2222" or "sftp://user@host:2222/...".
     pub fn parse(text: &str) -> std::result::Result<Address, String> {
         let t = text.trim();
-        let t = t.strip_prefix("sftp://").or_else(|| t.strip_prefix("ssh://")).unwrap_or(t);
+        let t = t
+            .strip_prefix("sftp://")
+            .or_else(|| t.strip_prefix("ssh://"))
+            .unwrap_or(t);
         let t = t.split('/').next().unwrap_or_default();
         let (host, port) = match t.rsplit_once(':') {
-            Some((h, p)) if !h.contains(':') => (h, Some(p.parse::<u16>().map_err(|_| format!("{p} isn't a port number."))?)),
+            Some((h, p)) if !h.contains(':') => (
+                h,
+                Some(
+                    p.parse::<u16>()
+                        .map_err(|_| format!("{p} isn't a port number."))?,
+                ),
+            ),
             _ => (t, None),
         };
         if host.is_empty() || host.starts_with('-') || host.contains(char::is_whitespace) {
             return Err("Enter a server, like me@example.com or a host from ~/.ssh/config.".into());
         }
-        Ok(Address { host: host.to_string(), port, ..Default::default() })
+        Ok(Address {
+            host: host.to_string(),
+            port,
+            ..Default::default()
+        })
     }
 
     /// As it's shown and kept: "user@host" or "user@host:port".
@@ -95,7 +108,14 @@ impl Address {
     /// `ssh` set up as `ssh`, with `options` before the server.
     fn ssh_with(&self, mut c: std::process::Command, options: &[&str]) -> std::process::Command {
         c.args(options);
-        c.args(["-o", "StrictHostKeyChecking=accept-new", "-o", "ConnectTimeout=10", "-o", "ServerAliveInterval=15"]);
+        c.args([
+            "-o",
+            "StrictHostKeyChecking=accept-new",
+            "-o",
+            "ConnectTimeout=10",
+            "-o",
+            "ServerAliveInterval=15",
+        ]);
         match &self.secret {
             Some(id) => {
                 c.args(["-o", "NumberOfPasswordPrompts=1"]);
@@ -109,7 +129,14 @@ impl Address {
             c.args(["-i", key, "-o", "IdentitiesOnly=yes"]);
         }
         if cfg!(unix) {
-            c.args(["-o", "ControlMaster=auto", "-o", "ControlPath=/tmp/ferry-ssh-%C", "-o", "ControlPersist=60"]);
+            c.args([
+                "-o",
+                "ControlMaster=auto",
+                "-o",
+                "ControlPath=/tmp/ferry-ssh-%C",
+                "-o",
+                "ControlPersist=60",
+            ]);
         }
         if let Some(p) = self.port {
             c.args(["-p", &p.to_string()]);
@@ -129,16 +156,28 @@ fn ssh_failed(addr: &Address, said: &str) -> String {
         format!("{host} didn't take the key file. Check its path, and add a passphrase in Settings > Connections if it has one.")
     } else if said.contains("Permission denied") {
         format!("{host} wants a password or a key it knows. Add a password or a key file in Settings > Connections, or add your key with ssh-copy-id {host}.")
-    } else if said.contains("Host key verification failed") || said.contains("REMOTE HOST IDENTIFICATION HAS CHANGED") {
+    } else if said.contains("Host key verification failed")
+        || said.contains("REMOTE HOST IDENTIFICATION HAS CHANGED")
+    {
         format!("{host}'s key isn't the one in ~/.ssh/known_hosts. If the server was set up again, remove the old key with ssh-keygen -R and try again.")
-    } else if said.contains("Could not resolve") || said.contains("Connection refused") || said.contains("timed out") || said.contains("No route") {
-        format!("Can't reach {host}: {}", said.lines().last().unwrap_or(said))
+    } else if said.contains("Could not resolve")
+        || said.contains("Connection refused")
+        || said.contains("timed out")
+        || said.contains("No route")
+    {
+        format!(
+            "Can't reach {host}: {}",
+            said.lines().last().unwrap_or(said)
+        )
     } else if said.contains("subsystem request failed") {
         format!("{host} doesn't serve SFTP.")
     } else if said.is_empty() {
         format!("Lost the connection to {host}.")
     } else {
-        format!("Couldn't connect to {host}: {}", said.lines().last().unwrap_or(said))
+        format!(
+            "Couldn't connect to {host}: {}",
+            said.lines().last().unwrap_or(said)
+        )
     }
 }
 
@@ -304,7 +343,14 @@ impl Session {
         let (Some(to), Some(from)) = (child.stdin.take(), child.stdout.take()) else {
             return Err("Can't talk to ssh.".into());
         };
-        let mut s = Session { child, to, from, next: 1, posix_rename: false, said };
+        let mut s = Session {
+            child,
+            to,
+            from,
+            next: 1,
+            posix_rename: false,
+            said,
+        };
         let mut hello = Out(vec![0, 0, 0, 0, INIT]);
         hello.u32(3);
         let failed = |s: &Session| {
@@ -312,17 +358,28 @@ impl Session {
             std::thread::sleep(Duration::from_millis(100));
             ssh_failed(addr, &s.said.lock().unwrap_or_else(|e| e.into_inner()))
         };
-        if s.to.write_all(&hello.done()).and_then(|_| s.to.flush()).is_err() {
+        if s.to
+            .write_all(&hello.done())
+            .and_then(|_| s.to.flush())
+            .is_err()
+        {
             return Err(failed(&s));
         }
-        let Ok((kind, body)) = s.read_packet() else { return Err(failed(&s)) };
+        let Ok((kind, body)) = s.read_packet() else {
+            return Err(failed(&s));
+        };
         if kind != VERSION {
-            return Err(format!("{} answered in a way the app doesn't understand.", addr.text()));
+            return Err(format!(
+                "{} answered in a way the app doesn't understand.",
+                addr.text()
+            ));
         }
         let mut r = In(&body);
         let _version = r.u32().map_err(|e| e.to_string())?;
         while !r.0.is_empty() {
-            let (Ok(name), Ok(_)) = (r.string(), r.bytes()) else { break };
+            let (Ok(name), Ok(_)) = (r.string(), r.bytes()) else {
+                break;
+            };
             if name == "posix-rename@openssh.com" {
                 s.posix_rename = true;
             }
@@ -344,7 +401,15 @@ impl Session {
     }
 
     fn lost(&self) -> DevError {
-        DevError::Msg(format!("Lost the connection to the server. {}", self.said.lock().unwrap_or_else(|e| e.into_inner()).lines().last().unwrap_or_default()))
+        DevError::Msg(format!(
+            "Lost the connection to the server. {}",
+            self.said
+                .lock()
+                .unwrap_or_else(|e| e.into_inner())
+                .lines()
+                .last()
+                .unwrap_or_default()
+        ))
     }
 
     fn id(&mut self) -> u32 {
@@ -353,7 +418,10 @@ impl Session {
     }
 
     fn send(&mut self, packet: Vec<u8>) -> Result<()> {
-        self.to.write_all(&packet).and_then(|_| self.to.flush()).map_err(|_| self.lost())
+        self.to
+            .write_all(&packet)
+            .and_then(|_| self.to.flush())
+            .map_err(|_| self.lost())
     }
 
     /// The next answer, by id.
@@ -363,7 +431,13 @@ impl Session {
             return err("The server's answer was cut short.");
         }
         let id = u32::from_be_bytes([body[0], body[1], body[2], body[3]]);
-        Ok((id, Reply { kind, body: body[4..].to_vec() }))
+        Ok((
+            id,
+            Reply {
+                kind,
+                body: body[4..].to_vec(),
+            },
+        ))
     }
 
     /// Sends a request and waits for its answer.
@@ -393,7 +467,11 @@ fn status(path: &str, r: &Reply) -> Result<u32> {
         3 => err(format!("{path}: permission denied.")),
         _ => {
             let msg = i.string().unwrap_or_default();
-            err(if msg.is_empty() { format!("{path}: the server refused (error {code}).") } else { format!("{path}: {msg}") })
+            err(if msg.is_empty() {
+                format!("{path}: the server refused (error {code}).")
+            } else {
+                format!("{path}: {msg}")
+            })
         }
     }
 }
@@ -425,11 +503,18 @@ pub struct Sftp {
 impl Sftp {
     /// Writes the file under a temporary name with `write` (given the open file's name and
     /// handle), renames it over `path`, and checks it has `size` bytes. Returns its version.
-    fn put(&self, path: &str, size: u64, write: impl FnOnce(&mut Session, &str, &[u8]) -> Result<()>) -> Result<String> {
+    fn put(
+        &self,
+        path: &str,
+        size: u64,
+        write: impl FnOnce(&mut Session, &str, &[u8]) -> Result<()>,
+    ) -> Result<String> {
         self.with(|s| {
             let tmp = join(&dirname(path), &format!(".{}.ferry-tmp", basename(path)));
             let r = s.ask(OPEN, |o| {
-                o.str(&tmp).u32(OPEN_WRITE | OPEN_CREATE | OPEN_TRUNC).no_attrs();
+                o.str(&tmp)
+                    .u32(OPEN_WRITE | OPEN_CREATE | OPEN_TRUNC)
+                    .no_attrs();
             })?;
             let h = handle(&tmp, &r)?;
             let wrote = write(s, &tmp, &h);
@@ -462,7 +547,10 @@ impl Sftp {
             }
             let a = Self::attrs_of(s, path, STAT)?.unwrap_or_default();
             if a.size != size {
-                return err(format!("{path}: wrote {size} bytes but the file has {}.", a.size));
+                return err(format!(
+                    "{path}: wrote {size} bytes but the file has {}.",
+                    a.size
+                ));
             }
             Ok(Self::version_of(&a))
         })
@@ -481,7 +569,11 @@ impl Sftp {
             }
             _ => "/".into(),
         };
-        Ok(Sftp { addr, home, session: Mutex::new(Some(s)) })
+        Ok(Sftp {
+            addr,
+            home,
+            session: Mutex::new(Some(s)),
+        })
     }
 
     pub fn address(&self) -> &Address {
@@ -541,7 +633,9 @@ impl Sftp {
                 break;
             }
             let (id, r) = s.recv()?;
-            let Some(at) = asked.remove(&id) else { continue };
+            let Some(at) = asked.remove(&id) else {
+                continue;
+            };
             if r.kind == DATA {
                 let chunk = In(&r.body).bytes()?;
                 // A short read: ask again for the rest of that piece.
@@ -577,7 +671,9 @@ impl Sftp {
         let mut chunks = data.chunks(CHUNK as usize).enumerate();
         loop {
             while waiting < AHEAD {
-                let Some((i, chunk)) = chunks.next() else { break };
+                let Some((i, chunk)) = chunks.next() else {
+                    break;
+                };
                 let id = s.id();
                 let mut o = Out::new(WRITE, id);
                 o.bytes(h).u64(base + i as u64 * CHUNK as u64).bytes(chunk);
@@ -691,7 +787,8 @@ impl Transport for Sftp {
 
     fn read(&self, path: &str) -> Result<(Vec<u8>, String)> {
         self.with(|s| {
-            let a = Self::attrs_of(s, path, STAT)?.ok_or_else(|| DevError::Msg(format!("{path}: no such file.")))?;
+            let a = Self::attrs_of(s, path, STAT)?
+                .ok_or_else(|| DevError::Msg(format!("{path}: no such file.")))?;
             let r = s.ask(OPEN, |o| {
                 o.str(path).u32(OPEN_READ).no_attrs();
             })?;
@@ -719,15 +816,25 @@ impl Transport for Sftp {
     }
 
     fn replace(&self, path: &str, data: &[u8], _exists: bool) -> Result<String> {
-        self.put(path, data.len() as u64, |s, tmp, h| Self::write_all(s, tmp, h, 0, data))
+        self.put(path, data.len() as u64, |s, tmp, h| {
+            Self::write_all(s, tmp, h, 0, data)
+        })
     }
 
     /// Read a piece at a time into the file.
-    fn read_to(&self, path: &str, to: &std::path::Path, read: &mut dyn FnMut(u64), stop: &std::sync::atomic::AtomicBool) -> Result<String> {
+    fn read_to(
+        &self,
+        path: &str,
+        to: &std::path::Path,
+        read: &mut dyn FnMut(u64),
+        stop: &std::sync::atomic::AtomicBool,
+    ) -> Result<String> {
         use std::io::Write;
-        let mut f = std::fs::File::create(to).map_err(|e| DevError::Msg(format!("Can't write {}: {e}", to.display())))?;
+        let mut f = std::fs::File::create(to)
+            .map_err(|e| DevError::Msg(format!("Can't write {}: {e}", to.display())))?;
         self.with(|s| {
-            let a = Self::attrs_of(s, path, STAT)?.ok_or_else(|| DevError::Msg(format!("{path}: no such file.")))?;
+            let a = Self::attrs_of(s, path, STAT)?
+                .ok_or_else(|| DevError::Msg(format!("{path}: no such file.")))?;
             let r = s.ask(OPEN, |o| {
                 o.str(path).u32(OPEN_READ).no_attrs();
             })?;
@@ -739,7 +846,8 @@ impl Transport for Sftp {
                         return err("Cancelled.");
                     }
                     let part = Self::read_from(s, path, &h, at, PIECE)?;
-                    f.write_all(&part).map_err(|e| DevError::Msg(format!("Can't write {}: {e}", to.display())))?;
+                    f.write_all(&part)
+                        .map_err(|e| DevError::Msg(format!("Can't write {}: {e}", to.display())))?;
                     at += part.len() as u64;
                     read(part.len() as u64);
                     if (part.len() as u64) < PIECE {
@@ -806,14 +914,18 @@ impl Transport for Sftp {
     fn refresh(&self) {
         // A lost connection is started again on the next use.
         let mut g = self.session.lock().unwrap_or_else(|e| e.into_inner());
-        if g.as_mut().is_some_and(|s| matches!(s.child.try_wait(), Ok(Some(_)))) {
+        if g.as_mut()
+            .is_some_and(|s| matches!(s.child.try_wait(), Ok(Some(_))))
+        {
             *g = None;
         }
     }
 
     /// A login shell on the server, in `dir`.
     fn shell(&self, dir: &str) -> Option<std::process::Command> {
-        let mut c = self.addr.ssh_with(std::process::Command::new("ssh"), &["-t"]);
+        let mut c = self
+            .addr
+            .ssh_with(std::process::Command::new("ssh"), &["-t"]);
         c.arg(format!("cd {}; exec \"${{SHELL:-sh}}\" -l", sh_quote(dir)));
         Some(c)
     }
@@ -827,7 +939,9 @@ pub(crate) async fn sftp_connect(
     secret: Option<String>,
 ) -> std::result::Result<connect::Info, String> {
     let mut addr = Address::parse(&server)?;
-    addr.key = key_file.map(|k| k.trim().to_string()).filter(|k| !k.is_empty());
+    addr.key = key_file
+        .map(|k| k.trim().to_string())
+        .filter(|k| !k.is_empty());
     addr.secret = secret.filter(|s| !s.is_empty());
     if let Some(k) = &addr.key {
         let path = crate::platform::native(&expand_home(k));
@@ -842,7 +956,11 @@ pub(crate) async fn sftp_connect(
         return Err(format!("{} is already added.", s.address().text()));
     }
     let id = format!("d{}", state.next_dev.fetch_add(1, Ordering::Relaxed));
-    let conn = Conn { dev: Arc::new(Device::new(Box::new(s))), usb, serial: None };
+    let conn = Conn {
+        dev: Arc::new(Device::new(Box::new(s))),
+        usb,
+        serial: None,
+    };
     let info = connect::info_of(&id, Some(&conn), &conn.dev);
     state.devs().insert(id, conn);
     Ok(info)
@@ -852,7 +970,9 @@ pub(crate) async fn sftp_connect(
 fn expand_home(path: &str) -> String {
     match path.strip_prefix("~/").or_else(|| path.strip_prefix("~\\")) {
         Some(rest) => {
-            let home = dirs::home_dir().map(|h| crate::platform::app_path(&h)).unwrap_or_default();
+            let home = dirs::home_dir()
+                .map(|h| crate::platform::app_path(&h))
+                .unwrap_or_default();
             format!("{}/{}", home.trim_end_matches('/'), rest.replace('\\', "/"))
         }
         None => crate::platform::app_path(std::path::Path::new(path)),
@@ -865,8 +985,21 @@ mod tests {
 
     #[test]
     fn addresses() {
-        assert_eq!(Address::parse("me@box").unwrap(), Address { host: "me@box".into(), ..Default::default() });
-        assert_eq!(Address::parse(" sftp://me@box:2222/home ").unwrap(), Address { host: "me@box".into(), port: Some(2222), ..Default::default() });
+        assert_eq!(
+            Address::parse("me@box").unwrap(),
+            Address {
+                host: "me@box".into(),
+                ..Default::default()
+            }
+        );
+        assert_eq!(
+            Address::parse(" sftp://me@box:2222/home ").unwrap(),
+            Address {
+                host: "me@box".into(),
+                port: Some(2222),
+                ..Default::default()
+            }
+        );
         assert_eq!(Address::parse("me@box:2222").unwrap().text(), "me@box:2222");
         assert!(Address::parse("").is_err());
         assert!(Address::parse("-oProxyCommand=x").is_err());
@@ -881,10 +1014,22 @@ mod tests {
         let p = o.done();
         assert_eq!(&p[..5], &[0, 0, 0, 19, OPEN]);
         let mut i = In(&p[5..]);
-        assert_eq!((i.u32().unwrap(), i.string().unwrap(), i.u32().unwrap(), i.u32().unwrap()), (7, "/a".into(), 1, 0));
+        assert_eq!(
+            (
+                i.u32().unwrap(),
+                i.string().unwrap(),
+                i.u32().unwrap(),
+                i.u32().unwrap()
+            ),
+            (7, "/a".into(), 1, 0)
+        );
 
         let mut a = Out(vec![]);
-        a.u32(1 | 4 | 8).u64(42).u32(0o040755).u32(1).u32(1_700_000_000);
+        a.u32(1 | 4 | 8)
+            .u64(42)
+            .u32(0o040755)
+            .u32(1)
+            .u32(1_700_000_000);
         let attrs = In(&a.0).attrs().unwrap();
         assert!(attrs.is_dir());
         assert_eq!((attrs.size, attrs.mtime), (42, 1_700_000_000));

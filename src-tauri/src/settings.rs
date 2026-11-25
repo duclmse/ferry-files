@@ -49,7 +49,14 @@ pub(super) async fn app_folders() -> Result<HashMap<String, Folder>, String> {
         for which in ["backups", "thumbs", "opened", "scripts"] {
             let dir = app_folder(which)?;
             let (files, bytes) = folder_size(&dir);
-            out.insert(which.to_string(), Folder { path: crate::platform::app_path(&dir), files, bytes });
+            out.insert(
+                which.to_string(),
+                Folder {
+                    path: crate::platform::app_path(&dir),
+                    files,
+                    bytes,
+                },
+            );
         }
         Ok(out)
     })
@@ -74,7 +81,9 @@ pub(super) async fn clear_cache(which: String) -> Result<(), String> {
         }
         let dir = app_folder(&which)?;
         match std::fs::remove_dir_all(&dir) {
-            Err(e) if e.kind() != std::io::ErrorKind::NotFound => Err(format!("Can't clear {}: {e}", dir.display())),
+            Err(e) if e.kind() != std::io::ErrorKind::NotFound => {
+                Err(format!("Can't clear {}: {e}", dir.display()))
+            }
             _ => Ok(()),
         }
     })

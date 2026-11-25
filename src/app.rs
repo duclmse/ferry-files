@@ -2,8 +2,9 @@
 //! in a list, thumbnail or column view, with a context menu), and a text editor.
 
 use crate::api::{
-    call, Backup, BookInfo, CompareReport, Devices, DupeProgress, Dupes, Entry, FileDrop, Info, Issue, Marks, Packed, Progress, SmbMount, Space, TextFile,
-    TransferReport, UsbDevice, WriteResult,
+    call, Backup, BookInfo, CompareReport, Devices, DupeProgress, Dupes, Entry, FileDrop, Info,
+    Issue, Marks, Packed, Progress, SmbMount, Space, TextFile, TransferReport, UsbDevice,
+    WriteResult,
 };
 use leptos::ev;
 use leptos::html;
@@ -103,7 +104,9 @@ impl Src {
     }
 
     fn of(id: &str) -> Src {
-        id.strip_prefix('d').and_then(|n| n.parse().ok()).map_or(Src::Mac, Src::Dev)
+        id.strip_prefix('d')
+            .and_then(|n| n.parse().ok())
+            .map_or(Src::Mac, Src::Dev)
     }
 }
 
@@ -117,7 +120,12 @@ enum ViewMode {
 }
 
 impl ViewMode {
-    const ALL: [ViewMode; 4] = [ViewMode::List, ViewMode::Thumbs, ViewMode::Columns, ViewMode::Code];
+    const ALL: [ViewMode; 4] = [
+        ViewMode::List,
+        ViewMode::Thumbs,
+        ViewMode::Columns,
+        ViewMode::Code,
+    ];
 
     fn key(self) -> &'static str {
         match self {
@@ -153,7 +161,10 @@ impl ViewMode {
     /// The view the pane had last time. Storage can be missing or blocked; then it's the list.
     fn stored(pane: usize) -> Self {
         let saved = stored(&Self::storage_key(pane));
-        Self::ALL.into_iter().find(|v| saved.as_deref() == Some(v.key())).unwrap_or(ViewMode::List)
+        Self::ALL
+            .into_iter()
+            .find(|v| saved.as_deref() == Some(v.key()))
+            .unwrap_or(ViewMode::List)
     }
 }
 
@@ -198,7 +209,13 @@ enum Group {
 }
 
 impl Group {
-    const ALL: [Group; 5] = [Group::None, Group::Name, Group::Kind, Group::Date, Group::Size];
+    const ALL: [Group; 5] = [
+        Group::None,
+        Group::Name,
+        Group::Kind,
+        Group::Date,
+        Group::Size,
+    ];
 
     fn storage_key(pane: usize) -> String {
         format!("ferry-files.group.{pane}")
@@ -226,7 +243,10 @@ impl Group {
 
     fn stored(pane: usize) -> Self {
         let k = stored(&Self::storage_key(pane)).unwrap_or_default();
-        Group::ALL.into_iter().find(|g| g.key() == k).unwrap_or(Group::None)
+        Group::ALL
+            .into_iter()
+            .find(|g| g.key() == k)
+            .unwrap_or(Group::None)
     }
 
     /// The group `e` is in, `now` being the time in seconds: its place among the groups, and its
@@ -234,7 +254,12 @@ impl Group {
     fn of(self, e: &Entry, now: i64) -> (u32, String) {
         match self {
             Group::None => (0, String::new()),
-            Group::Name => match e.name.chars().next().map(|c| c.to_uppercase().next().unwrap_or(c)) {
+            Group::Name => match e
+                .name
+                .chars()
+                .next()
+                .map(|c| c.to_uppercase().next().unwrap_or(c))
+            {
                 Some(c) if c.is_alphabetic() => (c as u32 + 1, c.to_string()),
                 _ => (0, "0–9 and others".into()),
             },
@@ -252,7 +277,10 @@ impl Group {
                     (KB * KB * KB, "Large (under 1 GB)"),
                     (u64::MAX, "Huge (1 GB and over)"),
                 ];
-                let i = BOUNDS.iter().position(|(b, _)| e.size < *b).unwrap_or(BOUNDS.len() - 1);
+                let i = BOUNDS
+                    .iter()
+                    .position(|(b, _)| e.size < *b)
+                    .unwrap_or(BOUNDS.len() - 1);
                 (i as u32 + 1, BOUNDS[i].1.into())
             }
         }
@@ -267,8 +295,10 @@ fn date_group(mtime: i64, now: i64) -> (u32, String) {
     }
     // Days back from the start of today, in local time.
     let d = js_sys::Date::new(&wasm_bindgen::JsValue::from_f64(now as f64 * 1000.0));
-    let midnight = now - (d.get_hours() as i64 * 3600 + d.get_minutes() as i64 * 60 + d.get_seconds() as i64);
-    let year_start = js_sys::Date::new_with_year_month_day(d.get_full_year(), 0, 1).get_time() as i64 / 1000;
+    let midnight =
+        now - (d.get_hours() as i64 * 3600 + d.get_minutes() as i64 * 60 + d.get_seconds() as i64);
+    let year_start =
+        js_sys::Date::new_with_year_month_day(d.get_full_year(), 0, 1).get_time() as i64 / 1000;
     match mtime {
         t if t > now => (0, "Later than now".into()),
         t if t >= midnight => (1, "Today".into()),
@@ -277,7 +307,8 @@ fn date_group(mtime: i64, now: i64) -> (u32, String) {
         t if t >= midnight - 29 * DAY => (4, "Last 30 days".into()),
         t if t >= year_start => (5, "Earlier this year".into()),
         t => {
-            let y = js_sys::Date::new(&wasm_bindgen::JsValue::from_f64(t as f64 * 1000.0)).get_full_year();
+            let y = js_sys::Date::new(&wasm_bindgen::JsValue::from_f64(t as f64 * 1000.0))
+                .get_full_year();
             // Years newest first.
             (6 + (3000 - y.min(3000)), y.to_string())
         }
@@ -296,7 +327,13 @@ impl Sort {
     fn stored(pane: usize) -> Self {
         let saved = stored(&Self::storage_key(pane)).unwrap_or_default();
         let (k, asc) = saved.split_once(':').unwrap_or(("name", "1"));
-        Sort(SortKey::ALL.into_iter().find(|s| s.key() == k).unwrap_or(SortKey::Name), asc != "0")
+        Sort(
+            SortKey::ALL
+                .into_iter()
+                .find(|s| s.key() == k)
+                .unwrap_or(SortKey::Name),
+            asc != "0",
+        )
     }
 
     /// Folders first, then by the key (ties by name).
@@ -340,7 +377,11 @@ struct SyncPair {
 const SYNC_PAIRS_KEY: &str = "ferry-files.sync-pairs";
 
 /// How a sync can go: value and label.
-const SYNC_MODES: [(&str, &str); 3] = [("copy", "Copy missing"), ("update", "Update"), ("mirror", "Mirror")];
+const SYNC_MODES: [(&str, &str); 3] = [
+    ("copy", "Copy missing"),
+    ("update", "Update"),
+    ("mirror", "Mirror"),
+];
 /// A mirror removing more than this many items needs "remove" typed to run.
 const MIRROR_TYPE_OVER: usize = 10;
 
@@ -472,7 +513,13 @@ enum MenuItem {
 }
 
 fn item(label: impl Into<String>, key: &'static str, act: Act) -> MenuItem {
-    MenuItem::Do { label: label.into(), key, act, danger: false, enabled: true }
+    MenuItem::Do {
+        label: label.into(),
+        key,
+        act,
+        danger: false,
+        enabled: true,
+    }
 }
 
 #[derive(Clone, PartialEq)]
@@ -550,7 +597,10 @@ struct Slot {
 
 impl Slot {
     fn dirty(self) -> bool {
-        self.editor.with(|e| e.as_ref().is_some_and(|e| self.text.with(|t| *e.saved_text != **t)))
+        self.editor.with(|e| {
+            e.as_ref()
+                .is_some_and(|e| self.text.with(|t| *e.saved_text != **t))
+        })
     }
 }
 
@@ -805,7 +855,13 @@ impl Pane {
             term_id: RwSignal::new(None),
             term_tick: RwSignal::new(0),
             term_starting: StoredValue::new(false),
-            tabs: RwSignal::new(vec![Tab { src: Src::Mac, cwd: String::new(), selected: None, view: ViewMode::stored(id), root: String::new() }]),
+            tabs: RwSignal::new(vec![Tab {
+                src: Src::Mac,
+                cwd: String::new(),
+                selected: None,
+                view: ViewMode::stored(id),
+                root: String::new(),
+            }]),
             tab: RwSignal::new(0),
             doc: RwSignal::new(None),
             doc_text: RwSignal::new(String::new()),
@@ -824,7 +880,14 @@ impl Pane {
 
     /// Where the Editor view keeps its file.
     fn slot(self) -> Slot {
-        Slot { editor: self.doc, text: self.doc_text, ask: self.doc_ask, status: self.doc_status, find: self.doc_find, pane: Some(self) }
+        Slot {
+            editor: self.doc,
+            text: self.doc_text,
+            ask: self.doc_ask,
+            status: self.doc_status,
+            find: self.doc_find,
+            pane: Some(self),
+        }
     }
 
     fn error(self, msg: impl Into<String>) {
@@ -835,7 +898,15 @@ impl Pane {
         let sel = self.selected.get()?;
         self.entries
             .with(|es| es.iter().find(|e| e.path == sel).cloned())
-            .or_else(|| self.kids.with(|k| k.values().flatten().flat_map(|v| v.iter()).find(|e| e.path == sel).cloned()))
+            .or_else(|| {
+                self.kids.with(|k| {
+                    k.values()
+                        .flatten()
+                        .flat_map(|v| v.iter())
+                        .find(|e| e.path == sel)
+                        .cloned()
+                })
+            })
     }
 
     /// Sorts and filters `all` into `entries`, dropping marks on items no longer shown.
@@ -869,7 +940,10 @@ impl Pane {
             self.all.with_untracked(|all| {
                 all.iter()
                     .filter(|e| re.as_ref().is_none_or(|re| re.is_match(&e.name)))
-                    .filter(|e| text.as_deref().is_none_or(|t| contains_any_case(&e.name, t)))
+                    .filter(|e| {
+                        text.as_deref()
+                            .is_none_or(|t| contains_any_case(&e.name, t))
+                    })
                     .filter(|e| cmp.is_none_or(|m| m.get(&e.name).is_some_and(|x| x != "same")))
                     .cloned()
                     .collect()
@@ -885,8 +959,13 @@ impl Pane {
         if !self.marked.with_untracked(HashSet::is_empty) {
             // Items in folders open in the tree stay marked too.
             let kids = self.kids.get_untracked();
-            let shown: HashSet<&str> = es.iter().chain(kids.values().flatten().flatten()).map(|e| e.path.as_str()).collect();
-            self.marked.update(|m| m.retain(|x| shown.contains(x.as_str())));
+            let shown: HashSet<&str> = es
+                .iter()
+                .chain(kids.values().flatten().flatten())
+                .map(|e| e.path.as_str())
+                .collect();
+            self.marked
+                .update(|m| m.retain(|x| shown.contains(x.as_str())));
         }
         self.entries.set(es);
     }
@@ -894,9 +973,14 @@ impl Pane {
     /// Sorts by `s` (remembered for the pane).
     fn sort_to(self, s: Sort) {
         self.sort.set(s);
-        store(&Sort::storage_key(self.id), &format!("{}:{}", s.0.key(), if s.1 { 1 } else { 0 }));
-        self.cols.update(|c| c.values_mut().for_each(|es| s.apply(es)));
-        self.kids.update(|k| k.values_mut().flatten().for_each(|es| s.apply(es)));
+        store(
+            &Sort::storage_key(self.id),
+            &format!("{}:{}", s.0.key(), if s.1 { 1 } else { 0 }),
+        );
+        self.cols
+            .update(|c| c.values_mut().for_each(|es| s.apply(es)));
+        self.kids
+            .update(|k| k.values_mut().flatten().for_each(|es| s.apply(es)));
         self.arrange();
     }
 
@@ -912,19 +996,29 @@ impl Pane {
     /// in the group). Tracked.
     fn list_rows(self) -> Vec<(Option<Entry>, usize, String)> {
         if self.tree_on() {
-            return self.tree_rows().into_iter().map(|(e, d)| (Some(e), d, String::new())).collect();
+            return self
+                .tree_rows()
+                .into_iter()
+                .map(|(e, d)| (Some(e), d, String::new()))
+                .collect();
         }
         let group = self.group.get();
         self.entries.with(|es| {
             if group == Group::None {
-                return es.iter().map(|e| (Some(e.clone()), 0, String::new())).collect();
+                return es
+                    .iter()
+                    .map(|e| (Some(e.clone()), 0, String::new()))
+                    .collect();
             }
             let now = (js_sys::Date::now() / 1000.0) as i64;
             let groups: Vec<(u32, String)> = es.iter().map(|e| group.of(e, now)).collect();
             let mut out = Vec::with_capacity(es.len() + 8);
             for (i, e) in es.iter().enumerate() {
                 if i == 0 || groups[i - 1].0 != groups[i].0 {
-                    let n = groups[i..].iter().take_while(|g| g.0 == groups[i].0).count();
+                    let n = groups[i..]
+                        .iter()
+                        .take_while(|g| g.0 == groups[i].0)
+                        .count();
                     out.push((None, n, groups[i].1.clone()));
                 }
                 out.push((Some(e.clone()), 0, String::new()));
@@ -936,12 +1030,18 @@ impl Pane {
     fn set_sort(self, key: SortKey) {
         let Sort(now, asc) = self.sort.get_untracked();
         // Clicking the same column again reverses it; dates and sizes start biggest first.
-        self.sort_to(if now == key { Sort(key, !asc) } else { Sort(key, matches!(key, SortKey::Name | SortKey::Kind)) });
+        self.sort_to(if now == key {
+            Sort(key, !asc)
+        } else {
+            Sort(key, matches!(key, SortKey::Name | SortKey::Kind))
+        });
     }
 
     /// Whether `path` is one of the items actions act on (tracked, for highlighting).
     fn is_picked(self, path: &str) -> bool {
-        let marked = self.marked.with(|m| (!m.is_empty()).then(|| m.contains(path)));
+        let marked = self
+            .marked
+            .with(|m| (!m.is_empty()).then(|| m.contains(path)));
         marked.unwrap_or_else(|| self.selected.get().as_deref() == Some(path))
     }
 
@@ -949,7 +1049,16 @@ impl Pane {
     fn picked(self) -> Vec<Entry> {
         let marked = self.marked.get_untracked();
         let sel = self.selected.get_untracked();
-        self.shown_rows().into_iter().filter(|e| if marked.is_empty() { sel.as_deref() == Some(e.path.as_str()) } else { marked.contains(&e.path) }).collect()
+        self.shown_rows()
+            .into_iter()
+            .filter(|e| {
+                if marked.is_empty() {
+                    sel.as_deref() == Some(e.path.as_str())
+                } else {
+                    marked.contains(&e.path)
+                }
+            })
+            .collect()
     }
 
     /// Selects one item, unmarking the rest.
@@ -976,7 +1085,10 @@ impl Pane {
             let es = self.shown_rows();
             let at = |p: &str| es.iter().position(|e| e.path == p);
             let range = match (at(&anchor), at(path)) {
-                (Some(a), Some(b)) => es[a.min(b)..=a.max(b)].iter().map(|e| e.path.clone()).collect(),
+                (Some(a), Some(b)) => es[a.min(b)..=a.max(b)]
+                    .iter()
+                    .map(|e| e.path.clone())
+                    .collect(),
                 _ => HashSet::from([path.to_string()]),
             };
             self.marked.set(range);
@@ -1007,7 +1119,11 @@ enum Panel {
 #[derive(Clone, PartialEq, serde::Serialize, serde::Deserialize)]
 enum Side {
     Mac,
-    Phone { serial: Option<String>, id: String, label: String },
+    Phone {
+        serial: Option<String>,
+        id: String,
+        label: String,
+    },
 }
 
 /// What Copy or Cut kept: where it is, its paths, and whether Paste moves them.
@@ -1047,7 +1163,14 @@ enum Work {
     },
     /// Copies (or moves) the photos and videos under `from_dir` into folders by date under
     /// `to_dir`, named by `pattern`.
-    Import { from: Side, from_dir: String, to: Side, to_dir: String, pattern: String, moving: bool },
+    Import {
+        from: Side,
+        from_dir: String,
+        to: Side,
+        to_dir: String,
+        pattern: String,
+        moving: bool,
+    },
 }
 
 #[derive(Clone, PartialEq)]
@@ -1260,14 +1383,24 @@ impl Ctx {
             phone_thumbs: RwSignal::new(stored_flag(PHONE_THUMBS_KEY, true)),
             follow_folder: RwSignal::new(stored_flag(FOLLOW_FOLDER_KEY, false)),
             scripts: RwSignal::new(vec![]),
-            script_places: RwSignal::new(stored(scripts::PLACES_KEY).and_then(|s| serde_json::from_str(&s).ok()).unwrap_or_default()),
+            script_places: RwSignal::new(
+                stored(scripts::PLACES_KEY)
+                    .and_then(|s| serde_json::from_str(&s).ok())
+                    .unwrap_or_default(),
+            ),
             script_folder: RwSignal::new(stored(scripts::FOLDER_KEY).unwrap_or_default()),
             script_error: RwSignal::new(None),
-            script_keys: RwSignal::new(stored(scripts::KEYS_KEY).and_then(|s| serde_json::from_str(&s).ok()).unwrap_or_default()),
+            script_keys: RwSignal::new(
+                stored(scripts::KEYS_KEY)
+                    .and_then(|s| serde_json::from_str(&s).ok())
+                    .unwrap_or_default(),
+            ),
             script_capturing: RwSignal::new(None),
             script_key_note: RwSignal::new(None),
             section_order: RwSignal::new(sidebar::section_order(
-                &stored(SECTION_ORDER_KEY).and_then(|s| serde_json::from_str::<Vec<String>>(&s).ok()).unwrap_or_default(),
+                &stored(SECTION_ORDER_KEY)
+                    .and_then(|s| serde_json::from_str::<Vec<String>>(&s).ok())
+                    .unwrap_or_default(),
             )),
             // Only sections there still are (Everything is now part of Servers).
             hidden_sections: RwSignal::new(
@@ -1293,10 +1426,18 @@ impl Ctx {
             space: RwSignal::new(HashMap::new()),
             history: RwSignal::new(vec![]),
             panel: RwSignal::new(None),
-            favs: RwSignal::new(stored(FAVS_KEY).and_then(|s| serde_json::from_str(&s).ok()).unwrap_or_default()),
+            favs: RwSignal::new(
+                stored(FAVS_KEY)
+                    .and_then(|s| serde_json::from_str(&s).ok())
+                    .unwrap_or_default(),
+            ),
             side_renaming: RwSignal::new(None),
             side_changed: RwSignal::new((0, Src::Mac, String::new())),
-            sync_pairs: RwSignal::new(stored(SYNC_PAIRS_KEY).and_then(|s| serde_json::from_str(&s).ok()).unwrap_or_default()),
+            sync_pairs: RwSignal::new(
+                stored(SYNC_PAIRS_KEY)
+                    .and_then(|s| serde_json::from_str(&s).ok())
+                    .unwrap_or_default(),
+            ),
             workspaces: RwSignal::new(saved_workspaces()),
             drag: StoredValue::new(None),
             tab_drag: StoredValue::new(None),
@@ -1307,7 +1448,11 @@ impl Ctx {
             drop_at: RwSignal::new(None),
             side_w: stored_px(SIDE_W_KEY),
             pane_w: stored_px(PANE_W_KEY),
-            searches: RwSignal::new(stored(SEARCHES_KEY).and_then(|s| serde_json::from_str(&s).ok()).unwrap_or_default()),
+            searches: RwSignal::new(
+                stored(SEARCHES_KEY)
+                    .and_then(|s| serde_json::from_str(&s).ok())
+                    .unwrap_or_default(),
+            ),
             theme: RwSignal::new(stored(THEME_KEY).unwrap_or_else(|| "auto".into())),
             epub_read: RwSignal::new(stored_flag(preview::EPUB_READ_KEY, false)),
             read_find: RwSignal::new((0, 0)),
@@ -1355,12 +1500,18 @@ impl Ctx {
     }
 
     fn set_hidden_sections(self, keys: Vec<String>) {
-        store(HIDDEN_SECTIONS_KEY, &serde_json::to_string(&keys).unwrap_or_default());
+        store(
+            HIDDEN_SECTIONS_KEY,
+            &serde_json::to_string(&keys).unwrap_or_default(),
+        );
         self.hidden_sections.set(keys);
     }
 
     fn set_section_order(self, order: Vec<&'static str>) {
-        store(SECTION_ORDER_KEY, &serde_json::to_string(&order).unwrap_or_default());
+        store(
+            SECTION_ORDER_KEY,
+            &serde_json::to_string(&order).unwrap_or_default(),
+        );
         self.section_order.set(order);
     }
 
@@ -1409,7 +1560,8 @@ impl Ctx {
             Src::Mac => self.mac.get(),
             Src::Dev(_) => {
                 let id = src.key();
-                self.phones.with(|ps| ps.iter().find(|i| i.id == id).cloned())
+                self.phones
+                    .with(|ps| ps.iter().find(|i| i.id == id).cloned())
             }
         }
     }
@@ -1418,7 +1570,9 @@ impl Ctx {
     fn place(self, src: Src) -> String {
         match src {
             Src::Mac => crate::os::the_computer().into(),
-            Src::Dev(_) => self.src_info(src).map_or_else(|| "the device".into(), |i| i.label),
+            Src::Dev(_) => self
+                .src_info(src)
+                .map_or_else(|| "the device".into(), |i| i.label),
         }
     }
 
@@ -1428,7 +1582,14 @@ impl Ctx {
 
     /// Where the full-window editor keeps its file.
     fn full_slot(self) -> Slot {
-        Slot { editor: self.editor, text: self.text, ask: self.confirm_discard, status: self.status, find: self.finding, pane: None }
+        Slot {
+            editor: self.editor,
+            text: self.text,
+            ask: self.confirm_discard,
+            status: self.status,
+            find: self.finding,
+            pane: None,
+        }
     }
 }
 
@@ -1437,7 +1598,11 @@ impl Ctx {
 /// page and lose what was typed.
 pub(crate) fn editor_page(html: &str, zoom: u32) -> String {
     let theme = expect_context::<Ctx>().theme.get_untracked();
-    reading::page(html, &reading::page_style(&theme, 15, zoom, "16px 20px 60px", "1.55"), None)
+    reading::page(
+        html,
+        &reading::page_style(&theme, 15, zoom, "16px 20px 60px", "1.55"),
+        None,
+    )
 }
 
 #[component]
@@ -1466,7 +1631,10 @@ pub fn App() -> impl IntoView {
         if let Ok(Some(mac)) = call::<Option<Info>>("info", json!({ "src": "mac" })).await {
             ctx.mac.set(Some(mac));
         }
-        for info in call::<Vec<Info>>("connections", json!({})).await.unwrap_or_default() {
+        for info in call::<Vec<Info>>("connections", json!({}))
+            .await
+            .unwrap_or_default()
+        {
             ctx.connected(info, false);
         }
         ctx.restore_session();
@@ -1491,7 +1659,9 @@ pub fn App() -> impl IntoView {
     crate::api::listen("devices-changed", move |_: ()| ctx.scan());
     let _ = set_interval_with_handle(
         move || {
-            let waiting = ctx.devices.with_untracked(|d| d.as_ref().is_some_and(|d| d.adb_waiting));
+            let waiting = ctx
+                .devices
+                .with_untracked(|d| d.as_ref().is_some_and(|d| d.adb_waiting));
             let unwatched = !watching.get_value() && !ctx.has_phone();
             if waiting || unwatched || ctx.scan_again.get_value() {
                 ctx.scan();
@@ -1507,7 +1677,9 @@ pub fn App() -> impl IntoView {
     // Letting go of the forward key: a skip, or the end of 2×.
     let _keys_up = window_event_listener(ev::keyup, move |e| {
         let bound = chord_of(&e).and_then(|c| ctx.command_for(&c));
-        if bound.is_some_and(|b| b.id == "media_forward") && media_key(ctx.act().id, MediaKey::ForwardUp) {
+        if bound.is_some_and(|b| b.id == "media_forward")
+            && media_key(ctx.act().id, MediaKey::ForwardUp)
+        {
             e.prevent_default();
         }
     });
@@ -1518,7 +1690,11 @@ pub fn App() -> impl IntoView {
             return;
         }
         e.prevent_default();
-        if e.button() != 3 || ctx.settings.get_untracked() || ctx.panel.get_untracked().is_some() || ctx.editor.get_untracked().is_some() {
+        if e.button() != 3
+            || ctx.settings.get_untracked()
+            || ctx.panel.get_untracked().is_some()
+            || ctx.editor.get_untracked().is_some()
+        {
             return;
         }
         let under = e
@@ -1539,19 +1715,36 @@ pub fn App() -> impl IntoView {
     // book's name, Read and Edit).
     let in_editor = |el: &web_sys::Element| {
         el.closest(".book-editor").ok().flatten().is_some()
-            || el.closest(".preview").ok().flatten().and_then(|p| p.query_selector(".book-editor").ok().flatten()).is_some()
+            || el
+                .closest(".preview")
+                .ok()
+                .flatten()
+                .and_then(|p| p.query_selector(".book-editor").ok().flatten())
+                .is_some()
     };
     let _mouse_nav_down = window_event_listener(ev::mousedown, move |e| {
         if matches!(e.button(), 3 | 4) {
             e.prevent_default();
         }
-        clicked.set_value(e.target().and_then(|t| t.dyn_into::<web_sys::Element>().ok()));
+        clicked.set_value(
+            e.target()
+                .and_then(|t| t.dyn_into::<web_sys::Element>().ok()),
+        );
     });
     // The pane whose preview is reading a book or showing a PDF, with `el` in it.
     let in_reader = |el: &web_sys::Element| {
         let preview = el.closest(".preview").ok().flatten()?;
-        preview.query_selector(".book-reader, .pdf-reader").ok().flatten()?;
-        preview.closest("[data-pane]").ok().flatten()?.get_attribute("data-pane")?.parse::<usize>().ok()
+        preview
+            .query_selector(".book-reader, .pdf-reader")
+            .ok()
+            .flatten()?;
+        preview
+            .closest("[data-pane]")
+            .ok()
+            .flatten()?
+            .get_attribute("data-pane")?
+            .parse::<usize>()
+            .ok()
     };
     let _keys = window_event_listener(ev::keydown, move |e| {
         let meta = e.meta_key() || e.ctrl_key();
@@ -1603,7 +1796,12 @@ pub fn App() -> impl IntoView {
         // In the preview's book editor: ⌘S saves the book, ⌘F finds in it and ⌘R (or ⌥⌘F)
         // replaces in it.
         // Where the keys go: what has the focus, or else what was clicked last.
-        let place = || document().active_element().filter(|el| el.tag_name() != "BODY").or_else(|| clicked.with_value(Clone::clone));
+        let place = || {
+            document()
+                .active_element()
+                .filter(|el| el.tag_name() != "BODY")
+                .or_else(|| clicked.with_value(Clone::clone))
+        };
         if meta && matches!(e.key().as_str(), "f" | "ƒ") {
             if let Some(id) = place().and_then(|el| in_reader(&el)) {
                 e.prevent_default();
@@ -1611,8 +1809,12 @@ pub fn App() -> impl IntoView {
                 return;
             }
         }
-        if meta && matches!(e.key().as_str(), "s" | "f" | "ƒ" | "r") && ep.book.with_untracked(|b| b.is_some()) {
-            let in_book = place().is_some_and(|el| in_editor(&el)) && ep.host.get_untracked().is_some();
+        if meta
+            && matches!(e.key().as_str(), "s" | "f" | "ƒ" | "r")
+            && ep.book.with_untracked(|b| b.is_some())
+        {
+            let in_book =
+                place().is_some_and(|el| in_editor(&el)) && ep.host.get_untracked().is_some();
             if in_book {
                 e.prevent_default();
                 match e.key().as_str() {
@@ -1633,7 +1835,10 @@ pub fn App() -> impl IntoView {
         let p = ctx.act();
         // The Editor view: ⌘S saves, ⌘W closes the file's tab, and only shortcuts that work
         // anywhere do the rest; the others act on files, which aren't shown.
-        if p.view.get_untracked() == ViewMode::Code && p.notice.with_untracked(|n| matches!(n, Notice::None | Notice::Ok(_) | Notice::Error(_))) {
+        if p.view.get_untracked() == ViewMode::Code
+            && p.notice
+                .with_untracked(|n| matches!(n, Notice::None | Notice::Ok(_) | Notice::Error(_)))
+        {
             if e.default_prevented() {
                 return;
             }
@@ -1641,7 +1846,10 @@ pub fn App() -> impl IntoView {
             if meta && e.key() == "s" {
                 e.prevent_default();
                 ctx.save_in(p.slot());
-            } else if meta && matches!(e.key().as_str(), "f" | "ƒ") && p.doc.with_untracked(Option::is_some) {
+            } else if meta
+                && matches!(e.key().as_str(), "f" | "ƒ")
+                && p.doc.with_untracked(Option::is_some)
+            {
                 // Find in the shown file, from anywhere in the pane (the editor's own ⌘F takes the selection).
                 e.prevent_default();
                 if e.alt_key() {
@@ -1653,12 +1861,18 @@ pub fn App() -> impl IntoView {
                 // rename box is one.
                 let focused = document().active_element();
                 let in_field = focused.as_ref().is_some_and(|el| el.tag_name() == "INPUT");
-                let row = focused.and_then(|el| el.closest(".code-tree .tree-row").ok().flatten()).and_then(|row| row.get_attribute("data-path"));
+                let row = focused
+                    .and_then(|el| el.closest(".code-tree .tree-row").ok().flatten())
+                    .and_then(|row| row.get_attribute("data-path"));
                 let shown = || {
                     if p.peek_on.get_untracked() {
-                        p.doc_peek.with_untracked(|e| e.as_ref().map(|e| e.path.clone()))
+                        p.doc_peek
+                            .with_untracked(|e| e.as_ref().map(|e| e.path.clone()))
                     } else {
-                        p.docs.with_untracked(|ds| ds.get(p.doc_at.get_untracked()).map(|d| d.path().to_string()))
+                        p.docs.with_untracked(|ds| {
+                            ds.get(p.doc_at.get_untracked())
+                                .map(|d| d.path().to_string())
+                        })
                     }
                 };
                 if !in_field {
@@ -1674,18 +1888,26 @@ pub fn App() -> impl IntoView {
             } else if id == Some("close_tab") && p.docs.with_untracked(|ds| !ds.is_empty()) {
                 e.prevent_default();
                 ctx.close_doc(p, p.doc_at.get_untracked(), false);
-            } else if bound.is_some_and(|b| b.anywhere && b.id != "replace") && chord.as_deref().is_some_and(held) {
+            } else if bound.is_some_and(|b| b.anywhere && b.id != "replace")
+                && chord.as_deref().is_some_and(held)
+            {
                 // Falls through to the shortcut below.
             } else {
                 return;
             }
         }
-        if !matches!(p.notice.get_untracked(), Notice::None | Notice::Ok(_) | Notice::Error(_)) {
+        if !matches!(
+            p.notice.get_untracked(),
+            Notice::None | Notice::Ok(_) | Notice::Error(_)
+        ) {
             return;
         }
         // Typing in a field (the filter) is the field's, but for shortcuts with ⌘ or ⌃ that work
         // anywhere: tabs, the palette and the sidebar.
-        let typing = e.target().and_then(|t| t.dyn_into::<web_sys::Element>().ok()).is_some_and(|el| el.closest("input, textarea").ok().flatten().is_some());
+        let typing = e
+            .target()
+            .and_then(|t| t.dyn_into::<web_sys::Element>().ok())
+            .is_some_and(|el| el.closest("input, textarea").ok().flatten().is_some());
         if typing && !bound.is_some_and(|b| b.anywhere && chord.as_deref().is_some_and(held)) {
             return;
         }
@@ -1699,7 +1921,10 @@ pub fn App() -> impl IntoView {
             }
         }
         let entries = p.shown_rows();
-        let idx = p.selected.get_untracked().and_then(|s| entries.iter().position(|x| x.path == s));
+        let idx = p
+            .selected
+            .get_untracked()
+            .and_then(|s| entries.iter().position(|x| x.path == s));
         let current = idx.and_then(|i| entries.get(i)).cloned();
         let view = p.view.get_untracked();
         let step = |delta: isize| {
@@ -1788,7 +2013,8 @@ pub fn App() -> impl IntoView {
                 }
                 "pick_all" if select_all_peek() => true,
                 "pick_all" => {
-                    p.marked.set(entries.iter().map(|x| x.path.clone()).collect());
+                    p.marked
+                        .set(entries.iter().map(|x| x.path.clone()).collect());
                     true
                 }
                 "quick_look" => {
@@ -1857,11 +2083,19 @@ pub fn App() -> impl IntoView {
             }
             ("ArrowDown", false) => {
                 e.prevent_default();
-                step(if view == ViewMode::Thumbs && idx.is_some() { per_row() } else { 1 });
+                step(if view == ViewMode::Thumbs && idx.is_some() {
+                    per_row()
+                } else {
+                    1
+                });
             }
             ("ArrowUp", false) => {
                 e.prevent_default();
-                step(if view == ViewMode::Thumbs { -per_row() } else { -1 });
+                step(if view == ViewMode::Thumbs {
+                    -per_row()
+                } else {
+                    -1
+                });
             }
             ("ArrowRight", false) if view == ViewMode::Thumbs => {
                 e.prevent_default();
@@ -1887,7 +2121,10 @@ pub fn App() -> impl IntoView {
 
     // The context menu closes on any click outside it, and when the window loses focus.
     let _press = window_event_listener(ev::mousedown, move |e| {
-        let inside = e.target().and_then(|t| t.dyn_into::<web_sys::Element>().ok()).is_some_and(|el| el.closest(".menu").ok().flatten().is_some());
+        let inside = e
+            .target()
+            .and_then(|t| t.dyn_into::<web_sys::Element>().ok())
+            .is_some_and(|el| el.closest(".menu").ok().flatten().is_some());
         if !inside {
             ctx.menu.set(None);
         }
@@ -1899,13 +2136,18 @@ pub fn App() -> impl IntoView {
     let _resize = window_event_listener(ev::resize, move |_| ctx.menu.set(None));
     // No browser menu (Reload, Inspect…) outside text fields; the panes have their own.
     let _ctx_menu = window_event_listener(ev::contextmenu, move |e| {
-        let editable = e.target().and_then(|t| t.dyn_into::<web_sys::Element>().ok()).is_some_and(|el| el.closest("input, textarea").ok().flatten().is_some());
+        let editable = e
+            .target()
+            .and_then(|t| t.dyn_into::<web_sys::Element>().ok())
+            .is_some_and(|el| el.closest("input, textarea").ok().flatten().is_some());
         if !editable {
             e.prevent_default();
         }
     });
 
-    crate::api::listen("dupes", move |d: DupeProgress| ctx.dupe_progress.set(Some((d.job, d.text))));
+    crate::api::listen("dupes", move |d: DupeProgress| {
+        ctx.dupe_progress.set(Some((d.job, d.text)))
+    });
     crate::api::listen("transfer", move |pr: Progress| {
         ctx.jobs.update(|js| {
             if let Some(j) = js.iter_mut().find(|j| j.id == pr.job) {
@@ -1917,14 +2159,35 @@ pub fn App() -> impl IntoView {
     // except subtitles dropped on a video.
     crate::api::listen("tauri://drag-drop", move |d: FileDrop| {
         let dpr = window().device_pixel_ratio().max(1.0);
-        let Some(el) = document().element_from_point((d.position.x / dpr) as f32, (d.position.y / dpr) as f32) else { return };
+        let Some(el) =
+            document().element_from_point((d.position.x / dpr) as f32, (d.position.y / dpr) as f32)
+        else {
+            return;
+        };
         // Subtitle files dropped on a video are shown with it.
-        if video::drop_on_player(&el, Src::Mac, d.paths.iter().map(|f| crate::os::app_path(f)).collect()) {
+        if video::drop_on_player(
+            &el,
+            Src::Mac,
+            d.paths.iter().map(|f| crate::os::app_path(f)).collect(),
+        ) {
             return;
         }
-        let Some(pane_el) = el.closest("[data-pane]").ok().flatten() else { return };
-        let Some(p) = pane_el.get_attribute("data-pane").and_then(|i| i.parse::<usize>().ok()).and_then(|i| ctx.panes.get(i).copied()) else { return };
-        let dir = el.closest("[data-dir]").ok().flatten().and_then(|f| f.get_attribute("data-dir")).unwrap_or_else(|| p.cwd.get_untracked());
+        let Some(pane_el) = el.closest("[data-pane]").ok().flatten() else {
+            return;
+        };
+        let Some(p) = pane_el
+            .get_attribute("data-pane")
+            .and_then(|i| i.parse::<usize>().ok())
+            .and_then(|i| ctx.panes.get(i).copied())
+        else {
+            return;
+        };
+        let dir = el
+            .closest("[data-dir]")
+            .ok()
+            .flatten()
+            .and_then(|f| f.get_attribute("data-dir"))
+            .unwrap_or_else(|| p.cwd.get_untracked());
         ctx.active.set(p.id);
         let paths = d.paths.iter().map(|f| crate::os::app_path(f)).collect();
         ctx.transfer(p, Src::Mac, paths, p.src.get_untracked(), dir, false);
@@ -1942,22 +2205,39 @@ pub fn App() -> impl IntoView {
                 continue;
             }
             request_animation_frame(move || {
-                let Ok(found) = document().query_selector_all(&format!(".pane[data-pane=\"{i}\"] [data-path]")) else { return };
+                let Ok(found) =
+                    document().query_selector_all(&format!(".pane[data-pane=\"{i}\"] [data-path]"))
+                else {
+                    return;
+                };
                 let el = (0..found.length())
-                    .filter_map(|n| found.item(n).and_then(|e| e.dyn_into::<web_sys::Element>().ok()))
+                    .filter_map(|n| {
+                        found
+                            .item(n)
+                            .and_then(|e| e.dyn_into::<web_sys::Element>().ok())
+                    })
                     .find(|e| e.get_attribute("data-path").as_deref() == Some(path.as_str()));
                 if let Some(el) = el {
                     let opts = web_sys::ScrollIntoViewOptions::new();
                     opts.set_block(web_sys::ScrollLogicalPosition::Nearest);
                     opts.set_inline(web_sys::ScrollLogicalPosition::Nearest);
                     el.scroll_into_view_with_scroll_into_view_options(&opts);
-                } else if let Some(sc) = document().query_selector(&format!(".pane[data-pane=\"{i}\"] [data-rows]")).ok().flatten() {
+                } else if let Some(sc) = document()
+                    .query_selector(&format!(".pane[data-pane=\"{i}\"] [data-rows]"))
+                    .ok()
+                    .flatten()
+                {
                     // Not rendered, being out of view in a long list: scroll to where it would be.
                     let rows = untrack(|| ctx.panes[i].list_rows());
-                    let at = rows.iter().position(|r| r.0.as_ref().is_some_and(|e| e.path == path));
+                    let at = rows
+                        .iter()
+                        .position(|r| r.0.as_ref().is_some_and(|e| e.path == path));
                     let at = match ctx.panes[i].view.get_untracked() {
                         ViewMode::List => at,
-                        _ => ctx.panes[i].shown_rows().iter().position(|e| e.path == path),
+                        _ => ctx.panes[i]
+                            .shown_rows()
+                            .iter()
+                            .position(|e| e.path == path),
                     };
                     if let Some(idx) = at {
                         rows::reveal(i, &sc, idx);

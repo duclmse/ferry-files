@@ -18,42 +18,157 @@ pub(super) struct Command {
     pub anywhere: bool,
 }
 
-const fn c(id: &'static str, what: &'static str, keys: &'static [&'static str], anywhere: bool) -> Command {
-    Command { id, what, keys, anywhere }
+const fn c(
+    id: &'static str,
+    what: &'static str,
+    keys: &'static [&'static str],
+    anywhere: bool,
+) -> Command {
+    Command {
+        id,
+        what,
+        keys,
+        anywhere,
+    }
 }
 
 pub(super) const COMMANDS: &[Command] = &[
     c("open", "Open", &["Enter", "cmd+ArrowDown"], false),
     c("up", "Up a folder", &["cmd+ArrowUp", "Backspace"], false),
     c("quick_look", "Quick Look", &["Space"], false),
-    c("media_play", "Play or pause the video or sound in the preview", &["KeyK"], false),
-    c("media_back", "Back 5 seconds in the preview's video or sound", &["KeyJ"], false),
-    c("media_forward", "Forward 10 seconds in the preview's video or sound (hold for 2x)", &["KeyL"], false),
-    c("media_mute", "Sound on or off for the preview's video or sound", &["KeyM"], false),
-    c("palette", "Commands: every action, favourites, devices, recent folders", &["cmd+KeyK"], true),
-    c("filter", "Filter; Enter searches subfolders", &["cmd+KeyF", "Slash"], false),
+    c(
+        "media_play",
+        "Play or pause the video or sound in the preview",
+        &["KeyK"],
+        false,
+    ),
+    c(
+        "media_back",
+        "Back 5 seconds in the preview's video or sound",
+        &["KeyJ"],
+        false,
+    ),
+    c(
+        "media_forward",
+        "Forward 10 seconds in the preview's video or sound (hold for 2x)",
+        &["KeyL"],
+        false,
+    ),
+    c(
+        "media_mute",
+        "Sound on or off for the preview's video or sound",
+        &["KeyM"],
+        false,
+    ),
+    c(
+        "palette",
+        "Commands: every action, favourites, devices, recent folders",
+        &["cmd+KeyK"],
+        true,
+    ),
+    c(
+        "filter",
+        "Filter; Enter searches subfolders",
+        &["cmd+KeyF", "Slash"],
+        false,
+    ),
     c("type_path", "Type a path", &["cmd+KeyL"], false),
-    c("rename", "Rename (with several picked: rename them together)", &["F2"], false),
-    c("replace", "Replace in names: the Replace with box under the search box", &["cmd+KeyR"], true),
-    c("replace_names", "Find and replace in names (what's picked, or everything shown)", &["alt+cmd+KeyF"], false),
-    c("delete", "Delete (on the computer: move to the Trash)", &["cmd+Backspace", "Delete"], false),
-    c("delete_forever", "Delete permanently, with no backup (files on the computer)", &["shift+Delete", "shift+Backspace"], false),
+    c(
+        "rename",
+        "Rename (with several picked: rename them together)",
+        &["F2"],
+        false,
+    ),
+    c(
+        "replace",
+        "Replace in names: the Replace with box under the search box",
+        &["cmd+KeyR"],
+        true,
+    ),
+    c(
+        "replace_names",
+        "Find and replace in names (what's picked, or everything shown)",
+        &["alt+cmd+KeyF"],
+        false,
+    ),
+    c(
+        "delete",
+        "Delete (on the computer: move to the Trash)",
+        &["cmd+Backspace", "Delete"],
+        false,
+    ),
+    c(
+        "delete_forever",
+        "Delete permanently, with no backup (files on the computer)",
+        &["shift+Delete", "shift+Backspace"],
+        false,
+    ),
     c("copy", "Copy to the other pane", &["F5"], false),
     c("move", "Move to the other pane", &["F6"], false),
-    c("copy_items", "Copy, to paste in another folder (or in Finder)", &["cmd+KeyC"], false),
-    c("cut_items", "Cut, to move to another folder with Paste", &["cmd+KeyX"], false),
-    c("paste", "Paste what was copied (here or in Finder) into this folder", &["cmd+KeyV"], false),
+    c(
+        "copy_items",
+        "Copy, to paste in another folder (or in Finder)",
+        &["cmd+KeyC"],
+        false,
+    ),
+    c(
+        "cut_items",
+        "Cut, to move to another folder with Paste",
+        &["cmd+KeyX"],
+        false,
+    ),
+    c(
+        "paste",
+        "Paste what was copied (here or in Finder) into this folder",
+        &["cmd+KeyV"],
+        false,
+    ),
     c("pick_all", "Pick everything", &["cmd+KeyA"], false),
-    c("undo", "Undo the last rename, new item, delete, copy or move", &["cmd+KeyZ"], false),
+    c(
+        "undo",
+        "Undo the last rename, new item, delete, copy or move",
+        &["cmd+KeyZ"],
+        false,
+    ),
     c("other_pane", "The other pane", &["Tab"], false),
-    c("split", "Show or hide the second pane", &["cmd+Backslash"], false),
-    c("terminal", "Show or hide the terminal (this computer, adb phones, SFTP servers)", &["ctrl+Backquote"], true),
-    c("hidden", "Show or hide hidden files (names starting with a dot)", &["cmd+Period"], true),
-    c("sidebar", "Show or hide the sidebar", &["alt+cmd+KeyS"], true),
+    c(
+        "split",
+        "Show or hide the second pane",
+        &["cmd+Backslash"],
+        false,
+    ),
+    c(
+        "terminal",
+        "Show or hide the terminal (this computer, adb phones, SFTP servers)",
+        &["ctrl+Backquote"],
+        true,
+    ),
+    c(
+        "hidden",
+        "Show or hide hidden files (names starting with a dot)",
+        &["cmd+Period"],
+        true,
+    ),
+    c(
+        "sidebar",
+        "Show or hide the sidebar",
+        &["alt+cmd+KeyS"],
+        true,
+    ),
     c("new_tab", "New tab", &["cmd+KeyT"], true),
     c("close_tab", "Close tab", &["cmd+KeyW"], true),
-    c("next_tab", "Next tab", &["shift+cmd+BracketRight", "ctrl+Tab"], true),
-    c("prev_tab", "Previous tab", &["shift+cmd+BracketLeft", "ctrl+shift+Tab"], true),
+    c(
+        "next_tab",
+        "Next tab",
+        &["shift+cmd+BracketRight", "ctrl+Tab"],
+        true,
+    ),
+    c(
+        "prev_tab",
+        "Previous tab",
+        &["shift+cmd+BracketLeft", "ctrl+shift+Tab"],
+        true,
+    ),
     c("help", "Keyboard shortcuts", &["shift+Slash"], false),
 ];
 
@@ -72,7 +187,12 @@ struct Mods {
 
 fn join(m: Mods, code: &str) -> String {
     let mut s = String::new();
-    for (on, name) in [(m.ctrl, "ctrl+"), (m.alt, "alt+"), (m.shift, "shift+"), (m.cmd, "cmd+")] {
+    for (on, name) in [
+        (m.ctrl, "ctrl+"),
+        (m.alt, "alt+"),
+        (m.shift, "shift+"),
+        (m.cmd, "cmd+"),
+    ] {
         if on {
             s.push_str(name);
         }
@@ -129,7 +249,12 @@ pub(super) fn chord_of(e: &web_sys::KeyboardEvent) -> Option<String> {
         return None;
     }
     let mac = crate::os::is_mac();
-    let m = Mods { ctrl: mac && e.ctrl_key(), alt: e.alt_key(), shift: e.shift_key(), cmd: crate::os::cmd(e.meta_key(), e.ctrl_key()) };
+    let m = Mods {
+        ctrl: mac && e.ctrl_key(),
+        alt: e.alt_key(),
+        shift: e.shift_key(),
+        cmd: crate::os::cmd(e.meta_key(), e.ctrl_key()),
+    };
     Some(join(m, &code))
 }
 
@@ -144,7 +269,12 @@ pub(super) fn label(chord: &str) -> String {
     let (m, code) = split(chord);
     let mac = crate::os::is_mac();
     // ? is how people know Shift+/.
-    if code == "Slash" && m == (Mods { shift: true, ..Mods::default() }) {
+    if code == "Slash"
+        && m == (Mods {
+            shift: true,
+            ..Mods::default()
+        })
+    {
         return "?".into();
     }
     let key = match code {
@@ -168,7 +298,10 @@ pub(super) fn label(chord: &str) -> String {
         "ArrowDown" => "↓",
         "ArrowLeft" => "←",
         "ArrowRight" => "→",
-        c => c.strip_prefix("Key").or_else(|| c.strip_prefix("Digit")).unwrap_or(c),
+        c => c
+            .strip_prefix("Key")
+            .or_else(|| c.strip_prefix("Digit"))
+            .unwrap_or(c),
     };
     let key = match code.strip_prefix("Numpad") {
         Some(n) if code != "NumpadEnter" => format!("Num {n}"),
@@ -182,7 +315,11 @@ pub(super) fn label(chord: &str) -> String {
             }
         }
     } else {
-        for (on, name) in [(m.cmd || m.ctrl, "Ctrl+"), (m.alt, "Alt+"), (m.shift, "Shift+")] {
+        for (on, name) in [
+            (m.cmd || m.ctrl, "Ctrl+"),
+            (m.alt, "Alt+"),
+            (m.shift, "Shift+"),
+        ] {
             if on {
                 s.push_str(name);
             }
@@ -193,11 +330,15 @@ pub(super) fn label(chord: &str) -> String {
 }
 
 pub(super) fn saved_keys() -> HashMap<String, Vec<String>> {
-    stored(KEYS_KEY).and_then(|s| serde_json::from_str(&s).ok()).unwrap_or_default()
+    stored(KEYS_KEY)
+        .and_then(|s| serde_json::from_str(&s).ok())
+        .unwrap_or_default()
 }
 
 fn defaults(id: &str) -> Vec<String> {
-    command(id).map(|c| c.keys.iter().map(|k| norm(k)).collect()).unwrap_or_default()
+    command(id)
+        .map(|c| c.keys.iter().map(|k| norm(k)).collect())
+        .unwrap_or_default()
 }
 
 fn chords_in(k: &HashMap<String, Vec<String>>, id: &str) -> Vec<String> {
@@ -216,7 +357,10 @@ impl Ctx {
         if id.is_empty() {
             return String::new();
         }
-        self.chords(id).first().map(|c| label(c)).unwrap_or_default()
+        self.chords(id)
+            .first()
+            .map(|c| label(c))
+            .unwrap_or_default()
     }
 
     /// "New tab (⌘T)", or the bare name when it has no shortcut.
@@ -229,7 +373,11 @@ impl Ctx {
 
     /// The command a chord runs, if any.
     pub(super) fn command_for(self, chord: &str) -> Option<&'static Command> {
-        self.keymap.with_untracked(|k| COMMANDS.iter().find(|c| chords_in(k, c.id).iter().any(|m| m == chord)))
+        self.keymap.with_untracked(|k| {
+            COMMANDS
+                .iter()
+                .find(|c| chords_in(k, c.id).iter().any(|m| m == chord))
+        })
     }
 
     fn set_keys(self, f: impl FnOnce(&mut HashMap<String, Vec<String>>)) {
@@ -286,7 +434,10 @@ pub(super) fn ShortcutsEditor() -> impl IntoView {
     let ctx = expect_context::<Ctx>();
     const FIXED: &[(&str, &str)] = &[
         ("↑ ↓", "Move through the files"),
-        ("← →", "Previous or next picture, video or sound (list); left and right (thumbnails, columns)"),
+        (
+            "← →",
+            "Previous or next picture, video or sound (list); left and right (thumbnails, columns)",
+        ),
         ("⌘-click, Shift-click", "Pick some"),
         ("Esc", "Unpick, or close"),
         ("Middle-click", "Open a sidebar folder in a new tab"),
@@ -295,7 +446,9 @@ pub(super) fn ShortcutsEditor() -> impl IntoView {
     let what = |w: &str| match w {
         "Quick Look" => crate::os::quick_look().to_string(),
         "Show or hide the sidebar" => format!("Show or hide the {}", crate::os::sidebar()),
-        "Open a sidebar folder in a new tab" => format!("Open a {} folder in a new tab", crate::os::sidebar()),
+        "Open a sidebar folder in a new tab" => {
+            format!("Open a {} folder in a new tab", crate::os::sidebar())
+        }
         w => w.to_string(),
     };
     on_cleanup(move || ctx.capturing.set(None));
@@ -320,11 +473,23 @@ pub(super) fn ShortcutsEditor() -> impl IntoView {
     let matches = move |text: &str, keys: &[String]| {
         query.with(|q| {
             let q = q.trim().to_lowercase();
-            q.is_empty() || text.to_lowercase().contains(&q) || keys.iter().any(|k| k.to_lowercase().contains(&q))
+            q.is_empty()
+                || text.to_lowercase().contains(&q)
+                || keys.iter().any(|k| k.to_lowercase().contains(&q))
         })
     };
-    let shows = move |c: &Command| matches(&what(c.what), &ctx.chords(c.id).iter().map(|ch| label(ch)).collect::<Vec<_>>());
-    let fixed_shows = move |(k, w): &(&'static str, &'static str)| matches(&what(w), &[crate::os::keys(k).to_string()]);
+    let shows = move |c: &Command| {
+        matches(
+            &what(c.what),
+            &ctx.chords(c.id)
+                .iter()
+                .map(|ch| label(ch))
+                .collect::<Vec<_>>(),
+        )
+    };
+    let fixed_shows = move |(k, w): &(&'static str, &'static str)| {
+        matches(&what(w), &[crate::os::keys(k).to_string()])
+    };
     let any_command = move || COMMANDS.iter().any(shows);
     let any_fixed = move || FIXED.iter().any(fixed_shows);
     view! {

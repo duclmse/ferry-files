@@ -22,7 +22,8 @@ pub fn webview_ready(app: &tauri::AppHandle) {
                 // SAFETY: COM calls on the window's own WebView2, on the main thread, where
                 // with_webview runs this.
                 unsafe {
-                    if let Ok(settings) = wv.controller().CoreWebView2().and_then(|c| c.Settings()) {
+                    if let Ok(settings) = wv.controller().CoreWebView2().and_then(|c| c.Settings())
+                    {
                         if let Ok(s3) = settings.cast::<ICoreWebView2Settings3>() {
                             let _ = s3.SetAreBrowserAcceleratorKeysEnabled(false);
                         }
@@ -46,7 +47,11 @@ pub const COMPUTER: &str = if cfg!(target_os = "macos") {
 
 /// Where the web view reaches the app's `ferry` scheme: Windows' web view (WebView2) only loads
 /// it over http, at `http://ferry.localhost/`. The page's `os::served` does the same.
-pub const SCHEME_ORIGIN: &str = if cfg!(windows) { "http://ferry.localhost" } else { "ferry://localhost" };
+pub const SCHEME_ORIGIN: &str = if cfg!(windows) {
+    "http://ferry.localhost"
+} else {
+    "ferry://localhost"
+};
 
 /// A command that runs without flashing a console window on Windows.
 pub fn command(program: impl AsRef<OsStr>) -> Command {
@@ -84,15 +89,23 @@ pub const ADB_INSTALL: &str = if cfg!(target_os = "macos") {
 /// its cache, since a cache may be cleared by the system.
 pub fn backup_dir() -> PathBuf {
     if cfg!(target_os = "macos") {
-        dirs::home_dir().unwrap_or_else(std::env::temp_dir).join("Library/Caches/ferry-files/backups")
+        dirs::home_dir()
+            .unwrap_or_else(std::env::temp_dir)
+            .join("Library/Caches/ferry-files/backups")
     } else {
-        dirs::data_local_dir().unwrap_or_else(std::env::temp_dir).join("ferry-files").join("backups")
+        dirs::data_local_dir()
+            .unwrap_or_else(std::env::temp_dir)
+            .join("ferry-files")
+            .join("backups")
     }
 }
 
 /// Where the user's Lua scripts are (Run script… in the context menu): with the app's data.
 pub fn scripts_dir() -> PathBuf {
-    dirs::data_dir().unwrap_or_else(std::env::temp_dir).join("ferry-files").join("scripts")
+    dirs::data_dir()
+        .unwrap_or_else(std::env::temp_dir)
+        .join("ferry-files")
+        .join("scripts")
 }
 
 /// The thumbnail Windows shows for the file in Explorer (pictures, videos, PDFs, documents and
@@ -104,7 +117,9 @@ pub fn system_thumb(path: &Path, px: u32) -> Option<image::DynamicImage> {
     // Thumbnail handlers expect a single-threaded COM apartment, which the caller's thread may
     // not be in (or may be in the other kind), so this runs on a thread of its own.
     std::thread::spawn(move || {
-        use windows::Win32::System::Com::{CoInitializeEx, CoUninitialize, COINIT_APARTMENTTHREADED};
+        use windows::Win32::System::Com::{
+            CoInitializeEx, CoUninitialize, COINIT_APARTMENTTHREADED,
+        };
         let inited = unsafe { CoInitializeEx(None, COINIT_APARTMENTTHREADED) }.is_ok();
         let img = unsafe { shell_thumb(&path, px) };
         if inited {
@@ -122,16 +137,33 @@ unsafe fn shell_thumb(path: &Path, px: u32) -> Option<image::DynamicImage> {
     use windows::core::{HSTRING, PCWSTR};
     use windows::Win32::Foundation::SIZE;
     use windows::Win32::Graphics::Gdi::{
-        CreateCompatibleDC, DeleteDC, DeleteObject, GetDIBits, GetObjectW, BITMAP, BITMAPINFO, BITMAPINFOHEADER, BI_RGB, DIB_RGB_COLORS,
+        CreateCompatibleDC, DeleteDC, DeleteObject, GetDIBits, GetObjectW, BITMAP, BITMAPINFO,
+        BITMAPINFOHEADER, BI_RGB, DIB_RGB_COLORS,
     };
-    use windows::Win32::UI::Shell::{IShellItemImageFactory, SHCreateItemFromParsingName, SIIGBF_BIGGERSIZEOK, SIIGBF_THUMBNAILONLY};
+    use windows::Win32::UI::Shell::{
+        IShellItemImageFactory, SHCreateItemFromParsingName, SIIGBF_BIGGERSIZEOK,
+        SIIGBF_THUMBNAILONLY,
+    };
     let wide = HSTRING::from(path.as_os_str());
-    let f: IShellItemImageFactory = unsafe { SHCreateItemFromParsingName(PCWSTR(wide.as_ptr()), None) }.ok()?;
+    let f: IShellItemImageFactory =
+        unsafe { SHCreateItemFromParsingName(PCWSTR(wide.as_ptr()), None) }.ok()?;
     let side = px as i32;
-    let hbm = unsafe { f.GetImage(SIZE { cx: side, cy: side }, SIIGBF_THUMBNAILONLY | SIIGBF_BIGGERSIZEOK) }.ok()?;
+    let hbm = unsafe {
+        f.GetImage(
+            SIZE { cx: side, cy: side },
+            SIIGBF_THUMBNAILONLY | SIIGBF_BIGGERSIZEOK,
+        )
+    }
+    .ok()?;
     let read = || -> Option<image::DynamicImage> {
         let mut bm = BITMAP::default();
-        let got = unsafe { GetObjectW(hbm.into(), std::mem::size_of::<BITMAP>() as i32, Some((&mut bm as *mut BITMAP).cast())) };
+        let got = unsafe {
+            GetObjectW(
+                hbm.into(),
+                std::mem::size_of::<BITMAP>() as i32,
+                Some((&mut bm as *mut BITMAP).cast()),
+            )
+        };
         if got == 0 || bm.bmWidth <= 0 || bm.bmHeight == 0 {
             return None;
         }
@@ -151,7 +183,17 @@ unsafe fn shell_thumb(path: &Path, px: u32) -> Option<image::DynamicImage> {
         };
         let mut px = vec![0u8; w as usize * h as usize * 4];
         let dc = unsafe { CreateCompatibleDC(None) };
-        let lines = unsafe { GetDIBits(dc, hbm, 0, h, Some(px.as_mut_ptr().cast()), &mut info, DIB_RGB_COLORS) };
+        let lines = unsafe {
+            GetDIBits(
+                dc,
+                hbm,
+                0,
+                h,
+                Some(px.as_mut_ptr().cast()),
+                &mut info,
+                DIB_RGB_COLORS,
+            )
+        };
         let _ = unsafe { DeleteDC(dc) };
         if lines != h as i32 {
             return None;
@@ -209,7 +251,8 @@ pub fn app_path(path: &Path) -> String {
 
 /// Opens a file in its default app, or a folder in the file manager.
 pub fn open(path: &Path) -> Result<(), String> {
-    tauri_plugin_opener::open_path(path, None::<&str>).map_err(|e| format!("Can't open {}: {e}", path.display()))
+    tauri_plugin_opener::open_path(path, None::<&str>)
+        .map_err(|e| format!("Can't open {}: {e}", path.display()))
 }
 
 /// Opens a web or mail address in its default app.
@@ -269,10 +312,12 @@ pub fn ejectable(path: &str) -> bool {
 fn external_drive(d: &str) -> bool {
     use windows::Win32::Foundation::CloseHandle;
     use windows::Win32::Storage::FileSystem::{
-        BusType1394, BusTypeMmc, BusTypeSd, BusTypeUsb, CreateFileW, GetDriveTypeW, FILE_FLAGS_AND_ATTRIBUTES, FILE_SHARE_READ, FILE_SHARE_WRITE, OPEN_EXISTING,
+        BusType1394, BusTypeMmc, BusTypeSd, BusTypeUsb, CreateFileW, GetDriveTypeW,
+        FILE_FLAGS_AND_ATTRIBUTES, FILE_SHARE_READ, FILE_SHARE_WRITE, OPEN_EXISTING,
     };
     use windows::Win32::System::Ioctl::{
-        PropertyStandardQuery, StorageDeviceProperty, IOCTL_STORAGE_QUERY_PROPERTY, STORAGE_DEVICE_DESCRIPTOR, STORAGE_PROPERTY_QUERY,
+        PropertyStandardQuery, StorageDeviceProperty, IOCTL_STORAGE_QUERY_PROPERTY,
+        STORAGE_DEVICE_DESCRIPTOR, STORAGE_PROPERTY_QUERY,
     };
     use windows::Win32::System::IO::DeviceIoControl;
     // GetDriveTypeW's documented return values.
@@ -286,11 +331,23 @@ fn external_drive(d: &str) -> bool {
     // The volume, opened with no access rights: enough to ask about its disk, without admin.
     let volume: Vec<u16> = format!("\\\\.\\{d}").encode_utf16().chain([0]).collect();
     let Ok(h) = (unsafe {
-        CreateFileW(windows::core::PCWSTR(volume.as_ptr()), 0, FILE_SHARE_READ | FILE_SHARE_WRITE, None, OPEN_EXISTING, FILE_FLAGS_AND_ATTRIBUTES(0), None)
+        CreateFileW(
+            windows::core::PCWSTR(volume.as_ptr()),
+            0,
+            FILE_SHARE_READ | FILE_SHARE_WRITE,
+            None,
+            OPEN_EXISTING,
+            FILE_FLAGS_AND_ATTRIBUTES(0),
+            None,
+        )
     }) else {
         return false;
     };
-    let query = STORAGE_PROPERTY_QUERY { PropertyId: StorageDeviceProperty, QueryType: PropertyStandardQuery, AdditionalParameters: [0] };
+    let query = STORAGE_PROPERTY_QUERY {
+        PropertyId: StorageDeviceProperty,
+        QueryType: PropertyStandardQuery,
+        AdditionalParameters: [0],
+    };
     // The descriptor is followed by its strings; only its fixed part is read.
     let mut desc = STORAGE_DEVICE_DESCRIPTOR::default();
     let mut got = 0u32;
@@ -318,7 +375,9 @@ fn external_drive(d: &str) -> bool {
 /// be: 4 GB less a byte on FAT (FAT32, as many USB sticks and SD cards come).
 pub fn max_file_size(dir: &str) -> Option<u64> {
     let fs = fs_type(dir)?.to_ascii_lowercase();
-    ["fat", "fat12", "fat16", "fat32", "vfat", "msdos"].contains(&fs.as_str()).then_some(u32::MAX as u64)
+    ["fat", "fat12", "fat16", "fat32", "vfat", "msdos"]
+        .contains(&fs.as_str())
+        .then_some(u32::MAX as u64)
 }
 
 /// The file system of the disk holding app path `dir`: "NTFS", "FAT32", "exFAT" on Windows;
@@ -327,10 +386,23 @@ fn fs_type(dir: &str) -> Option<String> {
     #[cfg(windows)]
     {
         use windows::Win32::Storage::FileSystem::GetVolumeInformationW;
-        let d = dir.trim_start_matches('/').get(..2).filter(|d| d.ends_with(':'))?;
+        let d = dir
+            .trim_start_matches('/')
+            .get(..2)
+            .filter(|d| d.ends_with(':'))?;
         let root: Vec<u16> = format!("{d}\\").encode_utf16().chain([0]).collect();
         let mut name = [0u16; 64];
-        unsafe { GetVolumeInformationW(windows::core::PCWSTR(root.as_ptr()), None, None, None, None, Some(&mut name)) }.ok()?;
+        unsafe {
+            GetVolumeInformationW(
+                windows::core::PCWSTR(root.as_ptr()),
+                None,
+                None,
+                None,
+                None,
+                Some(&mut name),
+            )
+        }
+        .ok()?;
         let len = name.iter().position(|&c| c == 0).unwrap_or(0);
         Some(String::from_utf16_lossy(&name[..len]))
     }
@@ -342,7 +414,11 @@ fn fs_type(dir: &str) -> Option<String> {
     #[cfg(all(unix, not(target_os = "macos")))]
     {
         let text = std::fs::read_to_string("/proc/self/mounts").ok()?;
-        mounts_typed(&text).into_iter().filter(|(_, at, _)| holds(at, dir)).max_by_key(|(_, at, _)| at.len()).map(|(_, _, t)| t)
+        mounts_typed(&text)
+            .into_iter()
+            .filter(|(_, at, _)| holds(at, dir))
+            .max_by_key(|(_, at, _)| at.len())
+            .map(|(_, _, t)| t)
     }
 }
 
@@ -361,7 +437,10 @@ fn fs_in_mount(out: &str, dir: &str) -> Option<String> {
         .filter_map(|l| {
             let (_, rest) = l.split_once(" on ")?;
             let (at, opts) = rest.rsplit_once(" (")?;
-            Some((at.to_string(), opts.split([',', ')']).next()?.trim().to_string()))
+            Some((
+                at.to_string(),
+                opts.split([',', ')']).next()?.trim().to_string(),
+            ))
         })
         .filter(|(at, _)| holds(at, dir))
         .max_by_key(|(at, _)| at.len())
@@ -397,7 +476,11 @@ fn drives_here() -> Vec<(String, String)> {
     let text = std::fs::read_to_string("/proc/self/mounts").unwrap_or_default();
     mounts(&text)
         .into_iter()
-        .filter(|(_, at)| ["/media/", "/run/media/", "/mnt/"].iter().any(|p| at.starts_with(p)))
+        .filter(|(_, at)| {
+            ["/media/", "/run/media/", "/mnt/"]
+                .iter()
+                .any(|p| at.starts_with(p))
+        })
         .filter(|(_, at)| Path::new(at).is_dir())
         .map(|(_, at)| (crate::device::basename(&at).to_string(), at))
         .collect()
@@ -406,7 +489,10 @@ fn drives_here() -> Vec<(String, String)> {
 /// (device, mount point) of each line of /proc/mounts.
 #[cfg(all(unix, not(target_os = "macos")))]
 pub(crate) fn mounts(text: &str) -> Vec<(String, String)> {
-    mounts_typed(text).into_iter().map(|(dev, at, _)| (dev, at)).collect()
+    mounts_typed(text)
+        .into_iter()
+        .map(|(dev, at, _)| (dev, at))
+        .collect()
 }
 
 /// (device, mount point, file system type) of each line of /proc/mounts, whose spaces and such
@@ -418,7 +504,10 @@ pub(crate) fn mounts_typed(text: &str) -> Vec<(String, String, String)> {
         let mut out = Vec::with_capacity(b.len());
         let mut i = 0;
         while i < b.len() {
-            if b[i] == b'\\' && i + 3 < b.len() && b[i + 1..i + 4].iter().all(|c| (b'0'..=b'7').contains(c)) {
+            if b[i] == b'\\'
+                && i + 3 < b.len()
+                && b[i + 1..i + 4].iter().all(|c| (b'0'..=b'7').contains(c))
+            {
                 out.push((b[i + 1] - b'0') * 64 + (b[i + 2] - b'0') * 8 + (b[i + 3] - b'0'));
                 i += 4;
             } else {
@@ -431,7 +520,11 @@ pub(crate) fn mounts_typed(text: &str) -> Vec<(String, String, String)> {
     text.lines()
         .filter_map(|l| {
             let mut f = l.split(' ');
-            Some((unescape(f.next()?), unescape(f.next()?), f.next().unwrap_or_default().to_string()))
+            Some((
+                unescape(f.next()?),
+                unescape(f.next()?),
+                f.next().unwrap_or_default().to_string(),
+            ))
         })
         .collect()
 }
@@ -449,9 +542,23 @@ fn drives_here() -> Vec<(String, String)> {
         .map(|d| {
             let root: Vec<u16> = format!("{d}\\").encode_utf16().chain([0]).collect();
             let mut label = [0u16; 261];
-            let ok = unsafe { GetVolumeInformationW(windows::core::PCWSTR(root.as_ptr()), Some(&mut label), None, None, None, None) }.is_ok();
+            let ok = unsafe {
+                GetVolumeInformationW(
+                    windows::core::PCWSTR(root.as_ptr()),
+                    Some(&mut label),
+                    None,
+                    None,
+                    None,
+                    None,
+                )
+            }
+            .is_ok();
             let len = label.iter().position(|&c| c == 0).unwrap_or(0);
-            let label = if ok { String::from_utf16_lossy(&label[..len]) } else { String::new() };
+            let label = if ok {
+                String::from_utf16_lossy(&label[..len])
+            } else {
+                String::new()
+            };
             let name = if !label.is_empty() {
                 format!("{label} ({d})")
             } else if fixed_disk(Path::new(&d)) {
@@ -471,11 +578,23 @@ pub fn move_no_replace(from: &Path, to: &Path) -> std::io::Result<()> {
     #[cfg(windows)]
     {
         use windows::Win32::Storage::FileSystem::{MoveFileExW, MOVE_FILE_FLAGS};
-        let wide = |p: &Path| -> Vec<u16> { p.as_os_str().to_string_lossy().encode_utf16().chain([0]).collect() };
+        let wide = |p: &Path| -> Vec<u16> {
+            p.as_os_str()
+                .to_string_lossy()
+                .encode_utf16()
+                .chain([0])
+                .collect()
+        };
         let (f, t) = (wide(from), wide(to));
-        unsafe { MoveFileExW(windows::core::PCWSTR(f.as_ptr()), windows::core::PCWSTR(t.as_ptr()), MOVE_FILE_FLAGS(0)) }
-            // The Win32 error code is the HRESULT's low 16 bits.
-            .map_err(|e| std::io::Error::from_raw_os_error((e.code().0 as u32 & 0xFFFF) as i32))
+        unsafe {
+            MoveFileExW(
+                windows::core::PCWSTR(f.as_ptr()),
+                windows::core::PCWSTR(t.as_ptr()),
+                MOVE_FILE_FLAGS(0),
+            )
+        }
+        // The Win32 error code is the HRESULT's low 16 bits.
+        .map_err(|e| std::io::Error::from_raw_os_error((e.code().0 as u32 & 0xFFFF) as i32))
     }
     #[cfg(not(windows))]
     {
@@ -525,7 +644,9 @@ fn fixed_disk(path: &Path) -> bool {
     // DRIVE_FIXED, from GetDriveTypeW's documented return values.
     const DRIVE_FIXED: u32 = 3;
     let s = path.to_string_lossy();
-    let Some(d) = s.get(..2).filter(|d| d.ends_with(':')) else { return false };
+    let Some(d) = s.get(..2).filter(|d| d.ends_with(':')) else {
+        return false;
+    };
     let root: Vec<u16> = format!("{d}\\").encode_utf16().chain([0]).collect();
     unsafe { GetDriveTypeW(windows::core::PCWSTR(root.as_ptr())) == DRIVE_FIXED }
 }
@@ -535,9 +656,22 @@ pub fn free_space(dir: &str) -> Option<(u64, u64)> {
     #[cfg(windows)]
     {
         use windows::Win32::Storage::FileSystem::GetDiskFreeSpaceExW;
-        let path: Vec<u16> = native(dir).as_os_str().to_string_lossy().encode_utf16().chain([0]).collect();
+        let path: Vec<u16> = native(dir)
+            .as_os_str()
+            .to_string_lossy()
+            .encode_utf16()
+            .chain([0])
+            .collect();
         let (mut free, mut total) = (0u64, 0u64);
-        unsafe { GetDiskFreeSpaceExW(windows::core::PCWSTR(path.as_ptr()), Some(&mut free), Some(&mut total), None) }.ok()?;
+        unsafe {
+            GetDiskFreeSpaceExW(
+                windows::core::PCWSTR(path.as_ptr()),
+                Some(&mut free),
+                Some(&mut total),
+                None,
+            )
+        }
+        .ok()?;
         Some((free, total))
     }
     #[cfg(not(windows))]
@@ -569,12 +703,21 @@ pub fn eject(path: &str) -> Result<(), String> {
     }
     let name = crate::device::basename(path).to_string();
     let failed = |why: String| {
-        let why = if why.trim().is_empty() { "the disk is in use".to_string() } else { why.trim().to_string() };
-        Err(format!("Couldn't eject {name}: {why}. Close files open on it and try again."))
+        let why = if why.trim().is_empty() {
+            "the disk is in use".to_string()
+        } else {
+            why.trim().to_string()
+        };
+        Err(format!(
+            "Couldn't eject {name}: {why}. Close files open on it and try again."
+        ))
     };
     #[cfg(target_os = "macos")]
     {
-        let out = command("diskutil").args(["eject", path]).output().map_err(|e| format!("Can't run diskutil: {e}"))?;
+        let out = command("diskutil")
+            .args(["eject", path])
+            .output()
+            .map_err(|e| format!("Can't run diskutil: {e}"))?;
         if out.status.success() {
             Ok(())
         } else {
@@ -586,20 +729,28 @@ pub fn eject(path: &str) -> Result<(), String> {
         // udisks (what desktops mount removable disks with) unmounts it, then powers the
         // disk off where it can; without it, `umount`, which works for disks in /etc/fstab.
         let text = std::fs::read_to_string("/proc/self/mounts").unwrap_or_default();
-        let dev = mounts(&text).into_iter().find(|(_, at)| at == path).map(|(d, _)| d);
+        let dev = mounts(&text)
+            .into_iter()
+            .find(|(_, at)| at == path)
+            .map(|(d, _)| d);
         let unmounted = match &dev {
             Some(dev) => command("udisksctl").args(["unmount", "-b", dev]).output(),
             None => command("umount").arg(path).output(),
         };
         let out = match unmounted {
             Ok(out) => out,
-            Err(_) => command("umount").arg(path).output().map_err(|e| format!("Can't run umount: {e}"))?,
+            Err(_) => command("umount")
+                .arg(path)
+                .output()
+                .map_err(|e| format!("Can't run umount: {e}"))?,
         };
         if !out.status.success() {
             return failed(String::from_utf8_lossy(&out.stderr).into_owned());
         }
         if let Some(dev) = dev {
-            let _ = command("udisksctl").args(["power-off", "-b", &dev]).output();
+            let _ = command("udisksctl")
+                .args(["power-off", "-b", &dev])
+                .output();
         }
         Ok(())
     }
@@ -608,8 +759,10 @@ pub fn eject(path: &str) -> Result<(), String> {
         // File Explorer's own Eject, through the shell.
         let drive = path.trim_start_matches('/');
         let script = format!("(New-Object -ComObject Shell.Application).Namespace(17).ParseName('{drive}').InvokeVerb('Eject')");
-        let out =
-            command("powershell").args(["-NoProfile", "-NonInteractive", "-Command", &script]).output().map_err(|e| format!("Can't run PowerShell: {e}"))?;
+        let out = command("powershell")
+            .args(["-NoProfile", "-NonInteractive", "-Command", &script])
+            .output()
+            .map_err(|e| format!("Can't run PowerShell: {e}"))?;
         if !out.status.success() {
             return failed(String::from_utf8_lossy(&out.stderr).into_owned());
         }
@@ -629,7 +782,10 @@ pub fn eject(path: &str) -> Result<(), String> {
 pub fn net_mounted() -> Vec<(String, String)> {
     #[cfg(target_os = "macos")]
     {
-        let out = command("mount").output().map(|o| String::from_utf8_lossy(&o.stdout).into_owned()).unwrap_or_default();
+        let out = command("mount")
+            .output()
+            .map(|o| String::from_utf8_lossy(&o.stdout).into_owned())
+            .unwrap_or_default();
         net_in_mount(&out)
     }
     #[cfg(all(unix, not(target_os = "macos")))]
@@ -639,15 +795,25 @@ pub fn net_mounted() -> Vec<(String, String)> {
         // gvfs (what `gio mount` uses) keeps each share in a folder like smb-share:server=host,share=name.
         let run = std::env::var("XDG_RUNTIME_DIR").unwrap_or_default();
         let dir = Path::new(&run).join("gvfs");
-        out.extend(std::fs::read_dir(&dir).into_iter().flatten().flatten().filter_map(|e| {
-            let url = gvfs_url(&e.file_name().to_string_lossy())?;
-            Some((url, e.path().display().to_string()))
-        }));
+        out.extend(
+            std::fs::read_dir(&dir)
+                .into_iter()
+                .flatten()
+                .flatten()
+                .filter_map(|e| {
+                    let url = gvfs_url(&e.file_name().to_string_lossy())?;
+                    Some((url, e.path().display().to_string()))
+                }),
+        );
         out
     }
     #[cfg(windows)]
     {
-        let out = command("net").arg("use").output().map(|o| String::from_utf8_lossy(&o.stdout).into_owned()).unwrap_or_default();
+        let out = command("net")
+            .arg("use")
+            .output()
+            .map(|o| String::from_utf8_lossy(&o.stdout).into_owned())
+            .unwrap_or_default();
         net_in_net_use(&out)
     }
 }
@@ -656,7 +822,11 @@ pub fn net_mounted() -> Vec<(String, String)> {
 #[cfg(any(unix, test))]
 fn nfs_of(what: &str) -> Option<String> {
     let (host, path) = what.split_once(":/")?;
-    (!host.is_empty() && !host.contains('/')).then(|| format!("nfs://{host}/{}", path.trim_end_matches('/')).trim_end_matches('/').to_string())
+    (!host.is_empty() && !host.contains('/')).then(|| {
+        format!("nfs://{host}/{}", path.trim_end_matches('/'))
+            .trim_end_matches('/')
+            .to_string()
+    })
 }
 
 /// Network mounts in `mount`'s output: "//me@nas/Share on /Volumes/Share (smbfs, ...)",
@@ -709,19 +879,31 @@ pub(crate) fn gvfs_url(name: &str) -> Option<String> {
     let field = |k: &str| {
         spec.split(',')
             .find_map(|f| f.strip_prefix(k).and_then(|v| v.strip_prefix('=')))
-            .map(|v| percent_encoding::percent_decode_str(v).decode_utf8_lossy().into_owned())
+            .map(|v| {
+                percent_encoding::percent_decode_str(v)
+                    .decode_utf8_lossy()
+                    .into_owned()
+            })
     };
     let user = field("user").map(|u| format!("{u}@")).unwrap_or_default();
     let port = field("port").map(|p| format!(":{p}")).unwrap_or_default();
     let prefix = field("prefix").unwrap_or_default();
     let prefix = prefix.trim_matches('/');
-    let rest = if prefix.is_empty() { String::new() } else { format!("/{prefix}") };
+    let rest = if prefix.is_empty() {
+        String::new()
+    } else {
+        format!("/{prefix}")
+    };
     Some(match kind {
         "smb-share" => format!("smb://{user}{}{port}/{}", field("server")?, field("share")?),
         "nfs" => format!("nfs://{}{port}{rest}", field("host")?),
         "dav" | "davs" => {
             let tls = kind == "davs" || field("ssl").as_deref() == Some("true");
-            format!("{}://{user}{}{port}{rest}", if tls { "https" } else { "http" }, field("host")?)
+            format!(
+                "{}://{user}{}{port}{rest}",
+                if tls { "https" } else { "http" },
+                field("host")?
+            )
         }
         "ftp" | "sftp" | "afp-volume" => {
             let scheme = if kind == "afp-volume" { "afp" } else { kind };
@@ -740,10 +922,22 @@ pub(crate) fn net_in_net_use(out: &str) -> Vec<(String, String)> {
         .filter_map(|l| {
             let words: Vec<&str> = l.split_whitespace().collect();
             let unc = words.iter().position(|w| w.starts_with(r"\\"))?;
-            let letter = words[..unc].iter().find(|w| w.len() == 2 && w.ends_with(':'))?;
+            let letter = words[..unc]
+                .iter()
+                .find(|w| w.len() == 2 && w.ends_with(':'))?;
             let path = words[unc].trim_start_matches('\\').replace('\\', "/");
-            let scheme = if words[unc + 1..].iter().any(|w| w.eq_ignore_ascii_case("NFS")) { "nfs" } else { "smb" };
-            Some((format!("{scheme}://{path}"), format!("/{}", letter.to_uppercase())))
+            let scheme = if words[unc + 1..]
+                .iter()
+                .any(|w| w.eq_ignore_ascii_case("NFS"))
+            {
+                "nfs"
+            } else {
+                "smb"
+            };
+            Some((
+                format!("{scheme}://{path}"),
+                format!("/{}", letter.to_uppercase()),
+            ))
         })
         .collect()
 }
@@ -759,7 +953,11 @@ pub struct SmbLogin<'a> {
 fn run_with_input(mut c: Command, input: &str) -> std::io::Result<std::process::Output> {
     use std::io::Write;
     use std::process::Stdio;
-    let mut child = c.stdin(Stdio::piped()).stdout(Stdio::piped()).stderr(Stdio::piped()).spawn()?;
+    let mut child = c
+        .stdin(Stdio::piped())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .spawn()?;
     if let Some(mut i) = child.stdin.take() {
         // A program that stops reading early isn't an error here: its exit says what happened.
         let _ = i.write_all(input.as_bytes());
@@ -788,8 +986,16 @@ pub fn smb_mount(url: &str, login: Option<&SmbLogin>) -> Result<(), String> {
     let out = {
         let mut script = format!("mount volume \"{}\"", applescript_text(url));
         if let Some(l) = login {
-            let user = if l.domain.is_empty() { l.user.to_string() } else { format!("{};{}", l.domain, l.user) };
-            script += &format!(" as user name \"{}\" with password \"{}\"", applescript_text(&user), applescript_text(l.password));
+            let user = if l.domain.is_empty() {
+                l.user.to_string()
+            } else {
+                format!("{};{}", l.domain, l.user)
+            };
+            script += &format!(
+                " as user name \"{}\" with password \"{}\"",
+                applescript_text(&user),
+                applescript_text(l.password)
+            );
         }
         let mut c = command("osascript");
         c.arg("-");
@@ -800,18 +1006,42 @@ pub fn smb_mount(url: &str, login: Option<&SmbLogin>) -> Result<(), String> {
         let mut c = command("gio");
         c.args(["mount", url]);
         // gio asks in turn for what the server wants: user, domain, password.
-        let answers = login.map(|l| format!("{}\n{}\n{}\n", l.user, if l.domain.is_empty() { "WORKGROUP" } else { l.domain }, l.password));
+        let answers = login.map(|l| {
+            format!(
+                "{}\n{}\n{}\n",
+                l.user,
+                if l.domain.is_empty() {
+                    "WORKGROUP"
+                } else {
+                    l.domain
+                },
+                l.password
+            )
+        });
         run_with_input(c, &answers.unwrap_or_default())
     };
     #[cfg(windows)]
     let out = {
-        let unc = url.trim_start_matches("smb:").trim_start_matches("nfs:").replace('/', "\\");
+        let unc = url
+            .trim_start_matches("smb:")
+            .trim_start_matches("nfs:")
+            .replace('/', "\\");
         // NFS: the NFS client's mount, on the next free letter, without a login.
         match (url.starts_with("nfs:"), login) {
-            (true, _) => command("mount").args(["-o", "anon", &unc, "*"]).stdin(std::process::Stdio::null()).output(),
-            (false, None) => command("net").args(["use", "*", &unc, "/persistent:no"]).stdin(std::process::Stdio::null()).output(),
+            (true, _) => command("mount")
+                .args(["-o", "anon", &unc, "*"])
+                .stdin(std::process::Stdio::null())
+                .output(),
+            (false, None) => command("net")
+                .args(["use", "*", &unc, "/persistent:no"])
+                .stdin(std::process::Stdio::null())
+                .output(),
             (false, Some(l)) => {
-                let user = if l.domain.is_empty() { l.user.to_string() } else { format!("{}\\{}", l.domain, l.user) };
+                let user = if l.domain.is_empty() {
+                    l.user.to_string()
+                } else {
+                    format!("{}\\{}", l.domain, l.user)
+                };
                 // The script (password included) goes in on PowerShell's input.
                 let script = format!(
                     "$ErrorActionPreference = 'Stop'\n\
@@ -834,12 +1064,22 @@ pub fn smb_mount(url: &str, login: Option<&SmbLogin>) -> Result<(), String> {
     if out.status.success() {
         return Ok(());
     }
-    let why = String::from_utf8_lossy(if out.stderr.is_empty() { &out.stdout } else { &out.stderr }).trim().to_string();
+    let why = String::from_utf8_lossy(if out.stderr.is_empty() {
+        &out.stdout
+    } else {
+        &out.stderr
+    })
+    .trim()
+    .to_string();
     // osascript: "execution error: ... (-128)" is the password dialog's Cancel.
     if why.contains("(-128)") {
         return Err("Cancelled.".into());
     }
-    Err(if why.is_empty() { format!("Couldn't mount {url}.") } else { format!("Couldn't mount {url}: {why}") })
+    Err(if why.is_empty() {
+        format!("Couldn't mount {url}.")
+    } else {
+        format!("Couldn't mount {url}: {why}")
+    })
 }
 
 /// Unmounts the network share mounted at `path` (an app path from `net_mounted`).
@@ -878,13 +1118,24 @@ pub fn smb_unmount(path: &str) -> Result<(), String> {
     for mut c in tries {
         match c.output() {
             Ok(out) if out.status.success() => return Ok(()),
-            Ok(out) if why.is_empty() => why = String::from_utf8_lossy(if out.stderr.is_empty() { &out.stdout } else { &out.stderr }).trim().to_string(),
+            Ok(out) if why.is_empty() => {
+                why = String::from_utf8_lossy(if out.stderr.is_empty() {
+                    &out.stdout
+                } else {
+                    &out.stderr
+                })
+                .trim()
+                .to_string()
+            }
             Ok(_) => {}
             Err(e) if why.is_empty() => why = e.to_string(),
             Err(_) => {}
         }
     }
-    Err(format!("Couldn't unmount {path}: {}. Close files open on it and try again.", if why.is_empty() { "it's in use" } else { &why }))
+    Err(format!(
+        "Couldn't unmount {path}: {}. Close files open on it and try again.",
+        if why.is_empty() { "it's in use" } else { &why }
+    ))
 }
 
 #[cfg(test)]
@@ -910,10 +1161,22 @@ mod tests {
         let mount = "/dev/disk3s1s1 on / (apfs, sealed, local, read-only, journaled)\n\
                      /dev/disk4s1 on /Volumes/STICK (msdos, local, nodev, nosuid, noowners)\n\
                      /dev/disk5s1 on /Volumes/STICK 2 (exfat, local, nodev, nosuid, noowners)\n";
-        assert_eq!(fs_in_mount(mount, "/Volumes/STICK/DCIM").as_deref(), Some("msdos"));
-        assert_eq!(fs_in_mount(mount, "/Volumes/STICK").as_deref(), Some("msdos"));
-        assert_eq!(fs_in_mount(mount, "/Volumes/STICK 2/a").as_deref(), Some("exfat"));
-        assert_eq!(fs_in_mount(mount, "/Volumes/STICKS").as_deref(), Some("apfs"));
+        assert_eq!(
+            fs_in_mount(mount, "/Volumes/STICK/DCIM").as_deref(),
+            Some("msdos")
+        );
+        assert_eq!(
+            fs_in_mount(mount, "/Volumes/STICK").as_deref(),
+            Some("msdos")
+        );
+        assert_eq!(
+            fs_in_mount(mount, "/Volumes/STICK 2/a").as_deref(),
+            Some("exfat")
+        );
+        assert_eq!(
+            fs_in_mount(mount, "/Volumes/STICKS").as_deref(),
+            Some("apfs")
+        );
         assert_eq!(fs_in_mount(mount, "/Users/me").as_deref(), Some("apfs"));
     }
 
@@ -935,15 +1198,30 @@ mod tests {
         assert_eq!(
             net_in_mount(mount),
             vec![
-                ("smb://me@nas._smb._tcp.local/Photos".to_string(), "/Volumes/Photos 1".to_string()),
-                ("nfs://nas/export/media".to_string(), "/Volumes/media".to_string()),
-                ("https://cloud.example.com/dav/".to_string(), "/Volumes/dav".to_string()),
+                (
+                    "smb://me@nas._smb._tcp.local/Photos".to_string(),
+                    "/Volumes/Photos 1".to_string()
+                ),
+                (
+                    "nfs://nas/export/media".to_string(),
+                    "/Volumes/media".to_string()
+                ),
+                (
+                    "https://cloud.example.com/dav/".to_string(),
+                    "/Volumes/dav".to_string()
+                ),
             ]
         );
         let net =
             "Status       Local     Remote                    Network\n-----\nOK           Z:        \\\\nas\\Photos              Microsoft Windows Network\n\
                    OK           Y:        \\\\nas\\export\\media        NFS Network\nThe command completed successfully.\n";
-        assert_eq!(net_in_net_use(net), vec![("smb://nas/Photos".to_string(), "/Z:".to_string()), ("nfs://nas/export/media".to_string(), "/Y:".to_string()),]);
+        assert_eq!(
+            net_in_net_use(net),
+            vec![
+                ("smb://nas/Photos".to_string(), "/Z:".to_string()),
+                ("nfs://nas/export/media".to_string(), "/Y:".to_string()),
+            ]
+        );
         let proc = "/dev/sdb1 /media/me/STICK vfat rw 0 0\nnas:/export /home/me/nas nfs4 rw 0 0\n//nas/Photos /mnt/photos cifs rw 0 0\nme@box:/srv /home/me/box fuse.sshfs rw 0 0\n";
         assert_eq!(
             net_in_proc(proc),
@@ -953,10 +1231,22 @@ mod tests {
                 ("sftp://me@box/srv".to_string(), "/home/me/box".to_string()),
             ]
         );
-        assert_eq!(gvfs_url("smb-share:server=nas,share=photos,user=me").as_deref(), Some("smb://me@nas/photos"));
-        assert_eq!(gvfs_url("nfs:host=nas,prefix=%2Fexport%2Fmedia").as_deref(), Some("nfs://nas/export/media"));
-        assert_eq!(gvfs_url("dav:host=cloud,ssl=true,prefix=%2Fdav").as_deref(), Some("https://cloud/dav"));
-        assert_eq!(gvfs_url("ftp:host=box,port=2121").as_deref(), Some("ftp://box:2121"));
+        assert_eq!(
+            gvfs_url("smb-share:server=nas,share=photos,user=me").as_deref(),
+            Some("smb://me@nas/photos")
+        );
+        assert_eq!(
+            gvfs_url("nfs:host=nas,prefix=%2Fexport%2Fmedia").as_deref(),
+            Some("nfs://nas/export/media")
+        );
+        assert_eq!(
+            gvfs_url("dav:host=cloud,ssl=true,prefix=%2Fdav").as_deref(),
+            Some("https://cloud/dav")
+        );
+        assert_eq!(
+            gvfs_url("ftp:host=box,port=2121").as_deref(),
+            Some("ftp://box:2121")
+        );
         assert_eq!(gvfs_url("mtp:host=Phone"), None);
         assert_eq!(applescript_text(r#"a"b\c"#), r#"a\"b\\c"#);
         assert_eq!(powershell_text("it's"), "it''s");
@@ -966,6 +1256,9 @@ mod tests {
     #[test]
     fn reads_mounts() {
         let text = "/dev/sdb1 /media/me/MY\\040STICK vfat rw 0 0\nproc /proc proc rw 0 0\n";
-        assert_eq!(mounts(text)[0], ("/dev/sdb1".to_string(), "/media/me/MY STICK".to_string()));
+        assert_eq!(
+            mounts(text)[0],
+            ("/dev/sdb1".to_string(), "/media/me/MY STICK".to_string())
+        );
     }
 }

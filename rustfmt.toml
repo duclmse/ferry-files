@@ -1,4 +1,2 @@
-# For both crates (the frontend and src-tauri). Wide lines, as the code was written by hand.
+# rustfmt defaults, for both crates (the frontend and src-tauri).
 edition = "2021"
-max_width = 160
-use_small_heuristics = "Max"

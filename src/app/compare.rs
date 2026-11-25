@@ -11,7 +11,10 @@ impl Ctx {
         if !self.split.get_untracked() {
             return;
         }
-        let (a, b) = ((p.src.get_untracked(), p.cwd.get_untracked()), (o.src.get_untracked(), o.cwd.get_untracked()));
+        let (a, b) = (
+            (p.src.get_untracked(), p.cwd.get_untracked()),
+            (o.src.get_untracked(), o.cwd.get_untracked()),
+        );
         if a.1.is_empty() || b.1.is_empty() {
             return;
         }
@@ -56,8 +59,12 @@ impl Ctx {
     /// The paths of pane `p`'s items marked `mark` (files only, unless `folders`).
     fn with_mark(p: Pane, mark: &str, folders: bool) -> Vec<String> {
         let marks = p.cmp.get_untracked().unwrap_or_default();
-        p.all
-            .with_untracked(|all| all.iter().filter(|e| (folders || !e.dir) && marks.get(&e.name).is_some_and(|m| m == mark)).map(|e| e.path.clone()).collect())
+        p.all.with_untracked(|all| {
+            all.iter()
+                .filter(|e| (folders || !e.dir) && marks.get(&e.name).is_some_and(|m| m == mark))
+                .map(|e| e.path.clone())
+                .collect()
+        })
     }
 
     /// Copies what's only in `p`'s folder to the other pane's.
@@ -65,7 +72,14 @@ impl Ctx {
         let o = self.other(p);
         let items = Self::with_mark(p, "only", true);
         if !items.is_empty() {
-            self.transfer(p, p.src.get_untracked(), items, o.src.get_untracked(), o.cwd.get_untracked(), false);
+            self.transfer(
+                p,
+                p.src.get_untracked(),
+                items,
+                o.src.get_untracked(),
+                o.cwd.get_untracked(),
+                false,
+            );
         }
     }
 
@@ -77,10 +91,22 @@ impl Ctx {
         if items.is_empty() {
             return;
         }
-        if self.read_only(o.src.get_untracked()) || to_dir == "/" && self.src_info(o.src.get_untracked()).is_some_and(|i| i.transport == "mtp") {
+        if self.read_only(o.src.get_untracked())
+            || to_dir == "/"
+                && self
+                    .src_info(o.src.get_untracked())
+                    .is_some_and(|i| i.transport == "mtp")
+        {
             return;
         }
-        let work = Work::Copy { from: self.side(p.src.get_untracked()), items, to: self.side(o.src.get_untracked()), to_dir, moving: false, replace: true };
+        let work = Work::Copy {
+            from: self.side(p.src.get_untracked()),
+            items,
+            to: self.side(o.src.get_untracked()),
+            to_dir,
+            moving: false,
+            replace: true,
+        };
         self.enqueue(p.id, work, false);
     }
 }
@@ -91,7 +117,8 @@ pub(super) fn cmp_mark(p: Pane, e: &Entry) -> Option<String> {
     if parent(&e.path) != p.cwd.get() {
         return None;
     }
-    p.cmp.with(|m| m.as_ref().and_then(|m| m.get(&e.name).cloned()))
+    p.cmp
+        .with(|m| m.as_ref().and_then(|m| m.get(&e.name).cloned()))
 }
 
 /// Above the files while comparing: counts, "Differences only", and copying across.
@@ -99,7 +126,12 @@ pub(super) fn cmp_mark(p: Pane, e: &Entry) -> Option<String> {
 pub(super) fn CompareBar(pane: Pane) -> impl IntoView {
     let ctx = expect_context::<Ctx>();
     let p = pane;
-    let count = move |mark: &str| p.cmp.with(|m| m.as_ref().map_or(0, |m| m.values().filter(|x| *x == mark).count()));
+    let count = move |mark: &str| {
+        p.cmp.with(|m| {
+            m.as_ref()
+                .map_or(0, |m| m.values().filter(|x| *x == mark).count())
+        })
+    };
     let files = move |mark: &'static str| {
         p.cmp.track();
         Ctx::with_mark(p, mark, false).len()

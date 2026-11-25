@@ -73,9 +73,11 @@ impl Ctx {
         p.loading.set(true);
         spawn_local(async move {
             match call::<String>("open_file", json!({ "src": src.key(), "path": path })).await {
-                Ok(_) if src != Src::Mac => {
-                    p.notice.set(Notice::Ok(format!("Opened a copy of {}. Changes to it stay on {}.", base(&path), crate::os::the_computer())))
-                }
+                Ok(_) if src != Src::Mac => p.notice.set(Notice::Ok(format!(
+                    "Opened a copy of {}. Changes to it stay on {}.",
+                    base(&path),
+                    crate::os::the_computer()
+                ))),
                 Ok(_) => {}
                 Err(e) => p.error(e),
             }
@@ -86,7 +88,9 @@ impl Ctx {
     pub(super) fn download(self, p: Pane, path: String) {
         let src = p.src.get_untracked();
         spawn_local(async move {
-            match call::<Option<String>>("download", json!({ "src": src.key(), "path": path })).await {
+            match call::<Option<String>>("download", json!({ "src": src.key(), "path": path }))
+                .await
+            {
                 Ok(Some(dest)) => p.notice.set(Notice::Ok(format!("Saved to {dest}"))),
                 Ok(None) => {}
                 Err(e) => p.error(e),
@@ -185,26 +189,49 @@ impl Ctx {
                         gone.push((e.path.clone(), e.dir, b));
                     }
                     Err(err) => {
-                        error = Some(if to_trash { format!("{err} That disk has no {trash}.") } else { err });
+                        error = Some(if to_trash {
+                            format!("{err} That disk has no {trash}.")
+                        } else {
+                            err
+                        });
                         break;
                     }
                 }
             }
             let one = items.len() == 1;
-            let what = if one { items[0].name.clone() } else { format!("{done} items") };
+            let what = if one {
+                items[0].name.clone()
+            } else {
+                format!("{done} items")
+            };
             let place = self.place(src);
-            let note = if backups > 0 { format!(" Backups are kept on {}.", crate::os::the_computer()) } else { String::new() };
+            let note = if backups > 0 {
+                format!(" Backups are kept on {}.", crate::os::the_computer())
+            } else {
+                String::new()
+            };
             // What went to the Trash comes back from there; what was backed up, with Undo.
             if forever && done > 0 {
                 self.log(format!("Deleted {what} permanently from {place}"));
             } else if trashed > 0 {
-                let t = if one { what.clone() } else { format!("{trashed} items") };
+                let t = if one {
+                    what.clone()
+                } else {
+                    format!("{trashed} items")
+                };
                 self.log(format!("Moved {t} to the {trash} from {place}"));
             }
             let fell_back = gone.len();
             if !gone.is_empty() {
-                let g = if one { what.clone() } else { format!("{fell_back} items") };
-                self.log_undo(format!("Deleted {g} from {place}"), Undo::Delete { src, items: gone });
+                let g = if one {
+                    what.clone()
+                } else {
+                    format!("{fell_back} items")
+                };
+                self.log_undo(
+                    format!("Deleted {g} from {place}"),
+                    Undo::Delete { src, items: gone },
+                );
             }
             let ok = if forever {
                 format!("Deleted {what} permanently.")
@@ -229,7 +256,10 @@ impl Ctx {
             for q in self.panes {
                 let cwd = q.cwd.get_untracked();
                 if q.src.get_untracked() == src {
-                    if let Some(e) = items[..done.min(items.len())].iter().find(|e| within(&cwd, &e.path)) {
+                    if let Some(e) = items[..done.min(items.len())]
+                        .iter()
+                        .find(|e| within(&cwd, &e.path))
+                    {
                         self.navigate(q, parent(&e.path));
                     }
                 }
@@ -245,9 +275,20 @@ impl Ctx {
         }
         let src = p.src.get_untracked();
         spawn_local(async move {
-            match call::<String>("rename", json!({ "src": src.key(), "path": e.path, "name": name })).await {
+            match call::<String>(
+                "rename",
+                json!({ "src": src.key(), "path": e.path, "name": name }),
+            )
+            .await
+            {
                 Ok(new) => {
-                    self.log_undo(format!("Renamed {} to {}", e.name, base(&new)), Undo::Renames { src, items: vec![(new.clone(), e.name.clone())] });
+                    self.log_undo(
+                        format!("Renamed {} to {}", e.name, base(&new)),
+                        Undo::Renames {
+                            src,
+                            items: vec![(new.clone(), e.name.clone())],
+                        },
+                    );
                     self.doc_moved(src, &e.path, &new);
                     p.select_only(Some(new));
                     self.changed(src, &parent(&e.path));
@@ -276,7 +317,14 @@ impl Ctx {
             match result {
                 Ok(()) => {
                     p.notice.set(Notice::None);
-                    self.log_undo(format!("Created {}", path), Undo::Create { src, path: path.clone(), folder });
+                    self.log_undo(
+                        format!("Created {}", path),
+                        Undo::Create {
+                            src,
+                            path: path.clone(),
+                            folder,
+                        },
+                    );
                     if folder {
                         self.changed(src, &dir)
                     } else if p.view.get_untracked() == ViewMode::Code {

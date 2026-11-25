@@ -13,7 +13,8 @@ const FPS: f64 = 23.976;
 
 /// Whether `name` is a subtitle file.
 pub fn is_subtitle(name: &str) -> bool {
-    name.rsplit_once('.').is_some_and(|(_, ext)| EXTS.iter().any(|e| ext.eq_ignore_ascii_case(e)))
+    name.rsplit_once('.')
+        .is_some_and(|(_, ext)| EXTS.iter().any(|e| ext.eq_ignore_ascii_case(e)))
 }
 
 /// Whether `name` is a subtitle file for the video `video`: the video's name without its
@@ -23,9 +24,14 @@ pub fn goes_with(video: &str, name: &str) -> bool {
     if !is_subtitle(name) {
         return false;
     }
-    let stem = video.rsplit_once('.').map_or(video, |(s, _)| s).to_lowercase();
+    let stem = video
+        .rsplit_once('.')
+        .map_or(video, |(s, _)| s)
+        .to_lowercase();
     let name = name.to_lowercase();
-    name.strip_prefix(&stem).and_then(|rest| rest.chars().next()).is_some_and(|c| matches!(c, '.' | '_' | '-' | ' '))
+    name.strip_prefix(&stem)
+        .and_then(|rest| rest.chars().next())
+        .is_some_and(|c| matches!(c, '.' | '_' | '-' | ' '))
 }
 
 /// The text of a subtitle file: UTF-8 (with or without a BOM), UTF-16 with a BOM, or else
@@ -35,7 +41,16 @@ pub fn decode(data: &[u8]) -> String {
         return String::from_utf8_lossy(rest).into_owned();
     }
     let utf16 = |rest: &[u8], le: bool| {
-        let units: Vec<u16> = rest.chunks_exact(2).map(|c| if le { u16::from_le_bytes([c[0], c[1]]) } else { u16::from_be_bytes([c[0], c[1]]) }).collect();
+        let units: Vec<u16> = rest
+            .chunks_exact(2)
+            .map(|c| {
+                if le {
+                    u16::from_le_bytes([c[0], c[1]])
+                } else {
+                    u16::from_be_bytes([c[0], c[1]])
+                }
+            })
+            .collect();
         String::from_utf16_lossy(&units)
     };
     if let Some(rest) = data.strip_prefix(&[0xFF, 0xFE]) {
@@ -53,8 +68,9 @@ pub fn decode(data: &[u8]) -> String {
 /// A Windows-1252 byte as a character.
 fn cp1252(b: u8) -> char {
     const HIGH: [char; 32] = [
-        '€', '\u{81}', '‚', 'ƒ', '„', '…', '†', '‡', 'ˆ', '‰', 'Š', '‹', 'Œ', '\u{8D}', 'Ž', '\u{8F}', '\u{90}', '‘', '’', '“', '”', '•', '–', '—', '˜', '™',
-        'š', '›', 'œ', '\u{9D}', 'ž', 'Ÿ',
+        '€', '\u{81}', '‚', 'ƒ', '„', '…', '†', '‡', 'ˆ', '‰', 'Š', '‹', 'Œ', '\u{8D}', 'Ž',
+        '\u{8F}', '\u{90}', '‘', '’', '“', '”', '•', '–', '—', '˜', '™', 'š', '›', 'œ', '\u{9D}',
+        'ž', 'Ÿ',
     ];
     match b {
         0x80..=0x9F => HIGH[(b - 0x80) as usize],
@@ -84,7 +100,12 @@ pub fn to_vtt(data: &[u8], name: &str) -> Result<String, String> {
     }
     let mut out = String::from("WEBVTT\n\n");
     for (start, end, text) in cues {
-        out.push_str(&format!("{} --> {}\n{}\n\n", stamp(start), stamp(end), text.trim_end()));
+        out.push_str(&format!(
+            "{} --> {}\n{}\n\n",
+            stamp(start),
+            stamp(end),
+            text.trim_end()
+        ));
     }
     Ok(out)
 }
@@ -94,7 +115,13 @@ type Cue = (u64, u64, String);
 
 /// Milliseconds as "00:01:02.345".
 fn stamp(ms: u64) -> String {
-    format!("{:02}:{:02}:{:02}.{:03}", ms / 3_600_000, ms / 60_000 % 60, ms / 1000 % 60, ms % 1000)
+    format!(
+        "{:02}:{:02}:{:02}.{:03}",
+        ms / 3_600_000,
+        ms / 60_000 % 60,
+        ms / 1000 % 60,
+        ms % 1000
+    )
 }
 
 /// "01:02:03,456" (or "." before the fraction, a short fraction, or no hours) in milliseconds.
@@ -104,14 +131,25 @@ fn time(s: &str) -> Option<u64> {
         Some(i) => (&s[..i], &s[i + 1..]),
         None => (s, ""),
     };
-    let parts: Vec<u64> = hms.split(':').map(|p| p.trim().parse().ok()).collect::<Option<_>>()?;
+    let parts: Vec<u64> = hms
+        .split(':')
+        .map(|p| p.trim().parse().ok())
+        .collect::<Option<_>>()?;
     let secs = match parts[..] {
         [h, m, s] => h * 3600 + m * 60 + s,
         [m, s] => m * 60 + s,
         _ => return None,
     };
-    let frac: String = frac.chars().take_while(char::is_ascii_digit).take(3).collect();
-    let ms = if frac.is_empty() { 0 } else { frac.parse::<u64>().ok()? * 10u64.pow(3 - frac.len() as u32) };
+    let frac: String = frac
+        .chars()
+        .take_while(char::is_ascii_digit)
+        .take(3)
+        .collect();
+    let ms = if frac.is_empty() {
+        0
+    } else {
+        frac.parse::<u64>().ok()? * 10u64.pow(3 - frac.len() as u32)
+    };
     Some(secs * 1000 + ms)
 }
 
@@ -120,10 +158,14 @@ fn srt(text: &str) -> Vec<Cue> {
     let mut cues = vec![];
     let mut lines = text.lines().peekable();
     while let Some(line) = lines.next() {
-        let Some((a, b)) = line.split_once("-->") else { continue };
+        let Some((a, b)) = line.split_once("-->") else {
+            continue;
+        };
         // Text after the end time (positions) is left out.
         let b = b.split_whitespace().next().unwrap_or("");
-        let (Some(start), Some(end)) = (time(a), time(b)) else { continue };
+        let (Some(start), Some(end)) = (time(a), time(b)) else {
+            continue;
+        };
         let mut body = vec![];
         while let Some(l) = lines.peek() {
             if l.trim().is_empty() {
@@ -143,10 +185,19 @@ fn microdvd(text: &str) -> Vec<Cue> {
     let mut fps = FPS;
     let mut cues = vec![];
     for (i, line) in text.lines().enumerate() {
-        let Some((a, rest)) = frames(line) else { continue };
-        let Some((b, body)) = frames(rest) else { continue };
+        let Some((a, rest)) = frames(line) else {
+            continue;
+        };
+        let Some((b, body)) = frames(rest) else {
+            continue;
+        };
         if i == 0 && a <= 1 && b <= 1 {
-            if let Some(f) = body.trim().parse::<f64>().ok().filter(|f| *f > 1.0 && *f < 200.0) {
+            if let Some(f) = body
+                .trim()
+                .parse::<f64>()
+                .ok()
+                .filter(|f| *f > 1.0 && *f < 200.0)
+            {
                 fps = f;
                 continue;
             }
@@ -170,8 +221,12 @@ fn subviewer(text: &str) -> Vec<Cue> {
     let mut cues = vec![];
     let mut lines = text.lines();
     while let Some(line) = lines.next() {
-        let Some((a, b)) = line.split_once(',') else { continue };
-        let (Some(start), Some(end)) = (time(a), time(b)) else { continue };
+        let Some((a, b)) = line.split_once(',') else {
+            continue;
+        };
+        let (Some(start), Some(end)) = (time(a), time(b)) else {
+            continue;
+        };
         if !a.contains(':') || !b.contains(':') {
             continue;
         }
@@ -205,7 +260,11 @@ fn strip_braces(s: &str) -> String {
 /// A line of text for VTT: the tags it knows (<i>, <b>, <u>) kept, others (<font>) and ASS
 /// codes ("{\an8}") taken out, and "&" and stray "<" written so they show.
 fn clean(line: &str) -> String {
-    let line = if line.contains("{\\") { strip_braces(line) } else { line.to_string() };
+    let line = if line.contains("{\\") {
+        strip_braces(line)
+    } else {
+        line.to_string()
+    };
     let mut out = String::new();
     let mut rest = line.as_str();
     while let Some(i) = rest.find(['<', '&']) {
@@ -261,7 +320,9 @@ mod tests {
         let sub = "{1}{1}25\n{25}{50}{y:i}One|Two\n{100}{125}Three\n";
         assert_eq!(to_vtt(sub.as_bytes(), "a.sub").unwrap(), "WEBVTT\n\n00:00:01.000 --> 00:00:02.000\nOne\nTwo\n\n00:00:04.000 --> 00:00:05.000\nThree\n\n");
         // No frame rate given.
-        assert!(to_vtt(b"{0}{24}Hi", "a.sub").unwrap().contains("00:00:00.000 --> 00:00:01.001\nHi"));
+        assert!(to_vtt(b"{0}{24}Hi", "a.sub")
+            .unwrap()
+            .contains("00:00:00.000 --> 00:00:01.001\nHi"));
     }
 
     #[test]
@@ -275,8 +336,13 @@ mod tests {
         assert_eq!(decode(b"caf\xe9 \x93x\x94"), "café “x”");
         assert_eq!(decode(&[0xFF, 0xFE, b'h', 0, b'i', 0]), "hi");
         assert_eq!(decode(&[0xFE, 0xFF, 0, b'h', 0, b'i']), "hi");
-        assert!(to_vtt(&[0, 0, 1, 0xBA, 0x44], "a.sub").unwrap_err().contains("VobSub"));
+        assert!(to_vtt(&[0, 0, 1, 0xBA, 0x44], "a.sub")
+            .unwrap_err()
+            .contains("VobSub"));
         assert!(to_vtt(b"nothing here", "a.srt").is_err());
-        assert_eq!(to_vtt(b"WEBVTT\n\n00:01.000 --> 00:02.000\nx\n", "a.vtt").unwrap(), "WEBVTT\n\n00:01.000 --> 00:02.000\nx\n");
+        assert_eq!(
+            to_vtt(b"WEBVTT\n\n00:01.000 --> 00:02.000\nx\n", "a.vtt").unwrap(),
+            "WEBVTT\n\n00:01.000 --> 00:02.000\nx\n"
+        );
     }
 }

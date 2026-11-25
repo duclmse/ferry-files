@@ -15,7 +15,15 @@ impl Ctx {
             match call::<TextFile>("read_text", json!({ "src": src.key(), "path": path })).await {
                 Ok(f) => {
                     let (text, crlf, mixed) = to_lf(f.text);
-                    self.editor.set(Some(Editor { src, pane: p.id, path, version: f.version, saved_text: text.as_str().into(), crlf, mixed }));
+                    self.editor.set(Some(Editor {
+                        src,
+                        pane: p.id,
+                        path,
+                        version: f.version,
+                        saved_text: text.as_str().into(),
+                        crlf,
+                        mixed,
+                    }));
                     self.text.set(text);
                     self.status.set((String::new(), ""));
                     self.confirm_discard.set(false);
@@ -32,7 +40,9 @@ impl Ctx {
     }
 
     pub(super) fn save_in(self, slot: Slot) {
-        let Some(ed) = slot.editor.get_untracked() else { return };
+        let Some(ed) = slot.editor.get_untracked() else {
+            return;
+        };
         if self.busy.get_untracked() {
             return;
         }
@@ -46,11 +56,27 @@ impl Ctx {
             drop(crlf);
             match call::<WriteResult>("write_text", args).await {
                 Ok(r) => {
-                    let note = if r.backup.is_some() { format!(" The old version is backed up on {}.", crate::os::the_computer()) } else { String::new() };
-                    slot.status.set((format!("Saved to {}.{note}", self.place(ed.src)), "ok"));
-                    self.log(format!("Saved {} on {}", base(&ed.path), self.place(ed.src)));
+                    let note = if r.backup.is_some() {
+                        format!(
+                            " The old version is backed up on {}.",
+                            crate::os::the_computer()
+                        )
+                    } else {
+                        String::new()
+                    };
+                    slot.status
+                        .set((format!("Saved to {}.{note}", self.place(ed.src)), "ok"));
+                    self.log(format!(
+                        "Saved {} on {}",
+                        base(&ed.path),
+                        self.place(ed.src)
+                    ));
                     let same = |e: &Editor| e.src == ed.src && e.path == ed.path;
-                    let saved = Editor { version: r.version, saved_text: text.into(), ..ed.clone() };
+                    let saved = Editor {
+                        version: r.version,
+                        saved_text: text.into(),
+                        ..ed.clone()
+                    };
                     if slot.editor.with_untracked(|e| e.as_ref().is_some_and(same)) {
                         slot.editor.set(Some(saved));
                         slot.ask.set(false);
@@ -78,7 +104,10 @@ impl Ctx {
     pub(super) fn open_doc(self, p: Pane, path: String) {
         let src = p.src.get_untracked();
         reveal(p, &path);
-        if let Some(i) = p.docs.with_untracked(|ds| ds.iter().position(|d| d.src() == src && d.path() == path)) {
+        if let Some(i) = p
+            .docs
+            .with_untracked(|ds| ds.iter().position(|d| d.src() == src && d.path() == path))
+        {
             self.show_doc(p, i);
             return;
         }
@@ -87,12 +116,25 @@ impl Ctx {
             match call::<TextFile>("read_text", json!({ "src": src.key(), "path": path })).await {
                 Ok(f) => {
                     let (text, crlf, mixed) = to_lf(f.text);
-                    let ed = Editor { src, pane: p.id, path, version: f.version, saved_text: text.as_str().into(), crlf, mixed };
+                    let ed = Editor {
+                        src,
+                        pane: p.id,
+                        path,
+                        version: f.version,
+                        saved_text: text.as_str().into(),
+                        crlf,
+                        mixed,
+                    };
                     // Its text is in the editor while it's shown.
-                    let doc = Doc::Text { ed: ed.clone(), text: None };
+                    let doc = Doc::Text {
+                        ed: ed.clone(),
+                        text: None,
+                    };
                     let at = p.doc_at.get_untracked();
                     // A shown file with changes, or one that isn't text (kept open), stays.
-                    let keep = p.slot().dirty() || p.docs.with_untracked(|ds| matches!(ds.get(at), Some(Doc::File { .. })));
+                    let keep = p.slot().dirty()
+                        || p.docs
+                            .with_untracked(|ds| matches!(ds.get(at), Some(Doc::File { .. })));
                     stash(p);
                     p.docs.update(|ds| {
                         if ds.is_empty() {
@@ -104,7 +146,11 @@ impl Ctx {
                             ds[at.min(last)] = doc;
                         }
                     });
-                    let at = if keep { at + 1 } else { at.min(p.docs.with_untracked(Vec::len) - 1) };
+                    let at = if keep {
+                        at + 1
+                    } else {
+                        at.min(p.docs.with_untracked(Vec::len) - 1)
+                    };
                     show(p, at, ed, text);
                     p.peek_on.set(false);
                 }
@@ -118,7 +164,10 @@ impl Ctx {
     /// or in its own tab, when it's kept open.
     pub(super) fn peek_doc(self, p: Pane, e: Entry) {
         let src = p.src.get_untracked();
-        if let Some(i) = p.docs.with_untracked(|ds| ds.iter().position(|d| matches!(d, Doc::File { .. }) && d.src() == src && d.path() == e.path)) {
+        if let Some(i) = p.docs.with_untracked(|ds| {
+            ds.iter()
+                .position(|d| matches!(d, Doc::File { .. }) && d.src() == src && d.path() == e.path)
+        }) {
             self.show_doc(p, i);
             return;
         }
@@ -129,10 +178,16 @@ impl Ctx {
 
     /// Keeps the preview tab's file open in a tab of its own, after the shown one.
     pub(super) fn keep_peek(self, p: Pane) {
-        let Some(entry) = p.doc_peek.get_untracked() else { return };
+        let Some(entry) = p.doc_peek.get_untracked() else {
+            return;
+        };
         let src = p.src.get_untracked();
         let n = p.docs.with_untracked(Vec::len);
-        let at = if n == 0 { 0 } else { (p.doc_at.get_untracked() + 1).min(n) };
+        let at = if n == 0 {
+            0
+        } else {
+            (p.doc_at.get_untracked() + 1).min(n)
+        };
         p.docs.update(|ds| ds.insert(at, Doc::File { src, entry }));
         if p.doc_at.get_untracked() >= at && n > 0 {
             p.doc_at.update(|a| *a += 1);
@@ -151,7 +206,10 @@ impl Ctx {
     /// preview tab follow it.
     pub(super) fn doc_moved(self, src: Src, old: &str, new: &str) {
         let moved = |path: &mut String| {
-            if let Some(rest) = path.strip_prefix(old).filter(|r| r.is_empty() || r.starts_with('/')) {
+            if let Some(rest) = path
+                .strip_prefix(old)
+                .filter(|r| r.is_empty() || r.starts_with('/'))
+            {
                 *path = format!("{new}{rest}");
             }
         };
@@ -187,8 +245,10 @@ impl Ctx {
     pub(super) fn show_doc(self, p: Pane, i: usize) {
         p.peek_on.set(false);
         let n = p.docs.with_untracked(Vec::len);
-        let here =
-            i == p.doc_at.get_untracked() && (p.doc.with_untracked(Option::is_some) || p.docs.with_untracked(|ds| matches!(ds.get(i), Some(Doc::File { .. }))));
+        let here = i == p.doc_at.get_untracked()
+            && (p.doc.with_untracked(Option::is_some)
+                || p.docs
+                    .with_untracked(|ds| matches!(ds.get(i), Some(Doc::File { .. }))));
         if here || i >= n {
             return;
         }
@@ -199,7 +259,12 @@ impl Ctx {
     /// Closes the Editor view's tab `i`; with unsaved changes, unless `force`, it's shown and asks.
     pub(super) fn close_doc(self, p: Pane, i: usize, force: bool) {
         let at = p.doc_at.get_untracked();
-        let dirty = if i == at { p.slot().dirty() } else { p.docs.with_untracked(|ds| ds.get(i).is_some_and(Doc::dirty)) };
+        let dirty = if i == at {
+            p.slot().dirty()
+        } else {
+            p.docs
+                .with_untracked(|ds| ds.get(i).is_some_and(Doc::dirty))
+        };
         if dirty && !force {
             self.show_doc(p, i);
             p.doc_ask.set(true);
@@ -252,9 +317,14 @@ impl Ctx {
 /// Keeps the shown tab's file in its entry of `docs`, and its text if it has changes: unchanged,
 /// it's made again from the saved text when shown.
 fn stash(p: Pane) {
-    let Some(ed) = p.doc.get_untracked() else { return };
+    let Some(ed) = p.doc.get_untracked() else {
+        return;
+    };
     let at = p.doc_at.get_untracked();
-    let text = p.doc_text.try_update_untracked(std::mem::take).unwrap_or_default();
+    let text = p
+        .doc_text
+        .try_update_untracked(std::mem::take)
+        .unwrap_or_default();
     let text = (text != *ed.saved_text).then_some(text);
     p.docs.update(|ds| {
         if let Some(d) = ds.get_mut(at) {
@@ -268,11 +338,19 @@ fn stash(p: Pane) {
 fn put(p: Pane, at: usize) {
     let taken = p.docs.try_update(|ds| {
         ds.get_mut(at).map(|d| match d {
-            Doc::Text { ed, text } => (ed.path.clone(), Some((ed.clone(), text.take().unwrap_or_else(|| ed.saved_text.to_string())))),
+            Doc::Text { ed, text } => (
+                ed.path.clone(),
+                Some((
+                    ed.clone(),
+                    text.take().unwrap_or_else(|| ed.saved_text.to_string()),
+                )),
+            ),
             Doc::File { entry, .. } => (entry.path.clone(), None),
         })
     });
-    let Some(Some((path, text))) = taken else { return };
+    let Some(Some((path, text))) = taken else {
+        return;
+    };
     reveal(p, &path);
     match text {
         Some((ed, text)) => show(p, at, ed, text),
@@ -363,12 +441,22 @@ fn slice_runs(runs: &[(u8, u32)], from: usize, to: usize) -> Vec<(u8, u32)> {
 /// `runs` for `old` moved onto `new`: kept where the start and the end are unchanged; what's
 /// between is plain until it's coloured again.
 pub(crate) fn shift_runs(runs: &[(u8, u32)], old: &str, new: &str) -> Vec<(u8, u32)> {
-    let mut pre = old.bytes().zip(new.bytes()).take_while(|(a, b)| a == b).count();
+    let mut pre = old
+        .bytes()
+        .zip(new.bytes())
+        .take_while(|(a, b)| a == b)
+        .count();
     while !new.is_char_boundary(pre) || !old.is_char_boundary(pre) {
         pre -= 1;
     }
     let room = old.len().min(new.len()) - pre;
-    let mut suf = old.bytes().rev().zip(new.bytes().rev()).take(room).take_while(|(a, b)| a == b).count();
+    let mut suf = old
+        .bytes()
+        .rev()
+        .zip(new.bytes().rev())
+        .take(room)
+        .take_while(|(a, b)| a == b)
+        .count();
     while !new.is_char_boundary(new.len() - suf) || !old.is_char_boundary(old.len() - suf) {
         suf -= 1;
     }
@@ -409,7 +497,13 @@ fn escape_into(out: &mut String, s: &str) {
 /// `<mark>` per match. The lines before and after are each one plain `<span class="far">`: they're
 /// out of view, and a long file is then a few hundred nodes, not a few per line. Every line ends
 /// with a line break, so an empty last line has its height. The text is escaped.
-pub(crate) fn code_html(t: &str, runs: Option<&[(u8, u32)]>, hits: &[(usize, usize)], shown: Option<usize>, rich: Range<usize>) -> String {
+pub(crate) fn code_html(
+    t: &str,
+    runs: Option<&[(u8, u32)]>,
+    hits: &[(usize, usize)],
+    shown: Option<usize>,
+    rich: Range<usize>,
+) -> String {
     let runs = runs.filter(|r| runs_fit(r, t));
     // (end, class) per run.
     let mut ends = vec![];
@@ -422,7 +516,11 @@ pub(crate) fn code_html(t: &str, runs: Option<&[(u8, u32)]>, hits: &[(usize, usi
     }
     // The rich lines' bytes, `a..b`; b is None when they go on to the last line.
     let (first, a) = line_start(t, rich.start.max(1)).map_or((1, 0), |a| (rich.start.max(1), a));
-    let b = if rich.end <= first { Some(a) } else { line_start(t, rich.end) };
+    let b = if rich.end <= first {
+        Some(a)
+    } else {
+        line_start(t, rich.end)
+    };
     let mut out = String::with_capacity((a + 64).max(4096));
     if a > 0 {
         out.push_str("<span class=\"far\">");
@@ -458,7 +556,11 @@ pub(crate) fn code_html(t: &str, runs: Option<&[(u8, u32)]>, hits: &[(usize, usi
             }
             let piece = &t[pos..end];
             if let Some(h) = hit {
-                out.push_str(if shown == Some(h) { "<mark class=\"hit on\">" } else { "<mark class=\"hit\">" });
+                out.push_str(if shown == Some(h) {
+                    "<mark class=\"hit on\">"
+                } else {
+                    "<mark class=\"hit\">"
+                });
             }
             if !class.is_empty() {
                 out.push_str("<span class=\"");
@@ -533,7 +635,11 @@ fn to_lf(t: String) -> (String, bool, bool) {
     }
     let crlf = t.matches("\r\n").count();
     let lf = t.matches('\n').count() - crlf;
-    (t.replace("\r\n", "\n").replace('\r', "\n"), crlf > lf, crlf > 0 && lf > 0)
+    (
+        t.replace("\r\n", "\n").replace('\r', "\n"),
+        crlf > lf,
+        crlf > 0 && lf > 0,
+    )
 }
 
 /// (lines, characters) in a selection; (0, 0) when it's empty. A last line break doesn't start a
@@ -543,7 +649,10 @@ fn selected(s: &str) -> (usize, usize) {
         return (0, 0);
     }
     let breaks = s.matches('\n').count();
-    (breaks + 1 - usize::from(s.ends_with('\n')), s.chars().count())
+    (
+        breaks + 1 - usize::from(s.ends_with('\n')),
+        s.chars().count(),
+    )
 }
 
 /// The byte in `t` at UTF-16 offset `u` (a textarea's selection is in UTF-16).
@@ -573,11 +682,20 @@ fn indent_unit(t: &str) -> &'static str {
 
 /// Types `s` into the box where the selection is, as typing would (so ⌘Z undoes it).
 fn type_text(el: &web_sys::HtmlTextAreaElement, s: &str) {
-    let typed =
-        document().dyn_into::<web_sys::HtmlDocument>().ok().and_then(|d| d.exec_command_with_show_ui_and_value("insertText", false, s).ok()).unwrap_or(false);
+    let typed = document()
+        .dyn_into::<web_sys::HtmlDocument>()
+        .ok()
+        .and_then(|d| {
+            d.exec_command_with_show_ui_and_value("insertText", false, s)
+                .ok()
+        })
+        .unwrap_or(false);
     if !typed {
         let v = el.value();
-        let (a, b) = (el.selection_start().ok().flatten().unwrap_or(0), el.selection_end().ok().flatten().unwrap_or(0));
+        let (a, b) = (
+            el.selection_start().ok().flatten().unwrap_or(0),
+            el.selection_end().ok().flatten().unwrap_or(0),
+        );
         let (a, b) = (byte_at(&v, a), byte_at(&v, b));
         let at = utf16_at(&v, a) + s.encode_utf16().count() as u32;
         el.set_value(&format!("{}{s}{}", &v[..a], &v[b..]));
@@ -599,7 +717,11 @@ pub(super) fn TextEditor(file: Slot) -> impl IntoView {
     let ta = NodeRef::<leptos::html::Textarea>::new();
     let layer = NodeRef::<leptos::html::Pre>::new();
     let find_box = NodeRef::<leptos::html::Input>::new();
-    let name = slot.editor.with_untracked(|e| e.as_ref().map(|e| base(&e.path).to_string()).unwrap_or_default());
+    let name = slot.editor.with_untracked(|e| {
+        e.as_ref()
+            .map(|e| base(&e.path).to_string())
+            .unwrap_or_default()
+    });
     let language = code_language(&name).unwrap_or("Text");
     let name = StoredValue::new(name);
     // Small enough to draw under the box.
@@ -618,7 +740,13 @@ pub(super) fn TextEditor(file: Slot) -> impl IntoView {
     // Lines and characters selected: (0, 0) when nothing is.
     let picked = RwSignal::new((0usize, 0usize));
     let finding = slot.find;
-    let FindState { query, with, opts, keep, replacing } = ctx.find_state;
+    let FindState {
+        query,
+        with,
+        opts,
+        keep,
+        replacing,
+    } = ctx.find_state;
     let replace_box = NodeRef::<leptos::html::Input>::new();
     // What's wrong with the regular expression.
     let find_err = RwSignal::new(None::<String>);
@@ -626,13 +754,25 @@ pub(super) fn TextEditor(file: Slot) -> impl IntoView {
     let shown = RwSignal::new(None::<usize>);
     let (wrap, numbers) = (ctx.wrap_text, ctx.line_numbers);
     let lines = Memo::new(move |_| slot.text.with(|t| t.matches('\n').count() + 1));
-    let (crlf, mixed) = slot.editor.with_untracked(|e| e.as_ref().map_or((false, false), |e| (e.crlf, e.mixed)));
+    let (crlf, mixed) = slot
+        .editor
+        .with_untracked(|e| e.as_ref().map_or((false, false), |e| (e.crlf, e.mixed)));
     // Files are read as UTF-8 only; a byte order mark is kept as the text's first character.
-    let encoding = Memo::new(move |_| slot.text.with(|t| if t.starts_with('\u{feff}') { "UTF-8 with BOM" } else { "UTF-8" }));
+    let encoding = Memo::new(move |_| {
+        slot.text.with(|t| {
+            if t.starts_with('\u{feff}') {
+                "UTF-8 with BOM"
+            } else {
+                "UTF-8"
+            }
+        })
+    });
 
     // The current line gets a highlight in the layer.
     let mark_line = move |line: usize| {
-        let Some(l) = layer.get_untracked() else { return };
+        let Some(l) = layer.get_untracked() else {
+            return;
+        };
         if let Ok(Some(old)) = l.query_selector(".ln.cur") {
             let _ = old.class_list().remove_1("cur");
         }
@@ -646,23 +786,40 @@ pub(super) fn TextEditor(file: Slot) -> impl IntoView {
         let l = layer.get_untracked()?;
         let p = painted.get_value();
         if p.contains(&k) {
-            let e = l.query_selector(&format!(":scope > .ln[data-n=\"{k}\"]")).ok().flatten()?;
+            let e = l
+                .query_selector(&format!(":scope > .ln[data-n=\"{k}\"]"))
+                .ok()
+                .flatten()?;
             return Some(e.dyn_into::<web_sys::HtmlElement>().ok()?.offset_top() as f64);
         }
-        let far = if k < p.start { l.first_element_child() } else { l.last_element_child() }?;
+        let far = if k < p.start {
+            l.first_element_child()
+        } else {
+            l.last_element_child()
+        }?;
         if !far.class_list().contains("far") {
             return None;
         }
         let node = far.first_child()?;
-        let (from, at) = starts.with_value(|s| Some((if k < p.start { 0 } else { *s.get(p.end - 1)? }, *s.get(k - 1)?)))?;
+        let (from, at) = starts.with_value(|s| {
+            Some((
+                if k < p.start { 0 } else { *s.get(p.end - 1)? },
+                *s.get(k - 1)?,
+            ))
+        })?;
         let r = document().create_range().ok()?;
         r.set_start(&node, at - from).ok()?;
         r.set_end(&node, at - from + 1).ok()?;
-        Some(r.get_bounding_client_rect().top() - l.get_bounding_client_rect().top() + l.scroll_top() as f64)
+        Some(
+            r.get_bounding_client_rect().top() - l.get_bounding_client_rect().top()
+                + l.scroll_top() as f64,
+        )
     };
     // The lines in view (by number, `first..end`).
     let in_view = move || -> Range<usize> {
-        let Some(t) = ta.get_untracked() else { return 1..2 };
+        let Some(t) = ta.get_untracked() else {
+            return 1..2;
+        };
         let (top, h) = (t.scroll_top(), t.client_height().max(LINE_PX));
         let n = lines.get_untracked();
         // How many lines start at or above `y`; a guess by the line height before it's painted.
@@ -681,9 +838,16 @@ pub(super) fn TextEditor(file: Slot) -> impl IntoView {
         above(top).max(1)..above(top + h) + 1
     };
     let draw_at = move |rich: Range<usize>| {
-        let Some(l) = layer.get_untracked() else { return };
-        let html =
-            slot.text.with_untracked(|t| runs.with_value(|r| hits.with_untracked(|h| code_html(t, r.as_deref(), h, shown.get_untracked(), rich.clone()))));
+        let Some(l) = layer.get_untracked() else {
+            return;
+        };
+        let html = slot.text.with_untracked(|t| {
+            runs.with_value(|r| {
+                hits.with_untracked(|h| {
+                    code_html(t, r.as_deref(), h, shown.get_untracked(), rich.clone())
+                })
+            })
+        });
         l.set_inner_html(&html);
         starts.set_value(slot.text.with_untracked(|t| utf16_starts(t)));
         painted.set_value(rich);
@@ -697,7 +861,10 @@ pub(super) fn TextEditor(file: Slot) -> impl IntoView {
         // Painted again when the lines in view get near the edge of those painted.
         if drawn_on {
             let v = in_view();
-            let (from, to) = (v.start.saturating_sub(MARGIN / 2).max(1), v.end + MARGIN / 2);
+            let (from, to) = (
+                v.start.saturating_sub(MARGIN / 2).max(1),
+                v.end + MARGIN / 2,
+            );
             if painted.with_value(|p| from < p.start || to > p.end) {
                 draw_at(band(v.start, v.end));
             }
@@ -716,13 +883,21 @@ pub(super) fn TextEditor(file: Slot) -> impl IntoView {
         let a = el.selection_start().ok().flatten().unwrap_or(0);
         let b = el.selection_end().ok().flatten().unwrap_or(a);
         // The caret is the end the selection was made towards.
-        let back = el.selection_direction().ok().flatten().is_some_and(|d| d == "backward");
+        let back = el
+            .selection_direction()
+            .ok()
+            .flatten()
+            .is_some_and(|d| d == "backward");
         let (line, col, sel) = slot.text.with_untracked(|t| {
             let (a, b) = (byte_at(t, a), byte_at(t, b));
             let at = if back { a } else { b };
             let before = &t[..at];
             let line_start = before.rfind('\n').map_or(0, |i| i + 1);
-            (before.matches('\n').count() + 1, before[line_start..].chars().count() + 1, selected(&t[a..b]))
+            (
+                before.matches('\n').count() + 1,
+                before[line_start..].chars().count() + 1,
+                selected(&t[a..b]),
+            )
         });
         if caret.get_untracked().0 != line {
             mark_line(line);
@@ -738,7 +913,14 @@ pub(super) fn TextEditor(file: Slot) -> impl IntoView {
         let text = slot.text.get_untracked();
         let name = name.get_value();
         spawn_local(async move {
-            let Ok(c) = call::<crate::api::TextColours>("colour_text", json!({ "name": name, "text": text })).await else { return };
+            let Ok(c) = call::<crate::api::TextColours>(
+                "colour_text",
+                json!({ "name": name, "text": text }),
+            )
+            .await
+            else {
+                return;
+            };
             if edits.try_get_value() != Some(at) {
                 return;
             }
@@ -762,7 +944,10 @@ pub(super) fn TextEditor(file: Slot) -> impl IntoView {
     let refind = move || {
         if finding.get_untracked() {
             let q = query.get_untracked();
-            match slot.text.with_untracked(|t| find::find(t, &q, opts.get_untracked(), FIND_MAX)) {
+            match slot
+                .text
+                .with_untracked(|t| find::find(t, &q, opts.get_untracked(), FIND_MAX))
+            {
                 Ok(h) => {
                     find_err.set(None);
                     hits.set(h);
@@ -772,7 +957,11 @@ pub(super) fn TextEditor(file: Slot) -> impl IntoView {
                     hits.set(vec![]);
                 }
             }
-            shown.set(shown.get_untracked().filter(|&i| i < hits.with_untracked(Vec::len)));
+            shown.set(
+                shown
+                    .get_untracked()
+                    .filter(|&i| i < hits.with_untracked(Vec::len)),
+            );
         }
     };
     let edited = move || {
@@ -781,7 +970,9 @@ pub(super) fn TextEditor(file: Slot) -> impl IntoView {
         edits.update_value(|n| *n += 1);
         if drawn_on {
             // The text in the slot is still the one the colours are for.
-            let shifted = slot.text.with_untracked(|old| runs.with_value(|r| r.as_ref().map(|r| shift_runs(r, old, &v))));
+            let shifted = slot.text.with_untracked(|old| {
+                runs.with_value(|r| r.as_ref().map(|r| shift_runs(r, old, &v)))
+            });
             runs.set_value(shifted);
         }
         slot.text.set(v);
@@ -796,10 +987,14 @@ pub(super) fn TextEditor(file: Slot) -> impl IntoView {
     };
     // Shows match `i`: selected in the box and scrolled to.
     let show_hit = move |i: usize| {
-        let Some((a, b)) = hits.with_untracked(|h| h.get(i).copied()) else { return };
+        let Some((a, b)) = hits.with_untracked(|h| h.get(i).copied()) else {
+            return;
+        };
         shown.set(Some(i));
         let Some(el) = ta.get_untracked() else { return };
-        let (ua, ub, line) = slot.text.with_untracked(|t| (utf16_at(t, a), utf16_at(t, b), t[..a].matches('\n').count()));
+        let (ua, ub, line) = slot
+            .text
+            .with_untracked(|t| (utf16_at(t, a), utf16_at(t, b), t[..a].matches('\n').count()));
         let _ = el.set_selection_range(ua, ub);
         draw();
         let top = line_top(line + 1).map_or(line as i32 * LINE_PX, |t| t as i32);
@@ -820,7 +1015,10 @@ pub(super) fn TextEditor(file: Slot) -> impl IntoView {
             Some(i) => (i + 1) % n,
             None => {
                 // The first match after the caret.
-                let at = ta.get_untracked().and_then(|el| el.selection_start().ok().flatten()).unwrap_or(0);
+                let at = ta
+                    .get_untracked()
+                    .and_then(|el| el.selection_start().ok().flatten())
+                    .unwrap_or(0);
                 let at = slot.text.with_untracked(|t| byte_at(t, at));
                 hits.with_untracked(|h| h.iter().position(|&(a, _)| a >= at).unwrap_or(0))
             }
@@ -856,8 +1054,14 @@ pub(super) fn TextEditor(file: Slot) -> impl IntoView {
     let open_find = move |replace: bool| {
         // The selection, when it's on one line, is what's looked for.
         if let Some(el) = ta.get_untracked() {
-            let (a, b) = (el.selection_start().ok().flatten().unwrap_or(0), el.selection_end().ok().flatten().unwrap_or(0));
-            let picked = slot.text.with_untracked(|t| t.get(byte_at(t, a)..byte_at(t, b)).map(str::to_string)).unwrap_or_default();
+            let (a, b) = (
+                el.selection_start().ok().flatten().unwrap_or(0),
+                el.selection_end().ok().flatten().unwrap_or(0),
+            );
+            let picked = slot
+                .text
+                .with_untracked(|t| t.get(byte_at(t, a)..byte_at(t, b)).map(str::to_string))
+                .unwrap_or_default();
             if !picked.is_empty() && !picked.contains('\n') {
                 query.set(picked);
             }
@@ -883,14 +1087,27 @@ pub(super) fn TextEditor(file: Slot) -> impl IntoView {
     // Replaces the shown match (or, with none shown, picks the next) and shows the next one.
     let replace_one = move || {
         let Some(el) = ta.get_untracked() else { return };
-        let Some((a, b)) = shown.get_untracked().and_then(|i| hits.with_untracked(|h| h.get(i).copied())) else {
+        let Some((a, b)) = shown
+            .get_untracked()
+            .and_then(|i| hits.with_untracked(|h| h.get(i).copied()))
+        else {
             step(false);
             return;
         };
-        let w =
-            slot.text.with_untracked(|t| find::replacement_at(t, &query.get_untracked(), opts.get_untracked(), &with.get_untracked(), keep.get_untracked(), a));
+        let w = slot.text.with_untracked(|t| {
+            find::replacement_at(
+                t,
+                &query.get_untracked(),
+                opts.get_untracked(),
+                &with.get_untracked(),
+                keep.get_untracked(),
+                a,
+            )
+        });
         let Some(w) = w else { return };
-        let (ua, ub) = slot.text.with_untracked(|t| (utf16_at(t, a), utf16_at(t, b)));
+        let (ua, ub) = slot
+            .text
+            .with_untracked(|t| (utf16_at(t, a), utf16_at(t, b)));
         // Typed into the text (focused, so it goes there), so ⌘Z undoes it; its input event finds
         // the matches again.
         let _ = el.focus();
@@ -898,7 +1115,11 @@ pub(super) fn TextEditor(file: Slot) -> impl IntoView {
         type_text(&el, &w);
         shown.set(None);
         let after = a + w.len();
-        match hits.with_untracked(|h| h.iter().position(|&(s, _)| s >= after).or((!h.is_empty()).then_some(0))) {
+        match hits.with_untracked(|h| {
+            h.iter()
+                .position(|&(s, _)| s >= after)
+                .or((!h.is_empty()).then_some(0))
+        }) {
             Some(i) => show_hit(i),
             None => draw(),
         }
@@ -907,7 +1128,11 @@ pub(super) fn TextEditor(file: Slot) -> impl IntoView {
     let replace_every = move || {
         let Some(el) = ta.get_untracked() else { return };
         let (q, w) = (query.get_untracked(), with.get_untracked());
-        let Ok((new, n)) = slot.text.with_untracked(|t| find::replace_all(t, &q, opts.get_untracked(), &w, keep.get_untracked())) else { return };
+        let Ok((new, n)) = slot.text.with_untracked(|t| {
+            find::replace_all(t, &q, opts.get_untracked(), &w, keep.get_untracked())
+        }) else {
+            return;
+        };
         if n == 0 {
             return;
         }
@@ -915,7 +1140,10 @@ pub(super) fn TextEditor(file: Slot) -> impl IntoView {
         el.select();
         type_text(&el, &new);
         let _ = el.set_selection_range(0, 0);
-        slot.status.set((format!("Replaced {n} {}.", if n == 1 { "match" } else { "matches" }), "ok"));
+        slot.status.set((
+            format!("Replaced {n} {}.", if n == 1 { "match" } else { "matches" }),
+            "ok",
+        ));
     };
     let keys = move |ev: web_sys::KeyboardEvent| {
         let meta = ev.meta_key() || ev.ctrl_key();
@@ -970,7 +1198,10 @@ pub(super) fn TextEditor(file: Slot) -> impl IntoView {
                 let indent = slot.text.with_untracked(|t| {
                     let b = byte_at(t, at);
                     let start = t[..b].rfind('\n').map_or(0, |i| i + 1);
-                    t[start..b].chars().take_while(|c| *c == ' ' || *c == '\t').collect::<String>()
+                    t[start..b]
+                        .chars()
+                        .take_while(|c| *c == ' ' || *c == '\t')
+                        .collect::<String>()
                 });
                 if !indent.is_empty() {
                     ev.prevent_default();
@@ -1055,7 +1286,11 @@ pub(super) fn TextEditor(file: Slot) -> impl IntoView {
         let on = !replacing.get_untracked();
         replacing.set(on);
         request_animation_frame(move || {
-            let el = if on { replace_box.get_untracked() } else { find_box.get_untracked() };
+            let el = if on {
+                replace_box.get_untracked()
+            } else {
+                find_box.get_untracked()
+            };
             if let Some(i) = el {
                 let _ = i.focus();
             }
@@ -1216,7 +1451,10 @@ mod tests {
     fn runs_follow_an_edit() {
         // "ab cd" coloured as [ab][ ][cd]; "X" typed after "ab".
         let runs = [(4, 2), (0, 1), (2, 2)];
-        assert_eq!(shift_runs(&runs, "ab cd", "abX cd"), [(4, 2), (0, 1), (0, 1), (2, 2)]);
+        assert_eq!(
+            shift_runs(&runs, "ab cd", "abX cd"),
+            [(4, 2), (0, 1), (0, 1), (2, 2)]
+        );
         // A letter deleted from the end.
         assert_eq!(shift_runs(&runs, "ab cd", "ab c"), [(4, 2), (0, 1), (2, 1)]);
         // Everything replaced.
@@ -1228,16 +1466,29 @@ mod tests {
         let h = code_html("a<b\n\nc", None, &[], None, ALL);
         assert_eq!(h, "<span class=\"ln\" data-n=\"1\">a&lt;b\n</span><span class=\"ln\" data-n=\"2\">\n</span><span class=\"ln\" data-n=\"3\">c\n</span>");
         // A last empty line still gets a line.
-        assert!(code_html("a\n", None, &[], None, ALL).ends_with("<span class=\"ln\" data-n=\"2\">\n</span>"));
-        assert_eq!(code_html("", None, &[], None, ALL), "<span class=\"ln\" data-n=\"1\">\n</span>");
+        assert!(code_html("a\n", None, &[], None, ALL)
+            .ends_with("<span class=\"ln\" data-n=\"2\">\n</span>"));
+        assert_eq!(
+            code_html("", None, &[], None, ALL),
+            "<span class=\"ln\" data-n=\"1\">\n</span>"
+        );
     }
 
     #[test]
     fn html_marks_matches_and_colours() {
         let t = "let x";
         // Runs that don't fit the text are left out.
-        assert_eq!(code_html(t, Some(&[(4, 9)]), &[], None, ALL), "<span class=\"ln\" data-n=\"1\">let x\n</span>");
-        let h = code_html(t, Some(&[(4, 3), (0, 2)]), &find::find(t, "ET", find::FindOpts::default(), FIND_MAX).unwrap(), Some(0), ALL);
+        assert_eq!(
+            code_html(t, Some(&[(4, 9)]), &[], None, ALL),
+            "<span class=\"ln\" data-n=\"1\">let x\n</span>"
+        );
+        let h = code_html(
+            t,
+            Some(&[(4, 3), (0, 2)]),
+            &find::find(t, "ET", find::FindOpts::default(), FIND_MAX).unwrap(),
+            Some(0),
+            ALL,
+        );
         assert_eq!(h, "<span class=\"ln\" data-n=\"1\"><span class=\"tok-keyword\">l</span><mark class=\"hit on\"><span class=\"tok-keyword\">et</span></mark> x\n</span>");
     }
 
@@ -1251,10 +1502,19 @@ mod tests {
             "<span class=\"far\">ab\n</span><span class=\"ln\" data-n=\"2\"><span class=\"tok-keyword\">a</span><mark class=\"hit\"><span class=\"tok-keyword\">b</span></mark><span class=\"tok-keyword\">\n</span></span><span class=\"far\">ab\n</span>"
         );
         // To the last line, and an empty last line.
-        assert_eq!(code_html("a\nb", None, &[], None, 2..9), "<span class=\"far\">a\n</span><span class=\"ln\" data-n=\"2\">b\n</span>");
-        assert_eq!(code_html("a\n", None, &[], None, 1..2), "<span class=\"ln\" data-n=\"1\">a\n</span><span class=\"far\">\n</span>");
+        assert_eq!(
+            code_html("a\nb", None, &[], None, 2..9),
+            "<span class=\"far\">a\n</span><span class=\"ln\" data-n=\"2\">b\n</span>"
+        );
+        assert_eq!(
+            code_html("a\n", None, &[], None, 1..2),
+            "<span class=\"ln\" data-n=\"1\">a\n</span><span class=\"far\">\n</span>"
+        );
         // Lines past the end: all of it, rich.
-        assert_eq!(code_html("a", None, &[], None, 5..9), "<span class=\"ln\" data-n=\"1\">a\n</span>");
+        assert_eq!(
+            code_html("a", None, &[], None, 5..9),
+            "<span class=\"ln\" data-n=\"1\">a\n</span>"
+        );
         assert_eq!(line_start("a\nb\n", 3), Some(4));
         assert_eq!(line_start("a\nb\n", 4), None);
         assert_eq!(utf16_starts("a\n😀\nb"), [0, 2, 5]);
@@ -1266,8 +1526,14 @@ mod tests {
     fn line_endings_and_selections() {
         assert_eq!(to_lf("a\nb".into()), ("a\nb".into(), false, false));
         assert_eq!(to_lf("a\r\nb\r\n".into()), ("a\nb\n".into(), true, false));
-        assert_eq!(to_lf("a\r\nb\r\nc\n".into()), ("a\nb\nc\n".into(), true, true));
-        assert_eq!(to_lf("a\r\nb\nc\n".into()), ("a\nb\nc\n".into(), false, true));
+        assert_eq!(
+            to_lf("a\r\nb\r\nc\n".into()),
+            ("a\nb\nc\n".into(), true, true)
+        );
+        assert_eq!(
+            to_lf("a\r\nb\nc\n".into()),
+            ("a\nb\nc\n".into(), false, true)
+        );
         assert_eq!(to_lf("a\rb".into()), ("a\nb".into(), false, false));
         assert_eq!(selected(""), (0, 0));
         assert_eq!(selected("ab"), (1, 2));

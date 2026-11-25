@@ -33,7 +33,11 @@ fn find_regex(r: &Rule) -> Result<Option<regex::Regex>, String> {
     if r.find.is_empty() {
         return Ok(None);
     }
-    let source = if r.pattern { r.find.clone() } else { regex::escape(&r.find) };
+    let source = if r.pattern {
+        r.find.clone()
+    } else {
+        regex::escape(&r.find)
+    };
     regex(&source, !r.match_case).map(Some)
 }
 
@@ -51,17 +55,32 @@ fn replace(re: &regex::Regex, name: &str, with: &str, pattern: bool) -> String {
             out.push_str(&rest[..i]);
             rest = &rest[i + 1..];
             let b = rest.as_bytes();
-            let digit = |k: usize| b.get(k).filter(|c| c.is_ascii_digit()).map(|c| (c - b'0') as usize);
+            let digit = |k: usize| {
+                b.get(k)
+                    .filter(|c| c.is_ascii_digit())
+                    .map(|c| (c - b'0') as usize)
+            };
             let group = |n: usize| (n > 0 && n < caps.len()).then_some(n);
             // $12 is group 12 when there is one, else group 1 and then "2".
-            let num = digit(0).zip(digit(1)).and_then(|(x, y)| group(x * 10 + y)).map(|n| (n, 2)).or_else(|| digit(0).and_then(group).map(|n| (n, 1)));
+            let num = digit(0)
+                .zip(digit(1))
+                .and_then(|(x, y)| group(x * 10 + y))
+                .map(|n| (n, 2))
+                .or_else(|| digit(0).and_then(group).map(|n| (n, 1)));
             let (put, used) = match b.first() {
                 Some(b'$') => ("$", 1),
                 Some(b'&') => (whole.as_str(), 1),
                 Some(b'`') => (&name[..whole.start()], 1),
                 Some(b'\'') => (&name[whole.end()..], 1),
-                _ if num.is_some() => num.map_or(("", 0), |(n, used)| (caps.get(n).map_or("", |m| m.as_str()), used)),
-                Some(b'<') => match rest.find('>').and_then(|j| re.capture_names().flatten().any(|n| n == &rest[1..j]).then_some(j)) {
+                _ if num.is_some() => num.map_or(("", 0), |(n, used)| {
+                    (caps.get(n).map_or("", |m| m.as_str()), used)
+                }),
+                Some(b'<') => match rest.find('>').and_then(|j| {
+                    re.capture_names()
+                        .flatten()
+                        .any(|n| n == &rest[1..j])
+                        .then_some(j)
+                }) {
                     Some(j) => (caps.name(&rest[1..j]).map_or("", |m| m.as_str()), j + 1),
                     None => ("$", 0),
                 },
@@ -86,7 +105,11 @@ fn split_ext(name: &str, dir: bool) -> (String, String) {
 
 /// The date `mtime` (seconds) as 2024-05-31.
 fn day(mtime: i64) -> String {
-    when(mtime).split(' ').next().unwrap_or_default().to_string()
+    when(mtime)
+        .split(' ')
+        .next()
+        .unwrap_or_default()
+        .to_string()
 }
 
 /// `template` with {name}, {n}, {n:3} and {date} filled in; anything else in braces stays.
@@ -105,7 +128,10 @@ fn fill(template: &str, name: &str, n: i64, mtime: i64) -> String {
             "name" => out.push_str(name),
             "n" => out.push_str(&n.to_string()),
             "date" => out.push_str(&day(mtime)),
-            _ => match token.strip_prefix("n:").and_then(|w| w.parse::<usize>().ok()) {
+            _ => match token
+                .strip_prefix("n:")
+                .and_then(|w| w.parse::<usize>().ok())
+            {
                 Some(w) if w <= 12 => out.push_str(&format!("{n:0w$}")),
                 _ => out.push_str(&rest[i..i + j + 2]),
             },
@@ -156,9 +182,17 @@ fn bad_name(name: &str) -> Option<String> {
 
 /// The new names for `items` (in order), with problems marked. `taken` holds, by folder, the
 /// lower-cased names of what else is there.
-fn plan(items: &[Entry], r: &Rule, taken: &HashMap<String, HashSet<String>>) -> Result<Vec<Row>, String> {
+fn plan(
+    items: &[Entry],
+    r: &Rule,
+    taken: &HashMap<String, HashSet<String>>,
+) -> Result<Vec<Row>, String> {
     let re = find_regex(r)?;
-    let template = if r.template.trim().is_empty() { "{name}" } else { r.template.as_str() };
+    let template = if r.template.trim().is_empty() {
+        "{name}"
+    } else {
+        r.template.as_str()
+    };
     let mut rows: Vec<Row> = items
         .iter()
         .enumerate()
@@ -168,14 +202,26 @@ fn plan(items: &[Entry], r: &Rule, taken: &HashMap<String, HashSet<String>>) -> 
                 None => e.name.clone(),
             };
             let (stem, ext) = split_ext(&name, e.dir);
-            let new = recase(&format!("{}{ext}", fill(template, &stem, r.start + i as i64, e.mtime)), r.case);
-            Row { entry: e.clone(), problem: bad_name(&new), new }
+            let new = recase(
+                &format!(
+                    "{}{ext}",
+                    fill(template, &stem, r.start + i as i64, e.mtime)
+                ),
+                r.case,
+            );
+            Row {
+                entry: e.clone(),
+                problem: bad_name(&new),
+                new,
+            }
         })
         .collect();
     // Two items ending up with the same name, or one taking the name of something else there.
     let mut seen: HashMap<(String, String), usize> = HashMap::new();
     for row in &rows {
-        *seen.entry((parent(&row.entry.path), row.new.to_lowercase())).or_default() += 1;
+        *seen
+            .entry((parent(&row.entry.path), row.new.to_lowercase()))
+            .or_default() += 1;
     }
     for row in &mut rows {
         if row.problem.is_some() || row.new == row.entry.name {
@@ -183,7 +229,12 @@ fn plan(items: &[Entry], r: &Rule, taken: &HashMap<String, HashSet<String>>) -> 
         }
         let dir = parent(&row.entry.path);
         let lower = row.new.to_lowercase();
-        if seen.get(&(dir.clone(), lower.clone())).copied().unwrap_or(0) > 1 {
+        if seen
+            .get(&(dir.clone(), lower.clone()))
+            .copied()
+            .unwrap_or(0)
+            > 1
+        {
             row.problem = Some("Same as another new name".into());
         } else if taken.get(&dir).is_some_and(|t| t.contains(&lower)) {
             row.problem = Some("Already there".into());
@@ -195,16 +246,24 @@ fn plan(items: &[Entry], r: &Rule, taken: &HashMap<String, HashSet<String>>) -> 
 /// Renames each (path, new name) on `src`, in an order where no item takes a name another still
 /// has; items swapping names go by way of a temporary name. Returns what was renamed as (path
 /// now, name before), and the error that stopped it, if one did.
-pub(super) async fn rename_all(src: Src, items: Vec<(String, String)>) -> (Vec<(String, String)>, Option<String>) {
+pub(super) async fn rename_all(
+    src: Src,
+    items: Vec<(String, String)>,
+) -> (Vec<(String, String)>, Option<String>) {
     // (path now, new name, name before)
-    let mut pending: Vec<(String, String, String)> =
-        items.into_iter().filter(|(path, new)| base(path) != *new).map(|(path, new)| (path.clone(), new, base(&path))).collect();
+    let mut pending: Vec<(String, String, String)> = items
+        .into_iter()
+        .filter(|(path, new)| base(path) != *new)
+        .map(|(path, new)| (path.clone(), new, base(&path)))
+        .collect();
     let mut done = vec![];
     let mut aside = 0;
     while !pending.is_empty() {
         let free = pending.iter().position(|(path, new, _)| {
             let target = join(&parent(path), new).to_lowercase();
-            !pending.iter().any(|(other, _, _)| other != path && other.to_lowercase() == target)
+            !pending
+                .iter()
+                .any(|(other, _, _)| other != path && other.to_lowercase() == target)
         });
         let (i, name) = match free {
             Some(i) => (i, pending[i].1.clone()),
@@ -215,14 +274,23 @@ pub(super) async fn rename_all(src: Src, items: Vec<(String, String)>) -> (Vec<(
             }
         };
         let path = pending[i].0.clone();
-        match call::<String>("rename", json!({ "src": src.key(), "path": path, "name": name })).await {
+        match call::<String>(
+            "rename",
+            json!({ "src": src.key(), "path": path, "name": name }),
+        )
+        .await
+        {
             Ok(now) if free.is_some() => {
                 let (_, _, before) = pending.remove(i);
                 done.push((now, before));
             }
             Ok(now) => pending[i].0 = now,
             Err(e) => {
-                let note = if base(&path) != pending[i].2 { format!(" ({} is called {} for now.)", pending[i].2, base(&path)) } else { String::new() };
+                let note = if base(&path) != pending[i].2 {
+                    format!(" ({} is called {} for now.)", pending[i].2, base(&path))
+                } else {
+                    String::new()
+                };
                 return (done, Some(format!("{e}{note}")));
             }
         }
@@ -239,21 +307,44 @@ pub(super) fn replace_plan(
     pattern: bool,
     taken: &HashMap<String, HashSet<String>>,
 ) -> Result<Vec<(Entry, String, Option<String>)>, String> {
-    let r = Rule { find: find.into(), replace: replace.into(), pattern, template: "{name}".into(), start: 1, ..Default::default() };
-    Ok(plan(items, &r, taken)?.into_iter().map(|x| (x.entry, x.new, x.problem)).collect())
+    let r = Rule {
+        find: find.into(),
+        replace: replace.into(),
+        pattern,
+        template: "{name}".into(),
+        start: 1,
+        ..Default::default()
+    };
+    Ok(plan(items, &r, taken)?
+        .into_iter()
+        .map(|x| (x.entry, x.new, x.problem))
+        .collect())
 }
 
 impl Ctx {
     /// After renaming: the undo entry, the renamed items marked, their folders reloaded, and a
     /// notice. Returns the error to show, if renaming stopped on one.
-    pub(super) fn renamed(self, p: Pane, src: Src, done: Vec<(String, String)>, err: Option<String>) -> Option<String> {
+    pub(super) fn renamed(
+        self,
+        p: Pane,
+        src: Src,
+        done: Vec<(String, String)>,
+        err: Option<String>,
+    ) -> Option<String> {
         if !done.is_empty() {
             let what = match done.as_slice() {
                 [(now, before)] => format!("Renamed {before} to {}", base(now)),
                 _ => format!("Renamed {} items", done.len()),
             };
-            self.log_undo(format!("{what} in {}", self.place(src)), Undo::Renames { src, items: done.clone() });
-            p.marked.set(done.iter().map(|(now, _)| now.clone()).collect());
+            self.log_undo(
+                format!("{what} in {}", self.place(src)),
+                Undo::Renames {
+                    src,
+                    items: done.clone(),
+                },
+            );
+            p.marked
+                .set(done.iter().map(|(now, _)| now.clone()).collect());
             let mut dirs: Vec<String> = done.iter().map(|(now, _)| parent(now)).collect();
             dirs.sort();
             dirs.dedup();
@@ -263,7 +354,11 @@ impl Ctx {
         }
         match err {
             None => {
-                p.notice.set(Notice::Ok(format!("Renamed {} item{}.", done.len(), if done.len() == 1 { "" } else { "s" })));
+                p.notice.set(Notice::Ok(format!(
+                    "Renamed {} item{}.",
+                    done.len(),
+                    if done.len() == 1 { "" } else { "s" }
+                )));
                 None
             }
             Some(e) if done.is_empty() => Some(e),
@@ -275,7 +370,11 @@ impl Ctx {
     /// the pane shows.
     pub(super) fn replace_names(self, p: Pane) {
         let picked = p.picked();
-        let items = if picked.len() > 1 { picked } else { p.entries.get_untracked() };
+        let items = if picked.len() > 1 {
+            picked
+        } else {
+            p.entries.get_untracked()
+        };
         if !items.is_empty() && self.renamable(p) {
             self.panel.set(Some(Panel::Rename(p.id, items)));
         }
@@ -285,7 +384,8 @@ impl Ctx {
     /// Everything server.
     pub(super) fn renamable(self, p: Pane) -> bool {
         let src = p.src.get_untracked();
-        let mtp_top = p.cwd.get_untracked() == "/" && self.src_info(src).is_some_and(|i| i.transport == "mtp");
+        let mtp_top = p.cwd.get_untracked() == "/"
+            && self.src_info(src).is_some_and(|i| i.transport == "mtp");
         !self.read_only(src) && !mtp_top
     }
 
@@ -303,27 +403,50 @@ impl Ctx {
 #[component]
 pub(super) fn BatchRename(pane: usize, items: Vec<Entry>) -> impl IntoView {
     let ctx = expect_context::<Ctx>();
-    let p = ctx.panes.into_iter().find(|p| p.id == pane).unwrap_or_else(|| ctx.act());
+    let p = ctx
+        .panes
+        .into_iter()
+        .find(|p| p.id == pane)
+        .unwrap_or_else(|| ctx.act());
     let src = p.src.get_untracked();
     let items = StoredValue::new(items);
-    let rule = RwSignal::new(Rule { template: "{name}".into(), start: 1, ..Default::default() });
-    let set = move |f: fn(&mut Rule, String)| move |ev: leptos::ev::Event| rule.update(|r| f(r, event_target_value(&ev)));
-    let check = move |f: fn(&mut Rule, bool)| move |ev: leptos::ev::Event| rule.update(|r| f(r, event_target_checked(&ev)));
+    let rule = RwSignal::new(Rule {
+        template: "{name}".into(),
+        start: 1,
+        ..Default::default()
+    });
+    let set = move |f: fn(&mut Rule, String)| {
+        move |ev: leptos::ev::Event| rule.update(|r| f(r, event_target_value(&ev)))
+    };
+    let check = move |f: fn(&mut Rule, bool)| {
+        move |ev: leptos::ev::Event| rule.update(|r| f(r, event_target_checked(&ev)))
+    };
     let error = RwSignal::new(None::<String>);
     let working = RwSignal::new(false);
 
     // What else is in each folder, for marking names already taken.
     let taken = RwSignal::new(None::<HashMap<String, HashSet<String>>>);
     spawn_local(async move {
-        let picked: HashSet<String> = items.with_value(|v| v.iter().map(|e| e.path.clone()).collect());
-        let mut dirs: Vec<String> = items.with_value(|v| v.iter().map(|e| parent(&e.path)).collect());
+        let picked: HashSet<String> =
+            items.with_value(|v| v.iter().map(|e| e.path.clone()).collect());
+        let mut dirs: Vec<String> =
+            items.with_value(|v| v.iter().map(|e| parent(&e.path)).collect());
         dirs.sort();
         dirs.dedup();
         let mut map = HashMap::new();
         for dir in dirs {
-            match call::<Vec<Entry>>("list", json!({ "src": src.key(), "path": dir, "current": false })).await {
+            match call::<Vec<Entry>>(
+                "list",
+                json!({ "src": src.key(), "path": dir, "current": false }),
+            )
+            .await
+            {
                 Ok(list) => {
-                    let names = list.into_iter().filter(|e| !picked.contains(&e.path)).map(|e| e.name.to_lowercase()).collect();
+                    let names = list
+                        .into_iter()
+                        .filter(|e| !picked.contains(&e.path))
+                        .map(|e| e.name.to_lowercase())
+                        .collect();
                     map.insert(dir, names);
                 }
                 Err(e) => error.set(Some(e)),
@@ -353,11 +476,16 @@ pub(super) fn BatchRename(pane: usize, items: Vec<Entry>) -> impl IntoView {
     let ready = move || changes() != 0 && problems() == 0;
     let close = move || ctx.panel.set(None);
     let apply = move || {
-        let Some(Ok(list)) = rows.get_untracked() else { return };
+        let Some(Ok(list)) = rows.get_untracked() else {
+            return;
+        };
         if list.iter().any(|x| x.problem.is_some()) {
             return;
         }
-        let plan: Vec<(String, String)> = list.iter().map(|x| (x.entry.path.clone(), x.new.clone())).collect();
+        let plan: Vec<(String, String)> = list
+            .iter()
+            .map(|x| (x.entry.path.clone(), x.new.clone()))
+            .collect();
         working.set(true);
         error.set(None);
         spawn_local(async move {
@@ -467,7 +595,9 @@ mod tests {
     #[test]
     fn globs() {
         let re = super::regex(&super::glob_source("IMG_*.j?g"), true).unwrap();
-        assert!(re.is_match("img_1.jpg") && !re.is_match("IMG_.jpeg") && re.is_match("IMG_(1)/x.jpg"));
+        assert!(
+            re.is_match("img_1.jpg") && !re.is_match("IMG_.jpeg") && re.is_match("IMG_(1)/x.jpg")
+        );
         assert!(super::regex("(", true).is_err());
     }
 }

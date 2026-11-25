@@ -22,15 +22,23 @@ pub(super) fn Crumbs(pane: Pane) -> impl IntoView {
     // all happens before the browser paints, so nothing flickers.
     let fit = move || {
         // From an animation frame or a resize observer, which can come after the bar is gone.
-        let Some(el) = el.try_get_untracked().flatten() else { return };
+        let Some(el) = el.try_get_untracked().flatten() else {
+            return;
+        };
         let classes = el.class_list();
         let _ = classes.add_1("measuring");
         let (need, room) = (el.scroll_width(), el.client_width());
-        let width = |e: Option<web_sys::Element>| e.and_then(|e| e.dyn_into::<web_sys::HtmlElement>().ok()).map_or(0, |e| e.offset_width());
+        let width = |e: Option<web_sys::Element>| {
+            e.and_then(|e| e.dyn_into::<web_sys::HtmlElement>().ok())
+                .map_or(0, |e| e.offset_width())
+        };
         // "…" is shown while measuring; "+ 1" is the gap beside each item.
         let more = width(el.query_selector(".part.more").ok().flatten()) + 1;
-        let parts: Vec<i32> =
-            el.query_selector_all(".part.dir").map_or(vec![], |ps| (0..ps.length()).map(|i| width(ps.item(i).and_then(|n| n.dyn_into().ok())) + 1).collect());
+        let parts: Vec<i32> = el.query_selector_all(".part.dir").map_or(vec![], |ps| {
+            (0..ps.length())
+                .map(|i| width(ps.item(i).and_then(|n| n.dyn_into().ok())) + 1)
+                .collect()
+        });
         let _ = classes.remove_1("measuring");
         let mut k = 0;
         if need - more > room {
@@ -53,12 +61,20 @@ pub(super) fn Crumbs(pane: Pane) -> impl IntoView {
         }
     });
     // Right away when the path's room changes: resize observers run between layout and paint.
-    let watcher = StoredValue::new_local(None::<(web_sys::ResizeObserver, wasm_bindgen::closure::Closure<dyn Fn()>)>);
+    let watcher = StoredValue::new_local(
+        None::<(
+            web_sys::ResizeObserver,
+            wasm_bindgen::closure::Closure<dyn Fn()>,
+        )>,
+    );
     let width = StoredValue::new(0);
     Effect::new(move |_| {
         let Some(node) = el.get() else { return };
         let cb = wasm_bindgen::closure::Closure::<dyn Fn()>::new(move || {
-            let w = el.try_get_untracked().flatten().map_or(0, |e| e.client_width());
+            let w = el
+                .try_get_untracked()
+                .flatten()
+                .map_or(0, |e| e.client_width());
             if width.try_get_value().is_some_and(|old| old != w) {
                 width.set_value(w);
                 fit();
@@ -122,7 +138,10 @@ fn PathEdit(pane: Pane) -> impl IntoView {
         });
     });
     let go = move || {
-        let typed = input.get_untracked().map(|el| el.value()).unwrap_or_default();
+        let typed = input
+            .get_untracked()
+            .map(|el| el.value())
+            .unwrap_or_default();
         let typed = typed.trim();
         p.editing_path.set(false);
         let path = match typed.trim_end_matches('/') {
@@ -152,7 +171,10 @@ pub(super) fn Notices(pane: Pane) -> impl IntoView {
     let p = pane;
     let name = RwSignal::new(String::new());
     let dismiss = move |_| p.notice.set(Notice::None);
-    let auto = AutoDismiss::new(move || p.notice.with(|n| matches!(n, Notice::Error(_))), move || p.notice.set(Notice::None));
+    let auto = AutoDismiss::new(
+        move || p.notice.with(|n| matches!(n, Notice::Error(_))),
+        move || p.notice.set(Notice::None),
+    );
     view! {
         {move || match p.notice.get() {
             Notice::None => ().into_any(),
@@ -332,14 +354,22 @@ fn fit_name(name: &str, dir: bool) -> AnyView {
 
 /// `split`: as `split_name`; `fit`: as `fit_name`.
 #[component]
-pub(super) fn Name(pane: Pane, entry: Entry, #[prop(optional)] split: bool, #[prop(optional)] fit: bool) -> impl IntoView {
+pub(super) fn Name(
+    pane: Pane,
+    entry: Entry,
+    #[prop(optional)] split: bool,
+    #[prop(optional)] fit: bool,
+) -> impl IntoView {
     let p = pane;
     let path = entry.path.clone();
     let e = StoredValue::new(entry);
     let editing = Memo::new(move |_| p.renaming.with(|r| r.as_deref() == Some(path.as_str())));
     let path = e.with_value(|e| e.path.clone());
     // While replacing, the name it would get.
-    let new = Memo::new(move |_| p.replace_rows.with(|r| r.as_ref().ok().and_then(|m| m.get(&path).cloned())));
+    let new = Memo::new(move |_| {
+        p.replace_rows
+            .with(|r| r.as_ref().ok().and_then(|m| m.get(&path).cloned()))
+    });
     move || {
         if editing.get() {
             view! { <NameEdit pane=p entry=e.get_value()/> }.into_any()
@@ -385,7 +415,10 @@ pub(super) fn NameEdit(pane: Pane, entry: Entry) -> impl IntoView {
             return;
         }
         done.set_value(true);
-        let new = input.get_untracked().map(|el| el.value()).unwrap_or_default();
+        let new = input
+            .get_untracked()
+            .map(|el| el.value())
+            .unwrap_or_default();
         if keep {
             ctx.rename(p, e.get_value(), new);
         } else {
@@ -476,7 +509,11 @@ pub(super) fn row_events(
     ctx: Ctx,
     p: Pane,
     e: &Entry,
-) -> (impl Fn(web_sys::MouseEvent) + 'static, impl Fn(web_sys::MouseEvent) + 'static, impl Fn(web_sys::MouseEvent) + 'static) {
+) -> (
+    impl Fn(web_sys::MouseEvent) + 'static,
+    impl Fn(web_sys::MouseEvent) + 'static,
+    impl Fn(web_sys::MouseEvent) + 'static,
+) {
     let (path, e1, e2) = (e.path.clone(), e.clone(), e.clone());
     (
         move |ev: web_sys::MouseEvent| {
@@ -519,15 +556,33 @@ pub(super) fn drag_end(ctx: Ctx) -> impl Fn(web_sys::DragEvent) + 'static {
 
 /// Lets items dragged from a pane drop into folder `dir` (None: the pane's folder). Dropping moves
 /// within the same device and copies between devices, like Finder; ⌥ always copies, ⌘ always moves.
-pub(super) fn drop_events(ctx: Ctx, p: Pane, dir: Option<String>) -> (impl Fn(web_sys::DragEvent) + 'static, impl Fn(web_sys::DragEvent) + 'static) {
+pub(super) fn drop_events(
+    ctx: Ctx,
+    p: Pane,
+    dir: Option<String>,
+) -> (
+    impl Fn(web_sys::DragEvent) + 'static,
+    impl Fn(web_sys::DragEvent) + 'static,
+) {
     let key = format!("{}:{}", p.id, dir.clone().unwrap_or_default());
-    drop_into(ctx, key, move || (p, p.src.get_untracked(), dir_or_cwd(p, &dir)))
+    drop_into(ctx, key, move || {
+        (p, p.src.get_untracked(), dir_or_cwd(p, &dir))
+    })
 }
 
 /// Lets items dragged from a pane drop into a folder in the sidebar: `path` on `src`. The work
 /// shows in the active pane. Its key in `ctx.drop_at` is `place_key`'s.
-pub(super) fn place_drop_events(ctx: Ctx, src: Src, path: String) -> (impl Fn(web_sys::DragEvent) + 'static, impl Fn(web_sys::DragEvent) + 'static) {
-    drop_into(ctx, place_key(src, &path), move || (ctx.act(), src, path.clone()))
+pub(super) fn place_drop_events(
+    ctx: Ctx,
+    src: Src,
+    path: String,
+) -> (
+    impl Fn(web_sys::DragEvent) + 'static,
+    impl Fn(web_sys::DragEvent) + 'static,
+) {
+    drop_into(ctx, place_key(src, &path), move || {
+        (ctx.act(), src, path.clone())
+    })
 }
 
 /// What `ctx.drop_at` holds while a drop would go into a sidebar folder.
@@ -541,10 +596,15 @@ fn drop_into(
     ctx: Ctx,
     key: String,
     to: impl Fn() -> (Pane, Src, String) + Clone + 'static,
-) -> (impl Fn(web_sys::DragEvent) + 'static, impl Fn(web_sys::DragEvent) + 'static) {
+) -> (
+    impl Fn(web_sys::DragEvent) + 'static,
+    impl Fn(web_sys::DragEvent) + 'static,
+) {
     let to2 = to.clone();
     let over = move |ev: web_sys::DragEvent| {
-        let Some((src, paths)) = ctx.drag.get_value() else { return };
+        let Some((src, paths)) = ctx.drag.get_value() else {
+            return;
+        };
         let (_, to_src, target) = to2();
         // Not into one of the dragged folders, nor into the folder they're already in.
         if !drop_allowed(src, to_src, &paths, &target) {
@@ -561,7 +621,11 @@ fn drop_into(
         ev.prevent_default();
         ev.stop_propagation();
         if let Some(dt) = ev.data_transfer() {
-            dt.set_drop_effect(if moves(&ev, src, to_src) { "move" } else { "copy" });
+            dt.set_drop_effect(if moves(&ev, src, to_src) {
+                "move"
+            } else {
+                "copy"
+            });
         }
         if ctx.drop_at.get_untracked().as_deref() != Some(key.as_str()) {
             ctx.drop_at.set(Some(key.clone()));
@@ -571,7 +635,9 @@ fn drop_into(
         ev.prevent_default();
         ev.stop_propagation();
         ctx.drop_at.set(None);
-        let Some((src, paths)) = ctx.drag.write_value().take() else { return };
+        let Some((src, paths)) = ctx.drag.write_value().take() else {
+            return;
+        };
         let (p, to_src, target) = to();
         if !drop_allowed(src, to_src, &paths, &target) {
             return;
@@ -590,12 +656,18 @@ fn drop_allowed(from_src: Src, to_src: Src, paths: &[String], target: &str) -> b
     if from_src != to_src {
         return true;
     }
-    !paths.iter().any(|path| within(target, path) || parent(path) == target)
+    !paths
+        .iter()
+        .any(|path| within(target, path) || parent(path) == target)
 }
 
 pub(super) fn moves(ev: &web_sys::DragEvent, from: Src, to: Src) -> bool {
     // On the Mac ⌥ copies and ⌘ moves; elsewhere Ctrl copies and Shift moves, as in File Explorer.
-    let (copy, mv) = if crate::os::is_mac() { (ev.alt_key(), ev.meta_key()) } else { (ev.ctrl_key(), ev.shift_key()) };
+    let (copy, mv) = if crate::os::is_mac() {
+        (ev.alt_key(), ev.meta_key())
+    } else {
+        (ev.ctrl_key(), ev.shift_key())
+    };
     if copy {
         false
     } else if mv {
@@ -646,18 +718,36 @@ pub(super) fn ListStatus(pane: Pane) -> impl IntoView {
     let selection = move || {
         let n = p.marked.with(|m| m.len());
         if n > 1 {
-            let bytes: u64 = p.marked.with(|m| p.entries.with(|es| es.iter().filter(|e| m.contains(&e.path)).map(|e| e.size).sum()));
+            let bytes: u64 = p.marked.with(|m| {
+                p.entries.with(|es| {
+                    es.iter()
+                        .filter(|e| m.contains(&e.path))
+                        .map(|e| e.size)
+                        .sum()
+                })
+            });
             return Some(format!("{n} picked · {}", human_size(bytes)));
         }
         p.selected_entry().map(|e| {
-            let size = if e.dir { String::new() } else { format!(" · {}", human_size(e.size)) };
-            let modified = if e.mtime > 0 { format!(" · modified {}", when(e.mtime)) } else { String::new() };
+            let size = if e.dir {
+                String::new()
+            } else {
+                format!(" · {}", human_size(e.size))
+            };
+            let modified = if e.mtime > 0 {
+                format!(" · modified {}", when(e.mtime))
+            } else {
+                String::new()
+            };
             format!("{}{size}{modified}", e.name)
         })
     };
     let place = move || match p.src.get() {
         Src::Mac => ctx.mac.get().map(|i| i.label).unwrap_or_default(),
-        src => ctx.src_info(src).map(|i| format!("{} · {}", i.label, i.transport)).unwrap_or_default(),
+        src => ctx
+            .src_info(src)
+            .map(|i| format!("{} · {}", i.label, i.transport))
+            .unwrap_or_default(),
     };
     let search = move || {
         p.found.get().map(|(q, complete)| {
@@ -732,7 +822,9 @@ fn Tabs(pane: Pane) -> impl IntoView {
         }
     };
     let drop = move |ev: web_sys::DragEvent, at: usize| {
-        let Some((from, i)) = ctx.tab_drag.write_value().take() else { return };
+        let Some((from, i)) = ctx.tab_drag.write_value().take() else {
+            return;
+        };
         ev.prevent_default();
         ev.stop_propagation();
         ctx.tab_drop.set(None);
@@ -826,14 +918,24 @@ mod tests {
 
     #[test]
     fn drop_rejects_moves_to_the_same_or_nested_folder() {
-        assert!(!drop_allowed(Src::Mac, Src::Mac, &["/A/file.txt".into()], "/A"));
+        assert!(!drop_allowed(
+            Src::Mac,
+            Src::Mac,
+            &["/A/file.txt".into()],
+            "/A"
+        ));
         assert!(!drop_allowed(Src::Mac, Src::Mac, &["/A".into()], "/A"));
         assert!(!drop_allowed(Src::Mac, Src::Mac, &["/A".into()], "/A/sub"));
     }
 
     #[test]
     fn drop_accepts_a_different_folder_and_cross_source_copy() {
-        assert!(drop_allowed(Src::Mac, Src::Mac, &["/A/file.txt".into()], "/B"));
+        assert!(drop_allowed(
+            Src::Mac,
+            Src::Mac,
+            &["/A/file.txt".into()],
+            "/B"
+        ));
         assert!(drop_allowed(Src::Mac, Src::Dev(1), &["/A".into()], "/B"));
     }
 }

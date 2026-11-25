@@ -28,10 +28,14 @@ static NEXT: AtomicU32 = AtomicU32::new(1);
 #[tauri::command(rename_all = "snake_case")]
 pub(crate) async fn pop_out(app: AppHandle, video: Popped) -> Result<(), String> {
     let label = format!("player-{}", NEXT.fetch_add(1, Ordering::Relaxed));
-    let (w, h) = (video.width.clamp(240.0, 1600.0), video.height.clamp(180.0, 1200.0));
+    let (w, h) = (
+        video.width.clamp(240.0, 1600.0),
+        video.height.clamp(180.0, 1200.0),
+    );
     let title = video.title.clone();
     // A JSON string holding the JSON, so the page reads it as a string.
-    let data = serde_json::to_string(&serde_json::to_string(&video).map_err(|e| e.to_string())?).map_err(|e| e.to_string())?;
+    let data = serde_json::to_string(&serde_json::to_string(&video).map_err(|e| e.to_string())?)
+        .map_err(|e| e.to_string())?;
     WebviewWindowBuilder::new(&app, label, WebviewUrl::App("index.html".into()))
         .title(title)
         .inner_size(w, h)
@@ -53,7 +57,8 @@ mod tests {
             r#"{"url":"ferry://x/a.mp4","key":"/a.mp4|1|2","title":"a \"b\".mp4","time":12.5,"turn":1,"playing":true,"width":480,"height":334}"#,
         )
         .unwrap();
-        let back: serde_json::Value = serde_json::from_str(&serde_json::to_string(&v).unwrap()).unwrap();
+        let back: serde_json::Value =
+            serde_json::from_str(&serde_json::to_string(&v).unwrap()).unwrap();
         assert_eq!(back["title"], "a \"b\".mp4");
         assert_eq!(back["turn"], 1);
     }

@@ -28,12 +28,24 @@ thread_local! {
 /// The regex for `q`, or what's wrong with it.
 fn compiled(q: &str, o: FindOpts) -> Result<Regex, String> {
     let o = FindOpts { word: false, ..o };
-    if let Some(re) = LAST.with_borrow(|l| l.as_ref().filter(|(lq, lo, _)| lq == q && *lo == o).map(|(_, _, re)| re.clone())) {
+    if let Some(re) = LAST.with_borrow(|l| {
+        l.as_ref()
+            .filter(|(lq, lo, _)| lq == q && *lo == o)
+            .map(|(_, _, re)| re.clone())
+    }) {
         return Ok(re);
     }
-    let src = if o.regex { q.to_string() } else { regex::escape(q) };
+    let src = if o.regex {
+        q.to_string()
+    } else {
+        regex::escape(q)
+    };
     // ^ and $ are at each line's start and end, as in other editors.
-    let re = RegexBuilder::new(&src).case_insensitive(!o.case).multi_line(true).build().map_err(|e| regex_problem(&e))?;
+    let re = RegexBuilder::new(&src)
+        .case_insensitive(!o.case)
+        .multi_line(true)
+        .build()
+        .map_err(|e| regex_problem(&e))?;
     LAST.set(Some((q.to_string(), o, re.clone())));
     Ok(re)
 }
@@ -49,7 +61,12 @@ fn whole_word(t: &str, a: usize, b: usize) -> bool {
 
 /// Calls `f` with each match of `q` in `t` (byte ranges, in order, none empty) and its groups,
 /// until `f` returns false. Err is what's wrong with a regular expression.
-fn each(t: &str, q: &str, o: FindOpts, f: &mut dyn FnMut(usize, usize, Group) -> bool) -> Result<(), String> {
+fn each(
+    t: &str,
+    q: &str,
+    o: FindOpts,
+    f: &mut dyn FnMut(usize, usize, Group) -> bool,
+) -> Result<(), String> {
     if q.is_empty() {
         return Ok(());
     }
@@ -73,7 +90,11 @@ fn each(t: &str, q: &str, o: FindOpts, f: &mut dyn FnMut(usize, usize, Group) ->
             let c = c.as_ref()?;
             match n.parse::<usize>() {
                 Ok(k) => (k < re.captures_len()).then(|| c.get(k).map(|g| g.as_str().to_string())),
-                Err(_) => re.capture_names().flatten().any(|x| x == n).then(|| c.name(n).map(|g| g.as_str().to_string())),
+                Err(_) => re
+                    .capture_names()
+                    .flatten()
+                    .any(|x| x == n)
+                    .then(|| c.name(n).map(|g| g.as_str().to_string())),
             }
         };
         if !f(a, b, &group) {
@@ -85,7 +106,12 @@ fn each(t: &str, q: &str, o: FindOpts, f: &mut dyn FnMut(usize, usize, Group) ->
 }
 
 /// Where `q` is in `t`, as byte ranges, at most `max` of them.
-pub(super) fn find(t: &str, q: &str, o: FindOpts, max: usize) -> Result<Vec<(usize, usize)>, String> {
+pub(super) fn find(
+    t: &str,
+    q: &str,
+    o: FindOpts,
+    max: usize,
+) -> Result<Vec<(usize, usize)>, String> {
     let mut out = vec![];
     each(t, q, o, &mut |a, b, _| {
         out.push((a, b));
@@ -97,7 +123,11 @@ pub(super) fn find(t: &str, q: &str, o: FindOpts, max: usize) -> Result<Vec<(usi
 /// What Replace with puts in place of a match: with a regular expression, $1, $<name>, $& and $$
 /// are what they are in JavaScript; with Preserve case, it's in the match's case.
 fn replacement(with: &str, o: FindOpts, keep: bool, group: Group) -> String {
-    let w = if o.regex { expand(with, group) } else { with.to_string() };
+    let w = if o.regex {
+        expand(with, group)
+    } else {
+        with.to_string()
+    };
     match (keep, group("0").flatten()) {
         (true, Some(m)) => keep_case(&m, &w),
         _ => w,
@@ -105,7 +135,14 @@ fn replacement(with: &str, o: FindOpts, keep: bool, group: Group) -> String {
 }
 
 /// What Replace puts in place of the match that starts at byte `a`.
-pub(super) fn replacement_at(t: &str, q: &str, o: FindOpts, with: &str, keep: bool, a: usize) -> Option<String> {
+pub(super) fn replacement_at(
+    t: &str,
+    q: &str,
+    o: FindOpts,
+    with: &str,
+    keep: bool,
+    a: usize,
+) -> Option<String> {
     let mut out = None;
     let _ = each(t, q, o, &mut |s, _, g| {
         if s == a {
@@ -117,7 +154,13 @@ pub(super) fn replacement_at(t: &str, q: &str, o: FindOpts, with: &str, keep: bo
 }
 
 /// `t` with every match of `q` replaced, and how many there were.
-pub(super) fn replace_all(t: &str, q: &str, o: FindOpts, with: &str, keep: bool) -> Result<(String, usize), String> {
+pub(super) fn replace_all(
+    t: &str,
+    q: &str,
+    o: FindOpts,
+    with: &str,
+    keep: bool,
+) -> Result<(String, usize), String> {
     let mut out = String::with_capacity(t.len());
     let (mut at, mut n) = (0, 0);
     each(t, q, o, &mut |a, b, g| {
@@ -135,7 +178,11 @@ pub(super) fn replace_all(t: &str, q: &str, o: FindOpts, with: &str, keep: bool)
 fn expand(with: &str, group: Group) -> String {
     let mut out = String::with_capacity(with.len());
     let b = with.as_bytes();
-    let digit = |i: usize| b.get(i).filter(|c| c.is_ascii_digit()).map(|c| (c - b'0') as usize);
+    let digit = |i: usize| {
+        b.get(i)
+            .filter(|c| c.is_ascii_digit())
+            .map(|c| (c - b'0') as usize)
+    };
     let mut i = 0;
     while i < b.len() {
         if b[i] == b'$' {
@@ -162,8 +209,15 @@ fn expand(with: &str, group: Group) -> String {
                 Some(_) => {
                     if let Some(d1) = digit(i + 1) {
                         // Two digits when there's a group with that number, else one.
-                        let two = digit(i + 2).map(|d2| d1 * 10 + d2).filter(|&n| n > 0).and_then(|n| group(&n.to_string()).map(|g| (g, 3)));
-                        let one = || (d1 > 0).then(|| group(&d1.to_string()).map(|g| (g, 2))).flatten();
+                        let two = digit(i + 2)
+                            .map(|d2| d1 * 10 + d2)
+                            .filter(|&n| n > 0)
+                            .and_then(|n| group(&n.to_string()).map(|g| (g, 3)));
+                        let one = || {
+                            (d1 > 0)
+                                .then(|| group(&d1.to_string()).map(|g| (g, 2)))
+                                .flatten()
+                        };
                         if let Some((g, len)) = two.or_else(one) {
                             out.push_str(&g.unwrap_or_default());
                             i += len;
@@ -184,14 +238,17 @@ fn expand(with: &str, group: Group) -> String {
 /// `with` in the case of `matched`: all capitals, all small letters, or a capital first.
 fn keep_case(matched: &str, with: &str) -> String {
     let letters: Vec<char> = matched.chars().filter(|c| c.is_alphabetic()).collect();
-    let Some(&first) = letters.first() else { return with.to_string() };
+    let Some(&first) = letters.first() else {
+        return with.to_string();
+    };
     if letters.len() > 1 && letters.iter().all(|c| c.is_uppercase()) {
         with.to_uppercase()
     } else if letters.iter().all(|c| c.is_lowercase()) {
         with.to_lowercase()
     } else if first.is_uppercase() {
         let mut cs = with.chars();
-        cs.next().map_or_else(String::new, |c| c.to_uppercase().chain(cs).collect())
+        cs.next()
+            .map_or_else(String::new, |c| c.to_uppercase().chain(cs).collect())
     } else {
         with.to_string()
     }
@@ -201,23 +258,56 @@ fn keep_case(matched: &str, with: &str) -> String {
 mod tests {
     use super::*;
 
-    const PLAIN: FindOpts = FindOpts { case: false, word: false, regex: false };
+    const PLAIN: FindOpts = FindOpts {
+        case: false,
+        word: false,
+        regex: false,
+    };
 
     #[test]
     fn plain_text_any_case_or_not() {
-        assert_eq!(find("Foo foo FOO", "foo", PLAIN, 10).unwrap(), [(0, 3), (4, 7), (8, 11)]);
-        assert_eq!(find("Foo foo FOO", "foo", FindOpts { case: true, ..PLAIN }, 10).unwrap(), [(4, 7)]);
+        assert_eq!(
+            find("Foo foo FOO", "foo", PLAIN, 10).unwrap(),
+            [(0, 3), (4, 7), (8, 11)]
+        );
+        assert_eq!(
+            find(
+                "Foo foo FOO",
+                "foo",
+                FindOpts {
+                    case: true,
+                    ..PLAIN
+                },
+                10
+            )
+            .unwrap(),
+            [(4, 7)]
+        );
         assert_eq!(find("aaa", "a", PLAIN, 2).unwrap().len(), 2);
         assert!(find("abc", "", PLAIN, 10).unwrap().is_empty());
-        assert_eq!(replace_all("Foo foo FOO bar", "foo", PLAIN, "x", false).unwrap(), ("x x x bar".into(), 3));
-        assert_eq!(replace_all("aaa", "aa", PLAIN, "b", false).unwrap(), ("ba".into(), 1));
+        assert_eq!(
+            replace_all("Foo foo FOO bar", "foo", PLAIN, "x", false).unwrap(),
+            ("x x x bar".into(), 3)
+        );
+        assert_eq!(
+            replace_all("aaa", "aa", PLAIN, "b", false).unwrap(),
+            ("ba".into(), 1)
+        );
         // $1 is only put in with a regular expression.
-        assert_eq!(replace_all("a", "a", PLAIN, "$&", false).unwrap(), ("$&".into(), 1));
+        assert_eq!(
+            replace_all("a", "a", PLAIN, "$&", false).unwrap(),
+            ("$&".into(), 1)
+        );
     }
 
     #[test]
     fn replacing_keeps_the_case() {
-        assert_eq!(replace_all("Foo foo FOO", "foo", PLAIN, "bar", true).unwrap().0, "Bar bar BAR");
+        assert_eq!(
+            replace_all("Foo foo FOO", "foo", PLAIN, "bar", true)
+                .unwrap()
+                .0,
+            "Bar bar BAR"
+        );
         assert_eq!(keep_case("A", "bar"), "Bar");
         assert_eq!(keep_case("fOO", "bar"), "bar");
         assert_eq!(keep_case("123", "bar"), "bar");
@@ -233,22 +323,48 @@ mod tests {
             "x" => Some(Some("X".into())),
             _ => None,
         };
-        assert_eq!(expand("[$1|$2|$&|$$|$<x>|$<y>|$3|$12|$0|$]", &g), "[a||ab|$|X|$<y>|$3|a2|$0|$]");
+        assert_eq!(
+            expand("[$1|$2|$&|$$|$<x>|$<y>|$3|$12|$0|$]", &g),
+            "[a||ab|$|X|$<y>|$3|a2|$0|$]"
+        );
         assert_eq!(expand("é$1é", &g), "éaé");
     }
 
     #[test]
     fn words_and_regexes() {
-        let word = FindOpts { word: true, ..PLAIN };
-        assert_eq!(find("a ab a_ (a) ä a", "a", word, 10).unwrap(), [(0, 1), (9, 10), (15, 16)]);
-        let re = FindOpts { regex: true, ..PLAIN };
+        let word = FindOpts {
+            word: true,
+            ..PLAIN
+        };
+        assert_eq!(
+            find("a ab a_ (a) ä a", "a", word, 10).unwrap(),
+            [(0, 1), (9, 10), (15, 16)]
+        );
+        let re = FindOpts {
+            regex: true,
+            ..PLAIN
+        };
         assert_eq!(find("x1 y22\nz", r"\d+", re, 10).unwrap(), [(1, 2), (4, 6)]);
         // Empty matches are passed over; ^ is at each line's start.
         assert_eq!(find("ab\nab", "^a?", re, 10).unwrap(), [(0, 1), (3, 4)]);
         assert_eq!(find("ÉTÉ été", "été", PLAIN, 10).unwrap().len(), 2);
         assert!(find("a", "(", re, 10).unwrap_err().contains("unclosed"));
-        assert_eq!(replace_all("john smith", r"(\w+) (?<last>\w+)", re, "$<last>, $1", false).unwrap().0, "smith, john");
-        assert_eq!(replacement_at("a1 b2", r"[a-z](\d)", re, "<$1>", false, 3).as_deref(), Some("<2>"));
+        assert_eq!(
+            replace_all(
+                "john smith",
+                r"(\w+) (?<last>\w+)",
+                re,
+                "$<last>, $1",
+                false
+            )
+            .unwrap()
+            .0,
+            "smith, john"
+        );
+        assert_eq!(
+            replacement_at("a1 b2", r"[a-z](\d)", re, "<$1>", false, 3).as_deref(),
+            Some("<2>")
+        );
         // A regex's special characters are plain text when it's not a regex.
         assert_eq!(find("a.b axb", "a.b", PLAIN, 10).unwrap(), [(0, 3)]);
     }

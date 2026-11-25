@@ -8,14 +8,33 @@ impl Ctx {
         let src = p.src.get_untracked();
         p.notice.set(Notice::Ok(format!("Checking {}…", e.name)));
         spawn_local(async move {
-            match call::<Vec<Issue>>("book_check", json!({ "src": src.key(), "path": e.path })).await {
-                Ok(is) if is.is_empty() => p.notice.set(Notice::Ok(format!("{}: no problems found.", e.name))),
+            match call::<Vec<Issue>>("book_check", json!({ "src": src.key(), "path": e.path }))
+                .await
+            {
+                Ok(is) if is.is_empty() => p
+                    .notice
+                    .set(Notice::Ok(format!("{}: no problems found.", e.name))),
                 Ok(is) => {
                     let serious = is.iter().any(|i| i.serious);
-                    let mut lines = vec![format!("{}: {}", e.name, if serious { "readers may refuse or misshow this book." } else { "only minor issues." })];
-                    lines.extend(is.into_iter().map(|i| format!("{} {}", if i.serious { "•" } else { "◦" }, i.text)));
+                    let mut lines = vec![format!(
+                        "{}: {}",
+                        e.name,
+                        if serious {
+                            "readers may refuse or misshow this book."
+                        } else {
+                            "only minor issues."
+                        }
+                    )];
+                    lines.extend(
+                        is.into_iter()
+                            .map(|i| format!("{} {}", if i.serious { "•" } else { "◦" }, i.text)),
+                    );
                     let msg = lines.join("\n");
-                    p.notice.set(if serious { Notice::Error(msg) } else { Notice::Ok(msg) });
+                    p.notice.set(if serious {
+                        Notice::Error(msg)
+                    } else {
+                        Notice::Ok(msg)
+                    });
                 }
                 Err(err) => p.error(err),
             }
@@ -24,7 +43,13 @@ impl Ctx {
 }
 
 /// Runs `f` on each book in turn, showing "Checking 3 of 10: name" in `busy`, until done or stopped.
-pub(super) async fn for_each_book<F, Fut>(busy: RwSignal<Option<String>>, stop: StoredValue<bool>, verb: &str, books: Vec<Entry>, f: F) -> usize
+pub(super) async fn for_each_book<F, Fut>(
+    busy: RwSignal<Option<String>>,
+    stop: StoredValue<bool>,
+    verb: &str,
+    books: Vec<Entry>,
+    f: F,
+) -> usize
 where
     F: Fn(Entry) -> Fut,
     Fut: std::future::Future<Output = ()>,
@@ -46,7 +71,10 @@ where
 
 /// Splits "Ann Smith; Bob Jones" into names.
 pub(super) fn names(s: &str) -> Vec<String> {
-    s.split(';').map(|x| x.trim().to_string()).filter(|x| !x.is_empty()).collect()
+    s.split(';')
+        .map(|x| x.trim().to_string())
+        .filter(|x| !x.is_empty())
+        .collect()
 }
 
 #[derive(Clone, Copy, PartialEq)]
@@ -72,9 +100,16 @@ pub(super) fn Library(src: Src, dir: String) -> impl IntoView {
     let stop = StoredValue::new(false);
     let form = RwSignal::new(None::<BookForm>);
     let message = RwSignal::new(None::<(String, bool)>);
-    let (authors, language, publisher, subjects) =
-        (RwSignal::new(String::new()), RwSignal::new(String::new()), RwSignal::new(String::new()), RwSignal::new(String::new()));
-    let (side, quality) = (RwSignal::new("1600".to_string()), RwSignal::new("80".to_string()));
+    let (authors, language, publisher, subjects) = (
+        RwSignal::new(String::new()),
+        RwSignal::new(String::new()),
+        RwSignal::new(String::new()),
+        RwSignal::new(String::new()),
+    );
+    let (side, quality) = (
+        RwSignal::new("1600".to_string()),
+        RwSignal::new("80".to_string()),
+    );
 
     let load = move || {
         spawn_local(async move {
@@ -91,11 +126,20 @@ pub(super) fn Library(src: Src, dir: String) -> impl IntoView {
                         if stop.try_get_value().is_none() {
                             return;
                         }
-                        if infos.try_with_untracked(|i| i.contains_key(&e.path)).unwrap_or(true) {
+                        if infos
+                            .try_with_untracked(|i| i.contains_key(&e.path))
+                            .unwrap_or(true)
+                        {
                             continue;
                         }
                         let args = json!({ "src": src.key(), "path": e.path, "size": e.size, "mtime": e.mtime });
-                        let info = call::<BookInfo>("book_info", args).await.unwrap_or_else(|err| BookInfo { problem: Some(err), ..Default::default() });
+                        let info =
+                            call::<BookInfo>("book_info", args)
+                                .await
+                                .unwrap_or_else(|err| BookInfo {
+                                    problem: Some(err),
+                                    ..Default::default()
+                                });
                         infos.try_update(|i| {
                             i.insert(e.path.clone(), info);
                         });
@@ -111,20 +155,28 @@ pub(super) fn Library(src: Src, dir: String) -> impl IntoView {
 
     let shown = move || -> Vec<Entry> {
         let f = filter.get().to_lowercase();
-        let Some(Ok((all, _))) = list.get() else { return vec![] };
+        let Some(Ok((all, _))) = list.get() else {
+            return vec![];
+        };
         infos.with(|i| {
             all.into_iter()
                 .filter(|e| {
                     f.is_empty()
                         || e.name.to_lowercase().contains(&f)
-                        || i.get(&e.path).is_some_and(|b| b.title.to_lowercase().contains(&f) || b.creators.iter().any(|c| c.to_lowercase().contains(&f)))
+                        || i.get(&e.path).is_some_and(|b| {
+                            b.title.to_lowercase().contains(&f)
+                                || b.creators.iter().any(|c| c.to_lowercase().contains(&f))
+                        })
                 })
                 .collect()
         })
     };
     let targets = move || -> Vec<Entry> {
         let p = picked.get_untracked();
-        list.get_untracked().and_then(|l| l.ok()).map(|(all, _)| all.into_iter().filter(|e| p.contains(&e.path)).collect()).unwrap_or_default()
+        list.get_untracked()
+            .and_then(|l| l.ok())
+            .map(|(all, _)| all.into_iter().filter(|e| p.contains(&e.path)).collect())
+            .unwrap_or_default()
     };
     let n_picked = move || picked.with(|p| p.len());
     let note = move |path: &str, text: String, ok: bool| {
@@ -138,13 +190,21 @@ pub(super) fn Library(src: Src, dir: String) -> impl IntoView {
         message.set(None);
         spawn_local(async move {
             let n = for_each_book(busy, stop, "Checking", books, |e| async move {
-                match call::<Vec<Issue>>("book_check", json!({ "src": src.key(), "path": e.path })).await {
+                match call::<Vec<Issue>>("book_check", json!({ "src": src.key(), "path": e.path }))
+                    .await
+                {
                     Ok(is) => {
                         let serious = is.iter().filter(|i| i.serious).count();
                         let text = match (serious, is.len()) {
                             (_, 0) => "No problems found.".to_string(),
-                            (0, n) => format!("{n} minor {}.", if n == 1 { "issue" } else { "issues" }),
-                            (s, n) => format!("{s} {} (and {} minor).", if s == 1 { "problem" } else { "problems" }, n - s),
+                            (0, n) => {
+                                format!("{n} minor {}.", if n == 1 { "issue" } else { "issues" })
+                            }
+                            (s, n) => format!(
+                                "{s} {} (and {} minor).",
+                                if s == 1 { "problem" } else { "problems" },
+                                n - s
+                            ),
                         };
                         note(&e.path, text, serious == 0);
                         issues.try_update(|m| {
@@ -155,7 +215,10 @@ pub(super) fn Library(src: Src, dir: String) -> impl IntoView {
                 }
             })
             .await;
-            message.try_set(Some((format!("Checked {n} {}.", if n == 1 { "book" } else { "books" }), true)));
+            message.try_set(Some((
+                format!("Checked {n} {}.", if n == 1 { "book" } else { "books" }),
+                true,
+            )));
         });
     };
 
@@ -176,7 +239,10 @@ pub(super) fn Library(src: Src, dir: String) -> impl IntoView {
             c.insert("add_subjects".into(), json!(s));
         }
         if c.is_empty() {
-            message.set(Some(("Fill in at least one field. Empty fields are left as they are.".into(), false)));
+            message.set(Some((
+                "Fill in at least one field. Empty fields are left as they are.".into(),
+                false,
+            )));
             return;
         }
         let books = targets();
@@ -189,10 +255,19 @@ pub(super) fn Library(src: Src, dir: String) -> impl IntoView {
             let n = for_each_book(busy, stop, "Changing", books, move |e| {
                 let (c, changed) = (c.clone(), c2.clone());
                 async move {
-                    match call::<serde_json::Value>("book_change", json!({ "src": src.key(), "path": e.path, "change": c })).await {
+                    match call::<serde_json::Value>(
+                        "book_change",
+                        json!({ "src": src.key(), "path": e.path, "change": c }),
+                    )
+                    .await
+                    {
                         Ok(r) if r["changed"] == json!(true) => {
                             changed.set(changed.get() + 1);
-                            note(&e.path, "Info changed. The old file is backed up.".into(), true);
+                            note(
+                                &e.path,
+                                "Info changed. The old file is backed up.".into(),
+                                true,
+                            );
                         }
                         Ok(_) => note(&e.path, "Already had this info.".into(), true),
                         Err(err) => note(&e.path, err, false),
@@ -202,9 +277,19 @@ pub(super) fn Library(src: Src, dir: String) -> impl IntoView {
             .await;
             let k = changed.get();
             if k > 0 {
-                ctx.log(format!("Changed the info of {k} {} in {}", if k == 1 { "book" } else { "books" }, dir.try_get_value().unwrap_or_default()));
+                ctx.log(format!(
+                    "Changed the info of {k} {} in {}",
+                    if k == 1 { "book" } else { "books" },
+                    dir.try_get_value().unwrap_or_default()
+                ));
             }
-            message.try_set(Some((format!("Changed {k} of {n} {}.", if n == 1 { "book" } else { "books" }), true)));
+            message.try_set(Some((
+                format!(
+                    "Changed {k} of {n} {}.",
+                    if n == 1 { "book" } else { "books" }
+                ),
+                true,
+            )));
             if stop.try_get_value().is_some() {
                 infos.update(|i| i.clear());
                 load();
@@ -256,9 +341,18 @@ pub(super) fn Library(src: Src, dir: String) -> impl IntoView {
             .await;
             let k = made.get();
             if k > 0 {
-                ctx.log(format!("Made smaller copies of {k} {}", if k == 1 { "book" } else { "books" }));
+                ctx.log(format!(
+                    "Made smaller copies of {k} {}",
+                    if k == 1 { "book" } else { "books" }
+                ));
             }
-            message.try_set(Some((format!("Made {k} smaller {} from {n}. The books themselves are unchanged.", if k == 1 { "copy" } else { "copies" }), true)));
+            message.try_set(Some((
+                format!(
+                    "Made {k} smaller {} from {n}. The books themselves are unchanged.",
+                    if k == 1 { "copy" } else { "copies" }
+                ),
+                true,
+            )));
             if stop.try_get_value().is_some() {
                 load();
             }

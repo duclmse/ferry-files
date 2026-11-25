@@ -27,20 +27,28 @@ impl Ctx {
             let list = m.get(&src.key())?;
             // The storage whose folder holds this one most closely: a disk rather than the home
             // folder it may be mounted in. On the computer, the first (home) one otherwise.
-            let holding = list.iter().filter(|s| !s.path.is_empty() && within(&cwd, &s.path)).max_by_key(|s| s.path.len());
+            let holding = list
+                .iter()
+                .filter(|s| !s.path.is_empty() && within(&cwd, &s.path))
+                .max_by_key(|s| s.path.len());
             let s = match (src, transport.as_str()) {
                 (_, "mtp") => holding,
                 (Src::Mac, _) => holding.or_else(|| list.first()),
                 _ => list.first(),
             }?;
-            Some(format!("{} free of {}", human_size(s.free), human_size(s.total)))
+            Some(format!(
+                "{} free of {}",
+                human_size(s.free),
+                human_size(s.total)
+            ))
         })
     }
 
     /// Ejects a disk. Panes showing it go back to the home folder first.
     pub(super) fn eject(self, path: String) {
         if self.running() {
-            self.act().error("Wait for the copy to finish before ejecting.");
+            self.act()
+                .error("Wait for the copy to finish before ejecting.");
             return;
         }
         for p in self.panes {
@@ -72,10 +80,22 @@ pub(super) fn Backups() -> impl IntoView {
     let filter = RwSignal::new(String::new());
     let restore = move |b: Backup, src: Src, path: String| {
         spawn_local(async move {
-            match call::<WriteResult>("restore", json!({ "file": b.file, "src": src.key(), "path": path })).await {
+            match call::<WriteResult>(
+                "restore",
+                json!({ "file": b.file, "src": src.key(), "path": path }),
+            )
+            .await
+            {
                 Ok(r) => {
-                    let note = if r.backup.is_some() { " The file that was there is backed up too." } else { "" };
-                    message.set(Some((format!("Restored {} to {path} on {}.{note}", b.name, ctx.place(src)), true)));
+                    let note = if r.backup.is_some() {
+                        " The file that was there is backed up too."
+                    } else {
+                        ""
+                    };
+                    message.set(Some((
+                        format!("Restored {} to {path} on {}.{note}", b.name, ctx.place(src)),
+                        true,
+                    )));
                     ctx.log(format!("Restored {} to {path}", b.name));
                     ctx.changed(src, &parent(&path));
                     load();
@@ -87,7 +107,12 @@ pub(super) fn Backups() -> impl IntoView {
     // Quick Look on the backup itself; it keeps the file's extension, so it shows like the original.
     let preview = move |b: Backup| {
         spawn_local(async move {
-            if let Err(e) = call::<()>("quick_look", json!({ "src": Src::Mac.key(), "path": b.file })).await {
+            if let Err(e) = call::<()>(
+                "quick_look",
+                json!({ "src": Src::Mac.key(), "path": b.file }),
+            )
+            .await
+            {
                 message.set(Some((e, false)));
             }
         });

@@ -7,25 +7,53 @@ fn main() {
     let transport = std::env::args().nth(1).unwrap_or_else(|| "auto".into());
     let t0 = std::time::Instant::now();
     let dev = device::connect(&transport, None).unwrap_or_else(|e| panic!("connect: {e}"));
-    println!("connected: {} over {} in {:?}", dev.label(), dev.kind(), t0.elapsed());
+    println!(
+        "connected: {} over {} in {:?}",
+        dev.label(),
+        dev.kind(),
+        t0.elapsed()
+    );
     let start = dev.default_dir();
     let root = dev.listdir(&start).expect("list start");
-    println!("{start}: {} entries: {:?}", root.len(), root.iter().take(8).map(|e| &e.name).collect::<Vec<_>>());
+    println!(
+        "{start}: {} entries: {:?}",
+        root.len(),
+        root.iter().take(8).map(|e| &e.name).collect::<Vec<_>>()
+    );
     let dl = join(&start, "Download");
     let files = dev.listdir(&dl).expect("list Download");
     println!("{dl}: {} entries", files.len());
-    if let Some(f) = files.iter().find(|e| !e.dir && e.size < 200_000 && [".txt", ".xml", ".json", ".md"].iter().any(|x| e.name.ends_with(x))) {
+    if let Some(f) = files.iter().find(|e| {
+        !e.dir
+            && e.size < 200_000
+            && [".txt", ".xml", ".json", ".md"]
+                .iter()
+                .any(|x| e.name.ends_with(x))
+    }) {
         let (data, v) = dev.read(&f.path).expect("read");
         println!("read {} ({} bytes, version {v})", f.name, data.len());
     }
 
-    let scratch = join(&dl, &format!("ferry-files-smoke-{}.txt", std::process::id()));
-    let r1 = dev.write(&scratch, b"hello from Ferry Files\n", None, true).expect("create");
-    println!("created {scratch} version {} backup {:?}", r1.version, r1.backup);
+    let scratch = join(
+        &dl,
+        &format!("ferry-files-smoke-{}.txt", std::process::id()),
+    );
+    let r1 = dev
+        .write(&scratch, b"hello from Ferry Files\n", None, true)
+        .expect("create");
+    println!(
+        "created {scratch} version {} backup {:?}",
+        r1.version, r1.backup
+    );
     let (data, v) = dev.read(&scratch).expect("read back");
     assert_eq!(data, b"hello from Ferry Files\n");
-    assert_eq!(v, r1.version, "version after read should match version after write");
-    let r2 = dev.write(&scratch, b"edited\n", Some(&v), false).expect("overwrite");
+    assert_eq!(
+        v, r1.version,
+        "version after read should match version after write"
+    );
+    let r2 = dev
+        .write(&scratch, b"edited\n", Some(&v), false)
+        .expect("overwrite");
     println!("overwrote, version {} backup {:?}", r2.version, r2.backup);
     assert!(r2.backup.is_some());
     match dev.write(&scratch, b"stale\n", Some(&v), false) {

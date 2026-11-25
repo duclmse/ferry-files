@@ -4,7 +4,12 @@
 use super::*;
 
 /// Folder patterns: value (as `import_photos` takes it) and an example.
-const PATTERNS: [(&str, &str); 4] = [("y/m", "2024/05"), ("ymd", "2024-05-14"), ("y/ymd", "2024/2024-05-14"), ("none", "All in one folder")];
+const PATTERNS: [(&str, &str); 4] = [
+    ("y/m", "2024/05"),
+    ("ymd", "2024-05-14"),
+    ("y/ymd", "2024/2024-05-14"),
+    ("none", "All in one folder"),
+];
 const PATTERN_KEY: &str = "ferry-files.import-pattern";
 
 impl Ctx {
@@ -32,12 +37,20 @@ impl Ctx {
 }
 
 #[component]
-pub(super) fn ImportPhotos(pane: usize, from: (Src, String), targets: Vec<(Src, String)>) -> impl IntoView {
+pub(super) fn ImportPhotos(
+    pane: usize,
+    from: (Src, String),
+    targets: Vec<(Src, String)>,
+) -> impl IntoView {
     let ctx = expect_context::<Ctx>();
     let targets = StoredValue::new(targets);
     let from = StoredValue::new(from);
     let target = RwSignal::new(0usize);
-    let pattern = RwSignal::new(stored(PATTERN_KEY).filter(|p| PATTERNS.iter().any(|x| x.0 == p)).unwrap_or_else(|| "y/m".into()));
+    let pattern = RwSignal::new(
+        stored(PATTERN_KEY)
+            .filter(|p| PATTERNS.iter().any(|x| x.0 == p))
+            .unwrap_or_else(|| "y/m".into()),
+    );
     let moving = RwSignal::new(false);
     let phone = from.with_value(|f| f.0 != Src::Mac);
     let close = move || ctx.panel.set(None);
@@ -45,14 +58,24 @@ pub(super) fn ImportPhotos(pane: usize, from: (Src, String), targets: Vec<(Src, 
         let (src, dir) = from.get_value();
         let (to, to_dir) = targets.with_value(|t| t[target.get_untracked()].clone());
         store(PATTERN_KEY, &pattern.get_untracked());
-        let work =
-            Work::Import { from: ctx.side(src), from_dir: dir, to: ctx.side(to), to_dir, pattern: pattern.get_untracked(), moving: moving.get_untracked() };
+        let work = Work::Import {
+            from: ctx.side(src),
+            from_dir: dir,
+            to: ctx.side(to),
+            to_dir,
+            pattern: pattern.get_untracked(),
+            moving: moving.get_untracked(),
+        };
         ctx.enqueue(pane, work, false);
         close();
     };
     let example = move || {
         let (_, dir) = targets.with_value(|t| t[target.get()].clone());
-        let sub = PATTERNS.iter().find(|x| x.0 == pattern.get()).filter(|x| x.0 != "none").map_or(String::new(), |x| format!("/{}", x.1));
+        let sub = PATTERNS
+            .iter()
+            .find(|x| x.0 == pattern.get())
+            .filter(|x| x.0 != "none")
+            .map_or(String::new(), |x| format!("/{}", x.1));
         format!("For example {dir}{sub}/IMG_0001.jpg")
     };
     view! {

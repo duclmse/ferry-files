@@ -102,7 +102,9 @@ fn syntaxes() -> Arc<SyntaxSet> {
     let set = Arc::new(SyntaxSet::load_defaults_newlines());
     *s = Some((set.clone(), Instant::now()));
     // Files' parser states go with the grammars; their next pieces start afresh.
-    crate::idle::drop_when_idle(&SET, IDLE, || kept().lock().unwrap_or_else(|e| e.into_inner()).clear());
+    crate::idle::drop_when_idle(&SET, IDLE, || {
+        kept().lock().unwrap_or_else(|e| e.into_inner()).clear()
+    });
     set
 }
 
@@ -116,7 +118,13 @@ fn syntax_for<'a>(ss: &'a SyntaxSet, name: &str, first_line: &str) -> Option<&'a
         "podfile" | "fastfile" => Some("rb"),
         "justfile" | "gnumakefile" => Some("mk"),
         ".zshrc" | ".zprofile" | ".zshenv" | ".envrc" => Some("sh"),
-        n if n == "dockerfile" || n == "containerfile" || n.starts_with("dockerfile.") || n.ends_with(".dockerfile") => Some("sh"),
+        n if n == "dockerfile"
+            || n == "containerfile"
+            || n.starts_with("dockerfile.")
+            || n.ends_with(".dockerfile") =>
+        {
+            Some("sh")
+        }
         n if n == ".env" || n.starts_with(".env.") => Some("sh"),
         _ => None,
     };
@@ -182,19 +190,33 @@ pub(crate) fn colour(key: &str, name: &str, start: u64, text: &str, next: Option
     let ss = &*syntaxes();
     let carried = {
         let mut kept = kept().lock().unwrap_or_else(|e| e.into_inner());
-        kept.iter().position(|c| c.key == key && c.at == start).map(|i| kept.remove(i))
+        kept.iter()
+            .position(|c| c.key == key && c.at == start)
+            .map(|i| kept.remove(i))
     };
     let (mut state, mut stack) = match carried {
         Some(c) if c.stopped => {
-            keep(Carry { at: next.unwrap_or(c.at), ..c }, next.is_some());
+            keep(
+                Carry {
+                    at: next.unwrap_or(c.at),
+                    ..c
+                },
+                next.is_some(),
+            );
             return Colours::default();
         }
         Some(c) => (c.state, c.stack),
         None => {
             // From the start; or, when the state was let go of, from here, which may colour this
             // piece wrong until the next line that starts afresh.
-            let first = if start == 0 { text.lines().next().unwrap_or("") } else { "" };
-            let Some(syntax) = syntax_for(ss, name, first) else { return Colours::default() };
+            let first = if start == 0 {
+                text.lines().next().unwrap_or("")
+            } else {
+                ""
+            };
+            let Some(syntax) = syntax_for(ss, name, first) else {
+                return Colours::default();
+            };
             (ParseState::new(syntax), ScopeStack::new())
         }
     };
@@ -243,10 +265,22 @@ pub(crate) fn colour(key: &str, name: &str, start: u64, text: &str, next: Option
         push(Kind::Plain, text.len() - at);
     }
     if let Some(n) = next {
-        keep(Carry { key: key.to_string(), at: n, state, stack, stopped }, true);
+        keep(
+            Carry {
+                key: key.to_string(),
+                at: n,
+                state,
+                stack,
+                stopped,
+            },
+            true,
+        );
     }
     let plain = runs.iter().all(|(k, _)| *k == Kind::Plain as u8);
-    Colours { runs: (!plain).then_some(runs), stopped }
+    Colours {
+        runs: (!plain).then_some(runs),
+        stopped,
+    }
 }
 
 fn keep(c: Carry, more: bool) {
@@ -266,7 +300,10 @@ fn kind_of(stack: &ScopeStack, cache: &mut std::collections::HashMap<Scope, Opti
     for scope in stack.as_slice().iter().rev() {
         let rule = *cache.entry(*scope).or_insert_with(|| {
             let name = scope.build_string();
-            RULES.iter().find(|(p, _)| name == *p || name.starts_with(&format!("{p}."))).and_then(|(_, k)| *k)
+            RULES
+                .iter()
+                .find(|(p, _)| name == *p || name.starts_with(&format!("{p}.")))
+                .and_then(|(_, k)| *k)
         });
         if let Some(k) = rule {
             return k;
@@ -297,15 +334,33 @@ mod tests {
     #[test]
     fn colours_by_name_extension_and_first_line() {
         let ss = &*syntaxes();
-        assert_eq!(syntax_for(ss, "a/main.rs", "").map(|s| s.name.as_str()), Some("Rust"));
-        assert_eq!(syntax_for(ss, "App.TSX", "").map(|s| s.name.as_str()), Some("JavaScript"));
-        assert_eq!(syntax_for(ss, "Makefile", "").map(|s| s.name.as_str()), Some("Makefile"));
-        assert_eq!(syntax_for(ss, "run", "#!/usr/bin/env python3").map(|s| s.name.as_str()), Some("Python"));
+        assert_eq!(
+            syntax_for(ss, "a/main.rs", "").map(|s| s.name.as_str()),
+            Some("Rust")
+        );
+        assert_eq!(
+            syntax_for(ss, "App.TSX", "").map(|s| s.name.as_str()),
+            Some("JavaScript")
+        );
+        assert_eq!(
+            syntax_for(ss, "Makefile", "").map(|s| s.name.as_str()),
+            Some("Makefile")
+        );
+        assert_eq!(
+            syntax_for(ss, "run", "#!/usr/bin/env python3").map(|s| s.name.as_str()),
+            Some("Python")
+        );
         assert!(syntax_for(ss, "notes.txt", "hello").is_none());
         let name = |n: &str| syntax_for(ss, n, "").map(|s| s.name.clone());
         assert_eq!(name("gnumakefile").as_deref(), Some("Makefile"));
-        assert_eq!(name("Dockerfile.dev").as_deref(), Some("Bourne Again Shell (bash)"));
-        assert_eq!(name(".env.local").as_deref(), Some("Bourne Again Shell (bash)"));
+        assert_eq!(
+            name("Dockerfile.dev").as_deref(),
+            Some("Bourne Again Shell (bash)")
+        );
+        assert_eq!(
+            name(".env.local").as_deref(),
+            Some("Bourne Again Shell (bash)")
+        );
         assert_eq!(name("Podfile").as_deref(), Some("Ruby"));
         assert_eq!(name("Main.kt").as_deref(), Some("Java"));
         assert_eq!(name("lib.zig").as_deref(), Some("Rust"));
@@ -313,7 +368,10 @@ mod tests {
         assert_eq!(name("Cargo.toml").as_deref(), Some("Java Properties"));
         assert_eq!(name("main.c").as_deref(), Some("C"));
         assert_eq!(name("x.go").as_deref(), Some("Go"));
-        assert_eq!(colour("t1", "notes.txt", 0, "hello\n", None), Colours::default());
+        assert_eq!(
+            colour("t1", "notes.txt", 0, "hello\n", None),
+            Colours::default()
+        );
     }
 
     #[test]
@@ -336,7 +394,10 @@ mod tests {
         assert_eq!(of_kind(md, &c, Kind::ListMark), ["-", "1."]);
         assert_eq!(of_kind(md, &c, Kind::Bold), ["**bold**"]);
         assert_eq!(of_kind(md, &c, Kind::Italic), ["*it*"]);
-        assert_eq!(of_kind(md, &c, Kind::Code), ["`code`", "```\nfn x() {}\n```\n"]);
+        assert_eq!(
+            of_kind(md, &c, Kind::Code),
+            ["`code`", "```\nfn x() {}\n```\n"]
+        );
         assert_eq!(of_kind(md, &c, Kind::Link), ["[text](", ")", "<", ">"]);
         assert_eq!(of_kind(md, &c, Kind::Url), ["http://a.b", "http://c.d"]);
         assert_eq!(of_kind(md, &c, Kind::Quote), ["> said\n"]);
@@ -347,11 +408,29 @@ mod tests {
         let long = format!("let s = \"{}\";\nlet n = 2;\n", "x".repeat(LONG_LINE));
         let c = colour("t3", "x.js", 0, &long, None);
         let first = long.find('\n').unwrap() + 1;
-        assert_eq!(c.runs.as_ref().unwrap()[0], (Kind::Plain as u8, first as u32));
+        assert_eq!(
+            c.runs.as_ref().unwrap()[0],
+            (Kind::Plain as u8, first as u32)
+        );
         assert_eq!(of_kind(&long, &c, Kind::Number), ["2"]);
         // Past the limit: plain, said once, and later pieces plain too.
-        let c = colour("t4", "x.js", COLOUR_MAX, "let n = 2;\n", Some(COLOUR_MAX + 11));
-        assert_eq!(c, Colours { runs: None, stopped: true });
-        assert_eq!(colour("t4", "x.js", COLOUR_MAX + 11, "let n = 2;\n", None), Colours::default());
+        let c = colour(
+            "t4",
+            "x.js",
+            COLOUR_MAX,
+            "let n = 2;\n",
+            Some(COLOUR_MAX + 11),
+        );
+        assert_eq!(
+            c,
+            Colours {
+                runs: None,
+                stopped: true
+            }
+        );
+        assert_eq!(
+            colour("t4", "x.js", COLOUR_MAX + 11, "let n = 2;\n", None),
+            Colours::default()
+        );
     }
 }

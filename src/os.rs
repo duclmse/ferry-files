@@ -148,7 +148,10 @@ pub fn app_path(native: &str) -> String {
     if os() != Os::Windows {
         return native.to_string();
     }
-    let p = native.strip_prefix(r"\\?\").unwrap_or(native).replace('\\', "/");
+    let p = native
+        .strip_prefix(r"\\?\")
+        .unwrap_or(native)
+        .replace('\\', "/");
     let p = p.trim_end_matches('/');
     if p.is_empty() {
         "/".into()

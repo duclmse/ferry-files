@@ -28,7 +28,12 @@ pub fn get(id: &str) -> Option<String> {
 /// Saves `secret` as connection `id`'s password, replacing one saved before.
 #[tauri::command(rename_all = "snake_case")]
 pub(crate) async fn secret_set(id: String, secret: String) -> Result<(), String> {
-    blocking(move || entry(&id)?.set_password(&secret).map_err(|e| format!("Couldn't save the password in the keychain: {e}"))).await
+    blocking(move || {
+        entry(&id)?
+            .set_password(&secret)
+            .map_err(|e| format!("Couldn't save the password in the keychain: {e}"))
+    })
+    .await
 }
 
 /// Forgets connection `id`'s password; fine when there was none.
@@ -36,20 +41,27 @@ pub(crate) async fn secret_set(id: String, secret: String) -> Result<(), String>
 pub(crate) async fn secret_clear(id: String) -> Result<(), String> {
     blocking(move || match entry(&id)?.delete_credential() {
         Ok(()) | Err(keyring::Error::NoEntry) => Ok(()),
-        Err(e) => Err(format!("Couldn't remove the password from the keychain: {e}")),
+        Err(e) => Err(format!(
+            "Couldn't remove the password from the keychain: {e}"
+        )),
     })
     .await
 }
 
 /// What `ssh` needs in its environment to ask the app for connection `id`'s password.
 pub fn askpass_env(id: &str) -> Vec<(String, String)> {
-    let me = std::env::current_exe().map(|p| p.display().to_string()).unwrap_or_default();
+    let me = std::env::current_exe()
+        .map(|p| p.display().to_string())
+        .unwrap_or_default();
     vec![
         ("SSH_ASKPASS".into(), me),
         // OpenSSH 8.4 and later: use it even with a terminal.
         ("SSH_ASKPASS_REQUIRE".into(), "force".into()),
         // Older ssh uses askpass only when there's a display.
-        ("DISPLAY".into(), std::env::var("DISPLAY").unwrap_or_else(|_| ":0".into())),
+        (
+            "DISPLAY".into(),
+            std::env::var("DISPLAY").unwrap_or_else(|_| ":0".into()),
+        ),
         (ASKPASS_ENV.into(), id.into()),
     ]
 }
@@ -62,7 +74,9 @@ pub fn ssh_asks(c: &mut Command, id: &str) {
 /// When the app was started as `ssh`'s askpass program: answers and exits. Only password and
 /// passphrase prompts get the password; anything else (like a new host key) is refused.
 pub fn askpass() {
-    let Ok(id) = std::env::var(ASKPASS_ENV) else { return };
+    let Ok(id) = std::env::var(ASKPASS_ENV) else {
+        return;
+    };
     let prompt = std::env::args().nth(1).unwrap_or_default().to_lowercase();
     if prompt.contains("password") || prompt.contains("passphrase") {
         if let Some(p) = get(&id) {

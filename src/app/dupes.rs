@@ -5,12 +5,19 @@ use super::*;
 use crate::api::Dupe;
 
 /// Smallest file looked at: label and bytes.
-const MIN_SIZES: [(&str, u64); 5] =
-    [("Any size", 1), ("100 KB and up", 100_000), ("1 MB and up", 1_000_000), ("10 MB and up", 10_000_000), ("100 MB and up", 100_000_000)];
+const MIN_SIZES: [(&str, u64); 5] = [
+    ("Any size", 1),
+    ("100 KB and up", 100_000),
+    ("1 MB and up", 1_000_000),
+    ("10 MB and up", 10_000_000),
+    ("100 MB and up", 100_000_000),
+];
 
 /// The copy to keep in a group: one on the computer, else the oldest.
 fn keeper(g: &[Dupe], folders: &[(Src, String)]) -> usize {
-    (0..g.len()).min_by_key(|&i| (folders[g[i].at].0 != Src::Mac, g[i].mtime, i)).unwrap_or(0)
+    (0..g.len())
+        .min_by_key(|&i| (folders[g[i].at].0 != Src::Mac, g[i].mtime, i))
+        .unwrap_or(0)
 }
 
 #[component]
@@ -27,7 +34,13 @@ pub(super) fn Duplicates(folders: Vec<(Src, String)>) -> impl IntoView {
     let deleting = RwSignal::new(false);
 
     let search = move || {
-        let picked: Vec<(Src, String)> = folders.with_value(|f| f.iter().zip(use_folder.get_untracked()).filter(|x| x.1).map(|x| x.0.clone()).collect());
+        let picked: Vec<(Src, String)> = folders.with_value(|f| {
+            f.iter()
+                .zip(use_folder.get_untracked())
+                .filter(|x| x.1)
+                .map(|x| x.0.clone())
+                .collect()
+        });
         if picked.is_empty() {
             message.set(Some(("Pick a folder to look in.".into(), false)));
             return;
@@ -40,7 +53,11 @@ pub(super) fn Duplicates(folders: Vec<(Src, String)>) -> impl IntoView {
         message.set(None);
         ctx.dupe_progress.set(None);
         // Results index the folders searched; map them back to all the window's folders.
-        let index: Vec<usize> = folders.with_value(|f| (0..f.len()).filter(|&i| use_folder.get_untracked()[i]).collect());
+        let index: Vec<usize> = folders.with_value(|f| {
+            (0..f.len())
+                .filter(|&i| use_folder.get_untracked()[i])
+                .collect()
+        });
         let args = json!({
             "job": id,
             "folders": picked.iter().map(|(s, d)| (s.key(), d.clone())).collect::<Vec<_>>(),
@@ -74,29 +91,53 @@ pub(super) fn Duplicates(folders: Vec<(Src, String)>) -> impl IntoView {
         }
     };
     let keep_one = move || {
-        let Some(d) = found.get_untracked() else { return };
+        let Some(d) = found.get_untracked() else {
+            return;
+        };
         let mut set = HashSet::new();
         folders.with_value(|f| {
             for g in &d.groups {
                 let k = keeper(g, f);
-                set.extend(g.iter().enumerate().filter(|(i, _)| *i != k).map(|(_, x)| (x.at, x.path.clone())));
+                set.extend(
+                    g.iter()
+                        .enumerate()
+                        .filter(|(i, _)| *i != k)
+                        .map(|(_, x)| (x.at, x.path.clone())),
+                );
             }
         });
         chosen.set(set);
     };
     let chosen_bytes = move || {
         found.with(|d| {
-            d.as_ref().map_or(0, |d| d.groups.iter().flatten().filter(|x| chosen.with(|c| c.contains(&(x.at, x.path.clone())))).map(|x| x.size).sum::<u64>())
+            d.as_ref().map_or(0, |d| {
+                d.groups
+                    .iter()
+                    .flatten()
+                    .filter(|x| chosen.with(|c| c.contains(&(x.at, x.path.clone()))))
+                    .map(|x| x.size)
+                    .sum::<u64>()
+            })
         })
     };
     // A group with every copy picked would lose the file.
-    let all_of_one =
-        move || found.with(|d| d.as_ref().is_some_and(|d| d.groups.iter().any(|g| chosen.with(|c| g.iter().all(|x| c.contains(&(x.at, x.path.clone())))))));
+    let all_of_one = move || {
+        found.with(|d| {
+            d.as_ref().is_some_and(|d| {
+                d.groups
+                    .iter()
+                    .any(|g| chosen.with(|c| g.iter().all(|x| c.contains(&(x.at, x.path.clone())))))
+            })
+        })
+    };
 
     let delete = move || {
         confirming.set(false);
         if all_of_one() {
-            message.set(Some(("Keep at least one copy in each group.".into(), false)));
+            message.set(Some((
+                "Keep at least one copy in each group.".into(),
+                false,
+            )));
             return;
         }
         let picked: Vec<(usize, String)> = chosen.get_untracked().into_iter().collect();
@@ -108,9 +149,13 @@ pub(super) fn Duplicates(folders: Vec<(Src, String)>) -> impl IntoView {
             let mut error = None;
             for (at, path) in &picked {
                 let src = list[*at].0;
-                match call::<Option<String>>("remove", json!({ "src": src.key(), "path": path })).await {
+                match call::<Option<String>>("remove", json!({ "src": src.key(), "path": path }))
+                    .await
+                {
                     Ok(backup) => {
-                        undo.entry(src).or_default().push((path.clone(), false, backup));
+                        undo.entry(src)
+                            .or_default()
+                            .push((path.clone(), false, backup));
                         gone.push((*at, path.clone()));
                     }
                     Err(e) => {
@@ -121,8 +166,18 @@ pub(super) fn Duplicates(folders: Vec<(Src, String)>) -> impl IntoView {
             }
             deleting.set(false);
             for (src, items) in undo {
-                let what = if items.len() == 1 { base(&items[0].0) } else { format!("{} duplicates", items.len()) };
-                ctx.log_undo(format!("Deleted {what} from {}", ctx.place(src)), Undo::Delete { src, items: items.clone() });
+                let what = if items.len() == 1 {
+                    base(&items[0].0)
+                } else {
+                    format!("{} duplicates", items.len())
+                };
+                ctx.log_undo(
+                    format!("Deleted {what} from {}", ctx.place(src)),
+                    Undo::Delete {
+                        src,
+                        items: items.clone(),
+                    },
+                );
                 let mut dirs: Vec<String> = items.iter().map(|x| parent(&x.0)).collect();
                 dirs.sort();
                 dirs.dedup();
@@ -139,7 +194,12 @@ pub(super) fn Duplicates(folders: Vec<(Src, String)>) -> impl IntoView {
                 }
             });
             chosen.update(|c| c.retain(|x| !gone.contains(x)));
-            let note = format!("Deleted {} file{}. They're in Backups on {}.", gone.len(), if gone.len() == 1 { "" } else { "s" }, crate::os::the_computer());
+            let note = format!(
+                "Deleted {} file{}. They're in Backups on {}.",
+                gone.len(),
+                if gone.len() == 1 { "" } else { "s" },
+                crate::os::the_computer()
+            );
             message.set(Some(match error {
                 None => (note, true),
                 Some(e) => (format!("{note} Then: {e}"), false),

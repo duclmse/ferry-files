@@ -64,11 +64,21 @@ struct List {
 
 fn indent_at(text: &str, pos: usize) -> String {
     let start = text[..pos].rfind('\n').map_or(0, |k| k + 1);
-    text[start..pos].chars().take_while(|c| *c == ' ' || *c == '\t').collect()
+    text[start..pos]
+        .chars()
+        .take_while(|c| *c == ' ' || *c == '\t')
+        .collect()
 }
 
 fn target(base: &str, href: &str) -> (String, Option<String>) {
-    let frag = href.split_once('#').map(|(_, f)| percent_encoding::percent_decode_str(f).decode_utf8_lossy().to_string()).filter(|f| !f.is_empty());
+    let frag = href
+        .split_once('#')
+        .map(|(_, f)| {
+            percent_encoding::percent_decode_str(f)
+                .decode_utf8_lossy()
+                .to_string()
+        })
+        .filter(|f| !f.is_empty());
     (resolve(base, href).unwrap_or_default(), frag)
 }
 
@@ -76,19 +86,43 @@ impl List {
     /// The nav document's table of contents (its `<nav epub:type="toc">`, else its first nav).
     fn nav(file: &str, text: String) -> Option<List> {
         let toks = xml::tokenize(&text).ok()?;
-        let navs: Vec<usize> = (0..toks.len()).filter(|&k| toks[k].kind == Kind::Open && toks[k].local() == "nav").collect();
-        let nav =
-            navs.iter().copied().find(|&k| toks[k].attr_local("type").is_some_and(|v| v.split_whitespace().any(|x| x == "toc"))).or(navs.first().copied())?;
+        let navs: Vec<usize> = (0..toks.len())
+            .filter(|&k| toks[k].kind == Kind::Open && toks[k].local() == "nav")
+            .collect();
+        let nav = navs
+            .iter()
+            .copied()
+            .find(|&k| {
+                toks[k]
+                    .attr_local("type")
+                    .is_some_and(|v| v.split_whitespace().any(|x| x == "toc"))
+            })
+            .or(navs.first().copied())?;
         let end = xml::matching_close(&toks, nav)?;
         let ol = (nav + 1..end).find(|&k| toks[k].kind == Kind::Open && toks[k].local() == "ol")?;
         let ol_end = xml::matching_close(&toks, ol)?;
         let mut nodes = vec![];
         Self::nav_items(file, &text, &toks, ol, ol_end, 1, &mut nodes);
-        Some(List { indent: indent_at(&text, toks[ol].start), inner: (toks[ol].end, toks[ol_end].start), file: file.into(), text, nodes, ncx: false })
+        Some(List {
+            indent: indent_at(&text, toks[ol].start),
+            inner: (toks[ol].end, toks[ol_end].start),
+            file: file.into(),
+            text,
+            nodes,
+            ncx: false,
+        })
     }
 
     /// The `<li>`s of the `<ol>` from `toks[ol]` to `toks[end]`, and theirs, at `depth`.
-    fn nav_items(file: &str, text: &str, toks: &[Tok], ol: usize, end: usize, depth: usize, out: &mut Vec<Node>) {
+    fn nav_items(
+        file: &str,
+        text: &str,
+        toks: &[Tok],
+        ol: usize,
+        end: usize,
+        depth: usize,
+        out: &mut Vec<Node>,
+    ) {
         let mut k = ol + 1;
         while k < end {
             let t = &toks[k];
@@ -97,7 +131,8 @@ impl List {
                 continue;
             }
             let li_end = xml::matching_close(toks, k).unwrap_or(end);
-            let (mut body, mut label, mut to) = (String::new(), String::new(), (String::new(), None));
+            let (mut body, mut label, mut to) =
+                (String::new(), String::new(), (String::new(), None));
             let mut j = k + 1;
             let mut sub = None;
             while j < li_end {
@@ -117,7 +152,14 @@ impl List {
                     j += 1;
                 }
             }
-            out.push(Node { open: text[t.start..t.end].to_string(), body, label, path: to.0, fragment: to.1, depth });
+            out.push(Node {
+                open: text[t.start..t.end].to_string(),
+                body,
+                label,
+                path: to.0,
+                fragment: to.1,
+                depth,
+            });
             if let Some((s, e)) = sub {
                 Self::nav_items(file, text, toks, s, e, depth + 1, out);
             }
@@ -128,14 +170,31 @@ impl List {
     /// The NCX's `<navMap>`.
     fn ncx(file: &str, text: String) -> Option<List> {
         let toks = xml::tokenize(&text).ok()?;
-        let map = toks.iter().position(|t| t.kind == Kind::Open && t.local() == "navMap")?;
+        let map = toks
+            .iter()
+            .position(|t| t.kind == Kind::Open && t.local() == "navMap")?;
         let end = xml::matching_close(&toks, map)?;
         let mut nodes = vec![];
         Self::nav_points(file, &text, &toks, map, end, 1, &mut nodes);
-        Some(List { indent: indent_at(&text, toks[map].start), inner: (toks[map].end, toks[end].start), file: file.into(), text, nodes, ncx: true })
+        Some(List {
+            indent: indent_at(&text, toks[map].start),
+            inner: (toks[map].end, toks[end].start),
+            file: file.into(),
+            text,
+            nodes,
+            ncx: true,
+        })
     }
 
-    fn nav_points(file: &str, text: &str, toks: &[Tok], from: usize, end: usize, depth: usize, out: &mut Vec<Node>) {
+    fn nav_points(
+        file: &str,
+        text: &str,
+        toks: &[Tok],
+        from: usize,
+        end: usize,
+        depth: usize,
+        out: &mut Vec<Node>,
+    ) {
         let mut k = from + 1;
         while k < end {
             let t = &toks[k];
@@ -144,7 +203,8 @@ impl List {
                 continue;
             }
             let p_end = xml::matching_close(toks, k).unwrap_or(end);
-            let (mut body, mut label, mut to) = (String::new(), String::new(), (String::new(), None));
+            let (mut body, mut label, mut to) =
+                (String::new(), String::new(), (String::new(), None));
             let mut j = k + 1;
             let mut first_child = None;
             while j < p_end {
@@ -168,7 +228,14 @@ impl List {
                     j += 1;
                 }
             }
-            out.push(Node { open: text[t.start..t.end].to_string(), body, label, path: to.0, fragment: to.1, depth });
+            out.push(Node {
+                open: text[t.start..t.end].to_string(),
+                body,
+                label,
+                path: to.0,
+                fragment: to.1,
+                depth,
+            });
             if let Some(c) = first_child {
                 Self::nav_points(file, text, toks, c - 1, p_end, depth + 1, out);
             }
@@ -178,7 +245,11 @@ impl List {
 
     /// The list's markup from its nodes, nested by their depths.
     fn render(&self) -> String {
-        let (list, end_item) = if self.ncx { ("", "</navPoint>") } else { ("ol", "</li>") };
+        let (list, end_item) = if self.ncx {
+            ("", "</navPoint>")
+        } else {
+            ("ol", "</li>")
+        };
         let mut out = String::new();
         let mut order = 0;
         let mut k = 0;
@@ -188,13 +259,31 @@ impl List {
         out
     }
 
-    fn render_from(&self, k: &mut usize, depth: usize, out: &mut String, order: &mut usize, list: &str, end_item: &str) {
+    fn render_from(
+        &self,
+        k: &mut usize,
+        depth: usize,
+        out: &mut String,
+        order: &mut usize,
+        list: &str,
+        end_item: &str,
+    ) {
         // Nested lists sit one step in; each entry under the list's own indent.
-        let pad = |d: usize| format!("{}{}", self.indent, "  ".repeat(if list.is_empty() { d } else { 2 * d - 1 }));
+        let pad = |d: usize| {
+            format!(
+                "{}{}",
+                self.indent,
+                "  ".repeat(if list.is_empty() { d } else { 2 * d - 1 })
+            )
+        };
         while *k < self.nodes.len() && self.nodes[*k].depth == depth {
             let n = &self.nodes[*k];
             *order += 1;
-            let open = if self.ncx { renumbered(&n.open, *order) } else { n.open.clone() };
+            let open = if self.ncx {
+                renumbered(&n.open, *order)
+            } else {
+                n.open.clone()
+            };
             out.push_str(&format!("\n{}{open}{}", pad(depth), n.body));
             *k += 1;
             if *k < self.nodes.len() && self.nodes[*k].depth > depth {
@@ -214,25 +303,39 @@ impl List {
 
     /// The file with the list rewritten, checked; and for the NCX, its dtb:depth made right.
     fn written(&self) -> Result<String> {
-        let mut text = xml::splice(&self.text, vec![(self.inner.0, self.inner.1, self.render())]);
+        let mut text = xml::splice(
+            &self.text,
+            vec![(self.inner.0, self.inner.1, self.render())],
+        );
         if self.ncx {
             let depth = self.nodes.iter().map(|n| n.depth).max().unwrap_or(1);
             if let Ok(toks) = xml::tokenize(&text) {
-                if let Some((_, at)) =
-                    toks.iter().find(|t| t.is_start() && t.local() == "meta" && t.attr("name") == Some("dtb:depth")).and_then(|t| t.attr_at("content"))
+                if let Some((_, at)) = toks
+                    .iter()
+                    .find(|t| {
+                        t.is_start() && t.local() == "meta" && t.attr("name") == Some("dtb:depth")
+                    })
+                    .and_then(|t| t.attr_at("content"))
                 {
                     text = xml::splice(&text, vec![(at.0, at.1, depth.to_string())]);
                 }
             }
         }
-        xml::check(&text).map_err(|e| format!("Changing the contents would break {}, so nothing was changed: {e}", file_name(&self.file)))?;
+        xml::check(&text).map_err(|e| {
+            format!(
+                "Changing the contents would break {}, so nothing was changed: {e}",
+                file_name(&self.file)
+            )
+        })?;
         Ok(text)
     }
 }
 
 /// A `<navPoint …>` tag with its playOrder set to `n` (added when it has none).
 fn renumbered(open: &str, n: usize) -> String {
-    let Ok(toks) = xml::tokenize(&format!("{open}</navPoint>")) else { return open.to_string() };
+    let Ok(toks) = xml::tokenize(&format!("{open}</navPoint>")) else {
+        return open.to_string();
+    };
     match toks.first().and_then(|t| t.attr_at("playOrder")) {
         Some((_, at)) => format!("{}{n}{}", &open[..at.0], &open[at.1..]),
         None => {
@@ -255,14 +358,34 @@ impl Book {
     fn toc_lists(&self) -> Result<Vec<List>> {
         let p = self.package()?;
         let mut lists = vec![];
-        if let Some(nav) = p.items.iter().find(|i| i.props.split_whitespace().any(|x| x == "nav")) {
-            if let Some(l) = self.text(&nav.path).ok().and_then(|t| List::nav(&nav.path, t)) {
+        if let Some(nav) = p
+            .items
+            .iter()
+            .find(|i| i.props.split_whitespace().any(|x| x == "nav"))
+        {
+            if let Some(l) = self
+                .text(&nav.path)
+                .ok()
+                .and_then(|t| List::nav(&nav.path, t))
+            {
                 lists.push(l);
             }
         }
-        let ncx = p.toc_id.as_deref().and_then(|id| p.item_by_id(id)).or_else(|| p.items.iter().find(|i| i.media == "application/x-dtbncx+xml"));
+        let ncx = p
+            .toc_id
+            .as_deref()
+            .and_then(|id| p.item_by_id(id))
+            .or_else(|| {
+                p.items
+                    .iter()
+                    .find(|i| i.media == "application/x-dtbncx+xml")
+            });
         if let Some(ncx) = ncx {
-            if let Some(l) = self.text(&ncx.path).ok().and_then(|t| List::ncx(&ncx.path, t)) {
+            if let Some(l) = self
+                .text(&ncx.path)
+                .ok()
+                .and_then(|t| List::ncx(&ncx.path, t))
+            {
                 lists.push(l);
             }
         }
@@ -275,19 +398,42 @@ impl Book {
             .toc_lists()?
             .into_iter()
             .next()
-            .map(|l| l.nodes.into_iter().map(|n| TocEntry { label: n.label, path: n.path, fragment: n.fragment, depth: n.depth }).collect())
+            .map(|l| {
+                l.nodes
+                    .into_iter()
+                    .map(|n| TocEntry {
+                        label: n.label,
+                        path: n.path,
+                        fragment: n.fragment,
+                        depth: n.depth,
+                    })
+                    .collect()
+            })
             .unwrap_or_default())
     }
 
     /// Where a place is in reading order: its chapter's place in the spine, then where in the
     /// chapter its id is (0 for the chapter's start). Files out of the spine come last.
-    fn reading_key(&self, spine: &[ChapterRef], ids: &mut HashMap<String, HashMap<String, usize>>, path: &str, fragment: Option<&str>) -> (usize, usize) {
-        let Some(k) = spine.iter().position(|c| c.path == path) else { return (usize::MAX, 0) };
+    fn reading_key(
+        &self,
+        spine: &[ChapterRef],
+        ids: &mut HashMap<String, HashMap<String, usize>>,
+        path: &str,
+        fragment: Option<&str>,
+    ) -> (usize, usize) {
+        let Some(k) = spine.iter().position(|c| c.path == path) else {
+            return (usize::MAX, 0);
+        };
         let Some(f) = fragment else { return (k, 0) };
         let at = ids.entry(path.to_string()).or_insert_with(|| {
             let text = self.text(path).unwrap_or_default();
             xml::tokenize(&text)
-                .map(|toks| toks.iter().filter(|t| t.is_start()).filter_map(|t| t.attr("id").map(|id| (id.to_string(), t.start))).collect())
+                .map(|toks| {
+                    toks.iter()
+                        .filter(|t| t.is_start())
+                        .filter_map(|t| t.attr("id").map(|id| (id.to_string(), t.start)))
+                        .collect()
+                })
                 .unwrap_or_default()
         });
         (k, at.get(f).copied().unwrap_or(0))
@@ -297,30 +443,66 @@ impl Book {
     /// start when that's the chapter's first element, else that element, which gets an id if it
     /// has none. `label`, or else the element's text, names it; `level` places it (see `Level`).
     /// `names` are as for `move_part`.
-    pub fn add_toc(&mut self, path: &str, cut: Cut, names: Option<&[String]>, label: &str, level: Level) -> Result<()> {
+    pub fn add_toc(
+        &mut self,
+        path: &str,
+        cut: Cut,
+        names: Option<&[String]>,
+        label: &str,
+        level: Level,
+    ) -> Result<()> {
         let spine = self.chapters()?;
         if !spine.iter().any(|c| c.path == path) {
-            return Err(format!("{} isn't one of the book's chapters.", file_name(path)));
+            return Err(format!(
+                "{} isn't one of the book's chapters.",
+                file_name(path)
+            ));
         }
         let mut lists = self.toc_lists()?;
         if lists.is_empty() {
             return Err("This book has no table of contents to add to.".into());
         }
         let text = self.text(path)?;
-        xml::check(&text).map_err(|e| format!("{} isn't valid XHTML, so nothing was added. Fix it in Source first: {e}", file_name(path)))?;
+        xml::check(&text).map_err(|e| {
+            format!(
+                "{} isn't valid XHTML, so nothing was added. Fix it in Source first: {e}",
+                file_name(path)
+            )
+        })?;
         let toks = xml::tokenize(&text)?;
         let bl = blocks(&text, &toks, path)?;
         if let Some(names) = names {
-            if names.len() != bl.len() || names.iter().zip(&bl).any(|(n, b)| !n.eq_ignore_ascii_case(&b.2)) {
+            if names.len() != bl.len()
+                || names
+                    .iter()
+                    .zip(&bl)
+                    .any(|(n, b)| !n.eq_ignore_ascii_case(&b.2))
+            {
                 return Err("The visual view doesn't match this chapter's XHTML here. Add the entry from the Source view.".into());
             }
         }
         let k = cut_block(&text, &bl, cut).min(bl.len().saturating_sub(1));
         let start = bl.get(k).map(|b| b.0);
         let tok = start.and_then(|s| toks.iter().position(|t| t.start == s));
-        let own = tok.map(|i| squash(&xml::inner_text(&text, &toks[i + 1..xml::matching_close(&toks, i).unwrap_or(i).max(i + 1)]))).unwrap_or_default();
-        let label = Some(squash(label)).filter(|l| !l.is_empty()).or_else(|| Some(own.chars().take(80).collect::<String>()).filter(|l| !l.is_empty()));
-        let label = label.or_else(|| spine.iter().find(|c| c.path == path).map(|c| c.label.clone())).unwrap_or_else(|| file_name(path).to_string());
+        let own = tok
+            .map(|i| {
+                squash(&xml::inner_text(
+                    &text,
+                    &toks[i + 1..xml::matching_close(&toks, i).unwrap_or(i).max(i + 1)],
+                ))
+            })
+            .unwrap_or_default();
+        let label = Some(squash(label))
+            .filter(|l| !l.is_empty())
+            .or_else(|| Some(own.chars().take(80).collect::<String>()).filter(|l| !l.is_empty()));
+        let label = label
+            .or_else(|| {
+                spine
+                    .iter()
+                    .find(|c| c.path == path)
+                    .map(|c| c.label.clone())
+            })
+            .unwrap_or_else(|| file_name(path).to_string());
 
         // The place: the chapter's start, or the element's id (given one if it has none).
         let mut chapter = None;
@@ -329,11 +511,20 @@ impl Book {
             Some(i) => match toks[i].attr("id") {
                 Some(id) => Some(id.to_string()),
                 None => {
-                    let taken: std::collections::HashSet<&str> = toks.iter().filter_map(|t| t.attr("id")).collect();
-                    let id = (1..).map(|n| format!("toc-{n}")).find(|id| !taken.contains(id.as_str())).unwrap_or_default();
+                    let taken: std::collections::HashSet<&str> =
+                        toks.iter().filter_map(|t| t.attr("id")).collect();
+                    let id = (1..)
+                        .map(|n| format!("toc-{n}"))
+                        .find(|id| !taken.contains(id.as_str()))
+                        .unwrap_or_default();
                     let at = toks[i].start + 1 + toks[i].name.len();
                     let new = xml::splice(&text, vec![(at, at, format!(" id=\"{id}\""))]);
-                    xml::check(&new).map_err(|e| format!("Giving the place an id would break {}: {e}", file_name(path)))?;
+                    xml::check(&new).map_err(|e| {
+                        format!(
+                            "Giving the place an id would break {}: {e}",
+                            file_name(path)
+                        )
+                    })?;
                     chapter = Some(new);
                     Some(id)
                 }
@@ -348,10 +539,19 @@ impl Book {
         let key = self.reading_key(&spine, &mut ids, path, fragment.as_deref());
         let mut written = vec![];
         for l in &mut lists {
-            if l.nodes.iter().any(|n| n.path == path && n.fragment == fragment) {
-                return Err(format!("“{label}” is in the contents already: an entry opens that place."));
+            if l.nodes
+                .iter()
+                .any(|n| n.path == path && n.fragment == fragment)
+            {
+                return Err(format!(
+                    "“{label}” is in the contents already: an entry opens that place."
+                ));
             }
-            let keys: Vec<(usize, usize)> = l.nodes.iter().map(|n| self.reading_key(&spine, &mut ids, &n.path, n.fragment.as_deref())).collect();
+            let keys: Vec<(usize, usize)> = l
+                .nodes
+                .iter()
+                .map(|n| self.reading_key(&spine, &mut ids, &n.path, n.fragment.as_deref()))
+                .collect();
             let at = keys.iter().position(|k| *k > key).unwrap_or(l.nodes.len());
             let before = at.checked_sub(1).map(|i| l.nodes[i].depth);
             let depth = match (level, before) {
@@ -369,12 +569,28 @@ impl Book {
                 }
             };
             let node = if l.ncx {
-                let taken: std::collections::HashSet<String> =
-                    l.nodes.iter().filter_map(|n| xml::tokenize(&format!("{}</navPoint>", n.open)).ok()?.first()?.attr("id").map(String::from)).collect();
-                let id = (1..).map(|n| format!("navPoint-toc-{n}")).find(|id| !taken.contains(id)).unwrap_or_default();
+                let taken: std::collections::HashSet<String> = l
+                    .nodes
+                    .iter()
+                    .filter_map(|n| {
+                        xml::tokenize(&format!("{}</navPoint>", n.open))
+                            .ok()?
+                            .first()?
+                            .attr("id")
+                            .map(String::from)
+                    })
+                    .collect();
+                let id = (1..)
+                    .map(|n| format!("navPoint-toc-{n}"))
+                    .find(|id| !taken.contains(id))
+                    .unwrap_or_default();
                 Node {
                     open: format!("<navPoint id=\"{id}\" playOrder=\"0\">"),
-                    body: format!("<navLabel><text>{}</text></navLabel><content src=\"{}\"/>", xml::escape_text(&label), xml::escape_attr(&href)),
+                    body: format!(
+                        "<navLabel><text>{}</text></navLabel><content src=\"{}\"/>",
+                        xml::escape_text(&label),
+                        xml::escape_attr(&href)
+                    ),
                     label: label.clone(),
                     path: path.to_string(),
                     fragment: fragment.clone(),
@@ -383,7 +599,11 @@ impl Book {
             } else {
                 Node {
                     open: "<li>".into(),
-                    body: format!("<a href=\"{}\">{}</a>", xml::escape_attr(&href), xml::escape_text(&label)),
+                    body: format!(
+                        "<a href=\"{}\">{}</a>",
+                        xml::escape_attr(&href),
+                        xml::escape_text(&label)
+                    ),
                     label: label.clone(),
                     path: path.to_string(),
                     fragment: fragment.clone(),
@@ -403,10 +623,20 @@ impl Book {
     /// Takes the contents' entry `index` (as `toc` lists them) out, from the nav and the NCX:
     /// what opens the same place there. What was under it moves up to take its place.
     pub fn remove_toc(&mut self, index: usize) -> Result<()> {
-        let entry = self.toc()?.into_iter().nth(index).ok_or("That entry is no longer in the contents.")?;
+        let entry = self
+            .toc()?
+            .into_iter()
+            .nth(index)
+            .ok_or("That entry is no longer in the contents.")?;
         let mut written = vec![];
         for mut l in self.toc_lists()? {
-            let Some(k) = l.nodes.iter().position(|n| n.path == entry.path && n.fragment == entry.fragment) else { continue };
+            let Some(k) = l
+                .nodes
+                .iter()
+                .position(|n| n.path == entry.path && n.fragment == entry.fragment)
+            else {
+                continue;
+            };
             let depth = l.nodes[k].depth;
             l.nodes.remove(k);
             // Its children come up a level, so they stay together where it was.
@@ -424,5 +654,14 @@ impl Book {
 }
 
 /// Characters written as %xx in an address made here.
-const HREF: &percent_encoding::AsciiSet =
-    &percent_encoding::CONTROLS.add(b' ').add(b'"').add(b'#').add(b'%').add(b'<').add(b'>').add(b'?').add(b'`').add(b'{').add(b'}');
+const HREF: &percent_encoding::AsciiSet = &percent_encoding::CONTROLS
+    .add(b' ')
+    .add(b'"')
+    .add(b'#')
+    .add(b'%')
+    .add(b'<')
+    .add(b'>')
+    .add(b'?')
+    .add(b'`')
+    .add(b'{')
+    .add(b'}');

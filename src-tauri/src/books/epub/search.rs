@@ -13,8 +13,9 @@ const SNIPPETS_MAX: usize = 200;
 /// Elements inside a run of text, which a phrase may cross. Any other tag (a paragraph, a line
 /// break, a picture) ends the run.
 const INLINE: &[&str] = &[
-    "a", "abbr", "b", "bdi", "bdo", "big", "cite", "code", "data", "del", "dfn", "em", "font", "i", "ins", "kbd", "mark", "q", "s", "samp", "small", "span",
-    "strike", "strong", "sub", "sup", "time", "tt", "u", "var",
+    "a", "abbr", "b", "bdi", "bdo", "big", "cite", "code", "data", "del", "dfn", "em", "font", "i",
+    "ins", "kbd", "mark", "q", "s", "samp", "small", "span", "strike", "strong", "sub", "sup",
+    "time", "tt", "u", "var",
 ];
 
 /// A text token in a run: where its decoded text starts in the run's, and for each place in that
@@ -40,7 +41,11 @@ impl Run {
             let to = p.from + p.at.len() - 1;
             let (lo, hi) = (a.max(p.from), b.min(to));
             if lo < hi {
-                let text = if out.is_empty() { with.to_string() } else { String::new() };
+                let text = if out.is_empty() {
+                    with.to_string()
+                } else {
+                    String::new()
+                };
                 out.push((p.at[lo - p.from]?, p.at[hi - p.from]?, text));
             }
         }
@@ -52,14 +57,17 @@ impl Run {
 /// text editor's Preserve case does).
 fn keep_case(matched: &str, with: &str) -> String {
     let letters: Vec<char> = matched.chars().filter(|c| c.is_alphabetic()).collect();
-    let Some(&first) = letters.first() else { return with.to_string() };
+    let Some(&first) = letters.first() else {
+        return with.to_string();
+    };
     if letters.len() > 1 && letters.iter().all(|c| c.is_uppercase()) {
         with.to_uppercase()
     } else if letters.iter().all(|c| c.is_lowercase()) {
         with.to_lowercase()
     } else if first.is_uppercase() {
         let mut cs = with.chars();
-        cs.next().map_or_else(String::new, |c| c.to_uppercase().chain(cs).collect())
+        cs.next()
+            .map_or_else(String::new, |c| c.to_uppercase().chain(cs).collect())
     } else {
         with.to_string()
     }
@@ -88,10 +96,16 @@ impl Book {
         runs.into_iter()
             .filter(|r| r.iter().any(|&(s, e)| !text[s..e].trim().is_empty()))
             .map(|r| {
-                let mut run = Run { plain: String::new(), pieces: vec![] };
+                let mut run = Run {
+                    plain: String::new(),
+                    pieces: vec![],
+                };
                 for (s, e) in r {
                     let (plain, at) = xml::decode_at(text, s, e);
-                    run.pieces.push(Piece { from: run.plain.len(), at });
+                    run.pieces.push(Piece {
+                        from: run.plain.len(),
+                        at,
+                    });
                     run.plain.push_str(&plain);
                 }
                 run
@@ -101,7 +115,12 @@ impl Book {
 
     /// The matches of `q` in a chapter, each with the edits that would replace it (with a
     /// regular expression, `$1` in the replacement is what its first group matched).
-    fn matches(text: &str, toks: &[Tok], q: &Query, re: Option<&regex::Regex>) -> Vec<(Snippet, Vec<(usize, usize, String)>)> {
+    fn matches(
+        text: &str,
+        toks: &[Tok],
+        q: &Query,
+        re: Option<&regex::Regex>,
+    ) -> Vec<(Snippet, Vec<(usize, usize, String)>)> {
         let mut out = vec![];
         for run in Self::runs(text, toks) {
             let found: Vec<((usize, usize), String)> = match re {
@@ -114,10 +133,17 @@ impl Book {
                         Some(((m.start(), m.end()), with))
                     })
                     .collect(),
-                None => find_all(&run.plain, &q.find, q.match_case, q.whole_word).into_iter().map(|m| (m, q.replace.clone())).collect(),
+                None => find_all(&run.plain, &q.find, q.match_case, q.whole_word)
+                    .into_iter()
+                    .map(|m| (m, q.replace.clone()))
+                    .collect(),
             };
             for (m, with) in found {
-                let with = if q.preserve_case { keep_case(&run.plain[m.0..m.1], &with) } else { with };
+                let with = if q.preserve_case {
+                    keep_case(&run.plain[m.0..m.1], &with)
+                } else {
+                    with
+                };
                 if let Some(edits) = run.edits(m, &xml::escape_text(&with)) {
                     out.push((snippet(&run.plain, m), edits));
                 }
@@ -131,12 +157,21 @@ impl Book {
         if !q.regex {
             return Ok(None);
         }
-        let pattern = if q.whole_word { format!(r"\b(?:{})\b", q.find) } else { q.find.clone() };
+        let pattern = if q.whole_word {
+            format!(r"\b(?:{})\b", q.find)
+        } else {
+            q.find.clone()
+        };
         regex::RegexBuilder::new(&pattern)
             .case_insensitive(!q.match_case)
             .build()
             .map(Some)
-            .map_err(|e| format!("That regular expression doesn't work: {}", e.to_string().lines().last().unwrap_or("").trim()))
+            .map_err(|e| {
+                format!(
+                    "That regular expression doesn't work: {}",
+                    e.to_string().lines().last().unwrap_or("").trim()
+                )
+            })
     }
 
     pub fn find(&self, q: &Query) -> Result<Found> {
@@ -146,7 +181,11 @@ impl Book {
         }
         let re = Self::regex(q)?;
         for ch in self.chapters()? {
-            let Some((text, toks)) = self.text(&ch.path).ok().and_then(|t| xml::tokenize(&t).ok().map(|k| (t, k))) else {
+            let Some((text, toks)) = self
+                .text(&ch.path)
+                .ok()
+                .and_then(|t| xml::tokenize(&t).ok().map(|k| (t, k)))
+            else {
                 found.skipped.push(ch.label);
                 continue;
             };
@@ -154,7 +193,12 @@ impl Book {
             if !ms.is_empty() {
                 found.total += ms.len();
                 let snippets = ms.into_iter().map(|m| m.0).collect::<Vec<_>>();
-                found.hits.push(Hit { path: ch.path, label: ch.label, count: snippets.len(), snippets: snippets.into_iter().take(SNIPPETS_MAX).collect() });
+                found.hits.push(Hit {
+                    path: ch.path,
+                    label: ch.label,
+                    count: snippets.len(),
+                    snippets: snippets.into_iter().take(SNIPPETS_MAX).collect(),
+                });
             }
         }
         Ok(found)
@@ -170,7 +214,10 @@ impl Book {
         let re = Self::regex(q)?;
         let text = self.text(path)?;
         let toks = xml::tokenize(&text)?;
-        let Some((_, edits)) = Self::matches(&text, &toks, q, re.as_ref()).into_iter().find(|(_, e)| e.first().is_some_and(|e| e.0 >= from)) else {
+        let Some((_, edits)) = Self::matches(&text, &toks, q, re.as_ref())
+            .into_iter()
+            .find(|(_, e)| e.first().is_some_and(|e| e.0 >= from))
+        else {
             return Ok(None);
         };
         let end = edits[0].0 + edits[0].2.len();
@@ -187,8 +234,12 @@ impl Book {
         let re = Self::regex(q)?;
         let mut total = 0;
         for ch in self.chapters()? {
-            let Ok(text) = self.text(&ch.path) else { continue };
-            let Ok(toks) = xml::tokenize(&text) else { continue };
+            let Ok(text) = self.text(&ch.path) else {
+                continue;
+            };
+            let Ok(toks) = xml::tokenize(&text) else {
+                continue;
+            };
             let ms = Self::matches(&text, &toks, q, re.as_ref());
             if !ms.is_empty() {
                 total += ms.len();

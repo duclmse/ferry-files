@@ -48,22 +48,49 @@ pub(super) struct Item {
 impl Item {
     /// A file to copy from `from` to `to`.
     pub(super) fn file(from: String, to: String, size: u64) -> Item {
-        Item { from, to, dir: false, size, replace: false }
+        Item {
+            from,
+            to,
+            dir: false,
+            size,
+            replace: false,
+        }
     }
 }
 
 impl Progress {
     /// Before any file is copied: what's being done meanwhile.
     pub(super) fn looking(job: u32, current: String) -> Progress {
-        Progress { job, files_done: 0, files_total: 0, bytes_done: 0, bytes_total: 0, current }
+        Progress {
+            job,
+            files_done: 0,
+            files_total: 0,
+            bytes_done: 0,
+            bytes_total: 0,
+            current,
+        }
     }
 }
 
 /// Lists everything under `from` (itself first), with where it goes under `to_dir`.
-pub(super) fn walk(dev: &Device, from: &str, to_dir: &str, out: &mut Vec<Item>) -> Result<(), String> {
-    let st = dev.stat(from).map_err(msg)?.ok_or_else(|| format!("No such file or folder: {from}"))?;
+pub(super) fn walk(
+    dev: &Device,
+    from: &str,
+    to_dir: &str,
+    out: &mut Vec<Item>,
+) -> Result<(), String> {
+    let st = dev
+        .stat(from)
+        .map_err(msg)?
+        .ok_or_else(|| format!("No such file or folder: {from}"))?;
     let to = device::join(to_dir, &st.name);
-    out.push(Item { from: from.to_string(), to: to.clone(), dir: st.dir, size: st.size, replace: false });
+    out.push(Item {
+        from: from.to_string(),
+        to: to.clone(),
+        dir: st.dir,
+        size: st.size,
+        replace: false,
+    });
     if st.dir {
         let mut kids = dev.listdir(from).map_err(msg)?;
         kids.sort_by(|a, b| a.name.cmp(&b.name));
@@ -96,7 +123,12 @@ enum Copied {
 impl Copied {
     /// Whether the copy at `path` on `b` holds what was written. adb writes are already checked
     /// against an md5 of the data on the phone (`Adb::replace`), so they aren't read back again.
-    fn matches(&self, b: &Device, path: &str, stop: &std::sync::atomic::AtomicBool) -> Result<bool, String> {
+    fn matches(
+        &self,
+        b: &Device,
+        path: &str,
+        stop: &std::sync::atomic::AtomicBool,
+    ) -> Result<bool, String> {
         if b.kind() == "adb" {
             return Ok(true);
         }
@@ -107,8 +139,10 @@ impl Copied {
             }
             Copied::File(from) => {
                 let back = Spooled::temp();
-                b.read_to(path, &back.path, &mut |_| {}, stop).map_err(msg)?;
-                same_files(&from.path, &back.path).map_err(|e| format!("Couldn't compare the copy: {e}"))
+                b.read_to(path, &back.path, &mut |_| {}, stop)
+                    .map_err(msg)?;
+                same_files(&from.path, &back.path)
+                    .map_err(|e| format!("Couldn't compare the copy: {e}"))
             }
         }
     }
@@ -123,9 +157,17 @@ struct Spooled {
 }
 
 impl Spooled {
-    fn of(a: &Device, path: &str, stop: &std::sync::atomic::AtomicBool, read: &mut dyn FnMut(u64)) -> Result<Spooled, String> {
+    fn of(
+        a: &Device,
+        path: &str,
+        stop: &std::sync::atomic::AtomicBool,
+        read: &mut dyn FnMut(u64),
+    ) -> Result<Spooled, String> {
         if a.kind() == "mac" {
-            return Ok(Spooled { path: crate::platform::native(path), temp: false });
+            return Ok(Spooled {
+                path: crate::platform::native(path),
+                temp: false,
+            });
         }
         let s = Spooled::temp();
         a.read_to(path, &s.path, read, stop).map_err(msg)?;
@@ -135,7 +177,10 @@ impl Spooled {
     fn temp() -> Spooled {
         static N: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
         let n = N.fetch_add(1, Ordering::Relaxed);
-        Spooled { path: std::env::temp_dir().join(format!("ferry-files-copy-{}-{n}", std::process::id())), temp: true }
+        Spooled {
+            path: std::env::temp_dir().join(format!("ferry-files-copy-{}-{n}", std::process::id())),
+            temp: true,
+        }
     }
 }
 
@@ -184,9 +229,17 @@ pub(super) fn run_transfer(
     let mut items = vec![];
     let mut new = vec![];
     for p in paths {
-        if same && (device::dirname(p) == to_dir || to_dir == p || to_dir.starts_with(&format!("{p}/"))) {
-            let why = if device::dirname(p) == to_dir { "It's already in this folder." } else { "A folder can't go inside itself." };
-            report.skipped.push((device::basename(p).to_string(), why.into()));
+        if same
+            && (device::dirname(p) == to_dir || to_dir == p || to_dir.starts_with(&format!("{p}/")))
+        {
+            let why = if device::dirname(p) == to_dir {
+                "It's already in this folder."
+            } else {
+                "A folder can't go inside itself."
+            };
+            report
+                .skipped
+                .push((device::basename(p).to_string(), why.into()));
             continue;
         }
         let target = device::join(to_dir, device::basename(p));
@@ -204,7 +257,9 @@ pub(super) fn run_transfer(
                 }
                 Ok(false) => {}
                 Err(e) => {
-                    report.skipped.push((device::basename(p).to_string(), e.to_string()));
+                    report
+                        .skipped
+                        .push((device::basename(p).to_string(), e.to_string()));
                     continue;
                 }
             }
@@ -212,7 +267,10 @@ pub(super) fn run_transfer(
         walk(a, p, to_dir, &mut items)?;
     }
     let mut report = run_items(a, b, job, &items, opts, stop, emit, report)?;
-    report.made = new.into_iter().filter(|t| b.stat(t).ok().flatten().is_some()).collect();
+    report.made = new
+        .into_iter()
+        .filter(|t| b.stat(t).ok().flatten().is_some())
+        .collect();
     Ok(report)
 }
 
@@ -245,10 +303,22 @@ pub(super) fn run_items(
     emit: impl Fn(Progress),
     mut report: TransferReport,
 ) -> Result<TransferReport, String> {
-    let Opts { moving, resume, verify, replace } = opts;
+    let Opts {
+        moving,
+        resume,
+        verify,
+        replace,
+    } = opts;
     let files_total = items.iter().filter(|i| !i.dir).count() as u32;
     let bytes_total: u64 = items.iter().map(|i| i.size).sum();
-    let mut p = Progress { job, files_done: 0, files_total, bytes_done: 0, bytes_total, current: String::new() };
+    let mut p = Progress {
+        job,
+        files_done: 0,
+        files_total,
+        bytes_done: 0,
+        bytes_total,
+        current: String::new(),
+    };
     // Folders that couldn't be made, so what's inside them is skipped too.
     let mut failed: Vec<String> = vec![];
     // Folders whose contents were all moved, removed afterwards (deepest first).
@@ -271,7 +341,9 @@ pub(super) fn run_items(
             match b.stat(&it.to).map_err(msg)? {
                 Some(e) if e.dir => {}
                 Some(_) => {
-                    report.skipped.push((name, "A file with that name is already there.".into()));
+                    report
+                        .skipped
+                        .push((name, "A file with that name is already there.".into()));
                     failed.push(it.from.clone());
                     continue;
                 }
@@ -295,7 +367,10 @@ pub(super) fn run_items(
                     if e.size == it.size {
                         report.already += 1;
                     } else {
-                        report.skipped.push((name, "A different file with this name is already there.".into()));
+                        report.skipped.push((
+                            name,
+                            "A different file with this name is already there.".into(),
+                        ));
                     }
                     // Its original stays, so the folders holding it aren't emptied.
                     emptied.retain(|d| !it.from.starts_with(&format!("{d}/")));
@@ -328,10 +403,17 @@ pub(super) fn run_items(
             let (w, copied) = if it.size < PIECE {
                 let (data, _) = a.read(&it.from).map_err(msg)?;
                 moved(data.len() as u64);
-                (b.write(&it.to, &data, None, !replace).map_err(conflict)?, Copied::Bytes(data))
+                (
+                    b.write(&it.to, &data, None, !replace).map_err(conflict)?,
+                    Copied::Bytes(data),
+                )
             } else {
                 let from = Spooled::of(a, &it.from, stop, &mut moved)?;
-                (b.write_from(&it.to, &from.path, None, !replace).map_err(conflict)?, Copied::File(from))
+                (
+                    b.write_from(&it.to, &from.path, None, !replace)
+                        .map_err(conflict)?,
+                    Copied::File(from),
+                )
             };
             if let Some(bk) = w.backup {
                 report.backups.push(bk);
@@ -347,7 +429,10 @@ pub(super) fn run_items(
                 );
             }
             if moving {
-                if let Some(bk) = a.remove(&it.from).map_err(|e| format!("Copied, but the original wasn't removed: {e}"))? {
+                if let Some(bk) = a
+                    .remove(&it.from)
+                    .map_err(|e| format!("Copied, but the original wasn't removed: {e}"))?
+                {
                     report.backups.push(bk);
                 }
             }
@@ -396,7 +481,12 @@ pub(super) async fn transfer(
 ) -> Result<TransferReport, String> {
     use tauri::Emitter;
     let (a, b) = (state.source(Some(&from_src))?, state.source(Some(&to_src))?);
-    let opts = Opts { moving: mode == "move", resume: resume.unwrap_or(false), verify: verify.unwrap_or(false), replace: mode == "replace" };
+    let opts = Opts {
+        moving: mode == "move",
+        resume: resume.unwrap_or(false),
+        verify: verify.unwrap_or(false),
+        replace: mode == "replace",
+    };
     let stop = Arc::new(std::sync::atomic::AtomicBool::new(false));
     state.jobs.lock().unwrap().insert(job, stop.clone());
     let same = from_src == to_src;
@@ -425,26 +515,63 @@ pub(super) struct Comparison {
     same: u32,
 }
 
-pub(super) fn compare_dirs(a: &Device, a_dir: &str, b: &Device, b_dir: &str, rel: &str, hidden: bool, out: &mut Comparison) -> Result<(), String> {
+pub(super) fn compare_dirs(
+    a: &Device,
+    a_dir: &str,
+    b: &Device,
+    b_dir: &str,
+    rel: &str,
+    hidden: bool,
+    out: &mut Comparison,
+) -> Result<(), String> {
     let shown = |e: &device::Entry| hidden || !e.is_hidden();
-    let mine: Vec<_> = a.listdir(a_dir).map_err(msg)?.into_iter().filter(shown).collect();
-    let theirs: HashMap<String, device::Entry> = b.listdir(b_dir).map_err(msg)?.into_iter().filter(shown).map(|e| (e.name.clone(), e)).collect();
-    let r = |name: &str| if rel.is_empty() { name.to_string() } else { format!("{rel}/{name}") };
+    let mine: Vec<_> = a
+        .listdir(a_dir)
+        .map_err(msg)?
+        .into_iter()
+        .filter(shown)
+        .collect();
+    let theirs: HashMap<String, device::Entry> = b
+        .listdir(b_dir)
+        .map_err(msg)?
+        .into_iter()
+        .filter(shown)
+        .map(|e| (e.name.clone(), e))
+        .collect();
+    let r = |name: &str| {
+        if rel.is_empty() {
+            name.to_string()
+        } else {
+            format!("{rel}/{name}")
+        }
+    };
     for e in &mine {
         match theirs.get(&e.name) {
             None => walk(a, &e.path, b_dir, &mut out.missing)?,
-            Some(t) if t.dir && e.dir => compare_dirs(a, &e.path, b, &t.path, &r(&e.name), hidden, out)?,
+            Some(t) if t.dir && e.dir => {
+                compare_dirs(a, &e.path, b, &t.path, &r(&e.name), hidden, out)?
+            }
             Some(t) if !t.dir && !e.dir && t.size == e.size => out.same += 1,
             Some(t) => {
                 if !t.dir && !e.dir {
-                    out.changed.push(Item { from: e.path.clone(), to: t.path.clone(), dir: false, size: e.size, replace: true });
+                    out.changed.push(Item {
+                        from: e.path.clone(),
+                        to: t.path.clone(),
+                        dir: false,
+                        size: e.size,
+                        replace: true,
+                    });
                 }
                 out.differ.push(r(&e.name));
             }
         }
     }
     let names: std::collections::HashSet<&str> = mine.iter().map(|e| e.name.as_str()).collect();
-    let mut extra: Vec<_> = theirs.keys().filter(|n| !names.contains(n.as_str())).map(|n| r(n)).collect();
+    let mut extra: Vec<_> = theirs
+        .keys()
+        .filter(|n| !names.contains(n.as_str()))
+        .map(|n| r(n))
+        .collect();
     extra.sort();
     out.extra.extend(extra);
     Ok(())
@@ -474,12 +601,20 @@ pub(super) struct Marks {
 }
 
 /// Whether two files of the same size hold the same bytes, read in parts.
-fn same_bytes(a: &Device, a_path: &str, b: &Device, b_path: &str, size: u64) -> Result<bool, String> {
+fn same_bytes(
+    a: &Device,
+    a_path: &str,
+    b: &Device,
+    b_path: &str,
+    size: u64,
+) -> Result<bool, String> {
     const PART: u64 = 4 << 20;
     let mut at = 0;
     while at < size {
         let len = PART.min(size - at);
-        if a.read_range(a_path, at, len).map_err(msg)? != b.read_range(b_path, at, len).map_err(msg)? {
+        if a.read_range(a_path, at, len).map_err(msg)?
+            != b.read_range(b_path, at, len).map_err(msg)?
+        {
             return Ok(false);
         }
         at += len;
@@ -487,10 +622,28 @@ fn same_bytes(a: &Device, a_path: &str, b: &Device, b_path: &str, size: u64) -> 
     Ok(true)
 }
 
-pub(super) fn mark_dirs(a: &Device, a_dir: &str, b: &Device, b_dir: &str, hidden: bool, content: bool) -> Result<Marks, String> {
+pub(super) fn mark_dirs(
+    a: &Device,
+    a_dir: &str,
+    b: &Device,
+    b_dir: &str,
+    hidden: bool,
+    content: bool,
+) -> Result<Marks, String> {
     let shown = |e: &device::Entry| hidden || !e.is_hidden();
-    let mine: Vec<_> = a.listdir(a_dir).map_err(msg)?.into_iter().filter(shown).collect();
-    let theirs: HashMap<String, device::Entry> = b.listdir(b_dir).map_err(msg)?.into_iter().filter(shown).map(|e| (e.name.clone(), e)).collect();
+    let mine: Vec<_> = a
+        .listdir(a_dir)
+        .map_err(msg)?
+        .into_iter()
+        .filter(shown)
+        .collect();
+    let theirs: HashMap<String, device::Entry> = b
+        .listdir(b_dir)
+        .map_err(msg)?
+        .into_iter()
+        .filter(shown)
+        .map(|e| (e.name.clone(), e))
+        .collect();
     let mut m = Marks::default();
     for e in &mine {
         let Some(t) = theirs.get(&e.name) else {
@@ -544,7 +697,8 @@ pub(super) async fn compare_marks(
 }
 
 pub(super) fn refuse_nested(same: bool, from_dir: &str, to_dir: &str) -> Result<(), String> {
-    let inside = |x: &str, y: &str| x == y || x.starts_with(&format!("{}/", y.trim_end_matches('/')));
+    let inside =
+        |x: &str, y: &str| x == y || x.starts_with(&format!("{}/", y.trim_end_matches('/')));
     if same && (inside(from_dir, to_dir) || inside(to_dir, from_dir)) {
         return Err("Pick two separate folders: one is inside the other.".into());
     }
@@ -614,7 +768,16 @@ pub(super) fn run_sync(
     if mode != SyncMode::Copy {
         items.append(&mut c.changed);
     }
-    let mut report = run_items(a, b, job, &items, opts, stop, emit, TransferReport::default())?;
+    let mut report = run_items(
+        a,
+        b,
+        job,
+        &items,
+        opts,
+        stop,
+        emit,
+        TransferReport::default(),
+    )?;
     if mode == SyncMode::Mirror && !report.cancelled {
         for rel in remove.iter().filter(|r| c.extra.contains(r)) {
             if stop.load(Ordering::Relaxed) {
@@ -623,7 +786,9 @@ pub(super) fn run_sync(
             }
             match crate::files::remove_all(b, &device::join(to_dir, rel)) {
                 Ok(_) => report.removed += 1,
-                Err(e) => report.skipped.push((rel.clone(), format!("Not removed: {e}"))),
+                Err(e) => report
+                    .skipped
+                    .push((rel.clone(), format!("Not removed: {e}"))),
             }
         }
     }
@@ -661,10 +826,25 @@ pub(super) async fn sync(
     let stop = Arc::new(std::sync::atomic::AtomicBool::new(false));
     state.jobs.lock().unwrap().insert(job, stop.clone());
     let r = blocking(move || {
-        let opts = Opts { verify: verify.unwrap_or(false), ..Opts::default() };
-        run_sync(&a, &b, &from_dir, &to_dir, hidden, mode, &remove.unwrap_or_default(), job, opts, &stop, |p| {
-            let _ = app.emit("transfer", p);
-        })
+        let opts = Opts {
+            verify: verify.unwrap_or(false),
+            ..Opts::default()
+        };
+        run_sync(
+            &a,
+            &b,
+            &from_dir,
+            &to_dir,
+            hidden,
+            mode,
+            &remove.unwrap_or_default(),
+            job,
+            opts,
+            &stop,
+            |p| {
+                let _ = app.emit("transfer", p);
+            },
+        )
     })
     .await;
     state.jobs.lock().unwrap().remove(&job);
@@ -741,9 +921,23 @@ mod tests {
         let stop = std::sync::atomic::AtomicBool::new(false);
         let mac = crate::Device::new(Box::new(crate::local::Local));
         let other = crate::Device::new(Box::new(Other));
-        let opts = super::Opts { verify: true, ..Default::default() };
+        let opts = super::Opts {
+            verify: true,
+            ..Default::default()
+        };
         // From the other device (through a temporary file) to this computer, and back as a move.
-        let r = super::run_transfer(&other, &mac, false, 1, &[s(&src.join("big.bin"))], &s(&dst), opts, &stop, |_| {}).unwrap();
+        let r = super::run_transfer(
+            &other,
+            &mac,
+            false,
+            1,
+            &[s(&src.join("big.bin"))],
+            &s(&dst),
+            opts,
+            &stop,
+            |_| {},
+        )
+        .unwrap();
         assert_eq!((r.copied, r.skipped.len()), (1, 0), "{:?}", r.skipped);
         assert!(fs::read(dst.join("big.bin")).unwrap() == big);
         fs::create_dir(root.join("back")).unwrap();
@@ -754,14 +948,25 @@ mod tests {
             1,
             &[s(&dst.join("big.bin"))],
             &s(&root.join("back")),
-            super::Opts { moving: true, ..opts },
+            super::Opts {
+                moving: true,
+                ..opts
+            },
             &stop,
             |_| {},
         )
         .unwrap();
-        assert_eq!((r.copied, r.skipped.len(), r.backups.len()), (1, 0, 1), "{:?}", r.skipped);
+        assert_eq!(
+            (r.copied, r.skipped.len(), r.backups.len()),
+            (1, 0, 1),
+            "{:?}",
+            r.skipped
+        );
         assert!(fs::read(root.join("back/big.bin")).unwrap() == big);
-        assert!(fs::read(&r.backups[0]).unwrap() == big, "the moved original was backed up whole");
+        assert!(
+            fs::read(&r.backups[0]).unwrap() == big,
+            "the moved original was backed up whole"
+        );
         assert!(!dst.join("big.bin").exists());
         // Replacing a big file backs the old one up through a file too.
         let r = super::run_transfer(
@@ -771,7 +976,10 @@ mod tests {
             1,
             &[s(&src.join("big.bin"))],
             &s(&root.join("back")),
-            super::Opts { replace: true, ..opts },
+            super::Opts {
+                replace: true,
+                ..opts
+            },
             &stop,
             |_| {},
         )
@@ -784,7 +992,11 @@ mod tests {
         let left: Vec<_> = fs::read_dir(std::env::temp_dir())
             .unwrap()
             .flatten()
-            .filter(|e| e.file_name().to_string_lossy().starts_with(&format!("ferry-files-copy-{}-", std::process::id())))
+            .filter(|e| {
+                e.file_name()
+                    .to_string_lossy()
+                    .starts_with(&format!("ferry-files-copy-{}-", std::process::id()))
+            })
             .collect();
         assert!(left.is_empty(), "temporary copies are deleted");
         fs::remove_dir_all(&root).unwrap();
@@ -811,7 +1023,12 @@ mod tests {
             1,
             &paths,
             &s(&dst),
-            super::Opts { moving: false, resume: false, verify: true, replace: false },
+            super::Opts {
+                moving: false,
+                resume: false,
+                verify: true,
+                replace: false,
+            },
             &stop,
             |_| {},
         )
@@ -820,12 +1037,30 @@ mod tests {
         assert_eq!(r.skipped.len(), 1, "the existing a.txt is skipped");
         assert_eq!(fs::read(dst.join("book/a.txt")).unwrap(), b"old");
         assert_eq!(fs::read(dst.join("book/inner/b.txt")).unwrap(), b"bb");
-        assert!(r.made.is_empty(), "book was there before: merged into, not made");
+        assert!(
+            r.made.is_empty(),
+            "book was there before: merged into, not made"
+        );
         // A copy into a fresh folder makes book there; undoing it removes all of it.
         fs::create_dir(root.join("copied")).unwrap();
-        let r = super::run_transfer(&mac, &mac, true, 1, &paths, &s(&root.join("copied")), super::Opts::default(), &stop, |_| {}).unwrap();
+        let r = super::run_transfer(
+            &mac,
+            &mac,
+            true,
+            1,
+            &paths,
+            &s(&root.join("copied")),
+            super::Opts::default(),
+            &stop,
+            |_| {},
+        )
+        .unwrap();
         assert_eq!(r.made, vec![s(&root.join("copied/book"))]);
-        assert_eq!(crate::files::remove_all(&mac, &r.made[0]).unwrap(), 2, "a.txt and b.txt backed up");
+        assert_eq!(
+            crate::files::remove_all(&mac, &r.made[0]).unwrap(),
+            2,
+            "a.txt and b.txt backed up"
+        );
         assert!(!root.join("copied/book").exists());
         // Resuming: b.txt is there with the same size (done); a.txt differs (skipped, kept).
         let r = super::run_transfer(
@@ -835,7 +1070,12 @@ mod tests {
             1,
             &paths,
             &s(&dst),
-            super::Opts { moving: false, resume: true, verify: true, replace: false },
+            super::Opts {
+                moving: false,
+                resume: true,
+                verify: true,
+                replace: false,
+            },
             &stop,
             |_| {},
         )
@@ -851,7 +1091,12 @@ mod tests {
             1,
             &paths,
             &s(&src.join("book/inner")),
-            super::Opts { moving: false, resume: false, verify: true, replace: false },
+            super::Opts {
+                moving: false,
+                resume: false,
+                verify: true,
+                replace: false,
+            },
             &stop,
             |_| {},
         )
@@ -866,15 +1111,26 @@ mod tests {
             1,
             &paths,
             &s(&root.join("moved")),
-            super::Opts { moving: true, resume: false, verify: true, replace: false },
+            super::Opts {
+                moving: true,
+                resume: false,
+                verify: true,
+                replace: false,
+            },
             &stop,
             |_| {},
         )
         .unwrap();
-        assert_eq!((r.moved, r.copied, r.skipped.len(), r.backups.len()), (1, 0, 0, 0));
+        assert_eq!(
+            (r.moved, r.copied, r.skipped.len(), r.backups.len()),
+            (1, 0, 0, 0)
+        );
         assert_eq!(r.made, vec![s(&root.join("moved/book"))]);
         assert!(!src.join("book").exists());
-        assert_eq!(fs::read(root.join("moved/book/inner/b.txt")).unwrap(), b"bb");
+        assert_eq!(
+            fs::read(root.join("moved/book/inner/b.txt")).unwrap(),
+            b"bb"
+        );
         // Into a folder that has one by that name: merged file by file (a.txt is there, skipped).
         fs::create_dir_all(root.join("merge/book")).unwrap();
         fs::write(root.join("merge/book/a.txt"), b"there").unwrap();
@@ -885,14 +1141,21 @@ mod tests {
             1,
             &[s(&root.join("moved/book"))],
             &s(&root.join("merge")),
-            super::Opts { moving: true, ..Default::default() },
+            super::Opts {
+                moving: true,
+                ..Default::default()
+            },
             &stop,
             |_| {},
         )
         .unwrap();
         assert_eq!((r.moved, r.copied, r.skipped.len()), (0, 1, 1));
         assert_eq!(fs::read(root.join("merge/book/a.txt")).unwrap(), b"there");
-        assert_eq!(fs::read(root.join("moved/book/a.txt")).unwrap(), b"a", "the skipped original stays");
+        assert_eq!(
+            fs::read(root.join("moved/book/a.txt")).unwrap(),
+            b"a",
+            "the skipped original stays"
+        );
         for b in r.backups {
             fs::remove_file(b).unwrap();
         }
@@ -905,7 +1168,10 @@ mod tests {
             1,
             &[s(&dst.join("book"))],
             &s(&root.join("moved")),
-            super::Opts { moving: true, ..Default::default() },
+            super::Opts {
+                moving: true,
+                ..Default::default()
+            },
             &stop,
             |_| {},
         )
@@ -933,27 +1199,78 @@ mod tests {
         let s = |p: &std::path::Path| crate::platform::app_path(p);
         let mut c = super::Comparison::default();
         super::compare_dirs(&mac, &s(&a), &mac, &s(&b), "", false, &mut c).unwrap();
-        let mut missing: Vec<_> = c.missing.iter().map(|i| i.to.strip_prefix(&s(&b)).unwrap().to_string()).collect();
+        let mut missing: Vec<_> = c
+            .missing
+            .iter()
+            .map(|i| i.to.strip_prefix(&s(&b)).unwrap().to_string())
+            .collect();
         missing.sort();
         assert_eq!(missing, ["/x/new.txt", "/x/y", "/x/y/deep.txt"]);
-        assert_eq!((c.differ, c.extra, c.same), (vec!["big.txt".to_string()], vec!["x/only-b.txt".to_string()], 1));
+        assert_eq!(
+            (c.differ, c.extra, c.same),
+            (
+                vec!["big.txt".to_string()],
+                vec!["x/only-b.txt".to_string()],
+                1
+            )
+        );
         let stop = std::sync::atomic::AtomicBool::new(false);
         let report = super::TransferReport::default();
-        let r = super::run_items(&mac, &mac, 1, &c.missing, super::Opts::default(), &stop, |_| {}, report).unwrap();
+        let r = super::run_items(
+            &mac,
+            &mac,
+            1,
+            &c.missing,
+            super::Opts::default(),
+            &stop,
+            |_| {},
+            report,
+        )
+        .unwrap();
         assert_eq!((r.copied, r.skipped.len()), (2, 0));
         assert_eq!(fs::read(b.join("x/y/deep.txt")).unwrap(), b"dd");
-        assert_eq!(fs::read(b.join("big.txt")).unwrap(), b"s", "different files are left alone");
+        assert_eq!(
+            fs::read(b.join("big.txt")).unwrap(),
+            b"s",
+            "different files are left alone"
+        );
         assert!(!b.join(".hid").exists(), "hidden files only when asked");
         assert!(super::refuse_nested(true, &s(&a), &s(&a.join("x"))).is_err());
 
         // Update replaces the file that differs; Mirror also removes what was listed.
         fs::write(b.join("x/also-b.txt"), b"").unwrap();
-        let r = super::run_sync(&mac, &mac, &s(&a), &s(&b), false, super::SyncMode::Update, &[], 1, super::Opts::default(), &stop, |_| {}).unwrap();
+        let r = super::run_sync(
+            &mac,
+            &mac,
+            &s(&a),
+            &s(&b),
+            false,
+            super::SyncMode::Update,
+            &[],
+            1,
+            super::Opts::default(),
+            &stop,
+            |_| {},
+        )
+        .unwrap();
         assert_eq!((r.copied, r.backups.len(), r.removed), (1, 1, 0));
         assert_eq!(fs::read(b.join("big.txt")).unwrap(), b"long");
         assert!(b.join("x/only-b.txt").exists());
         let listed = ["x/only-b.txt".to_string()];
-        let r = super::run_sync(&mac, &mac, &s(&a), &s(&b), false, super::SyncMode::Mirror, &listed, 1, super::Opts::default(), &stop, |_| {}).unwrap();
+        let r = super::run_sync(
+            &mac,
+            &mac,
+            &s(&a),
+            &s(&b),
+            false,
+            super::SyncMode::Mirror,
+            &listed,
+            1,
+            super::Opts::default(),
+            &stop,
+            |_| {},
+        )
+        .unwrap();
         assert_eq!((r.copied, r.removed), (0, 1));
         assert!(!b.join("x/only-b.txt").exists());
         assert!(b.join("x/also-b.txt").exists(), "only what was listed goes");
@@ -981,7 +1298,11 @@ mod tests {
         let m = super::mark_dirs(&mac, &s(&a), &mac, &s(&b), false, false).unwrap();
         assert_eq!(m.a["only.txt"], "only");
         assert_eq!(m.b["theirs.txt"], "only");
-        assert_eq!((m.a["same.txt"], m.a["dir"], m.a["tie.txt"]), ("same", "same", "same"), "by size");
+        assert_eq!(
+            (m.a["same.txt"], m.a["dir"], m.a["tie.txt"]),
+            ("same", "same", "same"),
+            "by size"
+        );
         assert_eq!((m.a["grew.txt"], m.b["grew.txt"]), ("newer", "older"));
         let m = super::mark_dirs(&mac, &s(&a), &mac, &s(&b), false, true).unwrap();
         assert_ne!(m.a["tie.txt"], "same", "by content");
@@ -989,10 +1310,18 @@ mod tests {
 
         let stop = std::sync::atomic::AtomicBool::new(false);
         let paths = [s(&a.join("grew.txt"))];
-        let opts = super::Opts { replace: true, verify: true, ..Default::default() };
-        let r = super::run_transfer(&mac, &mac, true, 1, &paths, &s(&b), opts, &stop, |_| {}).unwrap();
+        let opts = super::Opts {
+            replace: true,
+            verify: true,
+            ..Default::default()
+        };
+        let r =
+            super::run_transfer(&mac, &mac, true, 1, &paths, &s(&b), opts, &stop, |_| {}).unwrap();
         assert_eq!((r.copied, r.backups.len(), r.made.len()), (1, 1, 0));
-        assert_eq!(std::fs::read_to_string(b.join("grew.txt")).unwrap(), "newer");
+        assert_eq!(
+            std::fs::read_to_string(b.join("grew.txt")).unwrap(),
+            "newer"
+        );
         let _ = std::fs::remove_dir_all(&root);
     }
 }

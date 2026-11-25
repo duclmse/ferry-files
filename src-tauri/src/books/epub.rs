@@ -129,7 +129,10 @@ struct Elem {
 
 impl Elem {
     fn attr(&self, k: &str) -> Option<&str> {
-        self.attrs.iter().find(|(n, _)| n == k).map(|(_, v)| v.as_str())
+        self.attrs
+            .iter()
+            .find(|(n, _)| n == k)
+            .map(|(_, v)| v.as_str())
     }
 }
 
@@ -153,14 +156,24 @@ impl Package {
     }
 
     fn cover(&self) -> Option<&Item> {
-        self.items.iter().find(|i| i.props.split_whitespace().any(|p| p == "cover-image")).or_else(|| {
-            let id = self.elems.iter().find(|e| e.local == "meta" && e.attr("name") == Some("cover"))?.attr("content")?;
-            self.item_by_id(id)
-        })
+        self.items
+            .iter()
+            .find(|i| i.props.split_whitespace().any(|p| p == "cover-image"))
+            .or_else(|| {
+                let id = self
+                    .elems
+                    .iter()
+                    .find(|e| e.local == "meta" && e.attr("name") == Some("cover"))?
+                    .attr("content")?;
+                self.item_by_id(id)
+            })
     }
 
     fn dc(&self, local: &str) -> Vec<&Elem> {
-        self.elems.iter().filter(|e| e.dc && e.local == local).collect()
+        self.elems
+            .iter()
+            .filter(|e| e.dc && e.local == local)
+            .collect()
     }
 
     /// Where new metadata children go: after the last one, so the closing tag keeps its indent.
@@ -171,7 +184,10 @@ impl Package {
     fn indent_of(&self, pos: usize) -> String {
         let line = &self.text[..pos];
         let start = line.rfind('\n').map_or(0, |k| k + 1);
-        let ws: String = line[start..].chars().take_while(|c| *c == ' ' || *c == '\t').collect();
+        let ws: String = line[start..]
+            .chars()
+            .take_while(|c| *c == ' ' || *c == '\t')
+            .collect();
         if ws.is_empty() {
             "    ".into()
         } else {
@@ -196,7 +212,14 @@ pub fn resolve(base: &str, href: &str) -> Option<String> {
     }
     if let Some(colon) = href.find(':') {
         let scheme = &href[..colon];
-        if scheme.chars().next().is_some_and(|c| c.is_ascii_alphabetic()) && scheme.chars().all(|c| c.is_ascii_alphanumeric() || matches!(c, '+' | '-' | '.')) {
+        if scheme
+            .chars()
+            .next()
+            .is_some_and(|c| c.is_ascii_alphabetic())
+            && scheme
+                .chars()
+                .all(|c| c.is_ascii_alphanumeric() || matches!(c, '+' | '-' | '.'))
+        {
             return None;
         }
     }
@@ -244,12 +267,16 @@ fn css_urls(css: &str, base: usize) -> Vec<(usize, usize)> {
     let mut out = vec![];
     let mut from = 0;
     while let Some(k) = lower[from..].find("url(").map(|k| from + k + 4) {
-        let Some(close) = css[k..].find(')').map(|c| k + c) else { break };
+        let Some(close) = css[k..].find(')').map(|c| k + c) else {
+            break;
+        };
         let inner = &css[k..close];
         let lead = inner.len() - inner.trim_start().len();
         let v = inner.trim();
         let (s, e) = match v.chars().next() {
-            Some(q @ ('"' | '\'')) if v.len() >= 2 && v.ends_with(q) => (k + lead + 1, k + lead + v.len() - 1),
+            Some(q @ ('"' | '\'')) if v.len() >= 2 && v.ends_with(q) => {
+                (k + lead + 1, k + lead + v.len() - 1)
+            }
             _ => (k + lead, k + lead + v.len()),
         };
         if s < e {
@@ -289,11 +316,19 @@ pub fn media_guess(path: &str) -> &'static str {
 
 /// Elements that can't have content in HTML. Others written as <x/> must become <x></x>
 /// before the chapter is parsed as HTML in the visual editor.
-const VOID: &[&str] = &["area", "base", "br", "col", "embed", "hr", "img", "input", "link", "meta", "param", "source", "track", "wbr"];
+const VOID: &[&str] = &[
+    "area", "base", "br", "col", "embed", "hr", "img", "input", "link", "meta", "param", "source",
+    "track", "wbr",
+];
 
 /// Non-overlapping matches of `needle` in `hay`, as byte ranges. A space in `needle` matches
 /// any run of white space (a line break and indent in the XHTML shows as one space).
-pub fn find_all(hay: &str, needle: &str, match_case: bool, whole_word: bool) -> Vec<(usize, usize)> {
+pub fn find_all(
+    hay: &str,
+    needle: &str,
+    match_case: bool,
+    whole_word: bool,
+) -> Vec<(usize, usize)> {
     let h: Vec<(usize, char)> = hay.char_indices().collect();
     let mut n: Vec<char> = vec![];
     for c in needle.trim().chars() {
@@ -359,24 +394,39 @@ pub(crate) fn snippet(hay: &str, (s, e): (usize, usize)) -> Snippet {
     if !a.is_empty() && after.starts_with(char::is_whitespace) {
         a.insert(0, ' ');
     }
-    Snippet { before: b, text: hay[s..e].to_string(), after: a }
+    Snippet {
+        before: b,
+        text: hay[s..e].to_string(),
+        after: a,
+    }
 }
 
 impl Book {
     pub fn open(data: &[u8], source: String, version: String) -> Result<Book> {
-        let mut zip = zip::ZipArchive::new(Cursor::new(data)).map_err(|e| format!("Not a readable EPUB (zip): {e}"))?;
+        let mut zip = zip::ZipArchive::new(Cursor::new(data))
+            .map_err(|e| format!("Not a readable EPUB (zip): {e}"))?;
         let mut files = Vec::with_capacity(zip.len());
         for i in 0..zip.len() {
-            let mut f = zip.by_index(i).map_err(|e| format!("Can't read the EPUB: {e}"))?;
+            let mut f = zip
+                .by_index(i)
+                .map_err(|e| format!("Can't read the EPUB: {e}"))?;
             if f.is_dir() {
                 continue;
             }
             let name = f.name().to_string();
             let mut buf = Vec::with_capacity(f.size() as usize);
-            f.read_to_end(&mut buf).map_err(|e| format!("Can't read {name} in the EPUB: {e}"))?;
+            f.read_to_end(&mut buf)
+                .map_err(|e| format!("Can't read {name} in the EPUB: {e}"))?;
             files.push((name, buf));
         }
-        let mut book = Book { files, opf: String::new(), source, version, dirty: false, rev: 0 };
+        let mut book = Book {
+            files,
+            opf: String::new(),
+            source,
+            version,
+            dirty: false,
+            rev: 0,
+        };
         book.opf = book.find_opf()?;
         if book.file(&book.opf).is_none() {
             return Err(format!("The package document {} is missing.", book.opf));
@@ -386,7 +436,9 @@ impl Book {
     }
 
     fn find_opf(&self) -> Result<String> {
-        let container = self.text("META-INF/container.xml").map_err(|_| "Not an EPUB: META-INF/container.xml is missing.".to_string())?;
+        let container = self
+            .text("META-INF/container.xml")
+            .map_err(|_| "Not an EPUB: META-INF/container.xml is missing.".to_string())?;
         let toks = xml::tokenize(&container).map_err(|e| format!("META-INF/container.xml: {e}"))?;
         Ok(toks
             .iter()
@@ -399,7 +451,8 @@ impl Book {
     /// A book of only what lists its chapters: container.xml, the package document and the
     /// table of contents, each asked of `get`. For `chapters` and `meta`; nothing else is read.
     pub fn contents_only(get: &mut dyn FnMut(&str) -> Result<Vec<u8>>) -> Result<Book> {
-        let container = get("META-INF/container.xml").map_err(|_| "Not an EPUB: META-INF/container.xml is missing.".to_string())?;
+        let container = get("META-INF/container.xml")
+            .map_err(|_| "Not an EPUB: META-INF/container.xml is missing.".to_string())?;
         let mut book = Book {
             files: vec![("META-INF/container.xml".into(), container)],
             opf: String::new(),
@@ -409,13 +462,15 @@ impl Book {
             rev: 0,
         };
         book.opf = book.find_opf()?;
-        let opf = get(&book.opf).map_err(|_| format!("The package document {} is missing.", book.opf))?;
+        let opf =
+            get(&book.opf).map_err(|_| format!("The package document {} is missing.", book.opf))?;
         book.files.push((book.opf.clone(), opf));
         let p = book.package()?;
-        let toc = p
-            .items
-            .iter()
-            .filter(|i| i.props.split_whitespace().any(|x| x == "nav") || i.media == "application/x-dtbncx+xml" || p.toc_id.as_deref() == Some(i.id.as_str()));
+        let toc = p.items.iter().filter(|i| {
+            i.props.split_whitespace().any(|x| x == "nav")
+                || i.media == "application/x-dtbncx+xml"
+                || p.toc_id.as_deref() == Some(i.id.as_str())
+        });
         for path in toc.map(|i| i.path.clone()).collect::<Vec<_>>() {
             if let Ok(data) = get(&path) {
                 book.files.push((path, data));
@@ -440,16 +495,28 @@ impl Book {
 
     /// A chapter as `visual_html` makes it, from its own bytes alone.
     pub fn chapter_alone(path: &str, data: Vec<u8>, base: &str) -> Result<String> {
-        let book = Book { files: vec![(path.to_string(), data)], opf: String::new(), source: String::new(), version: String::new(), dirty: false, rev: 0 };
+        let book = Book {
+            files: vec![(path.to_string(), data)],
+            opf: String::new(),
+            source: String::new(),
+            version: String::new(),
+            dirty: false,
+            rev: 0,
+        };
         book.visual_html(path, base)
     }
 
     pub fn file(&self, path: &str) -> Option<&[u8]> {
-        self.files.iter().find(|(n, _)| n == path).map(|(_, d)| d.as_slice())
+        self.files
+            .iter()
+            .find(|(n, _)| n == path)
+            .map(|(_, d)| d.as_slice())
     }
 
     pub fn text(&self, path: &str) -> Result<String> {
-        let data = self.file(path).ok_or_else(|| format!("{path} isn't in the book."))?;
+        let data = self
+            .file(path)
+            .ok_or_else(|| format!("{path} isn't in the book."))?;
         let data = data.strip_prefix(b"\xEF\xBB\xBF").unwrap_or(data);
         String::from_utf8(data.to_vec()).map_err(|_| format!("{path} isn't UTF-8 text."))
     }
@@ -464,7 +531,15 @@ impl Book {
     }
 
     pub fn media_type(&self, path: &str) -> String {
-        self.package().ok().and_then(|p| p.items.iter().find(|i| i.path == path).map(|i| i.media.clone())).unwrap_or_else(|| media_guess(path).to_string())
+        self.package()
+            .ok()
+            .and_then(|p| {
+                p.items
+                    .iter()
+                    .find(|i| i.path == path)
+                    .map(|i| i.media.clone())
+            })
+            .unwrap_or_else(|| media_guess(path).to_string())
     }
 
     fn package(&self) -> Result<Package> {
@@ -499,24 +574,32 @@ impl Book {
                     p.unique_id = t.attr("unique-identifier").unwrap_or("").to_string();
                 }
                 (Kind::Open, "metadata") => {
-                    let close = xml::matching_close(&toks, i).ok_or(format!("{}: <metadata> is never closed.", self.opf))?;
+                    let close = xml::matching_close(&toks, i)
+                        .ok_or(format!("{}: <metadata> is never closed.", self.opf))?;
                     p.metadata_close = toks[close].start;
                     // Direct children only.
                     let mut k = i + 1;
                     while k < close {
                         let c = &toks[k];
                         if c.is_start() {
-                            let end = xml::matching_close(&toks, k).ok_or(format!("{}: <{}> is never closed.", self.opf, c.name))?;
+                            let end = xml::matching_close(&toks, k)
+                                .ok_or(format!("{}: <{}> is never closed.", self.opf, c.name))?;
                             p.elems.push(Elem {
                                 name: c.name.clone(),
                                 local: c.local().to_string(),
                                 dc: false, // set below, once the dc prefix is known
                                 start: c.start,
                                 end: toks[end].end,
-                                inner: if c.kind == Kind::Empty { (c.end, c.end) } else { (c.end, toks[end].start) },
+                                inner: if c.kind == Kind::Empty {
+                                    (c.end, c.end)
+                                } else {
+                                    (c.end, toks[end].start)
+                                },
                                 empty: c.kind == Kind::Empty,
                                 attrs: c.attrs.clone(),
-                                text: xml::inner_text(&text, &toks[k + 1..end.max(k + 1)]).trim().to_string(),
+                                text: xml::inner_text(&text, &toks[k + 1..end.max(k + 1)])
+                                    .trim()
+                                    .to_string(),
                             });
                             k = end + 1;
                         } else {
@@ -556,7 +639,10 @@ impl Book {
             i += 1;
         }
         if p.metadata_close == 0 || p.manifest_close == 0 {
-            return Err(format!("{}: no <metadata> or <manifest> section.", self.opf));
+            return Err(format!(
+                "{}: no <metadata> or <manifest> section.",
+                self.opf
+            ));
         }
         let prefix = p.dc_prefix.clone();
         for e in &mut p.elems {

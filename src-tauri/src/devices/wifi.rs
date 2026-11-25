@@ -21,9 +21,19 @@ pub(crate) struct Service {
 /// Checks an address typed by hand: "host:port", nothing adb would take as an option.
 pub(crate) fn check_address(a: &str) -> Result<String, String> {
     let a = a.trim();
-    let bad = || Err(format!("“{a}” isn't an address. Type it as shown on the phone, like 192.168.1.20:37000."));
-    let Some((host, port)) = a.rsplit_once(':') else { return bad() };
-    let host_ok = !host.is_empty() && !host.starts_with('-') && host.chars().all(|c| c.is_ascii_alphanumeric() || ".-_[]:".contains(c));
+    let bad = || {
+        Err(format!(
+            "“{a}” isn't an address. Type it as shown on the phone, like 192.168.1.20:37000."
+        ))
+    };
+    let Some((host, port)) = a.rsplit_once(':') else {
+        return bad();
+    };
+    let host_ok = !host.is_empty()
+        && !host.starts_with('-')
+        && host
+            .chars()
+            .all(|c| c.is_ascii_alphanumeric() || ".-_[]:".contains(c));
     if !host_ok || port.parse::<u16>().map_or(true, |p| p == 0) {
         return bad();
     }
@@ -34,7 +44,10 @@ pub(crate) fn check_address(a: &str) -> Result<String, String> {
 /// `adb connect` waiting for a long time). Returns stdout and stderr together.
 fn run(args: &[&str], limit: Duration) -> Result<String, String> {
     let Some(adb) = adb::adb_path() else {
-        return Err(format!("adb isn't installed. {}", crate::platform::ADB_INSTALL));
+        return Err(format!(
+            "adb isn't installed. {}",
+            crate::platform::ADB_INSTALL
+        ));
     };
     let mut child = crate::platform::command(adb)
         .args(args)
@@ -55,8 +68,14 @@ fn run(args: &[&str], limit: Duration) -> Result<String, String> {
             }
         }
     }
-    let out = child.wait_with_output().map_err(|e| format!("Couldn't run adb: {e}"))?;
-    Ok(format!("{}{}", String::from_utf8_lossy(&out.stdout), String::from_utf8_lossy(&out.stderr)))
+    let out = child
+        .wait_with_output()
+        .map_err(|e| format!("Couldn't run adb: {e}"))?;
+    Ok(format!(
+        "{}{}",
+        String::from_utf8_lossy(&out.stdout),
+        String::from_utf8_lossy(&out.stderr)
+    ))
 }
 
 /// What `adb pair` said: Ok when paired, else its reason in plain words.
@@ -64,7 +83,11 @@ pub(crate) fn pair_result(out: &str) -> Result<(), String> {
     if out.contains("Successfully paired") {
         return Ok(());
     }
-    let why = out.lines().map(str::trim).find(|l| !l.is_empty()).unwrap_or("adb said nothing.");
+    let why = out
+        .lines()
+        .map(str::trim)
+        .find(|l| !l.is_empty())
+        .unwrap_or("adb said nothing.");
     if why.contains("Wrong password") || why.contains("wrong password") {
         return Err(
             "Pairing failed: the code was wrong, or it expired. Open “Pair device with pairing code” on the phone again and use the new code and port.".into(),
@@ -77,16 +100,24 @@ pub(crate) fn pair_result(out: &str) -> Result<(), String> {
 /// failure with exit status 0, so the words decide.
 pub(crate) fn connect_result(out: &str) -> Result<(), String> {
     let text = out.trim();
-    if text.lines().any(|l| l.starts_with("connected to") || l.starts_with("already connected to")) {
+    if text
+        .lines()
+        .any(|l| l.starts_with("connected to") || l.starts_with("already connected to"))
+    {
         return Ok(());
     }
     if text.contains("authenticate") || text.contains("unauthorized") {
-        return Err("The phone hasn't allowed this computer. Pair it first with a pairing code.".into());
+        return Err(
+            "The phone hasn't allowed this computer. Pair it first with a pairing code.".into(),
+        );
     }
     if text.contains("refused") {
         return Err("The phone refused the connection. The port changes each time Wireless debugging is turned on: check the address on the phone.".into());
     }
-    let why = text.lines().find(|l| !l.trim().is_empty()).unwrap_or("adb said nothing.");
+    let why = text
+        .lines()
+        .find(|l| !l.trim().is_empty())
+        .unwrap_or("adb said nothing.");
     Err(format!("Couldn't connect: {why}"))
 }
 
@@ -103,7 +134,11 @@ pub(crate) fn parse_services(out: &str) -> Vec<Service> {
             } else {
                 return None;
             };
-            check_address(address).ok().map(|address| Service { name: name.to_string(), kind, address })
+            check_address(address).ok().map(|address| Service {
+                name: name.to_string(),
+                kind,
+                address,
+            })
         })
         .collect()
 }
@@ -134,7 +169,12 @@ pub(crate) async fn adb_connect(address: String) -> Result<String, String> {
 /// the network doesn't pass mDNS): addresses can still be typed.
 #[tauri::command(rename_all = "snake_case")]
 pub(crate) async fn adb_discover() -> Result<Vec<Service>, String> {
-    blocking(|| Ok(run(&["mdns", "services"], Duration::from_secs(5)).map(|o| parse_services(&o)).unwrap_or_default())).await
+    blocking(|| {
+        Ok(run(&["mdns", "services"], Duration::from_secs(5))
+            .map(|o| parse_services(&o))
+            .unwrap_or_default())
+    })
+    .await
 }
 
 #[cfg(test)]
@@ -143,7 +183,10 @@ mod tests {
 
     #[test]
     fn addresses_are_checked() {
-        assert_eq!(check_address(" 192.168.1.20:37000 ").unwrap(), "192.168.1.20:37000");
+        assert_eq!(
+            check_address(" 192.168.1.20:37000 ").unwrap(),
+            "192.168.1.20:37000"
+        );
         assert!(check_address("pixel.local:5555").is_ok());
         assert!(check_address("192.168.1.20").is_err());
         assert!(check_address("192.168.1.20:0").is_err());
@@ -154,12 +197,26 @@ mod tests {
 
     #[test]
     fn adb_answers_are_read() {
-        assert!(pair_result("Successfully paired to 192.168.1.20:41235 [guid=adb-R5CT-AbCd]\n").is_ok());
-        assert!(pair_result("Failed: Wrong password or connection was dropped.\n").unwrap_err().contains("code was wrong"));
+        assert!(
+            pair_result("Successfully paired to 192.168.1.20:41235 [guid=adb-R5CT-AbCd]\n").is_ok()
+        );
+        assert!(
+            pair_result("Failed: Wrong password or connection was dropped.\n")
+                .unwrap_err()
+                .contains("code was wrong")
+        );
         assert!(connect_result("connected to 192.168.1.20:37000\n").is_ok());
         assert!(connect_result("already connected to 192.168.1.20:37000\n").is_ok());
-        assert!(connect_result("failed to connect to '192.168.1.20:37000': Connection refused\n").unwrap_err().contains("refused"));
-        assert!(connect_result("failed to authenticate to 192.168.1.20:37000\n").unwrap_err().contains("Pair it first"));
+        assert!(
+            connect_result("failed to connect to '192.168.1.20:37000': Connection refused\n")
+                .unwrap_err()
+                .contains("refused")
+        );
+        assert!(
+            connect_result("failed to authenticate to 192.168.1.20:37000\n")
+                .unwrap_err()
+                .contains("Pair it first")
+        );
     }
 
     #[test]
@@ -170,7 +227,14 @@ mod tests {
             other\t_something._tcp\t192.168.1.30:80\n";
         let s = parse_services(out);
         assert_eq!(s.len(), 2);
-        assert_eq!(s[0], Service { name: "adb-R5CT10ABCDE-AbCdEf".into(), kind: "connect", address: "192.168.1.20:37000".into() });
+        assert_eq!(
+            s[0],
+            Service {
+                name: "adb-R5CT10ABCDE-AbCdEf".into(),
+                kind: "connect",
+                address: "192.168.1.20:37000".into()
+            }
+        );
         assert_eq!(s[1].kind, "pair");
     }
 }

@@ -7,7 +7,9 @@ use super::*;
 /// changes, with every part laid out in one line (`measuring`), before the paint.
 pub(crate) fn fold_bar(bar: NodeRef<leptos::html::Div>, levels: u32) {
     let fit = move || {
-        let Some(el) = bar.try_get_untracked().flatten() else { return };
+        let Some(el) = bar.try_get_untracked().flatten() else {
+            return;
+        };
         let classes = el.class_list();
         for k in 1..=levels {
             let _ = classes.remove_1(&format!("fold-{k}"));
@@ -20,7 +22,12 @@ pub(crate) fn fold_bar(bar: NodeRef<leptos::html::Div>, levels: u32) {
         }
         let _ = classes.remove_1("measuring");
     };
-    let watcher = StoredValue::new_local(None::<(web_sys::ResizeObserver, wasm_bindgen::closure::Closure<dyn Fn()>)>);
+    let watcher = StoredValue::new_local(
+        None::<(
+            web_sys::ResizeObserver,
+            wasm_bindgen::closure::Closure<dyn Fn()>,
+        )>,
+    );
     Effect::new(move |_| {
         let Some(node) = bar.get() else { return };
         let cb = wasm_bindgen::closure::Closure::<dyn Fn()>::new(fit);
@@ -184,17 +191,25 @@ pub(super) fn code_language(name: &str) -> Option<&'static str> {
         return Some("Dockerfile");
     }
     let x = ext(name);
-    CODE_EXTS.iter().find(|(xs, _)| xs.contains(&x.as_str())).map(|(_, l)| *l)
+    CODE_EXTS
+        .iter()
+        .find(|(xs, _)| xs.contains(&x.as_str()))
+        .map(|(_, l)| *l)
 }
 
 /// Whether a file of this name is text the preview and editor can show.
 pub(super) fn is_text_name(name: &str) -> bool {
     let lower = name.to_lowercase();
-    TEXT_EXTS.contains(&ext(name).as_str()) || code_language(name).is_some() || TEXT_NAMES.contains(&lower.as_str()) || lower.starts_with(".env.")
+    TEXT_EXTS.contains(&ext(name).as_str())
+        || code_language(name).is_some()
+        || TEXT_NAMES.contains(&lower.as_str())
+        || lower.starts_with(".env.")
 }
 
 pub(super) fn ext(name: &str) -> String {
-    name.rsplit_once('.').map(|(_, e)| e.to_lowercase()).unwrap_or_default()
+    name.rsplit_once('.')
+        .map(|(_, e)| e.to_lowercase())
+        .unwrap_or_default()
 }
 
 #[derive(Clone, Copy, PartialEq)]
@@ -222,7 +237,11 @@ pub(super) fn human_size(n: u64) -> String {
     let mut v = n as f64;
     for unit in ["B", "KB", "MB", "GB"] {
         if v < 1024.0 {
-            return if unit == "B" { format!("{v:.0} B") } else { format!("{v:.1} {unit}") };
+            return if unit == "B" {
+                format!("{v:.0} B")
+            } else {
+                format!("{v:.1} {unit}")
+            };
         }
         v /= 1024.0;
     }
@@ -248,7 +267,14 @@ pub(super) fn when(mtime: i64) -> String {
         return String::new();
     }
     let d = js_sys::Date::new(&wasm_bindgen::JsValue::from_f64(mtime as f64 * 1000.0));
-    format!("{}-{:02}-{:02} {:02}:{:02}", d.get_full_year(), d.get_month() + 1, d.get_date(), d.get_hours(), d.get_minutes())
+    format!(
+        "{}-{:02}-{:02} {:02}:{:02}",
+        d.get_full_year(),
+        d.get_month() + 1,
+        d.get_date(),
+        d.get_hours(),
+        d.get_minutes()
+    )
 }
 
 pub(super) fn parent(path: &str) -> String {
@@ -286,7 +312,9 @@ pub(super) enum Media {
     Audio,
 }
 
-const IMAGE_EXTS: &[&str] = &["jpg", "jpeg", "png", "gif", "webp", "bmp", "heic", "heif", "avif", "svg"];
+const IMAGE_EXTS: &[&str] = &[
+    "jpg", "jpeg", "png", "gif", "webp", "bmp", "heic", "heif", "avif", "svg",
+];
 const VIDEO_EXTS: &[&str] = &["mp4", "m4v", "mov", "webm", "3gp"];
 const AUDIO_EXTS: &[&str] = &["mp3", "m4a", "aac", "wav", "flac", "ogg", "oga", "opus"];
 /// Same as the backend's whole-file limit (protocol.rs): an `<img>` asks for the whole file.
@@ -311,7 +339,12 @@ pub(super) fn media(e: &Entry) -> Option<Media> {
 /// URL of the file itself, read in parts as the player asks for them, without copying it first.
 pub(super) fn stream_url(src: Src, e: &Entry) -> String {
     let p = uri_part(&e.path);
-    crate::os::served(&format!("file?src={}&p={p}&s={}&m={}", src.key(), e.size, e.mtime))
+    crate::os::served(&format!(
+        "file?src={}&p={p}&s={}&m={}",
+        src.key(),
+        e.size,
+        e.mtime
+    ))
 }
 
 /// Photos at least this big are shrunk by the backend for the preview (see `fit_url`).
@@ -320,9 +353,17 @@ const FIT_FROM: u64 = 2 * 1024 * 1024;
 /// URL of a big photo shrunk to about what the preview can show, and upright: its full-size
 /// pixels would take far more memory than it needs. `None` for other files.
 pub(super) fn fit_url(src: Src, e: &Entry) -> Option<String> {
-    (e.size >= FIT_FROM && e.size <= THUMB_MAX && ["jpg", "jpeg", "png", "webp"].contains(&ext(&e.name).as_str())).then(|| {
+    (e.size >= FIT_FROM
+        && e.size <= THUMB_MAX
+        && ["jpg", "jpeg", "png", "webp"].contains(&ext(&e.name).as_str()))
+    .then(|| {
         let p = uri_part(&e.path);
-        crate::os::served(&format!("fit?src={}&p={p}&s={}&m={}", src.key(), e.size, e.mtime))
+        crate::os::served(&format!(
+            "fit?src={}&p={p}&s={}&m={}",
+            src.key(),
+            e.size,
+            e.mtime
+        ))
     })
 }
 
@@ -330,10 +371,16 @@ pub(super) fn fit_url(src: Src, e: &Entry) -> Option<String> {
 /// On Windows, any of the computer's own files: Windows makes those (videos, PDFs and so on).
 pub(super) fn thumb_url(src: Src, e: &Entry) -> Option<String> {
     let system = src == Src::Mac && crate::os::os() == crate::os::Os::Windows;
-    (!e.dir && (system || (e.size <= THUMB_MAX && THUMB_EXTS.contains(&ext(&e.name).as_str())))).then(|| {
-        let p = uri_part(&e.path);
-        crate::os::served(&format!("thumb?src={}&p={p}&s={}&m={}", src.key(), e.size, e.mtime))
-    })
+    (!e.dir && (system || (e.size <= THUMB_MAX && THUMB_EXTS.contains(&ext(&e.name).as_str()))))
+        .then(|| {
+            let p = uri_part(&e.path);
+            crate::os::served(&format!(
+                "thumb?src={}&p={p}&s={}&m={}",
+                src.key(),
+                e.size,
+                e.mtime
+            ))
+        })
 }
 
 /// Whether `path` is `dir` or inside it.
@@ -347,7 +394,11 @@ pub(super) fn middle_down(ev: web_sys::MouseEvent) {
 
 pub(super) fn within(path: &str, dir: &str) -> bool {
     let dir = dir.trim_end_matches('/');
-    path == dir || dir.is_empty() || path.strip_prefix(dir).is_some_and(|rest| rest.starts_with('/'))
+    path == dir
+        || dir.is_empty()
+        || path
+            .strip_prefix(dir)
+            .is_some_and(|rest| rest.starts_with('/'))
 }
 
 /// Every folder from `root` down to `path`, e.g. ("/a", "/a/b/c") gives ["/a", "/a/b", "/a/b/c"].
@@ -377,9 +428,13 @@ pub(crate) fn stored(key: &str) -> Option<String> {
 /// new name already has one. Runs before anything reads them.
 pub(super) fn rename_stored_keys() {
     let Some(s) = storage() else { return };
-    let keys: Vec<String> = (0..s.length().unwrap_or(0)).filter_map(|i| s.key(i).ok().flatten()).collect();
+    let keys: Vec<String> = (0..s.length().unwrap_or(0))
+        .filter_map(|i| s.key(i).ok().flatten())
+        .collect();
     for old in keys {
-        let Some(rest) = old.strip_prefix("yomi-files.") else { continue };
+        let Some(rest) = old.strip_prefix("yomi-files.") else {
+            continue;
+        };
         let new = format!("ferry-files.{rest}");
         if let (Ok(Some(v)), Ok(None)) = (s.get_item(&old), s.get_item(&new)) {
             if s.set_item(&new, &v).is_err() {
@@ -457,8 +512,14 @@ pub(super) const SEARCH_SIZES: &[(&str, Option<u64>, Option<u64>)] = &[
     ("Over 1 GB", Some(1024 * MB), None),
 ];
 /// The search's modified filter: (label, days back; negative: older than that).
-pub(super) const SEARCH_TIMES: &[(&str, i64)] =
-    &[("Any time", 0), ("Today", 1), ("Past week", 7), ("Past month", 30), ("Past year", 365), ("Over a year ago", -365)];
+pub(super) const SEARCH_TIMES: &[(&str, i64)] = &[
+    ("Any time", 0),
+    ("Today", 1),
+    ("Past week", 7),
+    ("Past month", 30),
+    ("Past year", 365),
+    ("Over a year ago", -365),
+];
 pub(super) const REGEX_KEY: &str = "ferry-files.filter-regex";
 /// Whether a pane's filter pane shows its kind, size and time choices.
 pub(super) const OPTIONS_KEY: &str = "ferry-files.search-options";
@@ -473,13 +534,18 @@ pub(super) const PREVIEW_MIN: f64 = 200.0;
 
 /// A regular expression, or why `source` isn't one.
 pub(super) fn regex(source: &str, any_case: bool) -> Result<regex::Regex, String> {
-    regex::RegexBuilder::new(source).case_insensitive(any_case).build().map_err(|e| format!("That pattern doesn't work: {}", regex_problem(&e)))
+    regex::RegexBuilder::new(source)
+        .case_insensitive(any_case)
+        .build()
+        .map_err(|e| format!("That pattern doesn't work: {}", regex_problem(&e)))
 }
 
 /// The line of a regex error that says what's wrong, without the pattern drawn above it.
 pub(super) fn regex_problem(e: &regex::Error) -> String {
     let m = e.to_string();
-    m.lines().find_map(|l| l.strip_prefix("error: ")).map_or(m.clone(), str::to_string)
+    m.lines()
+        .find_map(|l| l.strip_prefix("error: "))
+        .map_or(m.clone(), str::to_string)
 }
 
 /// Whether `name` contains `lower` (already lowercase) in any case. Most names are ASCII, and
@@ -489,7 +555,9 @@ pub(super) fn contains_any_case(name: &str, lower: &str) -> bool {
         return name.to_lowercase().contains(lower);
     }
     let (n, t) = (name.as_bytes(), lower.as_bytes());
-    t.is_empty() || n.windows(t.len()).any(|w| w.iter().zip(t).all(|(a, b)| a.to_ascii_lowercase() == *b))
+    t.is_empty()
+        || n.windows(t.len())
+            .any(|w| w.iter().zip(t).all(|(a, b)| a.to_ascii_lowercase() == *b))
 }
 
 /// A pattern with * and ? as the source of a regular expression that matches whole names.
@@ -527,19 +595,29 @@ pub(super) fn kind_label(e: &Entry) -> String {
 
 /// Whether some text on the page is selected (⌘C then copies it).
 pub(super) fn text_selected() -> bool {
-    window().get_selection().ok().flatten().is_some_and(|s| !s.is_collapsed())
+    window()
+        .get_selection()
+        .ok()
+        .flatten()
+        .is_some_and(|s| !s.is_collapsed())
 }
 
 /// When some of a text preview (or a PDF's pages) is selected, selects all of it (as far as it's
 /// loaded or drawn) and says so; ⌘A then picks text, not files.
 pub(super) fn select_all_peek() -> bool {
-    let Some(sel) = window().get_selection().ok().flatten() else { return false };
+    let Some(sel) = window().get_selection().ok().flatten() else {
+        return false;
+    };
     if sel.is_collapsed() {
         return false;
     }
     let Some(pre) = sel
         .anchor_node()
-        .and_then(|n| n.dyn_ref::<web_sys::Element>().cloned().or_else(|| n.parent_element()))
+        .and_then(|n| {
+            n.dyn_ref::<web_sys::Element>()
+                .cloned()
+                .or_else(|| n.parent_element())
+        })
         .and_then(|e| e.closest(".peek pre, .pdf-col").ok().flatten())
     else {
         return false;
@@ -562,7 +640,10 @@ pub(super) struct AutoDismiss {
 
 impl AutoDismiss {
     /// `shown` reads the notice (so every new one is seen); `close` takes it down.
-    pub(super) fn new(shown: impl Fn() -> bool + Send + Sync + 'static, close: impl Fn() + Send + Sync + 'static) -> Self {
+    pub(super) fn new(
+        shown: impl Fn() -> bool + Send + Sync + 'static,
+        close: impl Fn() + Send + Sync + 'static,
+    ) -> Self {
         let d = AutoDismiss {
             shown: Signal::derive(shown),
             close: Callback::new(move |()| close()),
@@ -642,7 +723,10 @@ pub(super) fn count(n: u64) -> String {
 mod count_tests {
     #[test]
     fn uri_parts() {
-        assert_eq!(super::uri_part("/sdcard/My Photos/é#1?.jpg"), "%2Fsdcard%2FMy%20Photos%2F%C3%A9%231%3F.jpg");
+        assert_eq!(
+            super::uri_part("/sdcard/My Photos/é#1?.jpg"),
+            "%2Fsdcard%2FMy%20Photos%2F%C3%A9%231%3F.jpg"
+        );
         assert_eq!(super::uri_part("a-b_c.d!~*'()"), "a-b_c.d!~*'()");
     }
 

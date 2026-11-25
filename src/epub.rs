@@ -92,7 +92,11 @@ fn human_size(n: u64) -> String {
     let mut v = n as f64;
     for unit in ["B", "KB", "MB", "GB"] {
         if v < 1024.0 {
-            return if unit == "B" { format!("{v:.0} B") } else { format!("{v:.1} {unit}") };
+            return if unit == "B" {
+                format!("{v:.0} B")
+            } else {
+                format!("{v:.1} {unit}")
+            };
         }
         v /= 1024.0;
     }
@@ -101,7 +105,8 @@ fn human_size(n: u64) -> String {
 
 /// Whether the open book is on the Mac.
 fn b_mac(ep: Ep) -> bool {
-    ep.book.with_untracked(|b| b.as_ref().is_some_and(|b| b.src == "mac"))
+    ep.book
+        .with_untracked(|b| b.as_ref().is_some_and(|b| b.src == "mac"))
 }
 
 impl Ep {
@@ -124,7 +129,12 @@ impl Ep {
             anchor: StoredValue::new(None),
             find_timer: StoredValue::new(None),
             replace_from: StoredValue::new(None),
-            zoom: RwSignal::new(crate::app::stored(ZOOM_KEY).and_then(|z| z.parse().ok()).unwrap_or(100).clamp(ZOOM_MIN, ZOOM_MAX)),
+            zoom: RwSignal::new(
+                crate::app::stored(ZOOM_KEY)
+                    .and_then(|z| z.parse().ok())
+                    .unwrap_or(100)
+                    .clamp(ZOOM_MIN, ZOOM_MAX),
+            ),
             status: RwSignal::new((String::new(), "")),
             busy: RwSignal::new(false),
             confirm_close: RwSignal::new(false),
@@ -164,20 +174,34 @@ impl Ep {
 
     /// Whether the open book is the one at `path` on `src`.
     pub fn holds(self, src: &str, path: &str) -> bool {
-        self.book.with(|b| b.as_ref().is_some_and(|b| b.src == src && b.path == path))
+        self.book
+            .with(|b| b.as_ref().is_some_and(|b| b.src == src && b.path == path))
     }
 
     /// Opens the book at `path` on `src` ("mac" or a device id) in pane `host`'s preview; `place`
     /// names it for sentences. Editing reads the whole book. A book already open with unsaved
     /// changes isn't replaced.
-    pub async fn open(self, src: &str, place: String, path: String, host: usize) -> Result<(), String> {
-        if self.book.with_untracked(|b| b.as_ref().is_some_and(|b| b.src == src && b.path == path)) {
+    pub async fn open(
+        self,
+        src: &str,
+        place: String,
+        path: String,
+        host: usize,
+    ) -> Result<(), String> {
+        if self
+            .book
+            .with_untracked(|b| b.as_ref().is_some_and(|b| b.src == src && b.path == path))
+        {
             self.host.set(Some(host));
             return Ok(());
         }
         if self.dirty() {
-            let name = self.book.with_untracked(|b| b.as_ref().map(|b| b.name.clone()).unwrap_or_default());
-            return Err(format!("{name} has changes that aren't saved. Save or discard them first."));
+            let name = self
+                .book
+                .with_untracked(|b| b.as_ref().map(|b| b.name.clone()).unwrap_or_default());
+            return Err(format!(
+                "{name} has changes that aren't saved. Save or discard them first."
+            ));
         }
         let book = call::<Book>("epub_open", json!({ "src": src, "path": path })).await?;
         // A book still open here is replaced: the backend lets go of it.
@@ -188,7 +212,11 @@ impl Ep {
             });
         }
         self.place.set(place);
-        self.view.set(book.chapters.first().map_or(View::Info, |c| View::Chapter(c.path.clone())));
+        self.view.set(
+            book.chapters
+                .first()
+                .map_or(View::Info, |c| View::Chapter(c.path.clone())),
+        );
         self.mode.set(Mode::Visual);
         self.doc.set(None);
         self.chapter_dirty.set(false);
@@ -206,12 +234,18 @@ impl Ep {
         if !self.chapter_dirty.get_untracked() {
             return Ok(());
         }
-        let View::Chapter(path) = self.view.get_untracked() else { return Ok(()) };
+        let View::Chapter(path) = self.view.get_untracked() else {
+            return Ok(());
+        };
         let id = self.id();
         let book = match self.mode.get_untracked() {
             Mode::Source => {
                 let source = self.source.get_untracked();
-                call::<Book>("epub_set_source", json!({ "id": id, "path": path, "source": source })).await
+                call::<Book>(
+                    "epub_set_source",
+                    json!({ "id": id, "path": path, "source": source }),
+                )
+                .await
             }
             Mode::Visual => {
                 let body = match self.kept.try_update_value(Option::take).flatten() {
@@ -221,7 +255,11 @@ impl Ep {
                         .inspect_err(|_| self.chapter_dirty.set(false))
                         .map_err(|e| format!("The last edits to this chapter were lost. {e}"))?,
                 };
-                call::<Book>("epub_set_body", json!({ "id": id, "path": path, "body": body })).await
+                call::<Book>(
+                    "epub_set_body",
+                    json!({ "id": id, "path": path, "body": body }),
+                )
+                .await
             }
         }
         .map_err(|e| format!("This chapter can't be kept as it is. {e}"))?;
@@ -253,7 +291,8 @@ impl Ep {
     }
 
     async fn load_chapter(self, path: &str) -> Result<(), String> {
-        let doc = call::<ChapterDoc>("epub_chapter", json!({ "id": self.id(), "path": path })).await?;
+        let doc =
+            call::<ChapterDoc>("epub_chapter", json!({ "id": self.id(), "path": path })).await?;
         self.kept.set_value(None);
         self.source.set(doc.source.clone());
         self.doc.set(Some(doc));
@@ -277,7 +316,9 @@ impl Ep {
     /// Shows the open chapter again when the editor is drawn anew, as it is when the preview comes
     /// back to the book: its edits are sent first, then it's read back with them.
     fn reshow(self) {
-        let View::Chapter(p) = self.view.get_untracked() else { return };
+        let View::Chapter(p) = self.view.get_untracked() else {
+            return;
+        };
         self.doc.set(None);
         spawn_local(async move {
             let r = match self.commit().await {
@@ -309,7 +350,14 @@ impl Ep {
             let s = call::<Saved>("epub_save", json!({ "id": self.id() })).await?;
             self.book.set(Some(s.book));
             self.confirm_close.set(false);
-            let note = if s.backup { format!(" The old version is backed up on {}.", crate::os::the_computer()) } else { String::new() };
+            let note = if s.backup {
+                format!(
+                    " The old version is backed up on {}.",
+                    crate::os::the_computer()
+                )
+            } else {
+                String::new()
+            };
             self.say(format!("Saved to {}.{note}", self.place()), "ok");
             Ok(())
         });
@@ -317,7 +365,9 @@ impl Ep {
 
     fn export(self) {
         self.act(move || async move {
-            if let Some(dest) = call::<Option<String>>("epub_export", json!({ "id": self.id() })).await? {
+            if let Some(dest) =
+                call::<Option<String>>("epub_export", json!({ "id": self.id() })).await?
+            {
                 self.say(format!("Copy saved to {dest}"), "ok");
             }
             Ok(())
@@ -345,7 +395,10 @@ impl Ep {
         self.act(move || async move {
             let b = call::<Book>("epub_set_meta", json!({ "id": self.id(), "meta": meta })).await?;
             self.book.set(Some(b));
-            self.say(format!("Book info updated. Save to write it to {}.", self.place()), "ok");
+            self.say(
+                format!("Book info updated. Save to write it to {}.", self.place()),
+                "ok",
+            );
             Ok(())
         });
     }
@@ -359,7 +412,8 @@ impl Ep {
         if !self.outline.get_untracked() {
             self.toggle_outline();
         }
-        self.find_focus.update(|(n, r)| (*n, *r) = (*n + 1, replace));
+        self.find_focus
+            .update(|(n, r)| (*n, *r) = (*n + 1, replace));
     }
 
     /// Starts typing a new name for the chapter at `path`, in the outline (shown for it).
@@ -372,14 +426,28 @@ impl Ep {
 
     fn rename_chapter(self, path: String, label: String) {
         self.renaming.set(None);
-        let same = self.book.with_untracked(|b| b.as_ref().and_then(|b| b.chapters.iter().find(|c| c.path == path)).is_some_and(|c| c.label == label.trim()));
+        let same = self.book.with_untracked(|b| {
+            b.as_ref()
+                .and_then(|b| b.chapters.iter().find(|c| c.path == path))
+                .is_some_and(|c| c.label == label.trim())
+        });
         if same {
             return;
         }
         self.act(move || async move {
-            let b = call::<Book>("epub_rename_chapter", json!({ "id": self.id(), "path": path, "label": label })).await?;
+            let b = call::<Book>(
+                "epub_rename_chapter",
+                json!({ "id": self.id(), "path": path, "label": label }),
+            )
+            .await?;
             self.book.set(Some(b));
-            self.say(format!("Chapter renamed in the contents. Save to write the book to {}.", self.place()), "ok");
+            self.say(
+                format!(
+                    "Chapter renamed in the contents. Save to write the book to {}.",
+                    self.place()
+                ),
+                "ok",
+            );
             Ok(())
         });
     }
@@ -388,7 +456,10 @@ impl Ep {
         self.act(move || async move {
             if let Some(b) = call::<Option<Book>>("epub_cover", json!({ "id": self.id() })).await? {
                 self.book.set(Some(b));
-                self.say(format!("Cover changed. Save to write it to {}.", self.place()), "ok");
+                self.say(
+                    format!("Cover changed. Save to write it to {}.", self.place()),
+                    "ok",
+                );
             }
             Ok(())
         });
@@ -447,7 +518,9 @@ impl Ep {
 
     /// Opens an entry of the contents: its chapter, at its place.
     fn open_entry(self, path: String, fragment: Option<String>) {
-        let here = self.view.with_untracked(|v| matches!(v, View::Chapter(p) if *p == path));
+        let here = self
+            .view
+            .with_untracked(|v| matches!(v, View::Chapter(p) if *p == path));
         if here {
             if let Some(f) = fragment {
                 self.scroll_to(&f);
@@ -467,7 +540,10 @@ impl Ep {
     /// Adds the cursor's place in the open chapter to the contents (see `epub_toc_add`).
     fn toc_add(self, label: String, level: &'static str) {
         let View::Chapter(path) = self.view.get_untracked() else {
-            return self.say("Open a chapter and click where the entry should go first.", "error");
+            return self.say(
+                "Open a chapter and click where the entry should go first.",
+                "error",
+            );
         };
         let cut = match self.cut(true) {
             Ok(c) => c,
@@ -480,12 +556,21 @@ impl Ep {
             args["label"] = json!(label);
             args["level"] = json!(level);
             let b = call::<Book>("epub_toc_add", args).await?;
-            let added = b.toc.len() > self.book.with_untracked(|o| o.as_ref().map_or(0, |o| o.toc.len()));
+            let added = b.toc.len()
+                > self
+                    .book
+                    .with_untracked(|o| o.as_ref().map_or(0, |o| o.toc.len()));
             self.book.set(Some(b));
             // The place may have been given an id.
             self.load_chapter(&path).await?;
             if added {
-                self.say(format!("Added to the contents. Save to write the book to {}.", self.place()), "ok");
+                self.say(
+                    format!(
+                        "Added to the contents. Save to write the book to {}.",
+                        self.place()
+                    ),
+                    "ok",
+                );
             }
             Ok(())
         });
@@ -493,10 +578,25 @@ impl Ep {
 
     fn toc_remove(self, index: usize) {
         self.act(move || async move {
-            let label = self.book.with_untracked(|b| b.as_ref().and_then(|b| b.toc.get(index)).map(|e| e.label.clone()).unwrap_or_default());
-            let b = call::<Book>("epub_toc_remove", json!({ "id": self.id(), "index": index })).await?;
+            let label = self.book.with_untracked(|b| {
+                b.as_ref()
+                    .and_then(|b| b.toc.get(index))
+                    .map(|e| e.label.clone())
+                    .unwrap_or_default()
+            });
+            let b = call::<Book>(
+                "epub_toc_remove",
+                json!({ "id": self.id(), "index": index }),
+            )
+            .await?;
             self.book.set(Some(b));
-            self.say(format!("Took “{label}” out of the contents. Save to write the book to {}.", self.place()), "ok");
+            self.say(
+                format!(
+                    "Took “{label}” out of the contents. Save to write the book to {}.",
+                    self.place()
+                ),
+                "ok",
+            );
             Ok(())
         });
     }
@@ -513,28 +613,67 @@ impl Ep {
                 View::Chapter(p) => Some(p),
                 View::Info => None,
             };
-            let hits: Vec<(String, String)> =
-                self.found.with_untracked(|f| f.iter().flat_map(|f| f.hits.iter().map(|h| (h.path.clone(), h.label.clone()))).collect());
+            let hits: Vec<(String, String)> = self.found.with_untracked(|f| {
+                f.iter()
+                    .flat_map(|f| f.hits.iter().map(|h| (h.path.clone(), h.label.clone())))
+                    .collect()
+            });
             // The open chapter first (on from the last replacement), then those after it, round.
-            let k = open.as_ref().and_then(|o| hits.iter().position(|h| h.0 == *o)).map_or(0, |k| k + 1);
+            let k = open
+                .as_ref()
+                .and_then(|o| hits.iter().position(|h| h.0 == *o))
+                .map_or(0, |k| k + 1);
             let mut order: Vec<(String, usize)> = vec![];
             if let Some(o) = &open {
-                let from = self.replace_from.with_value(|r| r.as_ref().filter(|(rq, rp, _)| *rq == q && rp == o).map_or(0, |r| r.2));
+                let from = self.replace_from.with_value(|r| {
+                    r.as_ref()
+                        .filter(|(rq, rp, _)| *rq == q && rp == o)
+                        .map_or(0, |r| r.2)
+                });
                 order.push((o.clone(), from));
             }
-            order.extend(hits[k.min(hits.len())..].iter().chain(&hits[..k.min(hits.len())]).filter(|h| Some(&h.0) != open.as_ref()).map(|h| (h.0.clone(), 0)));
+            order.extend(
+                hits[k.min(hits.len())..]
+                    .iter()
+                    .chain(&hits[..k.min(hits.len())])
+                    .filter(|h| Some(&h.0) != open.as_ref())
+                    .map(|h| (h.0.clone(), 0)),
+            );
             for (path, from) in order {
-                let r = call::<ReplacedOne>("epub_replace_one", json!({ "id": self.id(), "query": q, "path": path, "from": from })).await?;
+                let r = call::<ReplacedOne>(
+                    "epub_replace_one",
+                    json!({ "id": self.id(), "query": q, "path": path, "from": from }),
+                )
+                .await?;
                 let Some(at) = r.at else { continue };
-                let label = r.book.chapters.iter().find(|c| c.path == path).map(|c| c.label.clone()).unwrap_or_default();
+                let label = r
+                    .book
+                    .chapters
+                    .iter()
+                    .find(|c| c.path == path)
+                    .map(|c| c.label.clone())
+                    .unwrap_or_default();
                 self.book.set(Some(r.book));
-                self.replace_from.set_value(Some((q.clone(), path.clone(), at)));
+                self.replace_from
+                    .set_value(Some((q.clone(), path.clone(), at)));
                 self.load_chapter(&path).await?;
                 self.view.set(View::Chapter(path));
                 self.search().await?;
-                let left = self.found.with_untracked(|f| f.as_ref().map_or(0, |f| f.total));
-                let left = if left == 0 { "No more matches.".to_string() } else { format!("{} left.", plural(left, "match", "matches")) };
-                self.say(format!("Replaced one in “{label}”. {left} Save to write the book to {}.", self.place()), "ok");
+                let left = self
+                    .found
+                    .with_untracked(|f| f.as_ref().map_or(0, |f| f.total));
+                let left = if left == 0 {
+                    "No more matches.".to_string()
+                } else {
+                    format!("{} left.", plural(left, "match", "matches"))
+                };
+                self.say(
+                    format!(
+                        "Replaced one in “{label}”. {left} Save to write the book to {}.",
+                        self.place()
+                    ),
+                    "ok",
+                );
                 return Ok(());
             }
             self.replace_from.set_value(None);
@@ -547,10 +686,18 @@ impl Ep {
     fn replace(self) {
         self.act(move || async move {
             let q = self.query.get_untracked();
-            let r = call::<Replaced>("epub_replace", json!({ "id": self.id(), "query": q })).await?;
+            let r =
+                call::<Replaced>("epub_replace", json!({ "id": self.id(), "query": q })).await?;
             self.book.set(Some(r.book));
             self.search().await?;
-            self.say(format!("Replaced {}. Save to write the book to {}.", plural(r.count, "match", "matches"), self.place()), "ok");
+            self.say(
+                format!(
+                    "Replaced {}. Save to write the book to {}.",
+                    plural(r.count, "match", "matches"),
+                    self.place()
+                ),
+                "ok",
+            );
             Ok(())
         });
     }
@@ -558,12 +705,18 @@ impl Ep {
     // ----- The visual chapter view: an editable iframe holding the chapter as HTML -----
 
     fn frame_doc(self) -> Option<web_sys::HtmlDocument> {
-        self.frame.get_untracked()?.content_document()?.dyn_into().ok()
+        self.frame
+            .get_untracked()?
+            .content_document()?
+            .dyn_into()
+            .ok()
     }
 
     /// The edited <body> content as XHTML.
     fn visual_body(self) -> Result<String, String> {
-        let doc = self.frame_doc().ok_or("The chapter view isn't ready yet.")?;
+        let doc = self
+            .frame_doc()
+            .ok_or("The chapter view isn't ready yet.")?;
         let body = doc.body().ok_or("The chapter has no body.")?;
         let ser = web_sys::XmlSerializer::new().map_err(|e| format!("{e:?}"))?;
         let kids = body.child_nodes();
@@ -604,7 +757,9 @@ impl Ep {
 
     /// Gives the visual page the focus back, with the cursor or selection it had.
     fn refocus(self) {
-        let Some(frame) = self.frame.get_untracked() else { return };
+        let Some(frame) = self.frame.get_untracked() else {
+            return;
+        };
         let Some(doc) = self.frame_doc() else { return };
         if let Some(w) = frame.content_window() {
             let _ = w.focus();
@@ -623,31 +778,39 @@ impl Ep {
         let Some(doc) = self.frame_doc() else { return };
         let kept = doc.clone();
         let moved = Closure::<dyn FnMut()>::new(move || {
-            let r = kept.get_selection().ok().flatten().filter(|s| s.range_count() > 0).and_then(|s| s.get_range_at(0).ok());
+            let r = kept
+                .get_selection()
+                .ok()
+                .flatten()
+                .filter(|s| s.range_count() > 0)
+                .and_then(|s| s.get_range_at(0).ok());
             if r.is_some() {
                 self.range.set_value(r);
             }
         });
-        let _ = doc.add_event_listener_with_callback("selectionchange", moved.as_ref().unchecked_ref());
+        let _ =
+            doc.add_event_listener_with_callback("selectionchange", moved.as_ref().unchecked_ref());
         moved.forget();
         doc.set_design_mode("on");
         let _ = doc.exec_command_with_show_ui_and_value("defaultParagraphSeparator", false, "p");
-        let input = Closure::<dyn FnMut(web_sys::Event)>::new(move |_| self.chapter_dirty.set(true));
+        let input =
+            Closure::<dyn FnMut(web_sys::Event)>::new(move |_| self.chapter_dirty.set(true));
         let _ = doc.add_event_listener_with_callback("input", input.as_ref().unchecked_ref());
         input.forget();
         // Key presses inside the iframe don't reach the app window, so ⌘S is caught here too.
-        let keys = Closure::<dyn FnMut(web_sys::KeyboardEvent)>::new(move |e: web_sys::KeyboardEvent| {
-            if !(e.meta_key() || e.ctrl_key()) {
-                return;
-            }
-            match e.key().as_str() {
-                "s" => self.save(),
-                "f" | "ƒ" => self.open_find(e.alt_key()),
-                "r" => self.open_find(true),
-                _ => return,
-            }
-            e.prevent_default();
-        });
+        let keys =
+            Closure::<dyn FnMut(web_sys::KeyboardEvent)>::new(move |e: web_sys::KeyboardEvent| {
+                if !(e.meta_key() || e.ctrl_key()) {
+                    return;
+                }
+                match e.key().as_str() {
+                    "s" => self.save(),
+                    "f" | "ƒ" => self.open_find(e.alt_key()),
+                    "r" => self.open_find(true),
+                    _ => return,
+                }
+                e.prevent_default();
+            });
         let _ = doc.add_event_listener_with_callback("keydown", keys.as_ref().unchecked_ref());
         keys.forget();
     }
@@ -662,10 +825,22 @@ impl Ep {
             Mode::Source => {
                 let ta = self.source_box.get_untracked().ok_or(NO_CURSOR)?;
                 let text = ta.value();
-                let (start, end) = (ta.selection_start().ok().flatten().unwrap_or(0), ta.selection_end().ok().flatten().unwrap_or(0));
+                let (start, end) = (
+                    ta.selection_start().ok().flatten().unwrap_or(0),
+                    ta.selection_end().ok().flatten().unwrap_or(0),
+                );
                 // The box counts UTF-16 units; the backend counts bytes, with a line break as one.
-                let bytes = |units: u32| String::from_utf16_lossy(&text.encode_utf16().take(units as usize).collect::<Vec<_>>()).len();
-                let (offset, through) = if !next && start != end { (bytes(end).saturating_sub(1), true) } else { (bytes(start), false) };
+                let bytes = |units: u32| {
+                    String::from_utf16_lossy(
+                        &text.encode_utf16().take(units as usize).collect::<Vec<_>>(),
+                    )
+                    .len()
+                };
+                let (offset, through) = if !next && start != end {
+                    (bytes(end).saturating_sub(1), true)
+                } else {
+                    (bytes(start), false)
+                };
                 Ok(json!({ "offset": offset, "through": through }))
             }
             Mode::Visual => {
@@ -673,7 +848,12 @@ impl Ep {
                 let doc = self.frame_doc().ok_or(NO_CURSOR)?;
                 let body = doc.body().ok_or("The chapter has no body.")?;
                 let body_node: &web_sys::Node = body.as_ref();
-                let sel = doc.get_selection().ok().flatten().filter(|s| s.range_count() > 0).ok_or(NO_CURSOR)?;
+                let sel = doc
+                    .get_selection()
+                    .ok()
+                    .flatten()
+                    .filter(|s| s.range_count() > 0)
+                    .ok_or(NO_CURSOR)?;
                 let range = sel.get_range_at(0).map_err(|_| NO_CURSOR)?;
                 let kids: Vec<web_sys::Node> = {
                     let list = body.child_nodes();
@@ -697,16 +877,28 @@ impl Ep {
                         }
                     };
                     let Some(top) = top else { return elements };
-                    let at = kids.iter().position(|k| k.is_same_node(Some(&top))).unwrap_or(kids.len());
+                    let at = kids
+                        .iter()
+                        .position(|k| k.is_same_node(Some(&top)))
+                        .unwrap_or(kids.len());
                     kids[..at].iter().filter(|n| is_element(n)).count()
                 };
                 let block = if !next && !range.collapsed() {
-                    let k = block_of(range.end_container().map_err(|_| NO_CURSOR)?, range.end_offset().unwrap_or(0));
+                    let k = block_of(
+                        range.end_container().map_err(|_| NO_CURSOR)?,
+                        range.end_offset().unwrap_or(0),
+                    );
                     (k + 1).min(elements)
                 } else {
-                    block_of(range.start_container().map_err(|_| NO_CURSOR)?, range.start_offset().unwrap_or(0))
+                    block_of(
+                        range.start_container().map_err(|_| NO_CURSOR)?,
+                        range.start_offset().unwrap_or(0),
+                    )
                 };
-                let names: Vec<String> = kids.iter().filter_map(|n| n.dyn_ref::<web_sys::Element>().map(|e| e.local_name())).collect();
+                let names: Vec<String> = kids
+                    .iter()
+                    .filter_map(|n| n.dyn_ref::<web_sys::Element>().map(|e| e.local_name()))
+                    .collect();
                 Ok(json!({ "block": block, "names": names }))
             }
         }
@@ -714,7 +906,9 @@ impl Ep {
 
     /// Moves part of the open chapter into the chapter before it or after it (see `cut`).
     fn move_part(self, next: bool) {
-        let View::Chapter(path) = self.view.get_untracked() else { return };
+        let View::Chapter(path) = self.view.get_untracked() else {
+            return;
+        };
         let cut = match self.cut(next) {
             Ok(c) => c,
             Err(e) => return self.say(e, "error"),
@@ -733,7 +927,12 @@ impl Ep {
             };
             let place = if next { "start" } else { "end" };
             self.say(
-                format!("Moved {} to the {place} of “{}”.{links} Save to write the book to {}.", plural(m.blocks, "block", "blocks"), m.to, self.place()),
+                format!(
+                    "Moved {} to the {place} of “{}”.{links} Save to write the book to {}.",
+                    plural(m.blocks, "block", "blocks"),
+                    m.to,
+                    self.place()
+                ),
                 "ok",
             );
             Ok(())
@@ -754,7 +953,10 @@ impl Ep {
 pub fn EditBar() -> impl IntoView {
     let ep = expect_context::<Ep>();
     let dirty = Memo::new(move |_| ep.dirty());
-    let chapters = move || ep.book.with(|b| b.as_ref().map(|b| b.chapters.clone()).unwrap_or_default());
+    let chapters = move || {
+        ep.book
+            .with(|b| b.as_ref().map(|b| b.chapters.clone()).unwrap_or_default())
+    };
     let shown = move || match ep.view.get() {
         View::Info => "info".to_string(),
         View::Chapter(p) => format!("ch:{p}"),
@@ -768,25 +970,38 @@ pub fn EditBar() -> impl IntoView {
     };
     let save_title = move || {
         ep.book.track();
-        let to = if b_mac(ep) { String::new() } else { format!(" to {}", ep.place()) };
+        let to = if b_mac(ep) {
+            String::new()
+        } else {
+            format!(" to {}", ep.place())
+        };
         let state = if dirty.get() { "" } else { " (nothing new)" };
         format!("Save{to}{state} ({})", crate::os::keys("⌘S"))
     };
     let copy_title = format!("Save a copy on {}…", crate::os::the_computer());
     // Previous and next go through the chapters; from Book info or Find, next is the first chapter.
     let at = move |v: &View, b: &Option<Book>| match v {
-        View::Chapter(p) => b.as_ref().and_then(|b| b.chapters.iter().position(|c| c.path == *p)),
+        View::Chapter(p) => b
+            .as_ref()
+            .and_then(|b| b.chapters.iter().position(|c| c.path == *p)),
         _ => None,
     };
     let count = move || ep.book.with(|b| b.as_ref().map_or(0, |b| b.chapters.len()));
     let here = move || ep.view.with(|v| ep.book.with(|b| at(v, b)));
     let step = move |d: isize| {
-        let to = match ep.view.with_untracked(|v| ep.book.with_untracked(|b| at(v, b))) {
+        let to = match ep
+            .view
+            .with_untracked(|v| ep.book.with_untracked(|b| at(v, b)))
+        {
             Some(k) => k as isize + d,
             None if d > 0 => 0,
             None => return,
         };
-        let path = ep.book.with_untracked(|b| b.as_ref().and_then(|b| usize::try_from(to).ok().and_then(|k| b.chapters.get(k))).map(|c| c.path.clone()));
+        let path = ep.book.with_untracked(|b| {
+            b.as_ref()
+                .and_then(|b| usize::try_from(to).ok().and_then(|k| b.chapters.get(k)))
+                .map(|c| c.path.clone())
+        });
         if let Some(p) = path {
             ep.go(View::Chapter(p));
         }
@@ -796,7 +1011,10 @@ pub fn EditBar() -> impl IntoView {
     let save_open = RwSignal::new(false);
     let save_menu = NodeRef::<html::Span>::new();
     let away = window_event_listener(leptos::ev::mousedown, move |e| {
-        let inside = save_menu.get_untracked().zip(e.target().and_then(|t| t.dyn_into::<web_sys::Node>().ok())).is_some_and(|(m, t)| m.contains(Some(&t)));
+        let inside = save_menu
+            .get_untracked()
+            .zip(e.target().and_then(|t| t.dyn_into::<web_sys::Node>().ok()))
+            .is_some_and(|(m, t)| m.contains(Some(&t)));
         if !inside {
             save_open.set(false);
         }
@@ -860,7 +1078,9 @@ pub fn EditBody() -> impl IntoView {
     let shown = move |v: &View| ep.view.with(|w| w == v);
     let in_chapter = Memo::new(move |_| ep.view.with(|v| matches!(v, View::Chapter(_))));
     let outline = move || {
-        let chapters = ep.book.with(|b| b.as_ref().map(|b| b.chapters.clone()).unwrap_or_default());
+        let chapters = ep
+            .book
+            .with(|b| b.as_ref().map(|b| b.chapters.clone()).unwrap_or_default());
         let item = move |v: View, label: String| {
             let here = v.clone();
             view! {
@@ -922,7 +1142,14 @@ pub fn EditBody() -> impl IntoView {
     }
 }
 
-fn field(form: RwSignal<Meta>, label: &'static str, wide: bool, rows: u32, get: fn(&Meta) -> String, set: fn(&mut Meta, String)) -> impl IntoView {
+fn field(
+    form: RwSignal<Meta>,
+    label: &'static str,
+    wide: bool,
+    rows: u32,
+    get: fn(&Meta) -> String,
+    set: fn(&mut Meta, String),
+) -> impl IntoView {
     let value = move || form.with(get);
     let input = move |ev| form.update(|m| set(m, event_target_value(&ev)));
     view! {
@@ -953,17 +1180,25 @@ fn split_lines(s: String) -> Vec<String> {
 #[component]
 fn InfoView() -> impl IntoView {
     let ep = expect_context::<Ep>();
-    let saved = move || ep.book.with_untracked(|b| b.as_ref().map(|b| b.meta.clone()).unwrap_or_default());
+    let saved = move || {
+        ep.book
+            .with_untracked(|b| b.as_ref().map(|b| b.meta.clone()).unwrap_or_default())
+    };
     let form = RwSignal::new(saved());
     // When the book's info changes (after Apply), show the cleaned-up values.
     Effect::new(move |prev: Option<Meta>| {
-        let m = ep.book.with(|b| b.as_ref().map(|b| b.meta.clone()).unwrap_or_default());
+        let m = ep
+            .book
+            .with(|b| b.as_ref().map(|b| b.meta.clone()).unwrap_or_default());
         if prev.as_ref().is_some_and(|p| *p != m) {
             form.set(m.clone());
         }
         m
     });
-    let changed = move || ep.book.with(|b| b.as_ref().is_some_and(|b| b.meta != form.get()));
+    let changed = move || {
+        ep.book
+            .with(|b| b.as_ref().is_some_and(|b| b.meta != form.get()))
+    };
     let book = move || ep.book.get();
     view! {
         <div class="scroll">
@@ -1034,16 +1269,29 @@ fn ContentsView() -> impl IntoView {
     let level = RwSignal::new("chapter");
     let in_chapter = move || ep.view.with(|v| matches!(v, View::Chapter(_)));
     let levels: [(&'static str, &'static str, &'static str); 3] = [
-        ("section", "Section", "A level up from the entry before it (a part, say, holding what follows)"),
+        (
+            "section",
+            "Section",
+            "A level up from the entry before it (a part, say, holding what follows)",
+        ),
         ("chapter", "Chapter", "At the level of the entry before it"),
-        ("subsection", "Subsection", "A level in, under the entry before it"),
+        (
+            "subsection",
+            "Subsection",
+            "A level in, under the entry before it",
+        ),
     ];
     let add = move || {
         ep.toc_add(label.get_untracked(), level.get_untracked());
         label.set(String::new());
     };
-    let entries = move || ep.book.with(|b| b.as_ref().map(|b| b.toc.clone()).unwrap_or_default());
-    let here = move |path: &str, frag: &Option<String>| ep.view.with(|v| matches!(v, View::Chapter(p) if p == path)) && frag.is_none();
+    let entries = move || {
+        ep.book
+            .with(|b| b.as_ref().map(|b| b.toc.clone()).unwrap_or_default())
+    };
+    let here = move |path: &str, frag: &Option<String>| {
+        ep.view.with(|v| matches!(v, View::Chapter(p) if p == path)) && frag.is_none()
+    };
     view! {
         <div class="toc-view">
             <form class="toc-add" on:submit=move |e| { e.prevent_default(); add(); }>
@@ -1098,8 +1346,14 @@ fn OutlineChapter(path: String, label: String) -> impl IntoView {
     let ep = expect_context::<Ep>();
     let path = StoredValue::new(path);
     let label = StoredValue::new(label);
-    let editing = move || ep.renaming.with(|r| path.with_value(|p| r.as_ref() == Some(p)));
-    let here = move || ep.view.with(|v| matches!(v, View::Chapter(p) if path.with_value(|q| q == p)));
+    let editing = move || {
+        ep.renaming
+            .with(|r| path.with_value(|p| r.as_ref() == Some(p)))
+    };
+    let here = move || {
+        ep.view
+            .with(|v| matches!(v, View::Chapter(p) if path.with_value(|q| q == p)))
+    };
     move || {
         if editing() {
             let input = NodeRef::<html::Input>::new();
@@ -1163,7 +1417,12 @@ fn FindView() -> impl IntoView {
     Effect::new(move |_| {
         let (_, replace) = ep.find_focus.get();
         request_animation_frame(move || {
-            let el = if replace { replace_box.get_untracked() } else { None }.or_else(|| find_box.get_untracked());
+            let el = if replace {
+                replace_box.get_untracked()
+            } else {
+                None
+            }
+            .or_else(|| find_box.get_untracked());
             if let Some(el) = el {
                 let _ = el.focus();
                 el.select();
@@ -1172,7 +1431,11 @@ fn FindView() -> impl IntoView {
     });
     let empty = move || q.with(|x| x.find.trim().is_empty());
     // An option turned on or off: found again at once.
-    let opt = move |label: &'static str, on: fn(&Query) -> bool, flip: fn(&mut Query), glyph: &'static str, class: &'static str| {
+    let opt = move |label: &'static str,
+                    on: fn(&Query) -> bool,
+                    flip: fn(&mut Query),
+                    glyph: &'static str,
+                    class: &'static str| {
         view! {
             <button class="filter-opt" class:on=move || q.with(on) aria-pressed=move || q.with(on).to_string() title=label aria-label=label
                 on:mousedown=|e: web_sys::MouseEvent| e.prevent_default()
@@ -1189,7 +1452,11 @@ fn FindView() -> impl IntoView {
         ep.found.with(|f| match f {
             None => String::new(),
             Some(f) if f.total == 0 => "No matches".into(),
-            Some(f) => format!("{} in {}", plural(f.total, "match", "matches"), plural(f.hits.len(), "chapter", "chapters")),
+            Some(f) => format!(
+                "{} in {}",
+                plural(f.total, "match", "matches"),
+                plural(f.hits.len(), "chapter", "chapters")
+            ),
         })
     };
     view! {
@@ -1304,7 +1571,10 @@ fn BlockMenu() -> impl IntoView {
     let open = RwSignal::new(false);
     let menu = NodeRef::<html::Span>::new();
     let away = window_event_listener(leptos::ev::mousedown, move |e| {
-        let inside = menu.get_untracked().zip(e.target().and_then(|t| t.dyn_into::<web_sys::Node>().ok())).is_some_and(|(m, t)| m.contains(Some(&t)));
+        let inside = menu
+            .get_untracked()
+            .zip(e.target().and_then(|t| t.dyn_into::<web_sys::Node>().ok()))
+            .is_some_and(|(m, t)| m.contains(Some(&t)));
         if !inside {
             open.set(false);
         }
@@ -1334,13 +1604,23 @@ fn BlockMenu() -> impl IntoView {
 #[component]
 fn ChapterView() -> impl IntoView {
     let ep = expect_context::<Ep>();
-    let visual_ok = move || ep.doc.with(|d| d.as_ref().is_some_and(|d| d.html.is_some()));
+    let visual_ok = move || {
+        ep.doc
+            .with(|d| d.as_ref().is_some_and(|d| d.html.is_some()))
+    };
     // Where this chapter is in reading order, for moving part of it to the one before or after.
     let path = Memo::new(move |_| match ep.view.get() {
         View::Chapter(p) => p,
         View::Info => String::new(),
     });
-    let here = Memo::new(move |_| path.with(|path| ep.book.with(|b| b.as_ref().and_then(|b| b.chapters.iter().position(|c| c.path == *path)))));
+    let here = Memo::new(move |_| {
+        path.with(|path| {
+            ep.book.with(|b| {
+                b.as_ref()
+                    .and_then(|b| b.chapters.iter().position(|c| c.path == *path))
+            })
+        })
+    });
     // What the page is: none yet, the visual page, a chapter that can't show visually, or its
     // XHTML (drawn anew for each chapter). The visual page stays from chapter to chapter: only
     // what it shows changes.
@@ -1351,7 +1631,11 @@ fn ChapterView() -> impl IntoView {
             Some(d) if d.html.is_some() => 1,
             Some(_) => 2,
         });
-        let source = if mode == Mode::Source && shown > 0 { ep.doc.with(|_| path.get()) } else { String::new() };
+        let source = if mode == Mode::Source && shown > 0 {
+            ep.doc.with(|_| path.get())
+        } else {
+            String::new()
+        };
         (mode, shown, source)
     });
     let count = move || ep.book.with(|b| b.as_ref().map_or(0, |b| b.chapters.len()));
@@ -1361,7 +1645,9 @@ fn ChapterView() -> impl IntoView {
     let compact = RwSignal::new(false);
     let bar = NodeRef::<html::Div>::new();
     let fit = move || {
-        let Some(el) = bar.try_get_untracked().flatten() else { return };
+        let Some(el) = bar.try_get_untracked().flatten() else {
+            return;
+        };
         let classes = el.class_list();
         let _ = classes.add_1("measuring");
         let fits = el.scroll_width() <= el.client_width() + 1;
@@ -1479,10 +1765,28 @@ fn SourceEdit(path: String) -> impl IntoView {
     let text = move || ep.source.with_untracked(|s| s.replace("\r\n", "\n"));
     let layered = move || ep.colours.get() && ep.source.with(|s| s.len() <= crate::app::LAYER_MAX);
     let draw = move || {
-        let Some(l) = layer.get_untracked() else { return };
+        let Some(l) = layer.get_untracked() else {
+            return;
+        };
         let t = text();
-        let r = ran_on.with_value(|old| runs.with_value(|r| r.as_ref().map(|r| if *old == t { r.clone() } else { crate::app::shift_runs(r, old, &t) })));
-        l.set_inner_html(&crate::app::code_html(&t, r.as_deref(), &[], None, 1..usize::MAX));
+        let r = ran_on.with_value(|old| {
+            runs.with_value(|r| {
+                r.as_ref().map(|r| {
+                    if *old == t {
+                        r.clone()
+                    } else {
+                        crate::app::shift_runs(r, old, &t)
+                    }
+                })
+            })
+        });
+        l.set_inner_html(&crate::app::code_html(
+            &t,
+            r.as_deref(),
+            &[],
+            None,
+            1..usize::MAX,
+        ));
         if let Some(b) = ta.get_untracked() {
             l.set_scroll_top(b.scroll_top());
             l.set_scroll_left(b.scroll_left());
@@ -1494,7 +1798,11 @@ fn SourceEdit(path: String) -> impl IntoView {
         asked.set_value(n);
         let name = path.clone();
         spawn_local(async move {
-            let Ok(c) = call::<TextColours>("colour_text", json!({ "name": name, "text": t })).await else { return };
+            let Ok(c) =
+                call::<TextColours>("colour_text", json!({ "name": name, "text": t })).await
+            else {
+                return;
+            };
             if asked.try_get_value() != Some(n) {
                 return;
             }
@@ -1513,7 +1821,9 @@ fn SourceEdit(path: String) -> impl IntoView {
             h.clear();
         }
         let colour = colour.clone();
-        timer.set_value(set_timeout_with_handle(move || colour(), std::time::Duration::from_millis(250)).ok());
+        timer.set_value(
+            set_timeout_with_handle(move || colour(), std::time::Duration::from_millis(250)).ok(),
+        );
     });
     on_cleanup(move || {
         if let Some(h) = timer.try_update_value(Option::take).flatten() {

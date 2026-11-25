@@ -22,13 +22,20 @@ const MOOV_MAX: u64 = 32 * 1024 * 1024;
 pub type Read<'a> = dyn FnMut(u64, u64) -> Result<Vec<u8>, String> + 'a;
 
 pub fn info(name: &str, read: &mut Read) -> Result<MediaInfo, String> {
-    let ext = name.rsplit_once('.').map(|(_, x)| x.to_ascii_lowercase()).unwrap_or_default();
+    let ext = name
+        .rsplit_once('.')
+        .map(|(_, x)| x.to_ascii_lowercase())
+        .unwrap_or_default();
     match ext.as_str() {
         "mp4" | "m4v" | "mov" | "3gp" | "m4a" => movie(read),
         "jpg" | "jpeg" | "png" | "gif" | "webp" | "bmp" | "heic" | "heif" | "avif" => {
             let head = read(0, HEAD)?;
             Ok(match picture(&head) {
-                Some((w, h)) => MediaInfo { width: Some(w), height: Some(h), duration: None },
+                Some((w, h)) => MediaInfo {
+                    width: Some(w),
+                    height: Some(h),
+                    duration: None,
+                },
                 None => MediaInfo::default(),
             })
         }
@@ -44,7 +51,14 @@ pub fn picture(head: &[u8]) -> Option<(u32, u32)> {
     }
     let u16le = |at: usize| Some(u16::from_le_bytes(head.get(at..at + 2)?.try_into().ok()?) as u32);
     let u32le = |at: usize| Some(u32::from_le_bytes(head.get(at..at + 4)?.try_into().ok()?));
-    let u24le = |at: usize| Some(u32::from_le_bytes([*head.get(at)?, *head.get(at + 1)?, *head.get(at + 2)?, 0]));
+    let u24le = |at: usize| {
+        Some(u32::from_le_bytes([
+            *head.get(at)?,
+            *head.get(at + 1)?,
+            *head.get(at + 2)?,
+            0,
+        ]))
+    };
     if head.starts_with(&[0xFF, 0xD8]) {
         jpeg(head)
     } else if head.starts_with(b"\x89PNG") {
@@ -81,9 +95,20 @@ fn boxes(data: &[u8]) -> impl Iterator<Item = Bx<'_>> {
     let mut at = 0usize;
     std::iter::from_fn(move || {
         let (size, head) = box_head(data.get(at..)?)?;
-        let end = if size == 0 { data.len() } else { at.checked_add(size as usize)?.min(data.len()) };
-        let b = Bx { kind: &data[at + 4..at + 8], body: data.get(at + head..end)? };
-        at = if size == 0 { data.len() } else { at + size as usize };
+        let end = if size == 0 {
+            data.len()
+        } else {
+            at.checked_add(size as usize)?.min(data.len())
+        };
+        let b = Bx {
+            kind: &data[at + 4..at + 8],
+            body: data.get(at + head..end)?,
+        };
+        at = if size == 0 {
+            data.len()
+        } else {
+            at + size as usize
+        };
         Some(b)
     })
 }
@@ -155,7 +180,9 @@ fn jpeg(d: &[u8]) -> Option<(u32, u32)> {
         let len = u16::from_be_bytes([*d.get(at + 2)?, *d.get(at + 3)?]) as usize;
         let seg = d.get(at + 4..(at + 2 + len).min(d.len()))?;
         match m {
-            0xE1 if seg.starts_with(b"Exif\0\0") => turned = exif_orientation(&seg[6..]).is_some_and(|o| (5..=8).contains(&o)),
+            0xE1 if seg.starts_with(b"Exif\0\0") => {
+                turned = exif_orientation(&seg[6..]).is_some_and(|o| (5..=8).contains(&o))
+            }
             // SOF0 to SOF15, apart from DHT, JPG and DAC.
             0xC0..=0xCF if !matches!(m, 0xC4 | 0xC8 | 0xCC) => {
                 let h = u16::from_be_bytes([*seg.get(1)?, *seg.get(2)?]) as u32;
@@ -177,7 +204,15 @@ fn exif_orientation(t: &[u8]) -> Option<u16> {
         b"MM" => false,
         _ => return None,
     };
-    let u16_ = |at: usize| t.get(at..at + 2).map(|b| if le { u16::from_le_bytes([b[0], b[1]]) } else { u16::from_be_bytes([b[0], b[1]]) });
+    let u16_ = |at: usize| {
+        t.get(at..at + 2).map(|b| {
+            if le {
+                u16::from_le_bytes([b[0], b[1]])
+            } else {
+                u16::from_be_bytes([b[0], b[1]])
+            }
+        })
+    };
     let u32_ = |at: usize| {
         t.get(at..at + 4).map(|b| {
             let b = [b[0], b[1], b[2], b[3]];
@@ -190,7 +225,10 @@ fn exif_orientation(t: &[u8]) -> Option<u16> {
     };
     let ifd = u32_(4)? as usize;
     let n = u16_(ifd)? as usize;
-    (0..n).map(|i| ifd + 2 + i * 12).find(|&e| u16_(e) == Some(0x0112)).and_then(|e| u16_(e + 8))
+    (0..n)
+        .map(|i| ifd + 2 + i * 12)
+        .find(|&e| u16_(e) == Some(0x0112))
+        .and_then(|e| u16_(e + 8))
 }
 
 /// MP4, MOV and the like: finds the `moov` box among the top-level ones, reading only their
@@ -206,7 +244,11 @@ fn moov(moov: &[u8]) -> MediaInfo {
     let mut info = MediaInfo::default();
     if let Some(m) = find(moov, b"mvhd") {
         // Version 1 has 64-bit times and length.
-        let (scale, len) = if m.first() == Some(&1) { (u32_at(m, 20), u64_at(m, 24)) } else { (u32_at(m, 12), u32_at(m, 16).map(u64::from)) };
+        let (scale, len) = if m.first() == Some(&1) {
+            (u32_at(m, 20), u64_at(m, 24))
+        } else {
+            (u32_at(m, 12), u32_at(m, 16).map(u64::from))
+        };
         if let (Some(scale), Some(len)) = (scale, len) {
             if scale > 0 && len > 0 && len != u32::MAX as u64 && len != u64::MAX {
                 info.duration = Some(len as f64 / scale as f64);
@@ -215,9 +257,18 @@ fn moov(moov: &[u8]) -> MediaInfo {
     }
     // The first track with a picture.
     for t in boxes(moov).filter(|b| b.kind == b"trak") {
-        let Some(k) = find(t.body, b"tkhd") else { continue };
+        let Some(k) = find(t.body, b"tkhd") else {
+            continue;
+        };
         let at = if k.first() == Some(&1) { 52 } else { 40 };
-        let (Some(a), Some(b), Some(w), Some(h)) = (u32_at(k, at), u32_at(k, at + 4), u32_at(k, at + 36), u32_at(k, at + 40)) else { continue };
+        let (Some(a), Some(b), Some(w), Some(h)) = (
+            u32_at(k, at),
+            u32_at(k, at + 4),
+            u32_at(k, at + 36),
+            u32_at(k, at + 40),
+        ) else {
+            continue;
+        };
         // 16.16 fixed point.
         let (w, h) = (w >> 16, h >> 16);
         if w == 0 || h == 0 {
@@ -225,7 +276,11 @@ fn moov(moov: &[u8]) -> MediaInfo {
         }
         // The matrix turns it a quarter when its first entry is 0 and the second isn't.
         let turned = a == 0 && b != 0;
-        (info.width, info.height) = if turned { (Some(h), Some(w)) } else { (Some(w), Some(h)) };
+        (info.width, info.height) = if turned {
+            (Some(h), Some(w))
+        } else {
+            (Some(w), Some(h))
+        };
         break;
     }
     info
@@ -234,7 +289,10 @@ fn moov(moov: &[u8]) -> MediaInfo {
 /// When a photo or video was taken, as (year, month, day): EXIF `DateTimeOriginal` in a JPEG or
 /// HEIC (else its `DateTime`), or an MP4 or MOV's creation time. None when the file doesn't say.
 pub fn taken(name: &str, read: &mut Read) -> Option<(i32, u32, u32)> {
-    let ext = name.rsplit_once('.').map(|(_, x)| x.to_ascii_lowercase()).unwrap_or_default();
+    let ext = name
+        .rsplit_once('.')
+        .map(|(_, x)| x.to_ascii_lowercase())
+        .unwrap_or_default();
     match ext.as_str() {
         "mp4" | "m4v" | "mov" | "3gp" => movie_date(read),
         "jpg" | "jpeg" => {
@@ -244,7 +302,11 @@ pub fn taken(name: &str, read: &mut Read) -> Option<(i32, u32, u32)> {
         "heic" | "heif" | "avif" => {
             let head = read(0, HEAD).ok()?;
             let (at, len) = heif_exif(&head)?;
-            let item = if at + len <= head.len() as u64 { head[at as usize..(at + len) as usize].to_vec() } else { read(at, len.min(HEAD)).ok()? };
+            let item = if at + len <= head.len() as u64 {
+                head[at as usize..(at + len) as usize].to_vec()
+            } else {
+                read(at, len.min(HEAD)).ok()?
+            };
             // The item starts with where the TIFF block begins, after "Exif\0\0".
             let skip = u32_at(&item, 0)? as usize;
             exif_date(item.get(4 + skip..)?)
@@ -285,11 +347,18 @@ fn jpeg_exif(d: &[u8]) -> Option<&[u8]> {
 fn heif_exif(head: &[u8]) -> Option<(u64, u64)> {
     let meta = find(head, b"meta")?.get(4..)?;
     let iinf = find(meta, b"iinf")?;
-    let entries = if iinf.first() == Some(&0) { iinf.get(6..)? } else { iinf.get(8..)? };
+    let entries = if iinf.first() == Some(&0) {
+        iinf.get(6..)?
+    } else {
+        iinf.get(8..)?
+    };
     let id = boxes(entries).filter(|b| b.kind == b"infe").find_map(|b| {
         let v = *b.body.first()?;
         let (id, kind_at) = match v {
-            2 => (u16::from_be_bytes(b.body.get(4..6)?.try_into().ok()?) as u32, 8),
+            2 => (
+                u16::from_be_bytes(b.body.get(4..6)?.try_into().ok()?) as u32,
+                8,
+            ),
             3 => (u32_at(b.body, 4)?, 10),
             _ => return None,
         };
@@ -298,9 +367,18 @@ fn heif_exif(head: &[u8]) -> Option<(u64, u64)> {
     let l = find(meta, b"iloc")?;
     let v = *l.first()?;
     let (off_size, len_size) = ((l.get(4)? >> 4) as usize, (l.get(4)? & 15) as usize);
-    let (base_size, index_size) = ((l.get(5)? >> 4) as usize, if v > 0 { (l.get(5)? & 15) as usize } else { 0 });
-    let num = |at: usize, n: usize| -> Option<u64> { (0..n).try_fold(0u64, |acc, i| Some(acc << 8 | *l.get(at + i)? as u64)) };
-    let (count, mut at) = if v < 2 { (num(6, 2)?, 8) } else { (num(6, 4)?, 10) };
+    let (base_size, index_size) = (
+        (l.get(5)? >> 4) as usize,
+        if v > 0 { (l.get(5)? & 15) as usize } else { 0 },
+    );
+    let num = |at: usize, n: usize| -> Option<u64> {
+        (0..n).try_fold(0u64, |acc, i| Some(acc << 8 | *l.get(at + i)? as u64))
+    };
+    let (count, mut at) = if v < 2 {
+        (num(6, 2)?, 8)
+    } else {
+        (num(6, 4)?, 10)
+    };
     for _ in 0..count {
         let id_size = if v < 2 { 2 } else { 4 };
         let item = num(at, id_size)? as u32;
@@ -335,7 +413,15 @@ fn exif_date(t: &[u8]) -> Option<(i32, u32, u32)> {
         b"MM" => false,
         _ => return None,
     };
-    let u16_ = |at: usize| t.get(at..at + 2).map(|b| if le { u16::from_le_bytes([b[0], b[1]]) } else { u16::from_be_bytes([b[0], b[1]]) });
+    let u16_ = |at: usize| {
+        t.get(at..at + 2).map(|b| {
+            if le {
+                u16::from_le_bytes([b[0], b[1]])
+            } else {
+                u16::from_be_bytes([b[0], b[1]])
+            }
+        })
+    };
     let u32_ = |at: usize| {
         t.get(at..at + 4).map(|b| {
             let b = [b[0], b[1], b[2], b[3]];
@@ -349,17 +435,26 @@ fn exif_date(t: &[u8]) -> Option<(i32, u32, u32)> {
     // Where the value of `tag` in the IFD at `ifd` is.
     let entry = |ifd: usize, tag: u16| -> Option<usize> {
         let n = u16_(ifd)? as usize;
-        (0..n.min(512)).map(|i| ifd + 2 + i * 12).find(|&e| u16_(e) == Some(tag))
+        (0..n.min(512))
+            .map(|i| ifd + 2 + i * 12)
+            .find(|&e| u16_(e) == Some(tag))
     };
     // "YYYY:MM:DD HH:MM:SS", always more than 4 bytes, so its value is an offset.
     let date = |e: usize| -> Option<(i32, u32, u32)> {
         let at = u32_(e + 8)? as usize;
         let s = std::str::from_utf8(t.get(at..at + 10)?).ok()?;
-        let (y, m, d) = (s.get(0..4)?.parse().ok()?, s.get(5..7)?.parse().ok()?, s.get(8..10)?.parse().ok()?);
+        let (y, m, d) = (
+            s.get(0..4)?.parse().ok()?,
+            s.get(5..7)?.parse().ok()?,
+            s.get(8..10)?.parse().ok()?,
+        );
         (y > 1900 && (1..=12).contains(&m) && (1..=31).contains(&d)).then_some((y, m, d))
     };
     let ifd0 = u32_(4)? as usize;
-    let original = entry(ifd0, 0x8769).and_then(|e| u32_(e + 8)).and_then(|exif| entry(exif as usize, 0x9003)).and_then(date);
+    let original = entry(ifd0, 0x8769)
+        .and_then(|e| u32_(e + 8))
+        .and_then(|exif| entry(exif as usize, 0x9003))
+        .and_then(date);
     original.or_else(|| entry(ifd0, 0x0132).and_then(date))
 }
 
@@ -369,9 +464,15 @@ fn moov_at(read: &mut Read) -> Result<Option<(u64, u64)>, String> {
     // A file has a handful of top-level boxes; the limit stops a broken one going on forever.
     for _ in 0..64 {
         let head = read(at, 16)?;
-        let Some((size, hl)) = box_head(&head) else { break };
+        let Some((size, hl)) = box_head(&head) else {
+            break;
+        };
         if &head[4..8] == b"moov" {
-            let len = if size == 0 { MOOV_MAX } else { (size - hl as u64).min(MOOV_MAX) };
+            let len = if size == 0 {
+                MOOV_MAX
+            } else {
+                (size - hl as u64).min(MOOV_MAX)
+            };
             return Ok(Some((at + hl as u64, len)));
         }
         if size == 0 {
@@ -388,7 +489,11 @@ fn movie_date(read: &mut Read) -> Option<(i32, u32, u32)> {
     // `mvhd` comes first in `moov`; only its start is read.
     let start = read(at, len.min(4096)).ok()?;
     let m = find(&start, b"mvhd")?;
-    let secs = if m.first() == Some(&1) { u64_at(m, 4)? } else { u32_at(m, 4)? as u64 };
+    let secs = if m.first() == Some(&1) {
+        u64_at(m, 4)?
+    } else {
+        u32_at(m, 4)? as u64
+    };
     const TO_1970: i64 = 2_082_844_800;
     let t = secs as i64 - TO_1970;
     if t <= 0 {
@@ -413,7 +518,11 @@ mod tests {
 
     fn tkhd(w: u32, h: u32, turned: bool) -> Vec<u8> {
         let mut k = vec![0u8; 84];
-        let (a, b) = if turned { (0u32, 0x10000u32) } else { (0x10000, 0) };
+        let (a, b) = if turned {
+            (0u32, 0x10000u32)
+        } else {
+            (0x10000, 0)
+        };
         k[40..44].copy_from_slice(&a.to_be_bytes());
         k[44..48].copy_from_slice(&b.to_be_bytes());
         k[76..80].copy_from_slice(&(w << 16).to_be_bytes());
@@ -433,18 +542,38 @@ mod tests {
         let mut reads = 0;
         let mut read = |at: u64, len: u64| {
             reads += 1;
-            Ok(file.iter().skip(at as usize).take(len as usize).copied().collect())
+            Ok(file
+                .iter()
+                .skip(at as usize)
+                .take(len as usize)
+                .copied()
+                .collect())
         };
         let i = info("clip.MP4", &mut read).unwrap();
-        assert_eq!(i, MediaInfo { width: Some(1080), height: Some(1920), duration: Some(90.5) });
+        assert_eq!(
+            i,
+            MediaInfo {
+                width: Some(1080),
+                height: Some(1920),
+                duration: Some(90.5)
+            }
+        );
         // Three box headers, then the moov box; the media data isn't read.
         assert_eq!(reads, 4);
     }
 
     #[test]
     fn heic_takes_the_whole_picture_not_a_tile() {
-        let ispe = |w: u32, h: u32| bx(b"ispe", &[&[0u8; 4][..], &w.to_be_bytes(), &h.to_be_bytes()].concat());
-        let ipco = bx(b"ipco", &[ispe(512, 512), ispe(4032, 3024), bx(b"irot", &[1])].concat());
+        let ispe = |w: u32, h: u32| {
+            bx(
+                b"ispe",
+                &[&[0u8; 4][..], &w.to_be_bytes(), &h.to_be_bytes()].concat(),
+            )
+        };
+        let ipco = bx(
+            b"ipco",
+            &[ispe(512, 512), ispe(4032, 3024), bx(b"irot", &[1])].concat(),
+        );
         let meta = bx(b"meta", &[&[0u8; 4][..], &bx(b"iprp", &ipco)].concat());
         let file = [bx(b"ftyp", b"heic"), meta].concat();
         assert_eq!(picture(&file), Some((3024, 4032)));
@@ -453,11 +582,15 @@ mod tests {
     #[test]
     fn png_and_turned_jpeg() {
         let mut png = Vec::new();
-        image::RgbImage::new(30, 20).write_to(&mut Cursor::new(&mut png), image::ImageFormat::Png).unwrap();
+        image::RgbImage::new(30, 20)
+            .write_to(&mut Cursor::new(&mut png), image::ImageFormat::Png)
+            .unwrap();
         assert_eq!(picture(&png), Some((30, 20)));
 
         let mut jpeg = Vec::new();
-        image::RgbImage::new(30, 20).write_to(&mut Cursor::new(&mut jpeg), image::ImageFormat::Jpeg).unwrap();
+        image::RgbImage::new(30, 20)
+            .write_to(&mut Cursor::new(&mut jpeg), image::ImageFormat::Jpeg)
+            .unwrap();
         assert_eq!(picture(&jpeg), Some((30, 20)));
         // An EXIF block saying "turned 90°" (orientation 6), big-endian, right after the start.
         let mut tiff = b"MM\0\x2A\0\0\0\x08\0\x01".to_vec();
@@ -472,9 +605,15 @@ mod tests {
         // Only the header is needed.
         assert_eq!(picture(&turned[..turned.len() / 2]), Some((20, 30)));
         assert_eq!(picture(&png[..40]), Some((30, 20)));
-        for f in [image::ImageFormat::Gif, image::ImageFormat::Bmp, image::ImageFormat::WebP] {
+        for f in [
+            image::ImageFormat::Gif,
+            image::ImageFormat::Bmp,
+            image::ImageFormat::WebP,
+        ] {
             let mut v = Vec::new();
-            image::RgbaImage::new(30, 20).write_to(&mut Cursor::new(&mut v), f).unwrap();
+            image::RgbaImage::new(30, 20)
+                .write_to(&mut Cursor::new(&mut v), f)
+                .unwrap();
             assert_eq!(picture(&v[..40]), Some((30, 20)), "{f:?}");
         }
     }
@@ -505,14 +644,28 @@ mod tests {
         jpg.extend(((exif.len() + 2) as u16).to_be_bytes());
         jpg.extend(&exif);
         jpg.extend([0xFF, 0xDA, 0, 2]);
-        let mut read = |at: u64, len: u64| Ok(jpg.iter().skip(at as usize).take(len as usize).copied().collect());
+        let mut read = |at: u64, len: u64| {
+            Ok(jpg
+                .iter()
+                .skip(at as usize)
+                .take(len as usize)
+                .copied()
+                .collect())
+        };
         assert_eq!(taken("IMG_1.JPG", &mut read), Some((2021, 7, 4)));
 
         // 2020-01-02 03:04:05 UTC, in seconds since 1904.
         let mut mvhd = vec![0u8; 20];
         mvhd[4..8].copy_from_slice(&((1_577_934_245u64 + 2_082_844_800) as u32).to_be_bytes());
         let mp4 = [bx(b"ftyp", b"isom"), bx(b"moov", &bx(b"mvhd", &mvhd))].concat();
-        let mut read = |at: u64, len: u64| Ok(mp4.iter().skip(at as usize).take(len as usize).copied().collect());
+        let mut read = |at: u64, len: u64| {
+            Ok(mp4
+                .iter()
+                .skip(at as usize)
+                .take(len as usize)
+                .copied()
+                .collect())
+        };
         assert_eq!(taken("VID.mp4", &mut read), Some((2020, 1, 2)));
         let mut read = |_: u64, _: u64| Ok(vec![]);
         assert_eq!(taken("x.png", &mut read), None);

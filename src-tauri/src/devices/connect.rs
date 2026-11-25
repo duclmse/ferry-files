@@ -70,7 +70,12 @@ pub(crate) fn drives() -> Vec<(String, String)> {
 /// over Wi-Fi too), an MTP one while its serial number is on USB, an iPhone while usbmuxd lists
 /// it. `None` when that can't be told (adb or usbmuxd didn't answer, the USB devices couldn't be
 /// listed, or the device has no serial number).
-fn still_there(c: &Conn, adb: &Option<Vec<String>>, usb: &Option<Vec<crate::devices::usb::UsbDev>>, iphones: &Option<Vec<String>>) -> Option<bool> {
+fn still_there(
+    c: &Conn,
+    adb: &Option<Vec<String>>,
+    usb: &Option<Vec<crate::devices::usb::UsbDev>>,
+    iphones: &Option<Vec<String>>,
+) -> Option<bool> {
     let place = c.usb.as_deref()?;
     if let Some(serial) = place.strip_prefix("adb:") {
         return adb.as_ref().map(|l| l.iter().any(|s| s == serial));
@@ -91,11 +96,27 @@ fn still_there(c: &Conn, adb: &Option<Vec<String>>, usb: &Option<Vec<crate::devi
 fn drop_gone(app: &AppHandle) -> Vec<(String, String)> {
     let st = state(app);
     let (adb, usb) = (adb::listed(), crate::devices::usb::try_list());
-    let any_iphone = st.devs().values().any(|c| c.usb.as_deref().is_some_and(|u| u.starts_with("iphone:")));
-    let iphones = if any_iphone { crate::devices::iphone::listed() } else { None };
+    let any_iphone = st
+        .devs()
+        .values()
+        .any(|c| c.usb.as_deref().is_some_and(|u| u.starts_with("iphone:")));
+    let iphones = if any_iphone {
+        crate::devices::iphone::listed()
+    } else {
+        None
+    };
     // Named after the locks are let go of: a name may take asking the device.
-    let looked: Vec<(String, Option<bool>, Arc<Device>)> =
-        st.devs().iter().map(|(id, c)| (id.clone(), still_there(c, &adb, &usb, &iphones), c.dev.clone())).collect();
+    let looked: Vec<(String, Option<bool>, Arc<Device>)> = st
+        .devs()
+        .iter()
+        .map(|(id, c)| {
+            (
+                id.clone(),
+                still_there(c, &adb, &usb, &iphones),
+                c.dev.clone(),
+            )
+        })
+        .collect();
     let gone: Vec<(String, Arc<Device>)> = {
         let mut missing = st.missing.lock().unwrap_or_else(|e| e.into_inner());
         let was = std::mem::take(&mut *missing);
@@ -129,7 +150,13 @@ pub(crate) async fn devices(app: AppHandle, state: State<'_, AppState>) -> Resul
         let gone = drop_gone(&app);
         let mut found: Vec<Found> = adb::ready_devices()
             .into_iter()
-            .map(|(serial, name)| Found { usb: format!("adb:{serial}"), transport: "adb", which: serial.clone(), name, serial: Some(serial) })
+            .map(|(serial, name)| Found {
+                usb: format!("adb:{serial}"),
+                transport: "adb",
+                which: serial.clone(),
+                name,
+                serial: Some(serial),
+            })
             .collect();
         let mtp_error = match mtp::detect() {
             Ok(v) => {
@@ -160,8 +187,21 @@ pub(crate) async fn devices(app: AppHandle, state: State<'_, AppState>) -> Resul
         found.retain(|f| !taken.contains(&Some(f.usb.clone())));
         let adb_waiting = !adb::unauthorized().is_empty();
         let drives = drives();
-        let ejectable = drives.iter().map(|(_, p)| p.clone()).filter(|p| crate::platform::ejectable(p)).collect();
-        Ok(Devices { found, adb_found: adb::adb_path().is_some(), mtp_error, iphone_error, adb_waiting, drives, ejectable, gone })
+        let ejectable = drives
+            .iter()
+            .map(|(_, p)| p.clone())
+            .filter(|p| crate::platform::ejectable(p))
+            .collect();
+        Ok(Devices {
+            found,
+            adb_found: adb::adb_path().is_some(),
+            mtp_error,
+            iphone_error,
+            adb_waiting,
+            drives,
+            ejectable,
+            gone,
+        })
     })
     .await
 }
@@ -169,16 +209,26 @@ pub(crate) async fn devices(app: AppHandle, state: State<'_, AppState>) -> Resul
 /// Connects a device found by `devices` (`which` is its adb serial or MTP location, `serial` its
 /// USB serial number when known), alongside any already connected.
 #[tauri::command(rename_all = "snake_case")]
-pub(crate) async fn connect(state: State<'_, AppState>, transport: String, which: Option<String>, serial: Option<String>) -> Result<Info, String> {
+pub(crate) async fn connect(
+    state: State<'_, AppState>,
+    transport: String,
+    which: Option<String>,
+    serial: Option<String>,
+) -> Result<Info, String> {
     let usb = which.as_ref().map(|w| format!("{transport}:{w}"));
     let serial = serial.or_else(|| which.clone().filter(|_| transport == "adb"));
-    let same = |c: &Conn| (usb.is_some() && c.usb == usb) || (serial.is_some() && c.serial == serial);
+    let same =
+        |c: &Conn| (usb.is_some() && c.usb == usb) || (serial.is_some() && c.serial == serial);
     if state.devs().values().any(same) {
         return Err("That device is already connected.".into());
     }
     let dev = blocking(move || device::connect(&transport, which).map_err(msg)).await?;
     let id = format!("d{}", state.next_dev.fetch_add(1, Ordering::Relaxed));
-    let conn = Conn { dev: Arc::new(dev), usb, serial };
+    let conn = Conn {
+        dev: Arc::new(dev),
+        usb,
+        serial,
+    };
     let info = info_of(&id, Some(&conn), &conn.dev);
     state.devs().insert(id, conn);
     Ok(info)
@@ -199,7 +249,10 @@ pub(crate) async fn disconnect(app: AppHandle, src: String) -> Result<(), String
 #[tauri::command(rename_all = "snake_case")]
 pub(crate) fn connections(state: State<'_, AppState>) -> Vec<Info> {
     let devs = state.devs();
-    let mut out: Vec<Info> = devs.iter().map(|(id, c)| info_of(id, Some(c), &c.dev)).collect();
+    let mut out: Vec<Info> = devs
+        .iter()
+        .map(|(id, c)| info_of(id, Some(c), &c.dev))
+        .collect();
     out.sort_by_key(|i| i.id[1..].parse::<u32>().unwrap_or(0));
     out
 }
@@ -233,12 +286,24 @@ mod tests {
             usb: Some(usb.into()),
             serial: serial.map(String::from),
         };
-        let on_usb = |serial: &str| UsbDev { bus: 0, address: 1, vendor: 0x04e8, product: 0x6860, serial: serial.into() };
-        let adb = Some(vec!["R3CR406TEMA".to_string(), "192.168.1.5:5555".to_string()]);
+        let on_usb = |serial: &str| UsbDev {
+            bus: 0,
+            address: 1,
+            vendor: 0x04e8,
+            product: 0x6860,
+            serial: serial.into(),
+        };
+        let adb = Some(vec![
+            "R3CR406TEMA".to_string(),
+            "192.168.1.5:5555".to_string(),
+        ]);
         let usb = Some(vec![on_usb("R3CR406TEMA")]);
         let phones = Some(vec!["00008110-001A2B3C4D5E801E".to_string()]);
         let there = |c: &Conn| still_there(c, &adb, &usb, &phones);
-        assert_eq!(there(&conn("adb:R3CR406TEMA", Some("R3CR406TEMA"))), Some(true));
+        assert_eq!(
+            there(&conn("adb:R3CR406TEMA", Some("R3CR406TEMA"))),
+            Some(true)
+        );
         assert_eq!(there(&conn("adb:192.168.1.5:5555", None)), Some(true));
         assert_eq!(there(&conn("adb:OTHER", Some("OTHER"))), Some(false));
         if !cfg!(windows) {
@@ -249,11 +314,31 @@ mod tests {
         }
         // Can't tell: no serial, or adb or the USB list not answering.
         assert_eq!(there(&conn("mtp:0-2", None)), None);
-        assert_eq!(still_there(&conn("adb:R3CR406TEMA", None), &None, &usb, &phones), None);
-        assert_eq!(still_there(&conn("mtp:0-1", Some("R3CR406TEMA")), &adb, &None, &phones), None);
-        assert_eq!(there(&conn("iphone:00008110-001A2B3C4D5E801E", None)), Some(true));
-        assert_eq!(there(&conn("iphone:00008030-000000000000002E", None)), Some(false));
-        assert_eq!(still_there(&conn("iphone:00008110-001A2B3C4D5E801E", None), &adb, &usb, &None), None);
+        assert_eq!(
+            still_there(&conn("adb:R3CR406TEMA", None), &None, &usb, &phones),
+            None
+        );
+        assert_eq!(
+            still_there(&conn("mtp:0-1", Some("R3CR406TEMA")), &adb, &None, &phones),
+            None
+        );
+        assert_eq!(
+            there(&conn("iphone:00008110-001A2B3C4D5E801E", None)),
+            Some(true)
+        );
+        assert_eq!(
+            there(&conn("iphone:00008030-000000000000002E", None)),
+            Some(false)
+        );
+        assert_eq!(
+            still_there(
+                &conn("iphone:00008110-001A2B3C4D5E801E", None),
+                &adb,
+                &usb,
+                &None
+            ),
+            None
+        );
     }
 
     #[test]
@@ -266,14 +351,23 @@ mod tests {
         }
         if cfg!(windows) {
             // Every drive, the system's too, which is never one to eject.
-            let system = format!("/{}", std::env::var("SystemDrive").unwrap_or_else(|_| "C:".into()).to_uppercase());
+            let system = format!(
+                "/{}",
+                std::env::var("SystemDrive")
+                    .unwrap_or_else(|_| "C:".into())
+                    .to_uppercase()
+            );
             assert!(drives.iter().any(|(_, p)| *p == system), "{drives:?}");
             assert!(!crate::platform::ejectable(&system));
         } else {
             // Not the disk the system is on.
             let root = std::fs::canonicalize("/").unwrap();
             for (_, path) in &drives {
-                assert_ne!(std::fs::canonicalize(crate::platform::native(path)).unwrap(), root, "{path}");
+                assert_ne!(
+                    std::fs::canonicalize(crate::platform::native(path)).unwrap(),
+                    root,
+                    "{path}"
+                );
             }
         }
     }

@@ -10,7 +10,10 @@ use std::path::Path;
 /// The web view's data folders in `~/Library/WebKit`, old and new: the bundled app's (named by
 /// its identifier) and a development build's (named by its binary).
 #[cfg(target_os = "macos")]
-const WEBKIT: [(&str, &str); 2] = [("dev.yomi.files", "dev.ferryfiles.desktop"), ("yomi-files-app", "ferry-files")];
+const WEBKIT: [(&str, &str); 2] = [
+    ("dev.yomi.files", "dev.ferryfiles.desktop"),
+    ("yomi-files-app", "ferry-files"),
+];
 
 pub fn run() {
     #[cfg(target_os = "macos")]
@@ -34,7 +37,10 @@ fn copy_once(old: &Path, new: &Path) -> std::io::Result<()> {
     if !old.is_dir() || new.exists() {
         return Ok(());
     }
-    let part = new.with_file_name(format!(".{}.partial", new.file_name().unwrap_or_default().to_string_lossy()));
+    let part = new.with_file_name(format!(
+        ".{}.partial",
+        new.file_name().unwrap_or_default().to_string_lossy()
+    ));
     let _ = std::fs::remove_dir_all(&part);
     copy_dir(old, &part)?;
     std::fs::rename(&part, new)
@@ -75,9 +81,17 @@ fn move_or_merge(old: &Path, new: &Path) -> std::io::Result<()> {
         } else if item.file_name() == "index.tsv" {
             let have = std::fs::read_to_string(&to)?;
             let known: std::collections::HashSet<&str> = have.lines().collect();
-            let missing: String = std::fs::read_to_string(&from)?.lines().filter(|l| !l.is_empty() && !known.contains(l)).map(|l| format!("{l}\n")).collect();
+            let missing: String = std::fs::read_to_string(&from)?
+                .lines()
+                .filter(|l| !l.is_empty() && !known.contains(l))
+                .map(|l| format!("{l}\n"))
+                .collect();
             if !missing.is_empty() {
-                let sep = if have.is_empty() || have.ends_with('\n') { "" } else { "\n" };
+                let sep = if have.is_empty() || have.ends_with('\n') {
+                    ""
+                } else {
+                    "\n"
+                };
                 std::fs::write(&to, format!("{have}{sep}{missing}"))?;
             }
             std::fs::remove_file(&from)?;
@@ -99,7 +113,11 @@ mod tests {
         let (old, new) = (root.join("old"), root.join("new"));
         std::fs::create_dir_all(old.join("backups")).unwrap();
         std::fs::write(old.join("backups/a.txt"), "a").unwrap();
-        std::fs::write(old.join("backups/index.tsv"), "a.txt\tmac\t/a\tdelete\nsame\n").unwrap();
+        std::fs::write(
+            old.join("backups/index.tsv"),
+            "a.txt\tmac\t/a\tdelete\nsame\n",
+        )
+        .unwrap();
         std::fs::create_dir_all(old.join("thumbs")).unwrap();
 
         // Copying leaves the old folder, and a second copy changes nothing.
@@ -108,7 +126,10 @@ mod tests {
         assert!(copy.join("backups/a.txt").is_file() && old.join("backups/a.txt").is_file());
         std::fs::write(copy.join("backups/a.txt"), "changed").unwrap();
         copy_once(&old, &copy).unwrap();
-        assert_eq!(std::fs::read_to_string(copy.join("backups/a.txt")).unwrap(), "changed");
+        assert_eq!(
+            std::fs::read_to_string(copy.join("backups/a.txt")).unwrap(),
+            "changed"
+        );
 
         // Merging: new files move in, notes are combined, clashes stay behind.
         std::fs::create_dir_all(new.join("backups")).unwrap();
@@ -116,10 +137,22 @@ mod tests {
         std::fs::write(new.join("backups/clash"), "new").unwrap();
         std::fs::write(old.join("backups/clash"), "old").unwrap();
         move_or_merge(&old, &new).unwrap();
-        assert_eq!(std::fs::read_to_string(new.join("backups/a.txt")).unwrap(), "a");
-        assert_eq!(std::fs::read_to_string(new.join("backups/index.tsv")).unwrap(), "same\na.txt\tmac\t/a\tdelete\n");
-        assert_eq!(std::fs::read_to_string(new.join("backups/clash")).unwrap(), "new");
-        assert_eq!(std::fs::read_to_string(old.join("backups/clash")).unwrap(), "old");
+        assert_eq!(
+            std::fs::read_to_string(new.join("backups/a.txt")).unwrap(),
+            "a"
+        );
+        assert_eq!(
+            std::fs::read_to_string(new.join("backups/index.tsv")).unwrap(),
+            "same\na.txt\tmac\t/a\tdelete\n"
+        );
+        assert_eq!(
+            std::fs::read_to_string(new.join("backups/clash")).unwrap(),
+            "new"
+        );
+        assert_eq!(
+            std::fs::read_to_string(old.join("backups/clash")).unwrap(),
+            "old"
+        );
         assert!(new.join("thumbs").is_dir());
 
         // With no new folder, the whole thing is renamed.

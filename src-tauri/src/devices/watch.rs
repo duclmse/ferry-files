@@ -82,7 +82,16 @@ mod iokit {
                     // Each notification takes (and releases) its own matching dictionary.
                     let matching = IOServiceMatching(c"IOUSBHostDevice".as_ptr());
                     let mut iterator: Object = 0;
-                    if matching.is_null() || IOServiceAddMatchingNotification(port, kind.as_ptr(), matching, usb_changed, refcon, &mut iterator) != 0 {
+                    if matching.is_null()
+                        || IOServiceAddMatchingNotification(
+                            port,
+                            kind.as_ptr(),
+                            matching,
+                            usb_changed,
+                            refcon,
+                            &mut iterator,
+                        ) != 0
+                    {
                         ok = false;
                         break;
                     }
@@ -93,7 +102,11 @@ mod iokit {
                 if !ok {
                     return;
                 }
-                CFRunLoopAddSource(CFRunLoopGetCurrent(), IONotificationPortGetRunLoopSource(port), kCFRunLoopDefaultMode);
+                CFRunLoopAddSource(
+                    CFRunLoopGetCurrent(),
+                    IONotificationPortGetRunLoopSource(port),
+                    kCFRunLoopDefaultMode,
+                );
                 CFRunLoopRun();
             }
         });

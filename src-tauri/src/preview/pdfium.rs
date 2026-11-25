@@ -17,7 +17,10 @@ static PDFIUM: OnceLock<Option<Pdfium>> = OnceLock::new();
 fn candidates() -> Vec<PathBuf> {
     let name = Pdfium::pdfium_platform_library_name();
     let mut out = vec![];
-    if let Some(dir) = std::env::current_exe().ok().and_then(|e| e.parent().map(PathBuf::from)) {
+    if let Some(dir) = std::env::current_exe()
+        .ok()
+        .and_then(|e| e.parent().map(PathBuf::from))
+    {
         #[cfg(target_os = "macos")]
         out.push(dir.join("../Frameworks").join(&name));
         // Linux packages put the bundle's resources in /usr/lib/<product name>.
@@ -26,14 +29,25 @@ fn candidates() -> Vec<PathBuf> {
         out.push(dir.join(&name));
     }
     #[cfg(debug_assertions)]
-    out.push(PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("libs/pdfium").join(&name));
+    out.push(
+        PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+            .join("libs/pdfium")
+            .join(&name),
+    );
     out.push(PathBuf::from(name));
     out
 }
 
 /// PDFium, or None when it isn't there (or won't load). Tried once.
 pub fn pdfium() -> Option<&'static Pdfium> {
-    PDFIUM.get_or_init(|| candidates().into_iter().find_map(|c| Pdfium::bind_to_library(&c).ok()).map(Pdfium::new)).as_ref()
+    PDFIUM
+        .get_or_init(|| {
+            candidates()
+                .into_iter()
+                .find_map(|c| Pdfium::bind_to_library(&c).ok())
+                .map(Pdfium::new)
+        })
+        .as_ref()
 }
 
 /// Which file a PDF's bytes came from. The size and modification time are in it, so a changed
@@ -66,7 +80,11 @@ pub fn doc(key: Key, read: impl FnOnce() -> Result<Vec<u8>, String>) -> Result<A
         docs.push(kept);
         return Ok(doc);
     }
-    let doc = Arc::new(pdfium.load_pdf_from_byte_vec(read()?, None).map_err(unread)?);
+    let doc = Arc::new(
+        pdfium
+            .load_pdf_from_byte_vec(read()?, None)
+            .map_err(unread)?,
+    );
     if docs.len() >= KEPT {
         docs.remove(0);
     }
@@ -78,7 +96,9 @@ pub const NO_PDFIUM: &str = "PDFium isn't there to read the PDF.";
 
 fn unread(e: PdfiumError) -> String {
     match e {
-        PdfiumError::PdfiumLibraryInternalError(PdfiumInternalError::PasswordError) => "This PDF is locked with a password.".to_string(),
+        PdfiumError::PdfiumLibraryInternalError(PdfiumInternalError::PasswordError) => {
+            "This PDF is locked with a password.".to_string()
+        }
         e => format!("Couldn't read the PDF: {e}"),
     }
 }
@@ -100,7 +120,9 @@ pub fn sizes(doc: &PdfDocument) -> Vec<[f32; 2]> {
         .as_range()
         .map(|i| match pages.page_size(i) {
             Ok(r) => [r.width().value, r.height().value],
-            Err(_) => pages.get(i).map_or([612.0, 792.0], |p| [p.width().value, p.height().value]),
+            Err(_) => pages
+                .get(i)
+                .map_or([612.0, 792.0], |p| [p.width().value, p.height().value]),
         })
         .collect()
 }
@@ -116,11 +138,19 @@ const TILED_WIDTH_MAX: u32 = 30_000;
 ///
 /// With `tile` (left, top, width, height in pixels of the page drawn `width` wide), only that
 /// piece of it is drawn, so a page zoomed in isn't drawn whole.
-pub fn render(doc: &PdfDocument, n: usize, width: u32, tile: Option<[u32; 4]>) -> Result<Vec<u8>, String> {
+pub fn render(
+    doc: &PdfDocument,
+    n: usize,
+    width: u32,
+    tile: Option<[u32; 4]>,
+) -> Result<Vec<u8>, String> {
     let page = page(doc, n)?;
     let (pw, ph) = (page.width().value.max(1.0), page.height().value.max(1.0));
     let w = match tile {
-        None => (width.clamp(16, 10_000) as f32).min((PIXELS_MAX * pw / ph).sqrt()).max(1.0).round() as Pixels,
+        None => (width.clamp(16, 10_000) as f32)
+            .min((PIXELS_MAX * pw / ph).sqrt())
+            .max(1.0)
+            .round() as Pixels,
         Some(_) => width.clamp(16, TILED_WIDTH_MAX) as Pixels,
     };
     // PDFium swaps its BGRA to RGBA as it draws, so the pixels need no converting after.
@@ -137,14 +167,22 @@ pub fn render(doc: &PdfDocument, n: usize, width: u32, tile: Option<[u32; 4]>) -
         Some([x, y, tw, th]) => {
             let h = (w as f32 * ph / pw).round() as u32;
             let (x, y) = (x.min(w as u32 - 1), y.min(h.saturating_sub(1)));
-            let (tw, th) = (tw.clamp(1, w as u32 - x), th.clamp(1, h.saturating_sub(y).max(1)));
+            let (tw, th) = (
+                tw.clamp(1, w as u32 - x),
+                th.clamp(1, h.saturating_sub(y).max(1)),
+            );
             if tw as f32 * th as f32 > PIXELS_MAX {
                 return Err("Too big a piece to draw.".into());
             }
-            let mut bitmap = PdfBitmap::empty(tw as Pixels, th as Pixels, PdfBitmapFormat::BGRA).map_err(failed)?;
+            let mut bitmap = PdfBitmap::empty(tw as Pixels, th as Pixels, PdfBitmapFormat::BGRA)
+                .map_err(failed)?;
             // The whole page laid out, moved so the piece is at the corner: PDFium draws only
             // what falls in the bitmap.
-            page.render_into_bitmap_with_config(&mut bitmap, &config.set_origin(-(x as Pixels), -(y as Pixels))).map_err(failed)?;
+            page.render_into_bitmap_with_config(
+                &mut bitmap,
+                &config.set_origin(-(x as Pixels), -(y as Pixels)),
+            )
+            .map_err(failed)?;
             bitmap
         }
     };
@@ -188,7 +226,14 @@ fn shown_box(page: &PdfPage, r: &PdfRect, config: &PdfRenderConfig) -> Option<[f
     let (x1, y1) = page.points_to_pixels(r.right(), r.bottom(), config).ok()?;
     let (l, t, rr, b) = (x0.min(x1), y0.min(y1), x0.max(x1), y0.max(y1));
     let u = UNIT as f32;
-    (rr > l && b > t).then(|| [l as f32 / u, t as f32 / u, (rr - l) as f32 / u, (b - t) as f32 / u])
+    (rr > l && b > t).then(|| {
+        [
+            l as f32 / u,
+            t as f32 / u,
+            (rr - l) as f32 / u,
+            (b - t) as f32 / u,
+        ]
+    })
 }
 
 /// A link on a page: its box (as `PageText`'s), and where it goes: a page in the PDF (from 1),
@@ -203,7 +248,9 @@ pub struct Link {
 /// Addresses a link may open: web and mail ones, not files or apps.
 pub fn openable(uri: &str) -> bool {
     let scheme = uri.split_once(':').map_or("", |(s, _)| s);
-    ["http", "https", "mailto"].iter().any(|s| s.eq_ignore_ascii_case(scheme))
+    ["http", "https", "mailto"]
+        .iter()
+        .any(|s| s.eq_ignore_ascii_case(scheme))
 }
 
 /// The links on a page that go somewhere the preview can take you.
@@ -213,15 +260,22 @@ pub fn links(page: &PdfPage) -> Vec<Link> {
         .iter()
         .filter_map(|l| {
             let b = l.rect().ok().and_then(|r| shown_box(page, &r, &config))?;
-            let to = l.destination().and_then(|d| d.page_index().ok()).or_else(|| {
-                let a = l.action()?;
-                let d = a.as_local_destination_action()?.destination().ok()?;
-                d.page_index().ok()
-            });
+            let to = l
+                .destination()
+                .and_then(|d| d.page_index().ok())
+                .or_else(|| {
+                    let a = l.action()?;
+                    let d = a.as_local_destination_action()?.destination().ok()?;
+                    d.page_index().ok()
+                });
             let page = to.and_then(|i| usize::try_from(i).ok()).map(|i| i + 1);
             let uri = match page {
                 Some(_) => None,
-                None => l.action().and_then(|a| a.as_uri_action().and_then(|u| u.uri().ok())).map(|u| u.trim().to_string()).filter(|u| openable(u)),
+                None => l
+                    .action()
+                    .and_then(|a| a.as_uri_action().and_then(|u| u.uri().ok()))
+                    .map(|u| u.trim().to_string())
+                    .filter(|u| openable(u)),
             };
             (page.is_some() || uri.is_some()).then_some(Link { b, page, uri })
         })
@@ -229,13 +283,24 @@ pub fn links(page: &PdfPage) -> Vec<Link> {
 }
 
 pub fn page_text(page: &PdfPage) -> Result<PageText, String> {
-    let text = page.text().map_err(|e| format!("Couldn't read the page's text: {e}"))?;
+    let text = page
+        .text()
+        .map_err(|e| format!("Couldn't read the page's text: {e}"))?;
     let config = PdfRenderConfig::new().set_fixed_size(UNIT, UNIT);
-    let mut out = PageText { text: String::new(), boxes: vec![] };
+    let mut out = PageText {
+        text: String::new(),
+        boxes: vec![],
+    };
     for c in text.chars().iter() {
         let ch = c.unicode_char().unwrap_or('\u{FFFD}');
         let generated = c.is_generated().unwrap_or(false);
-        let at = if generated { None } else { c.loose_bounds().ok().and_then(|r| shown_box(page, &r, &config)) };
+        let at = if generated {
+            None
+        } else {
+            c.loose_bounds()
+                .ok()
+                .and_then(|r| shown_box(page, &r, &config))
+        };
         out.boxes.push((out.text.len(), at));
         out.text.push(ch);
     }
@@ -249,7 +314,10 @@ fn same_line(a: &[f32; 4], b: &[f32; 4]) -> bool {
 
 fn join(a: &mut [f32; 4], b: &[f32; 4]) {
     let (x0, y0) = (a[0].min(b[0]), a[1].min(b[1]));
-    let (x1, y1) = ((a[0] + a[2]).max(b[0] + b[2]), (a[1] + a[3]).max(b[1] + b[3]));
+    let (x1, y1) = (
+        (a[0] + a[2]).max(b[0] + b[2]),
+        (a[1] + a[3]).max(b[1] + b[3]),
+    );
     *a = [x0, y0, x1 - x0, y1 - y0];
 }
 
@@ -284,7 +352,11 @@ impl PageText {
         fn close(out: &mut Vec<Run>, run: &mut Option<Run>, e: &'static str) {
             if let Some(mut r) = run.take() {
                 let kept = r.t.trim_end().len();
-                let e = if e.is_empty() && kept < r.t.len() { " " } else { e };
+                let e = if e.is_empty() && kept < r.t.len() {
+                    " "
+                } else {
+                    e
+                };
                 r.t.truncate(kept);
                 r.e = e;
                 if !r.t.is_empty() {
@@ -305,8 +377,11 @@ impl PageText {
                     }
                 }
                 Some(b) => {
-                    let goes_on =
-                        run.as_ref().is_some_and(|r| same_line(&r.b, &b) && b[0] >= r.b[0] + r.b[2] - 0.5 * b[3] && b[0] - (r.b[0] + r.b[2]) < 2.0 * b[3]);
+                    let goes_on = run.as_ref().is_some_and(|r| {
+                        same_line(&r.b, &b)
+                            && b[0] >= r.b[0] + r.b[2] - 0.5 * b[3]
+                            && b[0] - (r.b[0] + r.b[2]) < 2.0 * b[3]
+                    });
                     if !goes_on {
                         let next_line = run.as_ref().is_some_and(|r| !same_line(&r.b, &b));
                         close(&mut out, &mut run, if next_line { "\n" } else { " " });
@@ -316,7 +391,13 @@ impl PageText {
                             r.t.push_str(ch);
                             join(&mut r.b, &b);
                         }
-                        None => run = Some(Run { t: ch.to_string(), b, e: "" }),
+                        None => {
+                            run = Some(Run {
+                                t: ch.to_string(),
+                                b,
+                                e: "",
+                            })
+                        }
                     }
                 }
             }
@@ -343,7 +424,10 @@ pub struct Layer {
 
 pub fn layer_of(doc: &PdfDocument, n: usize) -> Result<Layer, String> {
     let p = page(doc, n)?;
-    Ok(Layer { runs: page_text(&p)?.runs(), links: links(&p) })
+    Ok(Layer {
+        runs: page_text(&p)?.runs(),
+        links: links(&p),
+    })
 }
 
 /// The text of page `n` (from 0).

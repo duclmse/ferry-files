@@ -18,7 +18,8 @@ const CACHE_TTL: Duration = Duration::from_secs(3);
 #[cfg(target_os = "macos")]
 const INSTALL: &str = "libmtp not found. Install it with: brew install libmtp";
 #[cfg(not(target_os = "macos"))]
-const INSTALL: &str = "libmtp not found. Install it with your package manager (libmtp9 on Debian and Ubuntu, \
+const INSTALL: &str =
+    "libmtp not found. Install it with your package manager (libmtp9 on Debian and Ubuntu, \
 libmtp on Fedora and Arch).";
 
 /// Where libmtp may be: next to the app first (a bundle carries its own), then where it's installed.
@@ -26,10 +27,17 @@ fn candidates() -> Vec<std::path::PathBuf> {
     let mut out = vec![];
     #[cfg(target_os = "macos")]
     {
-        if let Some(dir) = std::env::current_exe().ok().and_then(|e| e.parent().map(|d| d.join("../Frameworks"))) {
+        if let Some(dir) = std::env::current_exe()
+            .ok()
+            .and_then(|e| e.parent().map(|d| d.join("../Frameworks")))
+        {
             out.push(dir.join("libmtp.9.dylib"));
         }
-        for p in ["/opt/homebrew/lib/libmtp.dylib", "/usr/local/lib/libmtp.dylib", "libmtp.dylib"] {
+        for p in [
+            "/opt/homebrew/lib/libmtp.dylib",
+            "/usr/local/lib/libmtp.dylib",
+            "libmtp.dylib",
+        ] {
             out.push(p.into());
         }
     }
@@ -116,8 +124,15 @@ struct Lib {
     files_and_folders: unsafe extern "C" fn(Dev, u32, u32) -> *mut MtpFile,
     filemetadata: unsafe extern "C" fn(Dev, u32) -> *mut MtpFile,
     destroy_file: unsafe extern "C" fn(*mut MtpFile),
-    get_file_to_file: unsafe extern "C" fn(Dev, u32, *const c_char, Option<Progress>, *const c_void) -> c_int,
-    send_file_from_file: unsafe extern "C" fn(Dev, *const c_char, *mut MtpFile, Option<Progress>, *const c_void) -> c_int,
+    get_file_to_file:
+        unsafe extern "C" fn(Dev, u32, *const c_char, Option<Progress>, *const c_void) -> c_int,
+    send_file_from_file: unsafe extern "C" fn(
+        Dev,
+        *const c_char,
+        *mut MtpFile,
+        Option<Progress>,
+        *const c_void,
+    ) -> c_int,
     set_file_name: unsafe extern "C" fn(Dev, *mut MtpFile, *const c_char) -> c_int,
     delete_object: unsafe extern "C" fn(Dev, u32) -> c_int,
     create_folder: unsafe extern "C" fn(Dev, *mut c_char, u32, u32) -> u32,
@@ -139,7 +154,8 @@ pub fn stop_copies() {
 
 /// `data` is the device's stop flag (`Link::stop`).
 extern "C" fn progress(_sent: u64, _total: u64, data: *const c_void) -> c_int {
-    let stopped = !data.is_null() && unsafe { (*data.cast::<AtomicBool>()).load(Ordering::Relaxed) };
+    let stopped =
+        !data.is_null() && unsafe { (*data.cast::<AtomicBool>()).load(Ordering::Relaxed) };
     (stopped || QUITTING.load(Ordering::Relaxed)) as c_int
 }
 
@@ -183,16 +199,22 @@ impl Drop for LibLock {
 
 fn lib() -> Result<&'static Lib> {
     static LIB: OnceLock<std::result::Result<Lib, String>> = OnceLock::new();
-    LIB.get_or_init(load).as_ref().map_err(|e| DevError::Msg(e.clone()))
+    LIB.get_or_init(load)
+        .as_ref()
+        .map_err(|e| DevError::Msg(e.clone()))
 }
 
 fn load() -> std::result::Result<Lib, String> {
-    let library = candidates().iter().find_map(|p| unsafe { libloading::Library::new(p) }.ok()).ok_or(INSTALL)?;
+    let library = candidates()
+        .iter()
+        .find_map(|p| unsafe { libloading::Library::new(p) }.ok())
+        .ok_or(INSTALL)?;
     // The library stays loaded for the life of the app.
     let library: &'static libloading::Library = Box::leak(Box::new(library));
     macro_rules! sym {
         ($name:literal) => {
-            *unsafe { library.get(concat!($name, "\0").as_bytes()) }.map_err(|e| format!("libmtp is missing {}: {e}", $name))?
+            *unsafe { library.get(concat!($name, "\0").as_bytes()) }
+                .map_err(|e| format!("libmtp is missing {}: {e}", $name))?
         };
     }
     let lib = Lib {
@@ -212,7 +234,9 @@ fn load() -> std::result::Result<Lib, String> {
         set_file_name: sym!("LIBMTP_Set_File_Name"),
         delete_object: sym!("LIBMTP_Delete_Object"),
         create_folder: sym!("LIBMTP_Create_Folder"),
-        get_partial: unsafe { library.get(b"LIBMTP_GetPartialObject\0") }.ok().map(|f| *f),
+        get_partial: unsafe { library.get(b"LIBMTP_GetPartialObject\0") }
+            .ok()
+            .map(|f| *f),
     };
     let init: unsafe extern "C" fn() = sym!("LIBMTP_Init");
     unsafe { init() };
@@ -238,7 +262,9 @@ fn raw_devices(lib: &Lib) -> Result<Vec<*mut RawDevice>> {
         return err(format!("libmtp couldn't scan USB devices (error {rc})."));
     }
     // The array is malloc'd by libmtp and small; it's deliberately not freed (open copies from it).
-    Ok((0..count as usize).map(|i| unsafe { raws.add(i) }).collect())
+    Ok((0..count as usize)
+        .map(|i| unsafe { raws.add(i) })
+        .collect())
 }
 
 /// Where a raw device is on USB ("bus-devnum"): tells two connected devices apart.
@@ -260,14 +286,34 @@ pub fn detect() -> Result<Vec<Detected>> {
     let lib = lib()?;
     let _lib = lib_lock();
     let raws = raw_devices(lib)?;
-    let usb = if raws.is_empty() { vec![] } else { crate::devices::usb::list() };
+    let usb = if raws.is_empty() {
+        vec![]
+    } else {
+        crate::devices::usb::list()
+    };
     Ok(raws
         .into_iter()
         .map(|r| {
             let (e, bus, devnum) = unsafe { (&(*r).device_entry, (*r).bus_location, (*r).devnum) };
-            let name = format!("{} {}", cstr(e.vendor), cstr(e.product)).trim().to_string();
-            let name = if name.is_empty() { format!("{:04x}:{:04x}", e.vendor_id, e.product_id) } else { name };
-            Detected { location: location(r), name, serial: crate::devices::usb::serial_of(&usb, bus, devnum as u32, e.vendor_id, e.product_id) }
+            let name = format!("{} {}", cstr(e.vendor), cstr(e.product))
+                .trim()
+                .to_string();
+            let name = if name.is_empty() {
+                format!("{:04x}:{:04x}", e.vendor_id, e.product_id)
+            } else {
+                name
+            };
+            Detected {
+                location: location(r),
+                name,
+                serial: crate::devices::usb::serial_of(
+                    &usb,
+                    bus,
+                    devnum as u32,
+                    e.vendor_id,
+                    e.product_id,
+                ),
+            }
         })
         .collect())
 }
@@ -324,7 +370,16 @@ impl Link {
             // Read everything (including `next`) before freeing the node.
             let (c, next) = unsafe {
                 let r = &*f;
-                (Child { id: r.item_id, name: cstr(r.filename), dir: r.filetype == FILETYPE_FOLDER, size: r.filesize, mtime: r.modificationdate }, r.next)
+                (
+                    Child {
+                        id: r.item_id,
+                        name: cstr(r.filename),
+                        dir: r.filetype == FILETYPE_FOLDER,
+                        size: r.filesize,
+                        mtime: r.modificationdate,
+                    },
+                    r.next,
+                )
             };
             unsafe { (self.lib.destroy_file)(f) };
             out.push(c);
@@ -336,14 +391,18 @@ impl Link {
 
     fn download(&self, id: u32) -> Result<Vec<u8>> {
         let tmp = temp_path("dl");
-        let data = self.download_to(id, &tmp).and_then(|_| std::fs::read(&tmp).map_err(|e| DevError::Msg(e.to_string())));
+        let data = self
+            .download_to(id, &tmp)
+            .and_then(|_| std::fs::read(&tmp).map_err(|e| DevError::Msg(e.to_string())));
         let _ = std::fs::remove_file(&tmp);
         data
     }
 
     fn download_to(&self, id: u32, to: &std::path::Path) -> Result<()> {
         let c = CString::new(to.to_string_lossy().as_bytes()).unwrap();
-        let rc = unsafe { (self.lib.get_file_to_file)(self.dev, id, c.as_ptr(), Some(progress), self.stop_flag()) };
+        let rc = unsafe {
+            (self.lib.get_file_to_file)(self.dev, id, c.as_ptr(), Some(progress), self.stop_flag())
+        };
         if rc == 0 {
             Ok(())
         } else {
@@ -356,7 +415,15 @@ impl Link {
         let c = CString::new(to.to_string_lossy().as_bytes()).unwrap();
         let flags: [&AtomicBool; 2] = [&self.stop, cancel];
         let data: *const [&AtomicBool; 2] = &flags;
-        let rc = unsafe { (self.lib.get_file_to_file)(self.dev, id, c.as_ptr(), Some(progress_either), data.cast()) };
+        let rc = unsafe {
+            (self.lib.get_file_to_file)(
+                self.dev,
+                id,
+                c.as_ptr(),
+                Some(progress_either),
+                data.cast(),
+            )
+        };
         if rc == 0 {
             Ok(())
         } else {
@@ -369,7 +436,13 @@ impl Link {
         let f = self.lib.get_partial.filter(|_| self.partial)?;
         let (mut data, mut size) = (std::ptr::null_mut::<u8>(), 0u32);
         let rc = unsafe { f(self.dev, id, start, len, &mut data, &mut size) };
-        let out = (rc == 0).then(|| if data.is_null() { vec![] } else { unsafe { std::slice::from_raw_parts(data, size as usize) }.to_vec() });
+        let out = (rc == 0).then(|| {
+            if data.is_null() {
+                vec![]
+            } else {
+                unsafe { std::slice::from_raw_parts(data, size as usize) }.to_vec()
+            }
+        });
         if !data.is_null() {
             unsafe { free(data.cast()) };
         }
@@ -382,15 +455,24 @@ impl Link {
 
     fn upload(&self, data: &[u8], name: &str, storage: u32, parent: u32) -> Result<u32> {
         let tmp = temp_path("ul");
-        std::fs::write(&tmp, data).map_err(|e| DevError::Msg(format!("Can't write temp file: {e}")))?;
+        std::fs::write(&tmp, data)
+            .map_err(|e| DevError::Msg(format!("Can't write temp file: {e}")))?;
         let done = self.upload_file(&tmp, data.len() as u64, name, storage, parent);
         let _ = std::fs::remove_file(&tmp);
         done
     }
 
     /// Sends file `from` on this computer (`size` bytes) as `name`. Returns its id.
-    fn upload_file(&self, from: &std::path::Path, size: u64, name: &str, storage: u32, parent: u32) -> Result<u32> {
-        let path = CString::new(from.to_string_lossy().as_bytes()).map_err(|_| DevError::Msg("Bad file name.".into()))?;
+    fn upload_file(
+        &self,
+        from: &std::path::Path,
+        size: u64,
+        name: &str,
+        storage: u32,
+        parent: u32,
+    ) -> Result<u32> {
+        let path = CString::new(from.to_string_lossy().as_bytes())
+            .map_err(|_| DevError::Msg("Bad file name.".into()))?;
         let cname = CString::new(name).map_err(|_| DevError::Msg("Bad file name.".into()))?;
         let mut meta = MtpFile {
             item_id: 0,
@@ -402,7 +484,15 @@ impl Link {
             filetype: FILETYPE_UNKNOWN,
             next: std::ptr::null_mut(),
         };
-        let rc = unsafe { (self.lib.send_file_from_file)(self.dev, path.as_ptr(), &mut meta, Some(progress), self.stop_flag()) };
+        let rc = unsafe {
+            (self.lib.send_file_from_file)(
+                self.dev,
+                path.as_ptr(),
+                &mut meta,
+                Some(progress),
+                self.stop_flag(),
+            )
+        };
         if rc != 0 {
             return Err(self.error(&format!("Uploading {name}")));
         }
@@ -432,7 +522,9 @@ impl Link {
 
     fn mkdir(&self, name: &str, storage: u32, parent: u32) -> Result<u32> {
         // libmtp may rewrite the name in place, so hand it a buffer it owns for the call.
-        let raw = CString::new(name).map_err(|_| DevError::Msg("Bad folder name.".into()))?.into_raw();
+        let raw = CString::new(name)
+            .map_err(|_| DevError::Msg("Bad folder name.".into()))?
+            .into_raw();
         let id = unsafe { (self.lib.create_folder)(self.dev, raw, parent, storage) };
         drop(unsafe { CString::from_raw(raw) });
         if id == 0 {
@@ -466,7 +558,13 @@ const CAMERA_APPS: [&str; 2] = ["Image Capture", "Photos"];
 fn camera_apps_open() -> Vec<&'static str> {
     CAMERA_APPS
         .into_iter()
-        .filter(|app| crate::platform::command("pgrep").args(["-xq", app]).stdin(std::process::Stdio::null()).status().is_ok_and(|s| s.success()))
+        .filter(|app| {
+            crate::platform::command("pgrep")
+                .args(["-xq", app])
+                .stdin(std::process::Stdio::null())
+                .status()
+                .is_ok_and(|s| s.success())
+        })
         .collect()
 }
 
@@ -479,9 +577,15 @@ fn held_message(h: &crate::devices::usb::Holder) -> String {
             apps => format!("{} is open and has the phone: quit it, then connect again.", apps.join(" and ")),
         }
     } else if h.name == "ferry-files" {
-        format!("Another Ferry Files (pid {}) has the phone: disconnect it there, or quit it.", h.pid)
+        format!(
+            "Another Ferry Files (pid {}) has the phone: disconnect it there, or quit it.",
+            h.pid
+        )
     } else {
-        format!("{} (pid {}) is using the phone: quit it, then connect again.", h.name, h.pid)
+        format!(
+            "{} (pid {}) is using the phone: quit it, then connect again.",
+            h.name, h.pid
+        )
     }
 }
 
@@ -493,21 +597,32 @@ fn held_message(h: &crate::devices::usb::Holder) -> String {
 fn make_way(bus: u32, address: u32, vendor: u16, product: u16) -> Result<()> {
     let me = std::process::id();
     for _ in 0..15 {
-        let Some(held) = crate::devices::usb::holders(bus, address, vendor, product) else { return Ok(()) };
+        let Some(held) = crate::devices::usb::holders(bus, address, vendor, product) else {
+            return Ok(());
+        };
         let others: Vec<_> = held.into_iter().filter(|h| h.pid != me).collect();
         if others.is_empty() {
             return Ok(());
         }
-        if let Some(h) = others.iter().find(|h| !CAMERA_HELPERS.contains(&h.name.as_str())) {
+        if let Some(h) = others
+            .iter()
+            .find(|h| !CAMERA_HELPERS.contains(&h.name.as_str()))
+        {
             return err(held_message(h));
         }
         let apps = camera_apps_open();
         if !apps.is_empty() {
-            return err(format!("{} is open and has the phone: quit it, then connect again.", apps.join(" and ")));
+            return err(format!(
+                "{} is open and has the phone: quit it, then connect again.",
+                apps.join(" and ")
+            ));
         }
         // They ignore SIGTERM.
         for h in &others {
-            let _ = crate::platform::command("kill").args(["-9", &h.pid.to_string()]).stdin(std::process::Stdio::null()).status();
+            let _ = crate::platform::command("kill")
+                .args(["-9", &h.pid.to_string()])
+                .stdin(std::process::Stdio::null())
+                .status();
         }
         std::thread::sleep(std::time::Duration::from_millis(200));
     }
@@ -542,7 +657,11 @@ fn why_not_open(_bus: u32, _address: u32, _vendor: u16, _product: u16) -> Option
 fn temp_path(tag: &str) -> std::path::PathBuf {
     use std::sync::atomic::AtomicU64;
     static N: AtomicU64 = AtomicU64::new(0);
-    std::env::temp_dir().join(format!("ferry-files-mtp-{}-{tag}-{}", std::process::id(), N.fetch_add(1, Ordering::Relaxed)))
+    std::env::temp_dir().join(format!(
+        "ferry-files-mtp-{}-{tag}-{}",
+        std::process::id(),
+        N.fetch_add(1, Ordering::Relaxed)
+    ))
 }
 
 #[derive(Clone)]
@@ -567,7 +686,10 @@ impl Drop for Mtp {
 /// `inner`, locked; also holds the libmtp lock while in use.
 fn lock(inner: &Mutex<Inner>) -> Locked<'_> {
     let lib = lib_lock();
-    Locked { inner: inner.lock().unwrap_or_else(|e| e.into_inner()), _lib: lib }
+    Locked {
+        inner: inner.lock().unwrap_or_else(|e| e.into_inner()),
+        _lib: lib,
+    }
 }
 
 struct Locked<'a> {
@@ -601,7 +723,8 @@ impl Inner {
             }
         }
         let kids = self.link.children(storage, parent);
-        self.cache.insert((storage, parent), (Instant::now(), kids.clone()));
+        self.cache
+            .insert((storage, parent), (Instant::now(), kids.clone()));
         kids
     }
 
@@ -635,18 +758,32 @@ pub struct Mtp {
 impl Mtp {
     /// Writes the file with `send` (which sends it under the name given, returning its id): under
     /// a temporary name when there's a file to replace, swapped in once it's all there.
-    fn put(&self, path: &str, exists: bool, size: u64, send: &dyn Fn(&Link, &str, u32, u32) -> Result<u32>) -> Result<String> {
+    fn put(
+        &self,
+        path: &str,
+        exists: bool,
+        size: u64,
+        send: &dyn Fn(&Link, &str, u32, u32) -> Result<u32>,
+    ) -> Result<String> {
         self.forget_streamed();
         let mut inner = self.inner();
         let name = basename(path).to_string();
         let (sid, pid) = self.parent_of(&mut inner, path)?;
-        let old = if exists { self.resolve(&mut inner, path) } else { None };
+        let old = if exists {
+            self.resolve(&mut inner, path)
+        } else {
+            None
+        };
         let new_id = match old {
             None => send(&inner.link, &name, sid, pid)?,
             Some(old) => {
                 let tmp_name = format!(".{name}.ferry-tmp");
                 inner.invalidate(sid, pid);
-                if let Some(stale) = inner.children(sid, pid).into_iter().find(|k| k.name == tmp_name) {
+                if let Some(stale) = inner
+                    .children(sid, pid)
+                    .into_iter()
+                    .find(|k| k.name == tmp_name)
+                {
                     inner.link.delete(stale.id)?;
                 }
                 let tmp_id = send(&inner.link, &tmp_name, sid, pid)?;
@@ -682,8 +819,14 @@ impl Mtp {
             let Some(raw) = found else {
                 return err("No MTP device found".to_string());
             };
-            let (bus, address, vendor, product) =
-                unsafe { ((*raw).bus_location, (*raw).devnum as u32, (*raw).device_entry.vendor_id, (*raw).device_entry.product_id) };
+            let (bus, address, vendor, product) = unsafe {
+                (
+                    (*raw).bus_location,
+                    (*raw).devnum as u32,
+                    (*raw).device_entry.vendor_id,
+                    (*raw).device_entry.product_id,
+                )
+            };
             // libmtp doesn't let go of the USB device when claiming it fails (as it does while
             // another program has it), so this process would hold the phone without using it.
             make_way(bus, address, vendor, product)?;
@@ -694,13 +837,19 @@ impl Mtp {
             }
             tries += 1;
             if tries == 4 {
-                return err(why_not_open(bus, address, vendor, product).unwrap_or_else(|| "Couldn't open the MTP device".to_string()));
+                return err(why_not_open(bus, address, vendor, product)
+                    .unwrap_or_else(|| "Couldn't open the MTP device".to_string()));
             }
             drop(lock);
             std::thread::sleep(std::time::Duration::from_millis(1500));
         };
         let stop = Arc::new(AtomicBool::new(false));
-        let link = Link { lib, dev, partial: true, stop: stop.clone() };
+        let link = Link {
+            lib,
+            dev,
+            partial: true,
+            stop: stop.clone(),
+        };
         if unsafe { (lib.get_storage)(dev, 0) } != 0 {
             return Err(link.error("Reading the device's storage"));
         }
@@ -708,7 +857,11 @@ impl Mtp {
         let mut s = unsafe { (*dev).storage };
         while !s.is_null() {
             let (id, desc) = unsafe { ((*s).id, cstr((*s).storage_description)) };
-            let desc = if desc.is_empty() { format!("Storage {id:08x}") } else { desc };
+            let desc = if desc.is_empty() {
+                format!("Storage {id:08x}")
+            } else {
+                desc
+            };
             let base = desc.replace('/', "_");
             let mut name = base.clone();
             let mut n = 2;
@@ -720,10 +873,25 @@ impl Mtp {
             s = unsafe { (*s).next };
         }
         if storages.is_empty() {
-            return err("The device shows no storage. Unlock the phone and choose \"File transfer\".");
+            return err(
+                "The device shows no storage. Unlock the phone and choose \"File transfer\".",
+            );
         }
-        let model = [lib.friendlyname, lib.modelname].iter().map(|f| cstr(unsafe { f(dev) })).find(|s| !s.is_empty()).unwrap_or_else(|| "MTP device".into());
-        Ok(Mtp { inner: Arc::new(Mutex::new(Inner { link, cache: HashMap::new() })), streamed: Mutex::new(Vec::new()), storages, model, stop })
+        let model = [lib.friendlyname, lib.modelname]
+            .iter()
+            .map(|f| cstr(unsafe { f(dev) }))
+            .find(|s| !s.is_empty())
+            .unwrap_or_else(|| "MTP device".into());
+        Ok(Mtp {
+            inner: Arc::new(Mutex::new(Inner {
+                link,
+                cache: HashMap::new(),
+            })),
+            streamed: Mutex::new(Vec::new()),
+            storages,
+            model,
+            stop,
+        })
     }
 
     /// The device, locked; also holds the libmtp lock while in use.
@@ -734,46 +902,97 @@ impl Mtp {
     /// Part of the file `s`, from its copy (started if need be).
     fn read_streamed(&self, s: Streamed, start: u64, len: u64) -> Result<Vec<u8>> {
         let inner = self.inner.clone();
-        let fill = move |to: &std::path::Path, cancel: &AtomicBool| lock(&inner).link.download_until(s.id, to, cancel).map_err(|e| e.to_string());
+        let fill = move |to: &std::path::Path, cancel: &AtomicBool| {
+            lock(&inner)
+                .link
+                .download_until(s.id, to, cancel)
+                .map_err(|e| e.to_string())
+        };
         let (key, ext, size) = (s.key.clone(), s.ext.clone(), s.size);
         crate::preview::stream::read(&key, &ext, size, start, len, fill).map_err(DevError::Msg)
     }
 
     /// Writes change what's on the device: a copy being played is let go of.
     fn forget_streamed(&self) {
-        self.streamed.lock().unwrap_or_else(|e| e.into_inner()).clear();
+        self.streamed
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .clear();
     }
 
     fn storage_id(&self, name: &str) -> Option<u32> {
-        self.storages.iter().find(|(n, _)| n == name).map(|(_, id)| *id)
+        self.storages
+            .iter()
+            .find(|(n, _)| n == name)
+            .map(|(_, id)| *id)
     }
 
     fn resolve(&self, inner: &mut Inner, path: &str) -> Option<Node> {
         let parts: Vec<&str> = path.split('/').filter(|p| !p.is_empty()).collect();
         let Some(first) = parts.first() else {
-            return Some(Node { storage: None, id: ROOT_ID, dir: true, size: 0, mtime: 0, name: "/".into(), path: "/".into() });
+            return Some(Node {
+                storage: None,
+                id: ROOT_ID,
+                dir: true,
+                size: 0,
+                mtime: 0,
+                name: "/".into(),
+                path: "/".into(),
+            });
         };
         let sid = self.storage_id(first)?;
-        let mut node = Node { storage: Some(sid), id: ROOT_ID, dir: true, size: 0, mtime: 0, name: first.to_string(), path: format!("/{first}") };
+        let mut node = Node {
+            storage: Some(sid),
+            id: ROOT_ID,
+            dir: true,
+            size: 0,
+            mtime: 0,
+            name: first.to_string(),
+            path: format!("/{first}"),
+        };
         for seg in &parts[1..] {
             if !node.dir {
                 return None;
             }
-            let kid = inner.children(sid, node.id).into_iter().find(|k| k.name == *seg)?;
-            node = Node { storage: Some(sid), id: kid.id, dir: kid.dir, size: kid.size, mtime: kid.mtime, path: join(&node.path, seg), name: kid.name };
+            let kid = inner
+                .children(sid, node.id)
+                .into_iter()
+                .find(|k| k.name == *seg)?;
+            node = Node {
+                storage: Some(sid),
+                id: kid.id,
+                dir: kid.dir,
+                size: kid.size,
+                mtime: kid.mtime,
+                path: join(&node.path, seg),
+                name: kid.name,
+            };
         }
         Some(node)
     }
 
     fn parent_of(&self, inner: &mut Inner, path: &str) -> Result<(u32, u32)> {
         match self.resolve(inner, &dirname(path)) {
-            Some(Node { storage: Some(sid), id, dir: true, .. }) => Ok((sid, id)),
-            _ => err(format!("Files must go inside a storage folder, e.g. {}", self.default_dir())),
+            Some(Node {
+                storage: Some(sid),
+                id,
+                dir: true,
+                ..
+            }) => Ok((sid, id)),
+            _ => err(format!(
+                "Files must go inside a storage folder, e.g. {}",
+                self.default_dir()
+            )),
         }
     }
 
     fn invalidate_parent(&self, inner: &mut Inner, path: &str) {
-        if let Some(Node { storage: Some(sid), id, .. }) = self.resolve(inner, &dirname(path)) {
+        if let Some(Node {
+            storage: Some(sid),
+            id,
+            ..
+        }) = self.resolve(inner, &dirname(path))
+        {
             inner.invalidate(sid, id);
         }
     }
@@ -784,7 +1003,14 @@ impl Mtp {
         format!("{}:{}:{}", n.id, n.size, n.mtime)
     }
 
-    fn check_size(inner: &mut Inner, sid: u32, pid: u32, id: u32, size: u64, name: &str) -> Result<Child> {
+    fn check_size(
+        inner: &mut Inner,
+        sid: u32,
+        pid: u32,
+        id: u32,
+        size: u64,
+        name: &str,
+    ) -> Result<Child> {
         inner.invalidate(sid, pid);
         match inner.children(sid, pid).into_iter().find(|k| k.id == id) {
             Some(k) if k.size == size && k.name == name => Ok(k),
@@ -793,7 +1019,14 @@ impl Mtp {
     }
 
     fn public(n: &Node) -> Entry {
-        Entry { name: n.name.clone(), path: n.path.clone(), dir: n.dir, size: n.size, mtime: n.mtime, hidden: false }
+        Entry {
+            name: n.name.clone(),
+            path: n.path.clone(),
+            dir: n.dir,
+            size: n.size,
+            mtime: n.mtime,
+            hidden: false,
+        }
     }
 }
 
@@ -809,7 +1042,10 @@ impl Transport for Mtp {
     }
 
     fn quick_dirs(&self) -> Vec<(String, String)> {
-        self.storages.iter().map(|(n, _)| (n.clone(), format!("/{n}"))).collect()
+        self.storages
+            .iter()
+            .map(|(n, _)| (n.clone(), format!("/{n}")))
+            .collect()
     }
 
     fn refresh(&self) {
@@ -830,13 +1066,27 @@ impl Transport for Mtp {
             return Ok(self
                 .storages
                 .iter()
-                .map(|(n, _)| Entry { name: n.clone(), path: format!("/{n}"), dir: true, size: 0, mtime: 0, hidden: false })
+                .map(|(n, _)| Entry {
+                    name: n.clone(),
+                    path: format!("/{n}"),
+                    dir: true,
+                    size: 0,
+                    mtime: 0,
+                    hidden: false,
+                })
                 .collect());
         };
         Ok(inner
             .children(sid, node.id)
             .into_iter()
-            .map(|k| Entry { path: join(&node.path, &k.name), name: k.name, dir: k.dir, size: k.size, mtime: k.mtime, hidden: false })
+            .map(|k| Entry {
+                path: join(&node.path, &k.name),
+                name: k.name,
+                dir: k.dir,
+                size: k.size,
+                mtime: k.mtime,
+                hidden: false,
+            })
             .collect())
     }
 
@@ -848,12 +1098,21 @@ impl Transport for Mtp {
     fn version(&self, path: &str) -> Result<Option<String>> {
         let mut inner = self.inner();
         self.invalidate_parent(&mut inner, path);
-        Ok(self.resolve(&mut inner, path).filter(|n| !n.dir).map(|n| Self::version_of(&n)))
+        Ok(self
+            .resolve(&mut inner, path)
+            .filter(|n| !n.dir)
+            .map(|n| Self::version_of(&n)))
     }
 
     fn read_range(&self, path: &str, start: u64, len: u64) -> Result<Vec<u8>> {
         // Being copied: read from the copy, without waiting for the device the copy holds.
-        let streamed = self.streamed.lock().unwrap_or_else(|e| e.into_inner()).iter().find(|s| s.path == path).cloned();
+        let streamed = self
+            .streamed
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .iter()
+            .find(|s| s.path == path)
+            .cloned();
         if let Some(s) = streamed {
             return self.read_streamed(s, start, len);
         }
@@ -872,8 +1131,16 @@ impl Transport for Mtp {
         drop(inner);
         let s = Streamed {
             path: path.to_string(),
-            key: format!("mtp|{}|{}|{}", self.model, node.path, Self::version_of(&node)),
-            ext: node.name.rsplit_once('.').map_or(String::new(), |(_, x)| format!(".{x}")),
+            key: format!(
+                "mtp|{}|{}|{}",
+                self.model,
+                node.path,
+                Self::version_of(&node)
+            ),
+            ext: node
+                .name
+                .rsplit_once('.')
+                .map_or(String::new(), |(_, x)| format!(".{x}")),
             size: node.size,
             id: node.id,
         };
@@ -896,18 +1163,30 @@ impl Transport for Mtp {
         };
         let data = inner.link.download(node.id)?;
         if data.len() as u64 != node.size {
-            return err(format!("Read {} bytes but the device reports {}.", data.len(), node.size));
+            return err(format!(
+                "Read {} bytes but the device reports {}.",
+                data.len(),
+                node.size
+            ));
         }
         Ok((data, Self::version_of(&node)))
     }
 
     /// MTP can't overwrite: upload under a temporary name, delete the old file, rename.
     fn replace(&self, path: &str, data: &[u8], exists: bool) -> Result<String> {
-        self.put(path, exists, data.len() as u64, &|link, name, sid, pid| link.upload(data, name, sid, pid))
+        self.put(path, exists, data.len() as u64, &|link, name, sid, pid| {
+            link.upload(data, name, sid, pid)
+        })
     }
 
     /// libmtp writes the file straight into `to`.
-    fn read_to(&self, path: &str, to: &std::path::Path, read: &mut dyn FnMut(u64), stop: &AtomicBool) -> Result<String> {
+    fn read_to(
+        &self,
+        path: &str,
+        to: &std::path::Path,
+        read: &mut dyn FnMut(u64),
+        stop: &AtomicBool,
+    ) -> Result<String> {
         let mut inner = self.inner();
         self.invalidate_parent(&mut inner, path);
         let Some(node) = self.resolve(&mut inner, path).filter(|n| !n.dir) else {
@@ -916,15 +1195,22 @@ impl Transport for Mtp {
         inner.link.download_until(node.id, to, stop)?;
         let got = std::fs::metadata(to).map(|m| m.len()).unwrap_or(0);
         if got != node.size {
-            return err(format!("Read {got} bytes but the device reports {}.", node.size));
+            return err(format!(
+                "Read {got} bytes but the device reports {}.",
+                node.size
+            ));
         }
         read(got);
         Ok(Self::version_of(&node))
     }
 
     fn replace_from(&self, path: &str, from: &std::path::Path, exists: bool) -> Result<String> {
-        let size = std::fs::metadata(from).map_err(|e| DevError::Msg(format!("Can't read {}: {e}", from.display())))?.len();
-        self.put(path, exists, size, &|link, name, sid, pid| link.upload_file(from, size, name, sid, pid))
+        let size = std::fs::metadata(from)
+            .map_err(|e| DevError::Msg(format!("Can't read {}: {e}", from.display())))?
+            .len();
+        self.put(path, exists, size, &|link, name, sid, pid| {
+            link.upload_file(from, size, name, sid, pid)
+        })
     }
 
     fn delete(&self, path: &str, _is_dir: bool) -> Result<()> {
@@ -974,9 +1260,15 @@ impl Transport for Mtp {
         let mut out = vec![];
         let mut s = unsafe { (*link.dev).storage };
         while !s.is_null() {
-            let (id, free, total) = unsafe { ((*s).id, (*s).free_space_in_bytes, (*s).max_capacity) };
+            let (id, free, total) =
+                unsafe { ((*s).id, (*s).free_space_in_bytes, (*s).max_capacity) };
             if let Some((name, _)) = self.storages.iter().find(|(_, sid)| *sid == id) {
-                out.push(crate::device::Space { name: name.clone(), free, total, path: format!("/{name}") });
+                out.push(crate::device::Space {
+                    name: name.clone(),
+                    free,
+                    total,
+                    path: format!("/{name}"),
+                });
             }
             s = unsafe { (*s).next };
         }

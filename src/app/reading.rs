@@ -50,19 +50,29 @@ pub(super) fn page_style(theme: &str, size: u32, zoom: u32, pad: &str, line: &st
 }
 
 fn escape(s: &str) -> String {
-    s.replace('&', "&amp;").replace('<', "&lt;").replace('>', "&gt;").replace('"', "&quot;")
+    s.replace('&', "&amp;")
+        .replace('<', "&lt;")
+        .replace('>', "&gt;")
+        .replace('"', "&quot;")
 }
 
 /// The chapter's HTML with `style` after the `<base>` the backend adds (so the book's own styles
 /// still load, and give way to it), and a line at the end with a link to the next chapter: its
 /// label, and its place in the reading order.
 pub(super) fn page(html: &str, style: &str, next: Option<(&str, usize)>) -> String {
-    let mut out = match html.find("<base ").and_then(|k| html[k..].find('>').map(|j| k + j + 1)) {
+    let mut out = match html
+        .find("<base ")
+        .and_then(|k| html[k..].find('>').map(|j| k + j + 1))
+    {
         Some(k) => format!("{}{style}{}", &html[..k], &html[k..]),
         None => format!("{style}{html}"),
     };
     if let Some((label, k)) = next {
-        let note = format!(r#"<p class="ferry-next">Next chapter: <a href="{}">{}</a></p>"#, escape(&chapter_link(k)), escape(label));
+        let note = format!(
+            r#"<p class="ferry-next">Next chapter: <a href="{}">{}</a></p>"#,
+            escape(&chapter_link(k)),
+            escape(label)
+        );
         match out.to_ascii_lowercase().rfind("</body") {
             Some(k) => out.insert_str(k, &note),
             None => out.push_str(&note),
@@ -78,7 +88,9 @@ const CHAPTER_PARAM: &str = "ferry-chapter=";
 /// frame's load says where it went (`followed`). The app's address keeps the frame readable;
 /// the book's (its `<base>`) would not be.
 fn chapter_link(k: usize) -> String {
-    let origin = web_sys::window().and_then(|w| w.location().origin().ok()).unwrap_or_default();
+    let origin = web_sys::window()
+        .and_then(|w| w.location().origin().ok())
+        .unwrap_or_default();
     format!("{origin}/?{CHAPTER_PARAM}{k}")
 }
 
@@ -87,7 +99,10 @@ fn chapter_link(k: usize) -> String {
 pub(super) fn followed(frame: &web_sys::HtmlIFrameElement) -> Option<usize> {
     let href = frame.content_window()?.location().href().ok()?;
     let (_, rest) = href.split_once(CHAPTER_PARAM)?;
-    rest.split(|c: char| !c.is_ascii_digit()).next()?.parse().ok()
+    rest.split(|c: char| !c.is_ascii_digit())
+        .next()?
+        .parse()
+        .ok()
 }
 
 /// How far to scroll on, past the end, to turn to the next chapter.
@@ -108,8 +123,12 @@ pub(super) fn follow(
     find: impl Fn() + Copy + 'static,
     link: impl Fn(String) + Copy + 'static,
 ) {
-    let Some(doc) = frame.content_document() else { return };
-    let Some(el) = doc.scrolling_element() else { return };
+    let Some(doc) = frame.content_document() else {
+        return;
+    };
+    let Some(el) = doc.scrolling_element() else {
+        return;
+    };
     if end {
         el.set_scroll_top(el.scroll_height());
     }
@@ -120,7 +139,11 @@ pub(super) fn follow(
             el.scroll_top() <= 0
         }
     };
-    let (last, armed, sum) = (Rc::new(Cell::new(0.0)), Rc::new(Cell::new(0i32)), Rc::new(Cell::new(0.0)));
+    let (last, armed, sum) = (
+        Rc::new(Cell::new(0.0)),
+        Rc::new(Cell::new(0i32)),
+        Rc::new(Cell::new(0.0)),
+    );
     let edge2 = edge.clone();
     let wheel = Closure::<dyn FnMut(web_sys::WheelEvent)>::new(move |e: web_sys::WheelEvent| {
         let now = e.time_stamp();
@@ -149,38 +172,44 @@ pub(super) fn follow(
     });
     let _ = doc.add_event_listener_with_callback("wheel", wheel.as_ref().unchecked_ref());
     wheel.forget();
-    let keys = Closure::<dyn FnMut(web_sys::KeyboardEvent)>::new(move |e: web_sys::KeyboardEvent| {
-        // ⌘F: find in the book (key presses in the page don't reach the app's window).
-        if (e.meta_key() || e.ctrl_key()) && matches!(e.key().as_str(), "f" | "ƒ") {
-            e.prevent_default();
-            find();
-            return;
-        }
-        if e.meta_key() || e.ctrl_key() || e.alt_key() {
-            return;
-        }
-        let dir: i32 = match e.key().as_str() {
-            "ArrowRight" => 2,
-            "ArrowLeft" => -2,
-            "PageDown" | "ArrowDown" => 1,
-            " " if !e.shift_key() => 1,
-            "PageUp" | "ArrowUp" => -1,
-            " " => -1,
-            _ => return,
-        };
-        // Page keys turn only at the end (or start); before that they scroll as usual.
-        if dir.abs() == 2 || edge2(dir) {
-            e.prevent_default();
-            turn(dir.signum());
-        }
-    });
+    let keys =
+        Closure::<dyn FnMut(web_sys::KeyboardEvent)>::new(move |e: web_sys::KeyboardEvent| {
+            // ⌘F: find in the book (key presses in the page don't reach the app's window).
+            if (e.meta_key() || e.ctrl_key()) && matches!(e.key().as_str(), "f" | "ƒ") {
+                e.prevent_default();
+                find();
+                return;
+            }
+            if e.meta_key() || e.ctrl_key() || e.alt_key() {
+                return;
+            }
+            let dir: i32 = match e.key().as_str() {
+                "ArrowRight" => 2,
+                "ArrowLeft" => -2,
+                "PageDown" | "ArrowDown" => 1,
+                " " if !e.shift_key() => 1,
+                "PageUp" | "ArrowUp" => -1,
+                " " => -1,
+                _ => return,
+            };
+            // Page keys turn only at the end (or start); before that they scroll as usual.
+            if dir.abs() == 2 || edge2(dir) {
+                e.prevent_default();
+                turn(dir.signum());
+            }
+        });
     let _ = doc.add_event_listener_with_callback("keydown", keys.as_ref().unchecked_ref());
     keys.forget();
     let page = doc.clone();
     let click = Closure::<dyn FnMut(web_sys::MouseEvent)>::new(move |e: web_sys::MouseEvent| {
         let Some(t) = e.target() else { return };
-        let el = t.dyn_ref::<web_sys::Element>().cloned().or_else(|| t.dyn_ref::<web_sys::Node>().and_then(|n| n.parent_element()));
-        let Some(a) = el.and_then(|el| el.closest("a[href]").ok().flatten()) else { return };
+        let el = t.dyn_ref::<web_sys::Element>().cloned().or_else(|| {
+            t.dyn_ref::<web_sys::Node>()
+                .and_then(|n| n.parent_element())
+        });
+        let Some(a) = el.and_then(|el| el.closest("a[href]").ok().flatten()) else {
+            return;
+        };
         // The note at the end, to the next chapter, is followed for real (see `followed`).
         if a.closest(".ferry-next").ok().flatten().is_some() {
             return;
@@ -198,10 +227,13 @@ pub(super) fn follow(
 
 /// Scrolls the page in `frame` to the element with id `id` (a link's #fragment).
 pub(super) fn scroll_to(frame: &web_sys::HtmlIFrameElement, id: &str) {
-    if let Some(el) = frame
-        .content_document()
-        .and_then(|d| d.get_element_by_id(id).or_else(|| d.query_selector(&format!("a[name=\"{}\"]", id.replace('"', ""))).ok().flatten()))
-    {
+    if let Some(el) = frame.content_document().and_then(|d| {
+        d.get_element_by_id(id).or_else(|| {
+            d.query_selector(&format!("a[name=\"{}\"]", id.replace('"', "")))
+                .ok()
+                .flatten()
+        })
+    }) {
         el.scroll_into_view_with_bool(true);
     }
 }
@@ -209,12 +241,22 @@ pub(super) fn scroll_to(frame: &web_sys::HtmlIFrameElement, id: &str) {
 /// Makes the `k`th match in the page in `frame` the current one (all its marks, when it crosses
 /// formatting), and scrolls it to the middle.
 pub(super) fn focus_mark(frame: &web_sys::HtmlIFrameElement, k: usize) {
-    let Some(doc) = frame.content_document() else { return };
-    let Ok(marks) = doc.query_selector_all("mark.ferry-hit") else { return };
+    let Some(doc) = frame.content_document() else {
+        return;
+    };
+    let Ok(marks) = doc.query_selector_all("mark.ferry-hit") else {
+        return;
+    };
     let mut first = true;
     for i in 0..marks.length() {
-        if let Some(m) = marks.item(i).and_then(|n| n.dyn_into::<web_sys::Element>().ok()) {
-            let on = m.get_attribute("data-hit").and_then(|h| h.parse::<usize>().ok()) == Some(k);
+        if let Some(m) = marks
+            .item(i)
+            .and_then(|n| n.dyn_into::<web_sys::Element>().ok())
+        {
+            let on = m
+                .get_attribute("data-hit")
+                .and_then(|h| h.parse::<usize>().ok())
+                == Some(k);
             let _ = m.class_list().toggle_with_force("on", on);
             if on && first {
                 first = false;
@@ -229,8 +271,9 @@ pub(super) fn focus_mark(frame: &web_sys::HtmlIFrameElement, k: usize) {
 /// Elements inside a run of text, which a match may cross: the same as the backend's
 /// (books/epub/search.rs), so the page's matches are the search's, one for one.
 const INLINE: &[&str] = &[
-    "a", "abbr", "b", "bdi", "bdo", "big", "cite", "code", "data", "del", "dfn", "em", "font", "i", "ins", "kbd", "mark", "q", "s", "samp", "small", "span",
-    "strike", "strong", "sub", "sup", "time", "tt", "u", "var",
+    "a", "abbr", "b", "bdi", "bdo", "big", "cite", "code", "data", "del", "dfn", "em", "font", "i",
+    "ins", "kbd", "mark", "q", "s", "samp", "small", "span", "strike", "strong", "sub", "sup",
+    "time", "tt", "u", "var",
 ];
 
 /// Non-overlapping matches of `needle` in `hay`, as byte ranges: the backend's `find_all`
@@ -288,18 +331,37 @@ fn find_all(hay: &str, needle: &str, match_case: bool, whole_word: bool) -> Vec<
 /// Matches of a regular expression in `hay`, as byte ranges. JavaScript's regular expressions,
 /// which read almost every pattern as the backend's do.
 fn find_regex(hay: &str, q: &Query) -> Vec<(usize, usize)> {
-    let pattern = if q.whole_word { format!(r"\b(?:{})\b", q.find) } else { q.find.clone() };
+    let pattern = if q.whole_word {
+        format!(r"\b(?:{})\b", q.find)
+    } else {
+        q.find.clone()
+    };
     let flags = if q.match_case { "gu" } else { "giu" };
     let make = js_sys::RegExp::new("", "").constructor();
     let args = js_sys::Array::of2(&pattern.into(), &flags.into());
-    let Some(re) = js_sys::Reflect::construct(&make, &args).ok().map(|r| r.unchecked_into::<js_sys::RegExp>()) else { return vec![] };
+    let Some(re) = js_sys::Reflect::construct(&make, &args)
+        .ok()
+        .map(|r| r.unchecked_into::<js_sys::RegExp>())
+    else {
+        return vec![];
+    };
     // JavaScript counts UTF-16 units; this string, bytes.
-    let units: Vec<usize> = hay.char_indices().flat_map(|(b, c)| std::iter::repeat_n(b, c.len_utf16())).chain([hay.len()]).collect();
+    let units: Vec<usize> = hay
+        .char_indices()
+        .flat_map(|(b, c)| std::iter::repeat_n(b, c.len_utf16()))
+        .chain([hay.len()])
+        .collect();
     let byte = |u: u32| units.get(u as usize).copied().unwrap_or(hay.len());
     let mut out = vec![];
     while let Some(m) = re.exec(hay) {
-        let at = js_sys::Reflect::get(&m, &"index".into()).ok().and_then(|v| v.as_f64()).unwrap_or(0.0) as u32;
-        let len = m.get(0).as_string().map_or(0, |s| s.encode_utf16().count() as u32);
+        let at = js_sys::Reflect::get(&m, &"index".into())
+            .ok()
+            .and_then(|v| v.as_f64())
+            .unwrap_or(0.0) as u32;
+        let len = m
+            .get(0)
+            .as_string()
+            .map_or(0, |s| s.encode_utf16().count() as u32);
         if len == 0 {
             re.set_last_index(re.last_index() + 1);
             continue;
@@ -319,8 +381,9 @@ fn runs(node: &web_sys::Node, out: &mut Vec<Vec<web_sys::Node>>) {
             web_sys::Node::TEXT_NODE => out.last_mut().expect("a run is always open").push(k),
             web_sys::Node::ELEMENT_NODE => {
                 let name = k.node_name().to_ascii_lowercase();
-                let skip =
-                    matches!(name.as_str(), "script" | "style") || k.dyn_ref::<web_sys::Element>().is_some_and(|e| e.class_list().contains("ferry-next"));
+                let skip = matches!(name.as_str(), "script" | "style")
+                    || k.dyn_ref::<web_sys::Element>()
+                        .is_some_and(|e| e.class_list().contains("ferry-next"));
                 if INLINE.contains(&name.as_str()) && !skip {
                     runs(&k, out);
                 } else {
@@ -342,7 +405,9 @@ fn runs(node: &web_sys::Node, out: &mut Vec<Vec<web_sys::Node>>) {
 /// (`data-hit`). How many matches it marked.
 pub(super) fn mark(frame: &web_sys::HtmlIFrameElement, q: &Query) -> usize {
     unmark(frame);
-    let Some(doc) = frame.content_document() else { return 0 };
+    let Some(doc) = frame.content_document() else {
+        return 0;
+    };
     let Some(body) = doc.body() else { return 0 };
     if q.find.trim().is_empty() {
         return 0;
@@ -353,12 +418,19 @@ pub(super) fn mark(frame: &web_sys::HtmlIFrameElement, q: &Query) -> usize {
     // (text node, from, to in UTF-16 units, match)
     let mut parts: Vec<(web_sys::Node, u32, u32, usize)> = vec![];
     for run in all {
-        let texts: Vec<String> = run.iter().map(|n| n.node_value().unwrap_or_default()).collect();
+        let texts: Vec<String> = run
+            .iter()
+            .map(|n| n.node_value().unwrap_or_default())
+            .collect();
         if texts.iter().all(|t| t.trim().is_empty()) {
             continue;
         }
         let plain = texts.concat();
-        let found = if q.regex { find_regex(&plain, q) } else { find_all(&plain, &q.find, q.match_case, q.whole_word) };
+        let found = if q.regex {
+            find_regex(&plain, q)
+        } else {
+            find_all(&plain, &q.find, q.match_case, q.whole_word)
+        };
         for (a, b) in found {
             let mut from = 0;
             for (node, text) in run.iter().zip(&texts) {
@@ -381,7 +453,9 @@ pub(super) fn mark(frame: &web_sys::HtmlIFrameElement, q: &Query) -> usize {
             j += 1;
         }
         for (node, s, e, h) in parts[k..j].iter().rev() {
-            let (Ok(range), Ok(mark)) = (doc.create_range(), doc.create_element("mark")) else { continue };
+            let (Ok(range), Ok(mark)) = (doc.create_range(), doc.create_element("mark")) else {
+                continue;
+            };
             mark.set_class_name("ferry-hit");
             let _ = mark.set_attribute("data-hit", &h.to_string());
             if range.set_start(node, *s).is_ok() && range.set_end(node, *e).is_ok() {
@@ -395,8 +469,12 @@ pub(super) fn mark(frame: &web_sys::HtmlIFrameElement, q: &Query) -> usize {
 
 /// Takes the marks out of the page in `frame`, leaving its text as it was.
 pub(super) fn unmark(frame: &web_sys::HtmlIFrameElement) {
-    let Some(doc) = frame.content_document() else { return };
-    let Ok(marks) = doc.query_selector_all("mark.ferry-hit") else { return };
+    let Some(doc) = frame.content_document() else {
+        return;
+    };
+    let Ok(marks) = doc.query_selector_all("mark.ferry-hit") else {
+        return;
+    };
     for i in 0..marks.length() {
         let Some(m) = marks.item(i) else { continue };
         if let (Some(parent), Some(text)) = (m.parent_node(), m.text_content()) {
@@ -416,8 +494,16 @@ pub(super) struct FindWords {
     pub parts: &'static str,
 }
 
-pub(super) const BOOK_WORDS: FindWords = FindWords { find: "Find in the book", part: "chapter", parts: "chapters" };
-pub(super) const PDF_WORDS: FindWords = FindWords { find: "Find in the PDF", part: "page", parts: "pages" };
+pub(super) const BOOK_WORDS: FindWords = FindWords {
+    find: "Find in the book",
+    part: "chapter",
+    parts: "chapters",
+};
+pub(super) const PDF_WORDS: FindWords = FindWords {
+    find: "Find in the PDF",
+    part: "page",
+    parts: "pages",
+};
 
 /// Find, while reading, in the Search tab beside the page: the find box with its options, how
 /// many matches, and under it a tree: the chapters, each with its matches. A click on a match
@@ -447,7 +533,11 @@ pub(super) fn find_bar(
             }
         });
     });
-    let opt = move |label: &'static str, on: fn(&Query) -> bool, flip: fn(&mut Query), glyph: &'static str, class: &'static str| {
+    let opt = move |label: &'static str,
+                    on: fn(&Query) -> bool,
+                    flip: fn(&mut Query),
+                    glyph: &'static str,
+                    class: &'static str| {
         view! {
             <button class="filter-opt" class:on=move || q.with(on) aria-pressed=move || q.with(on).to_string() title=label aria-label=label
                 on:mousedown=|e: web_sys::MouseEvent| e.prevent_default()
@@ -470,7 +560,11 @@ pub(super) fn find_bar(
                 f.total,
                 if f.total == 1 { "match" } else { "matches" },
                 f.hits.len(),
-                if f.hits.len() == 1 { words.part } else { words.parts }
+                if f.hits.len() == 1 {
+                    words.part
+                } else {
+                    words.parts
+                }
             ),
         })
     };

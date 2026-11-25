@@ -37,7 +37,9 @@ const PREVIEWS_MAX: u64 = 500 << 20;
 
 fn ext(path: &str) -> String {
     let name = path.rsplit('/').next().unwrap_or(path);
-    name.rsplit_once('.').map(|(_, e)| e.to_lowercase()).unwrap_or_default()
+    name.rsplit_once('.')
+        .map(|(_, e)| e.to_lowercase())
+        .unwrap_or_default()
 }
 
 /// Whether a file of this name can have a thumbnail.
@@ -47,11 +49,15 @@ pub fn supported(path: &str) -> bool {
 }
 
 pub fn cache_dir() -> PathBuf {
-    dirs::cache_dir().unwrap_or_else(|| PathBuf::from("/tmp")).join("ferry-files/thumbs")
+    dirs::cache_dir()
+        .unwrap_or_else(|| PathBuf::from("/tmp"))
+        .join("ferry-files/thumbs")
 }
 
 fn previews_dir() -> PathBuf {
-    dirs::cache_dir().unwrap_or_else(|| PathBuf::from("/tmp")).join("ferry-files/previews")
+    dirs::cache_dir()
+        .unwrap_or_else(|| PathBuf::from("/tmp"))
+        .join("ferry-files/previews")
 }
 
 /// `src` ("mac" or names the device) is part of the key: the same path can be on several. `px`
@@ -60,12 +66,17 @@ fn key(src: &str, path: &str, size: u64, mtime: i64, px: u32) -> String {
     // "2": made upright since; the ones made before may be on their side. "3" on Windows, where
     // the system makes them now, for files of any type: the ones marked "none" before may have one.
     let v = if crate::platform::SYSTEM_THUMBS { 3 } else { 2 };
-    format!("{:x}", md5::compute(format!("{src}\n{path}\n{size}\n{mtime}\n{px}\n{v}")))
+    format!(
+        "{:x}",
+        md5::compute(format!("{src}\n{path}\n{size}\n{mtime}\n{px}\n{v}"))
+    )
 }
 
 /// Marks a cached file used, for `trim`: its modified time, at most once a day.
 fn touch(path: &Path) {
-    let old = std::fs::metadata(path).and_then(|m| m.modified()).is_ok_and(|t| t.elapsed().is_ok_and(|d| d > Duration::from_secs(86400)));
+    let old = std::fs::metadata(path)
+        .and_then(|m| m.modified())
+        .is_ok_and(|t| t.elapsed().is_ok_and(|d| d > Duration::from_secs(86400)));
     if old {
         if let Ok(f) = std::fs::File::options().append(true).open(path) {
             let _ = f.set_modified(SystemTime::now());
@@ -80,12 +91,18 @@ pub fn trim_caches() {
 }
 
 fn trim(dir: &Path, max: u64) {
-    let Ok(list) = std::fs::read_dir(dir) else { return };
+    let Ok(list) = std::fs::read_dir(dir) else {
+        return;
+    };
     let mut files: Vec<(SystemTime, u64, PathBuf)> = list
         .flatten()
         .filter_map(|f| {
             let m = f.metadata().ok().filter(|m| m.is_file())?;
-            Some((m.modified().unwrap_or(SystemTime::UNIX_EPOCH), m.len(), f.path()))
+            Some((
+                m.modified().unwrap_or(SystemTime::UNIX_EPOCH),
+                m.len(),
+                f.path(),
+            ))
         })
         .collect();
     let mut total: u64 = files.iter().map(|f| f.1).sum();
@@ -128,17 +145,24 @@ pub fn cached(src: &str, path: &str, size: u64, mtime: i64) -> Option<Thumb> {
 
 fn encode(img: DynamicImage) -> Result<(Vec<u8>, &'static str), String> {
     // Shrunk, never enlarged.
-    let img = if img.width() > SIZE || img.height() > SIZE { img.thumbnail(SIZE, SIZE) } else { img };
+    let img = if img.width() > SIZE || img.height() > SIZE {
+        img.thumbnail(SIZE, SIZE)
+    } else {
+        img
+    };
     to_bytes(img, 82)
 }
 
 fn to_bytes(img: DynamicImage, quality: u8) -> Result<(Vec<u8>, &'static str), String> {
     let mut out = Vec::new();
     if img.color().has_alpha() {
-        img.write_to(&mut Cursor::new(&mut out), ImageFormat::Png).map_err(|e| e.to_string())?;
+        img.write_to(&mut Cursor::new(&mut out), ImageFormat::Png)
+            .map_err(|e| e.to_string())?;
         Ok((out, "image/png"))
     } else {
-        JpegEncoder::new_with_quality(&mut out, quality).encode_image(&img.to_rgb8()).map_err(|e| e.to_string())?;
+        JpegEncoder::new_with_quality(&mut out, quality)
+            .encode_image(&img.to_rgb8())
+            .map_err(|e| e.to_string())?;
         Ok((out, "image/jpeg"))
     }
 }
@@ -209,7 +233,15 @@ fn read_tiff(t: &[u8], base: usize) -> Option<Exif> {
         b"MM" => false,
         _ => return None,
     };
-    let u16_at = |o: usize| t.get(o..o + 2).map(|b| if le { u16::from_le_bytes([b[0], b[1]]) } else { u16::from_be_bytes([b[0], b[1]]) });
+    let u16_at = |o: usize| {
+        t.get(o..o + 2).map(|b| {
+            if le {
+                u16::from_le_bytes([b[0], b[1]])
+            } else {
+                u16::from_be_bytes([b[0], b[1]])
+            }
+        })
+    };
     let u32_at = |o: usize| {
         t.get(o..o + 4).map(|b| {
             let b = [b[0], b[1], b[2], b[3]];
@@ -227,7 +259,11 @@ fn read_tiff(t: &[u8], base: usize) -> Option<Exif> {
         let fields = (0..n.min(512))
             .filter_map(|i| {
                 let f = o + 2 + i * 12;
-                let v = if u16_at(f + 2)? == 3 { u16_at(f + 8)? as u32 } else { u32_at(f + 8)? };
+                let v = if u16_at(f + 2)? == 3 {
+                    u16_at(f + 8)? as u32
+                } else {
+                    u32_at(f + 8)?
+                };
                 Some((u16_at(f)?, v))
             })
             .collect();
@@ -235,9 +271,14 @@ fn read_tiff(t: &[u8], base: usize) -> Option<Exif> {
     };
     let get = |fields: &[(u16, u32)], tag: u16| fields.iter().find(|f| f.0 == tag).map(|f| f.1);
     let (ifd0, next) = dir(u32_at(4)? as usize)?;
-    let mut x = Exif { orientation: get(&ifd0, 0x0112).map_or(1, |o| o as u8), ..Exif::default() };
+    let mut x = Exif {
+        orientation: get(&ifd0, 0x0112).map_or(1, |o| o as u8),
+        ..Exif::default()
+    };
     if let Some((sub, _)) = get(&ifd0, 0x8769).and_then(|o| dir(o as usize)) {
-        x.size = get(&sub, 0xA002).zip(get(&sub, 0xA003)).filter(|&(w, h)| w > 0 && h > 0);
+        x.size = get(&sub, 0xA002)
+            .zip(get(&sub, 0xA003))
+            .filter(|&(w, h)| w > 0 && h > 0);
     }
     if next != 0 {
         if let Some((ifd1, _)) = dir(next) {
@@ -286,7 +327,13 @@ pub enum Fitted {
 }
 
 /// The photo `path` for the preview (see `Fitted`), cached like thumbnails.
-pub fn fitted(src: &str, dev: &Device, path: &str, size: u64, mtime: i64) -> Result<Fitted, String> {
+pub fn fitted(
+    src: &str,
+    dev: &Device,
+    path: &str,
+    size: u64,
+    mtime: i64,
+) -> Result<Fitted, String> {
     let dir = previews_dir();
     let base = dir.join(key(src, path, size, mtime, FIT));
     for (ext, mime) in [("jpg", "image/jpeg"), ("png", "image/png")] {
@@ -299,15 +346,27 @@ pub fn fitted(src: &str, dev: &Device, path: &str, size: u64, mtime: i64) -> Res
     let (data, _) = dev.read(path).map_err(|e| e.to_string())?;
     let orientation = exif(&data).map_or(1, |x| x.orientation);
     // The size is in the header: no need to decode a photo that's small enough.
-    let dims = ImageReader::new(Cursor::new(&data)).with_guessed_format().ok().and_then(|r| r.into_dimensions().ok());
+    let dims = ImageReader::new(Cursor::new(&data))
+        .with_guessed_format()
+        .ok()
+        .and_then(|r| r.into_dimensions().ok());
     if dims.is_none_or(|(w, h)| w.max(h) <= FIT) && orientation <= 1 {
         return Ok(Fitted::Original(data));
     }
-    let Ok(img) = image::load_from_memory(&data) else { return Ok(Fitted::Original(data)) };
-    let img = if img.width().max(img.height()) > FIT { img.resize(FIT, FIT, FilterType::Triangle) } else { img };
+    let Ok(img) = image::load_from_memory(&data) else {
+        return Ok(Fitted::Original(data));
+    };
+    let img = if img.width().max(img.height()) > FIT {
+        img.resize(FIT, FIT, FilterType::Triangle)
+    } else {
+        img
+    };
     let (out, mime) = to_bytes(upright(img, orientation), 85)?;
     let _ = std::fs::create_dir_all(&dir);
-    let _ = std::fs::write(base.with_extension(if mime == "image/png" { "png" } else { "jpg" }), &out);
+    let _ = std::fs::write(
+        base.with_extension(if mime == "image/png" { "png" } else { "jpg" }),
+        &out,
+    );
     Ok(Fitted::Smaller(out, mime))
 }
 
@@ -334,7 +393,11 @@ fn system(src: &str, path: &str) -> Option<DynamicImage> {
     #[cfg(windows)]
     if src == "mac" {
         let img = crate::platform::system_thumb(&crate::platform::native(path), SIZE)?;
-        return Some(if img.width().max(img.height()) > SIZE { img.resize(SIZE, SIZE, FilterType::Triangle) } else { img });
+        return Some(if img.width().max(img.height()) > SIZE {
+            img.resize(SIZE, SIZE, FilterType::Triangle)
+        } else {
+            img
+        });
     }
     let _ = (src, path);
     None

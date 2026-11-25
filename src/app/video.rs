@@ -36,7 +36,10 @@ pub(super) const HOLD_SPEEDS: &[f64] = &[1.5, 2.0, 3.0, 4.0];
 
 impl VideoPrefs {
     pub(super) fn load() -> Self {
-        let speed = stored(HOLD_SPEED_KEY).and_then(|s| s.parse().ok()).filter(|s| HOLD_SPEEDS.contains(s)).unwrap_or(2.0);
+        let speed = stored(HOLD_SPEED_KEY)
+            .and_then(|s| s.parse().ok())
+            .filter(|s| HOLD_SPEEDS.contains(s))
+            .unwrap_or(2.0);
         VideoPrefs {
             hold_speed: RwSignal::new(speed),
             turn_controls: RwSignal::new(stored(TURN_CONTROLS_KEY).as_deref() == Some("1")),
@@ -86,7 +89,10 @@ impl Turn {
     }
 
     pub(super) fn at(t: i32) -> Self {
-        Turn { count: RwSignal::new(t.rem_euclid(4)), instant: RwSignal::new(false) }
+        Turn {
+            count: RwSignal::new(t.rem_euclid(4)),
+            instant: RwSignal::new(false),
+        }
     }
 
     pub(super) fn get(self) -> i32 {
@@ -103,7 +109,9 @@ impl Turn {
 
     /// For `transitionend`.
     pub(super) fn settle(self) {
-        let Some(t) = self.count.try_get_untracked() else { return };
+        let Some(t) = self.count.try_get_untracked() else {
+            return;
+        };
         if (0..4).contains(&t) {
             return;
         }
@@ -140,13 +148,20 @@ const RESUME_EDGE: f64 = 5.0;
 /// What's shown full screen, if anything (WebKit names it with a prefix).
 pub(super) fn full_screen_element() -> Option<JsValue> {
     let doc: JsValue = document().into();
-    let get = |k: &str| js_sys::Reflect::get(&doc, &k.into()).ok().filter(|v| !v.is_undefined() && !v.is_null());
+    let get = |k: &str| {
+        js_sys::Reflect::get(&doc, &k.into())
+            .ok()
+            .filter(|v| !v.is_undefined() && !v.is_null())
+    };
     get("fullscreenElement").or_else(|| get("webkitFullscreenElement"))
 }
 
 /// Calls the method `k` of `o`, if it has one; whether it did.
 fn call_method(o: &JsValue, k: &str) -> bool {
-    js_sys::Reflect::get(o, &k.into()).ok().and_then(|f| f.dyn_into::<js_sys::Function>().ok()).is_some_and(|f| f.call0(o).is_ok())
+    js_sys::Reflect::get(o, &k.into())
+        .ok()
+        .and_then(|f| f.dyn_into::<js_sys::Function>().ok())
+        .is_some_and(|f| f.call0(o).is_ok())
 }
 
 /// Leaves full screen.
@@ -160,7 +175,11 @@ pub(super) fn enter_full_screen(el: &JsValue) -> bool {
     let doc: JsValue = document().into();
     let enabled = ["fullscreenEnabled", "webkitFullscreenEnabled"]
         .iter()
-        .find_map(|k| js_sys::Reflect::get(&doc, &(*k).into()).ok().and_then(|v| v.as_bool()))
+        .find_map(|k| {
+            js_sys::Reflect::get(&doc, &(*k).into())
+                .ok()
+                .and_then(|v| v.as_bool())
+        })
         .unwrap_or(false);
     enabled && (call_method(el, "requestFullscreen") || call_method(el, "webkitRequestFullscreen"))
 }
@@ -170,7 +189,9 @@ pub(super) fn resume_key(e: &Entry) -> String {
 }
 
 fn resumes() -> serde_json::Map<String, serde_json::Value> {
-    stored(RESUME_KEY).and_then(|s| serde_json::from_str(&s).ok()).unwrap_or_default()
+    stored(RESUME_KEY)
+        .and_then(|s| serde_json::from_str(&s).ok())
+        .unwrap_or_default()
 }
 
 fn resume_at(key: &str) -> Option<f64> {
@@ -187,7 +208,10 @@ fn remember(key: &str, m: &web_sys::HtmlMediaElement) {
     if t >= RESUME_EDGE && t < d - RESUME_EDGE {
         all.insert(key.to_string(), json!([t, js_sys::Date::now()]));
         if all.len() > RESUME_KEEP {
-            let mut by_age: Vec<(String, f64)> = all.iter().map(|(k, v)| (k.clone(), v.get(1).and_then(|s| s.as_f64()).unwrap_or(0.0))).collect();
+            let mut by_age: Vec<(String, f64)> = all
+                .iter()
+                .map(|(k, v)| (k.clone(), v.get(1).and_then(|s| s.as_f64()).unwrap_or(0.0)))
+                .collect();
             by_age.sort_by(|a, b| a.1.total_cmp(&b.1));
             for (k, _) in by_age.into_iter().take(all.len() - RESUME_KEEP) {
                 all.remove(&k);
@@ -210,7 +234,10 @@ struct Resume {
 
 impl Resume {
     fn new(key: String, el: StoredValue<Option<web_sys::HtmlMediaElement>, LocalStorage>) -> Self {
-        let r = Resume { key: StoredValue::new(key), last: StoredValue::new(0.0) };
+        let r = Resume {
+            key: StoredValue::new(key),
+            last: StoredValue::new(0.0),
+        };
         let key = r.key;
         on_cleanup(move || {
             if let (Some(Some(m)), Some(k)) = (el.try_get_value(), key.try_get_value()) {
@@ -273,7 +300,13 @@ fn take_keys(pane: usize, f: impl Fn(MediaKey) + 'static) {
 
 /// A media key for the player in `pane`'s preview; false when there's none.
 pub(super) fn media_key(pane: usize, key: MediaKey) -> bool {
-    let f = KEYS.with(|k| k.borrow().iter().rev().find(|(p, _, _)| *p == pane).map(|(_, _, f)| f.clone()));
+    let f = KEYS.with(|k| {
+        k.borrow()
+            .iter()
+            .rev()
+            .find(|(p, _, _)| *p == pane)
+            .map(|(_, _, f)| f.clone())
+    });
     match f {
         Some(f) => {
             f(key);
@@ -300,7 +333,9 @@ fn skip(m: &web_sys::HtmlMediaElement, by: f64) {
 /// Fills in the details the header didn't give, from the player.
 fn fill_info(info: RwSignal<MediaInfo>, m: &web_sys::HtmlMediaElement) {
     let d = m.duration();
-    let size = m.dyn_ref::<web_sys::HtmlVideoElement>().map(|v| (v.video_width(), v.video_height()));
+    let size = m
+        .dyn_ref::<web_sys::HtmlVideoElement>()
+        .map(|v| (v.video_width(), v.video_height()));
     let _ = info.try_update(|i| {
         if i.duration.is_none() && d.is_finite() && d > 0.0 {
             i.duration = Some(d);
@@ -322,13 +357,19 @@ fn let_go(m: &web_sys::HtmlMediaElement) {
 }
 
 fn target_media(ev: &web_sys::Event) -> Option<web_sys::HtmlMediaElement> {
-    ev.target().and_then(|t| t.dyn_into::<web_sys::HtmlMediaElement>().ok())
+    ev.target()
+        .and_then(|t| t.dyn_into::<web_sys::HtmlMediaElement>().ok())
 }
 
 /// A sound, with the web view's own controls. It takes the media keys in `pane` and goes on from
 /// where it was stopped.
 #[component]
-pub(super) fn SoundPlayer(url: String, key: String, info: RwSignal<MediaInfo>, pane: usize) -> impl IntoView {
+pub(super) fn SoundPlayer(
+    url: String,
+    key: String,
+    info: RwSignal<MediaInfo>,
+    pane: usize,
+) -> impl IntoView {
     let el = StoredValue::new_local(None::<web_sys::HtmlMediaElement>);
     let resume = Resume::new(key, el);
     on_cleanup(move || {
@@ -391,7 +432,8 @@ pub struct Track {
 const SUB_EXTS: &[&str] = &["srt", "sub", "vtt"];
 
 fn is_subtitle(path: &str) -> bool {
-    path.rsplit_once('.').is_some_and(|(_, ext)| SUB_EXTS.iter().any(|e| ext.eq_ignore_ascii_case(e)))
+    path.rsplit_once('.')
+        .is_some_and(|(_, ext)| SUB_EXTS.iter().any(|e| ext.eq_ignore_ascii_case(e)))
 }
 
 /// How many subtitles show at once.
@@ -426,10 +468,14 @@ const LANGS: &[(&str, &[&str])] = &[
 fn lang_code(s: &str) -> Option<String> {
     let s = s.trim().to_lowercase();
     let base = s.split('-').next().unwrap_or("");
-    if let Some((code, _)) = LANGS.iter().find(|(c, other)| *c == base || other.contains(&base)) {
+    if let Some((code, _)) = LANGS
+        .iter()
+        .find(|(c, other)| *c == base || other.contains(&base))
+    {
         return Some(code.to_string());
     }
-    (matches!(base.len(), 2 | 3) && base.chars().all(|c| c.is_ascii_alphabetic())).then(|| base.to_string())
+    (matches!(base.len(), 2 | 3) && base.chars().all(|c| c.is_ascii_alphabetic()))
+        .then(|| base.to_string())
 }
 
 /// The language a subtitle file's name gives after the video's name: "Movie.en.srt",
@@ -447,7 +493,10 @@ fn track_lang(name: &str) -> Option<String> {
 
 /// The languages typed in Settings ("en, vi"), up to `SHOWN_MAX`.
 fn pref_langs(s: &str) -> Vec<String> {
-    s.split([',', ' ', ';']).filter_map(lang_code).take(SHOWN_MAX).collect()
+    s.split([',', ' ', ';'])
+        .filter_map(lang_code)
+        .take(SHOWN_MAX)
+        .collect()
 }
 
 /// Which of the subtitle files `names` show at first: one in each of the languages `prefs`, in
@@ -456,7 +505,9 @@ fn default_shown(names: &[String], prefs: &[String]) -> Vec<usize> {
     let langs: Vec<Option<String>> = names.iter().map(|n| track_lang(n)).collect();
     let mut out = vec![];
     for p in prefs {
-        if let Some(i) = (0..names.len()).find(|i| langs[*i].as_ref() == Some(p) && !out.contains(i)) {
+        if let Some(i) =
+            (0..names.len()).find(|i| langs[*i].as_ref() == Some(p) && !out.contains(i))
+        {
             out.push(i);
         }
     }
@@ -502,11 +553,23 @@ thread_local! {
 /// Hands the subtitle files among `paths` (on `src`) to the player `el` is in. False when it
 /// isn't in one, or none of them are subtitles.
 pub(super) fn drop_on_player(el: &web_sys::Element, src: Src, paths: Vec<String>) -> bool {
-    let Some(id) = el.closest(".vplayer[data-player]").ok().flatten().and_then(|p| p.get_attribute("data-player")?.parse::<u64>().ok()) else {
+    let Some(id) = el
+        .closest(".vplayer[data-player]")
+        .ok()
+        .flatten()
+        .and_then(|p| p.get_attribute("data-player")?.parse::<u64>().ok())
+    else {
         return false;
     };
     let subs: Vec<String> = paths.into_iter().filter(|p| is_subtitle(p)).collect();
-    let Some(f) = DROPS.with(|d| d.borrow().iter().find(|(i, _)| *i == id).map(|(_, f)| f.clone())) else { return false };
+    let Some(f) = DROPS.with(|d| {
+        d.borrow()
+            .iter()
+            .find(|(i, _)| *i == id)
+            .map(|(_, f)| f.clone())
+    }) else {
+        return false;
+    };
     if subs.is_empty() {
         return false;
     }
@@ -601,7 +664,13 @@ pub(super) fn VideoPlayer(
     // menu to pick them.
     let subs = RwSignal::new(tracks);
     let n = subs.with_untracked(Vec::len);
-    let shown = RwSignal::new(shown.into_iter().filter(|i| *i < n).take(SHOWN_MAX).collect::<Vec<usize>>());
+    let shown = RwSignal::new(
+        shown
+            .into_iter()
+            .filter(|i| *i < n)
+            .take(SHOWN_MAX)
+            .collect::<Vec<usize>>(),
+    );
     let subs_menu = RwSignal::new(false);
     // Shows track `i` beside the one shown, replacing the one picked earlier when two are.
     let show_track = move |i: usize| {
@@ -629,16 +698,27 @@ pub(super) fn VideoPlayer(
     };
     if let Some((src, path)) = near {
         spawn_local(async move {
-            let Ok(found) = call::<Vec<SubFile>>("subtitles", json!({ "src": src.key(), "path": path })).await else { return };
+            let Ok(found) =
+                call::<Vec<SubFile>>("subtitles", json!({ "src": src.key(), "path": path })).await
+            else {
+                return;
+            };
             for f in found {
                 if let Ok(t) = fetch_track(src, f.path).await {
                     add_track(t);
                 }
             }
             // The languages picked in Settings, or else the first file; unless one was dropped.
-            let Some(names) = subs.try_with_untracked(|s| s.iter().map(|t| t.name.clone()).collect::<Vec<_>>()) else { return };
+            let Some(names) =
+                subs.try_with_untracked(|s| s.iter().map(|t| t.name.clone()).collect::<Vec<_>>())
+            else {
+                return;
+            };
             if shown.get_untracked().is_empty() {
-                shown.set(default_shown(&names, &pref_langs(&prefs.sub_langs.get_untracked())));
+                shown.set(default_shown(
+                    &names,
+                    &pref_langs(&prefs.sub_langs.get_untracked()),
+                ));
             }
         });
     }
@@ -683,7 +763,9 @@ pub(super) fn VideoPlayer(
         }
     };
     let drop = move |ev: web_sys::DragEvent| {
-        let Some((src, paths)) = dragged_subs() else { return };
+        let Some((src, paths)) = dragged_subs() else {
+            return;
+        };
         ev.prevent_default();
         ev.stop_propagation();
         if let Some(c) = ctx {
@@ -704,19 +786,43 @@ pub(super) fn VideoPlayer(
         }
         let names = subs.with_untracked(|s| s.iter().map(|t| t.name.clone()).collect::<Vec<_>>());
         if names.is_empty() {
-            flash(if ctx.is_some() { "No subtitles. Drop a .srt or .sub file on the video." } else { "No subtitles" }.into());
+            flash(
+                if ctx.is_some() {
+                    "No subtitles. Drop a .srt or .sub file on the video."
+                } else {
+                    "No subtitles"
+                }
+                .into(),
+            );
             return;
         }
-        let last: Vec<usize> = last_shown.get_value().into_iter().filter(|i| *i < names.len()).collect();
-        let on = if last.is_empty() { default_shown(&names, &pref_langs(&prefs.sub_langs.get_untracked())) } else { last };
-        flash(format!("Subtitles: {}", on.iter().map(|&i| names[i].as_str()).collect::<Vec<_>>().join(", ")));
+        let last: Vec<usize> = last_shown
+            .get_value()
+            .into_iter()
+            .filter(|i| *i < names.len())
+            .collect();
+        let on = if last.is_empty() {
+            default_shown(&names, &pref_langs(&prefs.sub_langs.get_untracked()))
+        } else {
+            last
+        };
+        flash(format!(
+            "Subtitles: {}",
+            on.iter()
+                .map(|&i| names[i].as_str())
+                .collect::<Vec<_>>()
+                .join(", ")
+        ));
         shown.set(on);
     };
     // The shown tracks, as <track>s in the video, their WebVTT in blob: URLs (the page's own
     // origin, unlike the video's ferry: one). They're let go of when the tracks shown change.
     let track_els = StoredValue::new_local(Vec::<(web_sys::Element, String)>::new());
     let free_tracks = move || {
-        for (t, url) in track_els.try_update_value(std::mem::take).unwrap_or_default() {
+        for (t, url) in track_els
+            .try_update_value(std::mem::take)
+            .unwrap_or_default()
+        {
             track_mode(&t, "disabled");
             t.remove();
             let _ = web_sys::Url::revoke_object_url(&url);
@@ -728,20 +834,45 @@ pub(super) fn VideoPlayer(
             .get()
             .iter()
             .enumerate()
-            .filter_map(|(at, &i)| subs.with(|s| s.get(i).map(|t| (t.name.clone(), if at == 0 { t.vtt.clone() } else { at_top(&t.vtt) }))))
+            .filter_map(|(at, &i)| {
+                subs.with(|s| {
+                    s.get(i).map(|t| {
+                        (
+                            t.name.clone(),
+                            if at == 0 {
+                                t.vtt.clone()
+                            } else {
+                                at_top(&t.vtt)
+                            },
+                        )
+                    })
+                })
+            })
             .collect();
         free_tracks();
         let mut made = vec![];
         for (name, vtt) in picked {
             let opts = web_sys::BlobPropertyBag::new();
             opts.set_type("text/vtt");
-            let Ok(blob) = web_sys::Blob::new_with_str_sequence_and_options(&js_sys::Array::of1(&vtt.into()), &opts) else { continue };
-            let Ok(url) = web_sys::Url::create_object_url_with_blob(&blob) else { continue };
+            let Ok(blob) = web_sys::Blob::new_with_str_sequence_and_options(
+                &js_sys::Array::of1(&vtt.into()),
+                &opts,
+            ) else {
+                continue;
+            };
+            let Ok(url) = web_sys::Url::create_object_url_with_blob(&blob) else {
+                continue;
+            };
             let Ok(t) = document().create_element("track") else {
                 let _ = web_sys::Url::revoke_object_url(&url);
                 continue;
             };
-            for (k, val) in [("kind", "subtitles"), ("label", name.as_str()), ("default", ""), ("src", url.as_str())] {
+            for (k, val) in [
+                ("kind", "subtitles"),
+                ("label", name.as_str()),
+                ("default", ""),
+                ("src", url.as_str()),
+            ] {
                 let _ = t.set_attribute(k, val);
             }
             let _ = v.append_child(&t);
@@ -766,7 +897,9 @@ pub(super) fn VideoPlayer(
         badge.set(Some(speed_label(speed)));
     };
     let stop_fast = move || {
-        let Some(was_paused) = fast.try_update_value(Option::take).flatten() else { return };
+        let Some(was_paused) = fast.try_update_value(Option::take).flatten() else {
+            return;
+        };
         badge.set(None);
         if let Some(m) = media() {
             m.set_playback_rate(1.0);
@@ -790,7 +923,10 @@ pub(super) fn VideoPlayer(
         slot.set_value(t);
     };
     // Whether the wait was still on: a tap rather than a hold.
-    let end_wait = move |slot: StoredValue<Option<TimeoutHandle>, LocalStorage>| match slot.try_update_value(Option::take).flatten() {
+    let end_wait = move |slot: StoredValue<Option<TimeoutHandle>, LocalStorage>| match slot
+        .try_update_value(Option::take)
+        .flatten()
+    {
         Some(t) => {
             t.clear();
             true
@@ -878,7 +1014,11 @@ pub(super) fn VideoPlayer(
             move || {
                 let _ = idle_timer.try_set_value(None);
                 // Not while the mouse is on the controls.
-                let on_controls = player_ref.try_get_untracked().flatten().and_then(|p| p.query_selector(".vcontrols:hover").ok().flatten()).is_some();
+                let on_controls = player_ref
+                    .try_get_untracked()
+                    .flatten()
+                    .and_then(|p| p.query_selector(".vcontrols:hover").ok().flatten())
+                    .is_some();
                 if !on_controls {
                     let _ = idle.try_set(true);
                 }
@@ -891,7 +1031,12 @@ pub(super) fn VideoPlayer(
     let full_change = StoredValue::new_local(None::<Closure<dyn Fn()>>);
     player_ref.on_load(move |p| {
         let cb = Closure::<dyn Fn()>::new(move || {
-            let on = full_screen_element().is_some_and(|el| player_ref.try_get_untracked().flatten().is_some_and(|p| JsValue::from(p) == el));
+            let on = full_screen_element().is_some_and(|el| {
+                player_ref
+                    .try_get_untracked()
+                    .flatten()
+                    .is_some_and(|p| JsValue::from(p) == el)
+            });
             let _ = full.try_set(on);
             wake();
         });
@@ -905,7 +1050,10 @@ pub(super) fn VideoPlayer(
             exit_full_screen();
             return;
         }
-        if player_ref.get_untracked().is_some_and(|p| enter_full_screen(&p.into())) {
+        if player_ref
+            .get_untracked()
+            .is_some_and(|p| enter_full_screen(&p.into()))
+        {
             return;
         }
         if let Some(m) = media() {
@@ -977,12 +1125,22 @@ pub(super) fn VideoPlayer(
         if let Some(p) = player_ref.try_get_untracked().flatten() {
             let _ = room.try_set((p.client_width() as f64, p.client_height() as f64));
         }
-        let (Some(s), Some(v)) = (stage.try_get_untracked().flatten(), video_ref.try_get_untracked().flatten()) else { return };
-        let _ = sizes.try_set(((s.client_width() as f64, s.client_height() as f64), (v.offset_width() as f64, v.offset_height() as f64)));
+        let (Some(s), Some(v)) = (
+            stage.try_get_untracked().flatten(),
+            video_ref.try_get_untracked().flatten(),
+        ) else {
+            return;
+        };
+        let _ = sizes.try_set((
+            (s.client_width() as f64, s.client_height() as f64),
+            (v.offset_width() as f64, v.offset_height() as f64),
+        ));
     };
     let watcher = StoredValue::new_local(None::<(web_sys::ResizeObserver, Closure<dyn Fn()>)>);
     Effect::new(move |_| {
-        let (Some(s), Some(v), Some(p)) = (stage.get(), video_ref.get(), player_ref.get()) else { return };
+        let (Some(s), Some(v), Some(p)) = (stage.get(), video_ref.get(), player_ref.get()) else {
+            return;
+        };
         let cb = Closure::<dyn Fn()>::new(measure);
         if let Ok(ro) = web_sys::ResizeObserver::new(cb.as_ref().unchecked_ref()) {
             ro.observe(&s);
@@ -1000,15 +1158,29 @@ pub(super) fn VideoPlayer(
     });
     // The video's turn, when the controls stay level; with them turned too, the box holding both
     // turns instead, swapping its width and height on its side, so the video fits as it is.
-    let video_turn = move || if prefs.turn_controls.get() { 0 } else { turn.get() };
+    let video_turn = move || {
+        if prefs.turn_controls.get() {
+            0
+        } else {
+            turn.get()
+        }
+    };
     let box_style = move || {
         let t = turn.get();
         if !prefs.turn_controls.get() || t == 0 {
             return String::new();
         }
         let (w, h) = room.get();
-        let size = if t.rem_euclid(2) == 1 { format!("width: {h}px; height: {w}px; ") } else { String::new() };
-        format!("{size}transform: translate(-50%, -50%) rotate({}deg){}", t * 90, turn.css())
+        let size = if t.rem_euclid(2) == 1 {
+            format!("width: {h}px; height: {w}px; ")
+        } else {
+            String::new()
+        };
+        format!(
+            "{size}transform: translate(-50%, -50%) rotate({}deg){}",
+            t * 90,
+            turn.css()
+        )
     };
     let style = move || {
         if prefs.turn_controls.get() {
@@ -1066,19 +1238,33 @@ pub(super) fn VideoPlayer(
         }
     };
     let peek_ready = move |_| {
-        if let (Some(t), Some(p)) = (peek_next.try_update_value(Option::take).flatten(), peek_ref.get_untracked()) {
+        if let (Some(t), Some(p)) = (
+            peek_next.try_update_value(Option::take).flatten(),
+            peek_ref.get_untracked(),
+        ) {
             p.set_current_time(t);
         }
     };
     let over_bar = move |ev: web_sys::MouseEvent| {
         // Along the bar, in its own terms (offsetX), so this works when it's turned with the video.
-        let Some(bar) = ev.current_target().and_then(|t| t.dyn_into::<web_sys::HtmlElement>().ok()) else { return };
-        let Some(input) = ev.target().and_then(|t| t.dyn_into::<web_sys::HtmlInputElement>().ok()) else { return };
+        let Some(bar) = ev
+            .current_target()
+            .and_then(|t| t.dyn_into::<web_sys::HtmlElement>().ok())
+        else {
+            return;
+        };
+        let Some(input) = ev
+            .target()
+            .and_then(|t| t.dyn_into::<web_sys::HtmlInputElement>().ok())
+        else {
+            return;
+        };
         let (d, w) = (length.get_untracked(), bar.offset_width() as f64);
         if d <= 0.0 || w <= 0.0 {
             return;
         }
-        let x = (ev.offset_x() as f64 + input.offset_left() as f64 - bar.offset_left() as f64).clamp(0.0, w);
+        let x = (ev.offset_x() as f64 + input.offset_left() as f64 - bar.offset_left() as f64)
+            .clamp(0.0, w);
         let t = x / w * d;
         peek_on.set(true);
         hover.set(Some((x, w, t)));
@@ -1087,8 +1273,16 @@ pub(super) fn VideoPlayer(
     // The frame's box, as the video is turned: at most 160 × 120.
     let tip_box = move || {
         let (vw, vh) = natural.get();
-        let a = if vw > 0 && vh > 0 { vw as f64 / vh as f64 } else { 16.0 / 9.0 };
-        let a = if video_turn().rem_euclid(2) == 1 { 1.0 / a } else { a };
+        let a = if vw > 0 && vh > 0 {
+            vw as f64 / vh as f64
+        } else {
+            16.0 / 9.0
+        };
+        let a = if video_turn().rem_euclid(2) == 1 {
+            1.0 / a
+        } else {
+            a
+        };
         if a >= 160.0 / 120.0 {
             (160.0, 160.0 / a)
         } else {
@@ -1107,15 +1301,29 @@ pub(super) fn VideoPlayer(
     let video_url = url.clone();
 
     let pop_out = move || {
-        let (Some(pop), Some(m)) = (pop, media()) else { return };
+        let (Some(pop), Some(m)) = (pop, media()) else {
+            return;
+        };
         let (vw, vh) = natural.get_untracked();
-        let (vw, vh) = if vw > 0 && vh > 0 { (vw as f64, vh as f64) } else { (16.0, 9.0) };
-        let (vw, vh) = if turn.get_untracked().rem_euclid(2) == 1 { (vh, vw) } else { (vw, vh) };
+        let (vw, vh) = if vw > 0 && vh > 0 {
+            (vw as f64, vh as f64)
+        } else {
+            (16.0, 9.0)
+        };
+        let (vw, vh) = if turn.get_untracked().rem_euclid(2) == 1 {
+            (vh, vw)
+        } else {
+            (vw, vh)
+        };
         // About 480 px across (less for a tall one), plus the controls: at the side of a video on
         // its side when they turn with it.
         let scale = (480.0 / vw).min(480.0 / vh);
         let side = prefs.turn_controls.get_untracked() && turn.get_untracked().rem_euclid(2) == 1;
-        let (cw, ch) = if side { (CONTROLS_H, 0.0) } else { (0.0, CONTROLS_H) };
+        let (cw, ch) = if side {
+            (CONTROLS_H, 0.0)
+        } else {
+            (0.0, CONTROLS_H)
+        };
         let playing = !m.paused();
         let _ = m.pause();
         resume.save(&m);
@@ -1255,7 +1463,11 @@ const CONTROLS_H: f64 = 64.0;
 
 /// A time in seconds as "1:02:03" or "2:03".
 fn clock(secs: f64) -> String {
-    let s = if secs.is_finite() { secs.max(0.0).floor() as u64 } else { 0 };
+    let s = if secs.is_finite() {
+        secs.max(0.0).floor() as u64
+    } else {
+        0
+    };
     let (h, m, s) = (s / 3600, s / 60 % 60, s % 60);
     if h > 0 {
         format!("{h}:{m:02}:{s:02}")
@@ -1266,7 +1478,9 @@ fn clock(secs: f64) -> String {
 
 /// The video this window was opened for, when it's a popped-out player (the backend sets it).
 pub fn popped_out() -> Option<Popped> {
-    let v = js_sys::Reflect::get(&window(), &"__FERRY_PLAYER".into()).ok()?.as_string()?;
+    let v = js_sys::Reflect::get(&window(), &"__FERRY_PLAYER".into())
+        .ok()?
+        .as_string()?;
     serde_json::from_str(&v).ok()
 }
 
@@ -1280,7 +1494,12 @@ pub fn PopOut(video: Popped) -> impl IntoView {
     let turn = Turn::at(video.turn);
     let start = Some(video.time).filter(|t| *t > 0.0);
     request_animation_frame(|| {
-        if let Some(p) = document().query_selector(".vplayer").ok().flatten().and_then(|p| p.dyn_into::<web_sys::HtmlElement>().ok()) {
+        if let Some(p) = document()
+            .query_selector(".vplayer")
+            .ok()
+            .flatten()
+            .and_then(|p| p.dyn_into::<web_sys::HtmlElement>().ok())
+        {
             let _ = p.focus();
         }
     });
@@ -1320,7 +1539,9 @@ mod tests {
 
     #[test]
     fn shows_the_languages_picked_first() {
-        let names: Vec<String> = ["Movie.en.srt", "Movie.fr.srt", "Movie.vi.srt"].map(String::from).to_vec();
+        let names: Vec<String> = ["Movie.en.srt", "Movie.fr.srt", "Movie.vi.srt"]
+            .map(String::from)
+            .to_vec();
         assert_eq!(default_shown(&names, &["vi".into(), "en".into()]), [2, 0]);
         assert_eq!(default_shown(&names, &["de".into(), "fr".into()]), [1]);
         assert_eq!(default_shown(&names, &["de".into()]), [0]);
@@ -1330,7 +1551,13 @@ mod tests {
 
     #[test]
     fn puts_the_second_subtitles_at_the_top() {
-        assert_eq!(at_top("WEBVTT\n\n00:01.000 --> 00:02.000\nHi\n"), "WEBVTT\n\n00:01.000 --> 00:02.000 line:0\nHi\n");
-        assert_eq!(at_top("00:01.000 --> 00:02.000 line:3\n"), "00:01.000 --> 00:02.000 line:3\n");
+        assert_eq!(
+            at_top("WEBVTT\n\n00:01.000 --> 00:02.000\nHi\n"),
+            "WEBVTT\n\n00:01.000 --> 00:02.000 line:0\nHi\n"
+        );
+        assert_eq!(
+            at_top("00:01.000 --> 00:02.000 line:3\n"),
+            "00:01.000 --> 00:02.000 line:3\n"
+        );
     }
 }

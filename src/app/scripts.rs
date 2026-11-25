@@ -18,7 +18,9 @@ impl Ctx {
         let places = self.script_places.get_untracked();
         let folder = self.script_folder.get_untracked();
         spawn_local(async move {
-            match call::<Vec<ScriptInfo>>("scripts", json!({ "places": places, "folder": folder })).await {
+            match call::<Vec<ScriptInfo>>("scripts", json!({ "places": places, "folder": folder }))
+                .await
+            {
                 Ok(list) => {
                     if self.scripts.with_untracked(|v| *v != list) {
                         self.scripts.set(list);
@@ -32,18 +34,26 @@ impl Ctx {
 
     /// The script `chord` runs, if it's one that's found.
     pub(super) fn script_for(self, chord: &str) -> Option<ScriptInfo> {
-        let path = self.script_keys.with_untracked(|k| k.iter().find(|(_, c)| *c == chord).map(|(p, _)| p.clone()))?;
-        self.scripts.with_untracked(|v| v.iter().find(|s| s.path == path).cloned())
+        let path = self
+            .script_keys
+            .with_untracked(|k| k.iter().find(|(_, c)| *c == chord).map(|(p, _)| p.clone()))?;
+        self.scripts
+            .with_untracked(|v| v.iter().find(|s| s.path == path).cloned())
     }
 
     /// The shortcut of the script at `path`, as shown ("Ctrl+Shift+1"), or "".
     pub(super) fn script_key_label(self, path: &str) -> String {
-        self.script_keys.with(|k| k.get(path).map(|c| super::keymap::label(c)).unwrap_or_default())
+        self.script_keys.with(|k| {
+            k.get(path)
+                .map(|c| super::keymap::label(c))
+                .unwrap_or_default()
+        })
     }
 
     fn set_script_keys(self, f: impl FnOnce(&mut HashMap<String, String>)) {
         self.script_keys.update(f);
-        self.script_keys.with_untracked(|k| store(KEYS_KEY, &serde_json::to_string(k).unwrap_or_default()));
+        self.script_keys
+            .with_untracked(|k| store(KEYS_KEY, &serde_json::to_string(k).unwrap_or_default()));
     }
 
     /// A key pressed while the script at `path` waits for its shortcut: Esc stops waiting, ⌫ or
@@ -84,7 +94,10 @@ impl Ctx {
     }
 
     fn set_script_places(self, places: Vec<String>) {
-        store(PLACES_KEY, &serde_json::to_string(&places).unwrap_or_default());
+        store(
+            PLACES_KEY,
+            &serde_json::to_string(&places).unwrap_or_default(),
+        );
         self.script_places.set(places);
         self.load_scripts();
     }
@@ -96,13 +109,18 @@ impl Ctx {
         let (src, dir) = (p.src.get_untracked(), p.cwd.get_untracked());
         let again = items.clone();
         spawn_local(async move {
-            let args = json!({ "src": src.key(), "dir": dir, "items": items, "script": script.path });
+            let args =
+                json!({ "src": src.key(), "dir": dir, "items": items, "script": script.path });
             match call::<ScriptReport>("run_script", args).await {
                 Ok(report) => {
                     if report.changed > 0 {
                         self.reload(p);
                     }
-                    p.notice.set(Notice::ScriptDone { script, items: again, report });
+                    p.notice.set(Notice::ScriptDone {
+                        script,
+                        items: again,
+                        report,
+                    });
                 }
                 Err(e) => p.error(e),
             }
@@ -122,7 +140,13 @@ pub(super) fn running(name: String) -> AnyView {
 }
 
 /// What a script printed, why it stopped (when it didn't end by itself), and how much it changed.
-pub(super) fn done(ctx: Ctx, p: Pane, script: ScriptInfo, items: Vec<String>, r: ScriptReport) -> AnyView {
+pub(super) fn done(
+    ctx: Ctx,
+    p: Pane,
+    script: ScriptInfo,
+    items: Vec<String>,
+    r: ScriptReport,
+) -> AnyView {
     let name = &script.name;
     let n = r.changed;
     let s = if n == 1 { "" } else { "s" };
@@ -174,7 +198,11 @@ pub(super) fn ScriptSettings() -> impl IntoView {
             match call::<Vec<String>>("pick_scripts", json!({ "folder": folder })).await {
                 Ok(got) if !got.is_empty() => {
                     let mut places = ctx.script_places.get_untracked();
-                    places.extend(got.into_iter().filter(|g| !places.contains(g)).collect::<Vec<_>>());
+                    places.extend(
+                        got.into_iter()
+                            .filter(|g| !places.contains(g))
+                            .collect::<Vec<_>>(),
+                    );
                     ctx.set_script_places(places);
                 }
                 Ok(_) => {}
@@ -218,7 +246,12 @@ pub(super) fn ScriptSettings() -> impl IntoView {
     let make = move || {
         let name = new_name.get_untracked();
         spawn_local(async move {
-            match call::<String>("new_script", json!({ "name": name, "folder": ctx.script_folder.get_untracked() })).await {
+            match call::<String>(
+                "new_script",
+                json!({ "name": name, "folder": ctx.script_folder.get_untracked() }),
+            )
+            .await
+            {
                 Ok(path) => {
                     new_name.set(String::new());
                     ctx.load_scripts();
