@@ -283,6 +283,8 @@ where
 
 impl FileSearchService {
     /// The request, once its token is checked.
+    // tonic's handlers return `Status` itself; boxing it here would only be unboxed by `?`.
+    #[allow(clippy::result_large_err)]
     async fn authorized<T>(&self, request: Request<T>) -> Result<T, Status> {
         let header = request
             .metadata()

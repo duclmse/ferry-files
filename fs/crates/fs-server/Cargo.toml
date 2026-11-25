@@ -11,7 +11,7 @@ path = "src/main.rs"
 # so at startup; `grpc` also drops tonic and the bundled protoc from the build.
 [features]
 default = ["rest", "grpc", "ipc"]
-rest    = ["dep:axum", "dep:tower", "dep:tower-http", "dep:hyper"]
+rest    = ["dep:async-stream", "dep:axum", "dep:tower", "dep:tower-http", "dep:hyper"]
 grpc    = ["dep:tonic", "dep:tonic-reflection", "dep:prost", "dep:tonic-build", "dep:protoc-bin-vendored"]
 ipc     = []
 
@@ -93,7 +93,7 @@ zstd      = "0.13"
 
 # Streaming ZIP decompression pipeline (Phase 10)
 async-trait  = "0.1"
-async-stream = "0.3"
+async-stream = { version = "0.3", optional = true }
 futures      = "0.3"
 
 [target.'cfg(unix)'.dependencies]
