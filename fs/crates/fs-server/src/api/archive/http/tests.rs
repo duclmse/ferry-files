@@ -85,7 +85,7 @@ fn disabled_registry_returns_empty() {
     assert!(r.index("any").is_none());
 }
 
-// ----- integration: GET /archive/:id/file via full Axum router ----------
+// ----- integration: GET /archive/{id}/file via full Axum router ----------
 
 fn make_test_app_state(dir: &TempDir, registry: Arc<ArchiveRegistry>) -> AppState {
     use crate::config::{
@@ -295,7 +295,7 @@ async fn stream_file_handler_limits_concurrent_inflight_per_archive() {
     );
 }
 
-// ----- Range requests on GET /archive/:id/file ------------------------------
+// ----- Range requests on GET /archive/{id}/file ------------------------------
 
 async fn get_file_with_range(
     state: AppState,

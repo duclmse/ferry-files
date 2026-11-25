@@ -26,7 +26,7 @@ pub(super) async fn list_archives(State(state): State<AppState>) -> impl IntoRes
 }
 
 // ---------------------------------------------------------------------------
-// Handler: GET /archive/:id/index
+// Handler: GET /archive/{id}/index
 // ---------------------------------------------------------------------------
 
 pub(super) async fn get_index(
@@ -67,7 +67,7 @@ pub(super) async fn get_index(
 }
 
 // ---------------------------------------------------------------------------
-// Handler: GET /archive/:id/dir?node=<u32>
+// Handler: GET /archive/{id}/dir?node=<u32>
 // ---------------------------------------------------------------------------
 
 #[derive(Deserialize)]
@@ -141,7 +141,7 @@ pub(super) async fn list_dir(
 }
 
 // ---------------------------------------------------------------------------
-// Handler: GET /archive/:id/file?node=<u32>
+// Handler: GET /archive/{id}/file?node=<u32>
 // ---------------------------------------------------------------------------
 
 pub(super) async fn stream_file(
@@ -298,7 +298,7 @@ async fn read_entry_range(
 }
 
 // ---------------------------------------------------------------------------
-// Handler: GET /archive/:id/search?q=&limit=&offset=
+// Handler: GET /archive/{id}/search?q=&limit=&offset=
 // ---------------------------------------------------------------------------
 
 #[derive(Deserialize)]

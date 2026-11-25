@@ -52,9 +52,9 @@ tonic-reflection = { version = "0.11", optional = true }
 prost            = { version = "0.12", optional = true }
 
 # REST
-axum       = { version = "0.7", features = ["macros"], optional = true }
-tower      = { version = "0.4", features = ["util"], optional = true }
-tower-http = { version = "0.5", features = ["cors", "trace"], optional = true }
+axum       = { version = "0.8", features = ["macros"], optional = true }
+tower      = { version = "0.5", features = ["util"], optional = true }
+tower-http = { version = "0.7", features = ["cors", "trace"], optional = true }
 hyper      = { version = "1", features = ["full"], optional = true }
 
 # Fuzzy matching

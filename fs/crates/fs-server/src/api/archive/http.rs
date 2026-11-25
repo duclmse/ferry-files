@@ -30,10 +30,10 @@ mod tests;
 pub fn router(state: AppState) -> Router<AppState> {
     Router::new()
         .route("/archive", get(handlers::list_archives))
-        .route("/archive/:id/index", get(handlers::get_index))
-        .route("/archive/:id/dir", get(handlers::list_dir))
-        .route("/archive/:id/file", get(handlers::stream_file))
-        .route("/archive/:id/search", get(handlers::search_archive))
+        .route("/archive/{id}/index", get(handlers::get_index))
+        .route("/archive/{id}/dir", get(handlers::list_dir))
+        .route("/archive/{id}/file", get(handlers::stream_file))
+        .route("/archive/{id}/search", get(handlers::search_archive))
         .layer(axum::middleware::from_fn_with_state(
             state.clone(),
             rate_limit_middleware,
