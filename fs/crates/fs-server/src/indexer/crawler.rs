@@ -265,15 +265,35 @@ pub async fn full_crawl(
     registry: Arc<ArchiveRegistry>,
     shutdown: CancellationToken,
 ) -> Result<()> {
-    crawl_roots(config, None, sqlite, tantivy, metrics, registry, shutdown).await
+    crawl_roots(
+        config,
+        Scope::default(),
+        sqlite,
+        tantivy,
+        metrics,
+        registry,
+        shutdown,
+    )
+    .await
 }
 
-/// Crawls `roots`, or every watch path when `None`: a watch path added
-/// while the daemon runs is crawled alone. Each root's stale rows go with
-/// its own crawl, so the other roots' rows are left as they are.
+/// What a crawl covers.
+#[derive(Debug, Clone, Default)]
+pub struct Scope {
+    /// The roots to crawl; every watch path when `None`.
+    pub roots: Option<Vec<PathBuf>>,
+    /// Folders under them whose entries are known current: former watch
+    /// paths an added root took in, watched until now. Their rows are tagged
+    /// as crawled instead of walked again.
+    pub keep: Vec<PathBuf>,
+}
+
+/// Crawls the roots of `scope`: a watch path added while the daemon runs is
+/// crawled alone. Each root's stale rows go with its own crawl, so the other
+/// roots' rows are left as they are.
 pub async fn crawl_roots(
     config: Arc<RwLock<Config>>,
-    roots: Option<Vec<PathBuf>>,
+    scope: Scope,
     sqlite: Arc<FileStore>,
     tantivy: Arc<TantivyStore>,
     metrics: Arc<IndexMetrics>,
@@ -283,8 +303,10 @@ pub async fn crawl_roots(
     let cfg = config.read().await.clone();
 
     let exclusions = Arc::new(ExclusionEngine::for_config(&cfg)?);
+    let Scope { roots, keep } = scope;
     let whole = roots.is_none();
     let watch_paths = roots.unwrap_or_else(|| cfg.watch_paths.clone());
+    let keep = Arc::new(keep);
     for root in &watch_paths {
         metrics.set_root(&root.to_string_lossy(), RootState::Pending, None);
     }
@@ -432,6 +454,12 @@ pub async fn crawl_roots(
             if try_mft {
                 mft_cache.release_unless_needed(watch_path, &watch_paths[i + 1..]);
             }
+            let kept: Arc<Vec<PathBuf>> = Arc::new(
+                keep.iter()
+                    .filter(|k| k.starts_with(watch_path))
+                    .cloned()
+                    .collect(),
+            );
             if !from_mft {
                 walker.run(|| {
                     let tx_w = tx.clone();
@@ -439,6 +467,7 @@ pub async fn crawl_roots(
                     let excl = Arc::clone(&excl);
                     let side_work = Arc::clone(&side_work);
                     let root_str = root_str.clone();
+                    let kept = Arc::clone(&kept);
 
                     Box::new(move |result| {
                         let entry = match result {
@@ -471,6 +500,9 @@ pub async fn crawl_roots(
                         if let Some(side) = side {
                             let _ = side_tx.send(side);
                         }
+                        if meta.is_dir() && kept.iter().any(|k| k == path) {
+                            return ignore::WalkState::Skip;
+                        }
                         ignore::WalkState::Continue
                     })
                 });
@@ -486,7 +518,16 @@ pub async fn crawl_roots(
             // Closing tx signals the writer thread that no more records are coming.
             // Join before removing stale rows so all crawl_generation marks are committed.
             drop(tx);
-            let entries = writer_thread.join().ok();
+            let mut entries = writer_thread.join().ok();
+            for k in kept.iter() {
+                match sqlite_w.retag_under(&k.to_string_lossy(), &watch_root, generation) {
+                    Ok(n) => {
+                        tracing::info!("{}: {n} entries kept, not walked", k.display());
+                        entries = entries.map(|e| e + n as u64);
+                    }
+                    Err(e) => tracing::warn!("keeping {}: {e}", k.display()),
+                }
+            }
             if let Some(entries) = entries {
                 let _ = sqlite_w.set_meta(&entries_key(&watch_root), &entries.to_string());
             }

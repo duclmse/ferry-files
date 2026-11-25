@@ -59,6 +59,54 @@ async fn full_crawl_indexes_all_files() {
     assert!(total >= 5, "expected ≥5 files, got {total}");
 }
 
+/// A kept folder (a watch path the crawled root took in) is not walked
+/// again: its rows survive the sweep as they were, in both stores.
+#[tokio::test]
+async fn a_kept_folder_is_tagged_not_walked() {
+    use crate::store::memory_store::MemoryStore;
+    let dir = TempDir::new().unwrap();
+    let root = crate::config::without_verbatim(dir.path().canonicalize().unwrap()).join("r");
+    let child = root.join("child");
+    std::fs::create_dir_all(&child).unwrap();
+    std::fs::write(child.join("known.txt"), b"x").unwrap();
+    let data = dir.path().join("mem");
+    std::fs::create_dir(&data).unwrap();
+    let stores = [
+        make_store(&dir),
+        Arc::new(FileStore::Memory(Arc::new(
+            MemoryStore::new(&data).unwrap(),
+        ))),
+    ];
+    for store in stores {
+        let crawl = |scope: Scope| {
+            crawl_roots(
+                make_config(&root),
+                scope,
+                store.clone(),
+                make_tantivy(&dir),
+                IndexMetrics::new(),
+                Arc::new(ArchiveRegistry::disabled()),
+                CancellationToken::new(),
+            )
+        };
+        crawl(Scope::default()).await.unwrap();
+        std::fs::write(child.join("unseen.txt"), b"x").unwrap();
+        std::fs::write(root.join("beside.txt"), b"x").unwrap();
+        crawl(Scope {
+            roots: Some(vec![root.clone()]),
+            keep: vec![child.clone()],
+        })
+        .await
+        .unwrap();
+        let has = |p: &Path| store.get_by_path(&p.to_string_lossy()).unwrap().is_some();
+        assert!(has(&child.join("known.txt")), "kept through the sweep");
+        assert!(!has(&child.join("unseen.txt")), "not walked");
+        assert!(has(&root.join("beside.txt")), "the rest is walked");
+        std::fs::remove_file(child.join("unseen.txt")).unwrap();
+        std::fs::remove_file(root.join("beside.txt")).unwrap();
+    }
+}
+
 /// The daemon's own folders under a watch path stay out of the index: its
 /// writes there would otherwise come back as events forever.
 #[tokio::test]

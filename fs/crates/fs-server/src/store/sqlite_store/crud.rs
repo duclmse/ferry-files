@@ -404,6 +404,21 @@ impl SqliteStore {
     /// watch paths below it sweeps their rows too, as the memory store does.
     /// The `LIKE` this replaced was case-insensitive here, so it scanned the
     /// whole table.
+    /// Tags `dir` and the rows under it as crawled under `watch_root` at
+    /// `generation`. An index range, like the sweep.
+    pub fn retag_under(&self, dir: &str, watch_root: &str, generation: i64) -> Result<usize> {
+        let conn = self.write_conn()?;
+        let n = conn.execute(
+            &format!(
+                "UPDATE files SET watch_root = ?2, crawl_generation = ?3
+                 WHERE path = ?1 OR {}",
+                super::schema::UNDER_DIR_1
+            ),
+            rusqlite::params![dir, watch_root, generation],
+        )?;
+        Ok(n)
+    }
+
     pub fn remove_stale_for_root(&self, watch_root: &str, generation: i64) -> Result<usize> {
         let conn = self.write_conn()?;
         let n = conn.execute(

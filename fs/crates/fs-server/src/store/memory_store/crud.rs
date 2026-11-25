@@ -276,6 +276,21 @@ impl MemoryStore {
         }
     }
 
+    /// The memory store sweeps by path, so only the generation changes.
+    pub fn retag_under(&self, dir: &str, generation: i64) -> usize {
+        let generation = generation_u32(generation);
+        let mut state = self.write_state();
+        let hits: Vec<u32> = state
+            .iter()
+            .filter(|e| e.under(dir).is_some() || e.path_is(dir))
+            .map(|e| e.index())
+            .collect();
+        for &i in &hits {
+            state.set_generation(i, generation);
+        }
+        hits.len()
+    }
+
     pub fn remove_stale_for_root(&self, watch_root: &str, generation: i64) -> usize {
         let generation = generation_u32(generation);
         self.remove_where(|e| {

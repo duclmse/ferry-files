@@ -90,8 +90,10 @@ Unit: memory and SQLite arms both remove exactly the subtree.
 
 ## 2. Fold child roots into an added parent
 
-> **Done**, without the skip-and-retag refinement (the parent's crawl walks
-> the children again). `WatchList::add` replaces the children and reports
+> **Done**, with the skip-and-retag refinement: the parent's crawl skips
+> the children it took in (`Scope::keep`) and tags their rows as crawled
+> (`FileStore::retag_under`), since they were watched until then (test
+> `a_kept_folder_is_tagged_not_walked`). `WatchList::add` replaces the children and reports
 > them (`Outcome::absorbed`, REST and gRPC `absorbed`). SQLite's
 > `remove_stale_for_root` now finds rows by path as an index range, like the
 > memory store, so the parent's sweep covers rows last crawled under a child;

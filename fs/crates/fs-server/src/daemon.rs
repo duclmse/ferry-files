@@ -23,7 +23,7 @@ use crate::config;
 #[cfg(any(feature = "rest", feature = "grpc"))]
 use crate::config::AuthMode;
 use crate::error::AppError;
-use crate::indexer::crawler::{crawl_roots, process_events, IndexEvent, IndexMetrics};
+use crate::indexer::crawler::{crawl_roots, process_events, IndexEvent, IndexMetrics, Scope};
 use crate::indexer::exclusions::ExclusionEngine;
 #[cfg(feature = "rest")]
 use crate::scheduler::{ArchiveSemaphores, ClientRateLimiter, SchedulerMetrics};
@@ -1054,6 +1054,13 @@ async fn follow_watch_paths(
         }
         let added: Vec<PathBuf> = now.iter().filter(|p| !roots.contains(p)).cloned().collect();
         let removed: Vec<PathBuf> = roots.iter().filter(|p| !now.contains(p)).cloned().collect();
+        // Watch paths an added one took in: watched live until now, so their
+        // entries are current and its crawl need not walk them again.
+        let keep: Vec<PathBuf> = removed
+            .iter()
+            .filter(|r| following.contains(r) && added.iter().any(|a| r.starts_with(a)))
+            .cloned()
+            .collect();
         // Listed before and after, but not reachable before and after.
         let back: Vec<PathBuf> = available
             .iter()
@@ -1155,7 +1162,7 @@ async fn follow_watch_paths(
         if crawl.is_empty() {
             crawler.active.store(false, Ordering::Release);
         } else {
-            crawler.spawn(Some(crawl), shutdown.clone());
+            crawler.spawn_keeping(crawl, keep, shutdown.clone());
         }
     }
 }
@@ -1361,11 +1368,26 @@ fn forget_roots(c: &Crawler, gone: &[PathBuf], kept: &[PathBuf]) -> Vec<PathBuf>
 impl Crawler {
     /// Crawls `roots`, or every watch path, in the background.
     fn spawn(&self, roots: Option<Vec<PathBuf>>, shutdown: CancellationToken) {
-        spawn_crawl(self.clone(), roots, shutdown);
+        let scope = Scope {
+            roots,
+            keep: Vec::new(),
+        };
+        spawn_crawl(self.clone(), scope, shutdown);
+    }
+
+    /// `spawn`, keeping the entries of `keep` instead of walking them
+    /// (`Scope::keep`).
+    fn spawn_keeping(&self, roots: Vec<PathBuf>, keep: Vec<PathBuf>, shutdown: CancellationToken) {
+        let scope = Scope {
+            roots: Some(roots),
+            keep,
+        };
+        spawn_crawl(self.clone(), scope, shutdown);
     }
 }
 
-fn spawn_crawl(c: Crawler, roots: Option<Vec<PathBuf>>, shutdown: CancellationToken) {
+fn spawn_crawl(c: Crawler, scope: Scope, shutdown: CancellationToken) {
+    let roots = scope.roots.clone();
     let Crawler {
         active: ca,
         sqlite,
@@ -1403,7 +1425,7 @@ fn spawn_crawl(c: Crawler, roots: Option<Vec<PathBuf>>, shutdown: CancellationTo
         });
         let store = Arc::clone(&sqlite);
         let cancelled = shutdown.clone();
-        if let Err(e) = crawl_roots(cfg, roots, sqlite, tantivy, metrics, registry, shutdown).await
+        if let Err(e) = crawl_roots(cfg, scope, sqlite, tantivy, metrics, registry, shutdown).await
         {
             tracing::error!("{what} error: {e}");
         } else {

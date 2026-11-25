@@ -645,6 +645,16 @@ impl FileStore {
         }
     }
 
+    /// Marks `dir` and everything under it as seen by the crawl of
+    /// `watch_root` at `generation`, without reading the disk: for a folder
+    /// whose entries are known current, so the crawl's sweep keeps them.
+    pub fn retag_under(&self, dir: &str, watch_root: &str, generation: i64) -> Result<usize> {
+        match self {
+            FileStore::Sqlite(s) => s.retag_under(dir, watch_root, generation),
+            FileStore::Memory(m) => Ok(m.retag_under(dir, generation)),
+        }
+    }
+
     pub fn remove_stale_for_root(&self, watch_root: &str, generation: i64) -> Result<usize> {
         match self {
             FileStore::Sqlite(s) => s.remove_stale_for_root(watch_root, generation),
