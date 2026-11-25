@@ -272,7 +272,7 @@ fn md5_file(path: &std::path::Path) -> Result<String> {
             .read(&mut buf)
             .map_err(|e| DevError::Msg(format!("Can't read {}: {e}", path.display())))?;
         if n == 0 {
-            return Ok(format!("{:x}", ctx.compute()));
+            return Ok(format!("{:x}", ctx.finalize()));
         }
         ctx.consume(&buf[..n]);
     }

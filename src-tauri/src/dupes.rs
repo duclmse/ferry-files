@@ -57,7 +57,7 @@ fn digest(
         at += data.len() as u64;
         ctx.consume(&data);
     }
-    Some(ctx.compute().0)
+    Some(ctx.finalize().0)
 }
 
 /// Splits each group by `key` (files it can't read drop out), keeping groups of two or more.
