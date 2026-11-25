@@ -225,6 +225,13 @@ pub const SYSTEM_THUMBS: bool = cfg!(windows);
 pub fn native(path: &str) -> PathBuf {
     #[cfg(windows)]
     {
+        // "//nas/Photos/a" is the network share's \\nas\Photos\a.
+        if let Some(unc) = path
+            .strip_prefix("//")
+            .filter(|p| !p.is_empty() && !p.starts_with('/'))
+        {
+            return PathBuf::from(format!(r"\\{}", unc.replace('/', "\\")));
+        }
         // "/C:/Users/me" is C:\Users\me, and "/C:" is the drive's top folder, C:\.
         let mut s = path.trim_start_matches('/').replace('/', "\\");
         if s.len() == 2 && s.ends_with(':') {
@@ -241,6 +248,13 @@ pub fn app_path(path: &Path) -> String {
     #[cfg(windows)]
     {
         let s = path.to_string_lossy();
+        // A network share, \\nas\Photos (or `canonicalize`'s \\?\UNC\nas\Photos), is "//nas/Photos".
+        if let Some(unc) = s
+            .strip_prefix(r"\\?\UNC\")
+            .or_else(|| s.strip_prefix(r"\\").filter(|r| !r.starts_with(['?', '.'])))
+        {
+            return format!("//{}", unc.replace('\\', "/").trim_end_matches('/'));
+        }
         // `canonicalize` gives \\?\C:\..., which is still C:\...
         let s = s.strip_prefix(r"\\?\").unwrap_or(&s).replace('\\', "/");
         format!("/{}", s.trim_end_matches('/'))
@@ -1187,6 +1201,21 @@ mod tests {
         assert_eq!(native("/C:"), PathBuf::from(r"C:\"));
         assert_eq!(app_path(Path::new(r"C:\Users\me")), "/C:/Users/me");
         assert_eq!(app_path(Path::new(r"\\?\D:\x\")), "/D:/x");
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn network_shares_keep_their_server() {
+        assert_eq!(
+            app_path(Path::new(r"\\nas\Photos\a.jpg")),
+            "//nas/Photos/a.jpg"
+        );
+        assert_eq!(app_path(Path::new(r"\\?\UNC\nas\Photos\")), "//nas/Photos");
+        assert_eq!(
+            native("//nas/Photos/a.jpg"),
+            PathBuf::from(r"\\nas\Photos\a.jpg")
+        );
+        assert_eq!(native("/C:/x"), PathBuf::from(r"C:\x"));
     }
 
     #[test]

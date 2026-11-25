@@ -352,7 +352,7 @@ impl Ctx {
     /// Shows the terminal and goes to `dir` in its shell. A shell that's starting (or starts when
     /// the terminal is shown) gets the cd once it runs.
     pub(super) fn cd_in_terminal(self, p: Pane, dir: String) {
-        let cd = format!("cd '{}'\r", dir.replace('\'', r"'\''")).into_bytes();
+        let cd = cd_line(p.src.get_untracked(), &dir).into_bytes();
         if p.term_id.get_untracked().is_some() || p.term_starting.get_value() {
             self.type_in(p, cd);
         } else if dir != p.cwd.get_untracked() {
@@ -616,10 +616,7 @@ pub(super) fn Terminal(pane: Pane) -> impl IntoView {
     };
     let cd_here = move |_| {
         let dir = p.cwd.get_untracked();
-        ctx.type_in(
-            p,
-            format!("cd '{}'\r", dir.replace('\'', r"'\''")).into_bytes(),
-        );
+        ctx.type_in(p, cd_line(p.src.get_untracked(), &dir).into_bytes());
         if let Some(el) = screen_el.get_untracked() {
             let _ = el.focus();
         }
@@ -660,6 +657,16 @@ pub(super) fn Terminal(pane: Pane) -> impl IntoView {
                 on:focus=move |_| focused.set(true) on:blur=move |_| focused.set(false)></div>
             <span class="term-measure" node_ref=measure_el aria-hidden="true">"MMMMMMMMMM"</span>
         </div>
+    }
+}
+
+/// The line that takes `src`'s shell to `dir`: the computer's own shell as it writes folders
+/// (PowerShell on Windows); phones over adb and SFTP servers have a POSIX shell.
+fn cd_line(src: Src, dir: &str) -> String {
+    if src == Src::Mac {
+        crate::os::cd_line(dir)
+    } else {
+        crate::os::posix_cd(dir)
     }
 }
 

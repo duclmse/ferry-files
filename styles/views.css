@@ -870,8 +870,8 @@ td.name input.rename {
 }
 
 /* The buttons under what's shown stay at the bottom of the preview, with what's shown in the
-   middle of the room above them. */
-.preview > .view > :first-child {
+   middle of the room above them. Without them (a folder), what's shown is in the middle. */
+.preview > .view > :first-child:has(~ .viewer-bar:last-child) {
   margin-top: auto;
 }
 

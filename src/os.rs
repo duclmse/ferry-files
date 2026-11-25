@@ -148,6 +148,14 @@ pub fn app_path(native: &str) -> String {
     if os() != Os::Windows {
         return native.to_string();
     }
+    // A network share, \\nas\Photos, is "//nas/Photos" (as `platform::app_path` has it).
+    if let Some(unc) = native.strip_prefix(r"\\?\UNC\").or_else(|| {
+        native
+            .strip_prefix(r"\\")
+            .filter(|r| !r.starts_with(['?', '.']))
+    }) {
+        return format!("//{}", unc.replace('\\', "/").trim_end_matches('/'));
+    }
     let p = native
         .strip_prefix(r"\\?\")
         .unwrap_or(native)
@@ -160,10 +168,30 @@ pub fn app_path(native: &str) -> String {
     }
 }
 
+/// Whether `text` is a whole path as Windows writes it: "C:\Users", "C:/Users", "C:" or
+/// "\\nas\Photos". Never elsewhere, where the app's paths are the system's.
+pub fn is_native_path(text: &str) -> bool {
+    if os() != Os::Windows {
+        return false;
+    }
+    let b = text.as_bytes();
+    let drive = b.len() >= 2
+        && b[0].is_ascii_alphabetic()
+        && b[1] == b':'
+        && (b.len() == 2 || b[2] == b'\\' || b[2] == b'/');
+    drive || text.starts_with(r"\\")
+}
+
 /// A path on the computer as the system writes it ("C:\Users" on Windows).
 pub fn native_path(app: &str) -> String {
     if os() != Os::Windows {
         return app.to_string();
+    }
+    if let Some(unc) = app
+        .strip_prefix("//")
+        .filter(|p| !p.is_empty() && !p.starts_with('/'))
+    {
+        return format!(r"\\{}", unc.replace('/', "\\"));
     }
     let p = app.trim_start_matches('/').replace('/', "\\");
     if p.len() == 2 && p.ends_with(':') {
@@ -171,4 +199,22 @@ pub fn native_path(app: &str) -> String {
     } else {
         p
     }
+}
+
+/// The line that takes the computer's own terminal to folder `dir` (an app path): PowerShell's
+/// Set-Location on Windows, a POSIX shell's cd elsewhere.
+pub fn cd_line(dir: &str) -> String {
+    if os() == Os::Windows {
+        format!(
+            "Set-Location -LiteralPath '{}'\r",
+            native_path(dir).replace('\'', "''")
+        )
+    } else {
+        posix_cd(dir)
+    }
+}
+
+/// cd to `dir` in a POSIX shell (a Mac's or Linux's, a phone's over adb, an SFTP server's).
+pub fn posix_cd(dir: &str) -> String {
+    format!("cd '{}'\r", dir.replace('\'', r"'\''"))
 }

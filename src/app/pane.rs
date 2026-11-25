@@ -144,6 +144,13 @@ fn PathEdit(pane: Pane) -> impl IntoView {
             .unwrap_or_default();
         let typed = typed.trim();
         p.editing_path.set(false);
+        // The computer's own way of writing it, as Copy path gives it ("C:\Users", "\\nas\Photos").
+        let own = p.src.get_untracked() == Src::Mac && crate::os::is_native_path(typed);
+        let typed = if own {
+            crate::os::app_path(typed)
+        } else {
+            typed.to_string()
+        };
         let path = match typed.trim_end_matches('/') {
             "" => "/".to_string(),
             t if t.starts_with('/') => t.to_string(),
