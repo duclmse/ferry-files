@@ -17,5 +17,5 @@ anyhow      = { workspace = true }
 clap        = { workspace = true }
 
 # TUI
-ratatui   = "0.26"
+ratatui   = { version = "0.30", default-features = false, features = ["crossterm_0_29", "all-widgets", "layout-cache", "macros", "underline-color"] }
 crossterm = "0.29"

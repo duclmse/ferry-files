@@ -295,7 +295,7 @@ fn render_tags_only_archive_rows_with_zip() {
     let buf = term.backend().buffer();
     let line = |y: u16| {
         (0..buf.area.width)
-            .map(|x| buf.get(x, y).symbol())
+            .map(|x| buf[(x, y)].symbol())
             .collect::<String>()
     };
     let lines: Vec<String> = (0..buf.area.height).map(line).collect();

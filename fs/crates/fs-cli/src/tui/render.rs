@@ -20,7 +20,7 @@ pub(super) fn render(f: &mut Frame, app: &mut App) {
             Constraint::Min(0),    // results
             Constraint::Length(1), // status bar
         ])
-        .split(f.size());
+        .split(f.area());
 
     // ── Search input ──────────────────────────────────────────────────────
     let search_block = Block::default()
@@ -35,10 +35,10 @@ pub(super) fn render(f: &mut Frame, app: &mut App) {
     // Cursor at end of input.
     let cursor_x = chunks[0].x + 1 + app.input.len() as u16;
     let cursor_y = chunks[0].y + 1;
-    f.set_cursor(
+    f.set_cursor_position((
         cursor_x.min(chunks[0].x + chunks[0].width.saturating_sub(2)),
         cursor_y,
-    );
+    ));
 
     // ── Results list ─────────────────────────────────────────────────────
     // Borrows pre-computed strings - no clone, no format! per row per frame.
