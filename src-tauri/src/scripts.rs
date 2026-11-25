@@ -277,7 +277,7 @@ fn run(
                     Ok(VmState::Continue)
                 }
             },
-        );
+        )?;
         let ferry = api(&lua, dev, dir, items, &changed, stop)?;
         let g = lua.globals();
         g.set("ferry", ferry)?;
@@ -558,7 +558,7 @@ fn api(
     let (d, c) = (dev.clone(), changed.clone());
     t.set(
         "write",
-        func(lua, move |_, (path, data): (String, mlua::String)| {
+        func(lua, move |_, (path, data): (String, mlua::LuaString)| {
             d.write(&path, &data.as_bytes(), None, false)
                 .map_err(fail)?;
             c.fetch_add(1, Ordering::Relaxed);
@@ -598,7 +598,7 @@ fn api(
         "create",
         func(
             lua,
-            move |_, (path, data): (String, Option<mlua::String>)| {
+            move |_, (path, data): (String, Option<mlua::LuaString>)| {
                 let bytes = data.map(|s| s.as_bytes().to_vec()).unwrap_or_default();
                 d.write(&path, &bytes, None, true).map_err(fail)?;
                 c.fetch_add(1, Ordering::Relaxed);
@@ -609,7 +609,7 @@ fn api(
     let (d, c) = (dev.clone(), changed.clone());
     t.set(
         "append",
-        func(lua, move |_, (path, data): (String, mlua::String)| {
+        func(lua, move |_, (path, data): (String, mlua::LuaString)| {
             let mut now = match d.stat(&path).map_err(fail)? {
                 Some(e) if e.dir => return Err(fail(format!("{path} is a folder."))),
                 Some(e) if e.size > READ_MAX => {
