@@ -1,0 +1,3 @@
+# Formatting only: `git blame` skips these (git config blame.ignoreRevsFile .git-blame-ignore-revs).
+# Format with rustfmt's defaults
+99e97ae42b25ea0194ffb3e973e261cf88aa1a61
