@@ -86,22 +86,12 @@ postcard = { version = "1", default-features = false, features = [
 plist = "1.8"
 # Run script…: Lua 5.4, built from source with the app (needs a C compiler).
 mlua = { version = "0.12", features = ["lua54", "vendored"] }
+# Saved passwords go in the system's keychain: Keychain on macOS, Credential Manager on Windows, and
+# the Secret Service over zbus elsewhere, so no C library. keyring 4 names them as 3 did.
+keyring = "4"
 
 [target.'cfg(unix)'.dependencies]
 signal-hook = "0.4"
-
-# Saved passwords go in the system's keychain.
-[target.'cfg(target_os = "macos")'.dependencies]
-keyring = { version = "3", features = ["apple-native"] }
-
-[target.'cfg(windows)'.dependencies.keyring]
-version = "3"
-features = ["windows-native"]
-
-# Secret Service over zbus, so no C library.
-[target.'cfg(all(unix, not(target_os = "macos")))'.dependencies.keyring]
-version = "3"
-features = ["async-secret-service", "tokio", "crypto-rust"]
 
 [target.'cfg(windows)'.dependencies]
 # WebView2's settings (its own shortcuts off; see platform::webview_ready). The version wry uses.
