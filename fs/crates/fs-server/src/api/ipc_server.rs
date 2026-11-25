@@ -86,11 +86,11 @@ pub async fn run_ipc_server(
                 res = listener.accept() => {
                     match res {
                         Ok((stream, _)) => {
-                            let admin = if shared {
-                                let group = cfg.read().await.api.admin_group.clone();
-                                client_is_admin(&stream, group.as_deref())
-                            } else {
-                                false
+                            // getsockopt only; any group lookup waits
+                            // for a request that needs it.
+                            let peer = match stream.peer_cred() {
+                                Ok(c) if shared => Peer::Unix { uid: c.uid(), gid: c.gid() },
+                                _ => Peer::Unknown,
                             };
                             let ctx = ConnCtx {
                                 cfg:        Arc::clone(&cfg),
@@ -101,7 +101,7 @@ pub async fn run_ipc_server(
                                 extensions: Arc::clone(&extensions),
                                 watch_list: Arc::clone(&watch_list),
                                 shared,
-                                admin,
+                                peer,
                             };
                             tokio::spawn(handle_connection(stream, ctx));
                         }
@@ -157,7 +157,9 @@ pub async fn run_ipc_server(
                 res = server.connect() => {
                     match res {
                         Ok(()) => {
-                            let admin = shared && client_is_admin(&server);
+                            let peer = Peer::Windows {
+                                elevated: shared && client_is_admin(&server),
+                            };
                             let ctx = ConnCtx {
                                 cfg:        Arc::clone(&cfg),
                                 sqlite:     Arc::clone(&sqlite),
@@ -167,7 +169,7 @@ pub async fn run_ipc_server(
                                 extensions: Arc::clone(&extensions),
                                 watch_list: Arc::clone(&watch_list),
                                 shared,
-                                admin,
+                                peer,
                             };
                             tokio::spawn(handle_connection(server, ctx));
                         }
@@ -195,9 +197,23 @@ struct ConnCtx {
     extensions: Arc<Extensions>,
     watch_list: Arc<crate::watch_list::WatchList>,
     shared: bool,
-    /// The client is an administrator: root or `api.admin_group` on Unix,
-    /// an elevated administrator on Windows. Looked up only for `shared`.
-    admin: bool,
+    /// Who the client is, for `peer_is_admin`. Looked up only for `shared`.
+    peer: Peer,
+}
+
+/// Who is on the other end of a connection, as far as the administrator
+/// check needs.
+#[derive(Clone, Copy)]
+enum Peer {
+    /// Unix peer credentials.
+    #[cfg(unix)]
+    Unix { uid: u32, gid: u32 },
+    /// Unix: no credentials, or not a shared daemon.
+    #[cfg(unix)]
+    Unknown,
+    /// Windows: whether the client's token is elevated.
+    #[cfg(windows)]
+    Windows { elevated: bool },
 }
 
 // ---------------------------------------------------------------------------
@@ -326,6 +342,15 @@ where
 // ---------------------------------------------------------------------------
 
 async fn dispatch(req: IpcRequest, request_id: u128, ctx: &ConnCtx) -> IpcEnvelope {
+    // The daemon's account may read folders the client cannot, and the
+    // index would then show their names to every user.
+    if matches!(
+        req,
+        IpcRequest::WatchAdd { .. } | IpcRequest::WatchRemove { .. }
+    ) && !may_change_watch_paths(ctx.shared, ctx.shared && peer_is_admin(ctx).await)
+    {
+        return error_response(request_id, "NOT_ALLOWED", SHARED_WATCH_REFUSAL);
+    }
     match req {
         IpcRequest::Search {
             query,
@@ -348,13 +373,6 @@ async fn dispatch(req: IpcRequest, request_id: u128, ctx: &ConnCtx) -> IpcEnvelo
             "UNEXPECTED_SUBSCRIBE",
             "Subscribe is answered with a stream",
         ),
-        // The daemon's account may read folders the client cannot, and the
-        // index would then show their names to every user.
-        IpcRequest::WatchAdd { .. } | IpcRequest::WatchRemove { .. }
-            if !may_change_watch_paths(ctx.shared, ctx.admin) =>
-        {
-            error_response(request_id, "NOT_ALLOWED", SHARED_WATCH_REFUSAL)
-        }
         IpcRequest::WatchAdd { path } => {
             let changed = ctx.watch_list.add(&path).await;
             watch_handler(request_id, changed, ctx).await
@@ -377,21 +395,39 @@ fn may_change_watch_paths(shared: bool, admin: bool) -> bool {
     !shared || admin
 }
 
-/// Root, or a member of `admin_group`, by the peer's credentials.
-#[cfg(unix)]
-fn client_is_admin(stream: &tokio::net::UnixStream, admin_group: Option<&str>) -> bool {
-    use nix::unistd::{Group, Uid, User};
-    let Ok(cred) = stream.peer_cred() else {
-        return false;
-    };
-    if cred.uid() == 0 {
-        return true;
+/// Whether the client is an administrator: root or a member of
+/// `api.admin_group` on Unix, an elevated token on Windows.
+async fn peer_is_admin(ctx: &ConnCtx) -> bool {
+    match ctx.peer {
+        #[cfg(unix)]
+        Peer::Unix { uid: 0, .. } => true,
+        #[cfg(unix)]
+        Peer::Unix { uid, gid } => {
+            let Some(group) = ctx.cfg.read().await.api.admin_group.clone() else {
+                return false;
+            };
+            // getgrnam and getpwuid may ask a directory service over the
+            // network, so they stay off the runtime's threads.
+            tokio::task::spawn_blocking(move || in_group(uid, gid, &group))
+                .await
+                .unwrap_or(false)
+        }
+        #[cfg(unix)]
+        Peer::Unknown => false,
+        #[cfg(windows)]
+        Peer::Windows { elevated } => elevated,
     }
-    let Some(Ok(Some(group))) = admin_group.map(Group::from_name) else {
+}
+
+/// `uid` (primary group `gid`) belongs to `group`. Blocking.
+#[cfg(unix)]
+fn in_group(uid: u32, gid: u32, group: &str) -> bool {
+    use nix::unistd::{Group, Uid, User};
+    let Ok(Some(group)) = Group::from_name(group) else {
         return false;
     };
-    cred.gid() == group.gid.as_raw()
-        || User::from_uid(Uid::from_raw(cred.uid()))
+    gid == group.gid.as_raw()
+        || User::from_uid(Uid::from_raw(uid))
             .ok()
             .flatten()
             .is_some_and(|u| group.mem.contains(&u.name))
@@ -798,6 +834,19 @@ mod tests {
             indexed_at: 0,
             archive_path: archive_path.map(str::to_string),
         }
+    }
+
+    /// root is in every group check's place; a missing group holds no one.
+    #[cfg(unix)]
+    #[test]
+    fn group_membership_is_read_from_the_system() {
+        let me = nix::unistd::getuid().as_raw();
+        let my_gid = nix::unistd::getgid().as_raw();
+        let primary = nix::unistd::Group::from_gid(nix::unistd::Gid::from_raw(my_gid))
+            .unwrap()
+            .unwrap();
+        assert!(in_group(me, my_gid, &primary.name));
+        assert!(!in_group(me, my_gid, "fs-no-such-group-here"));
     }
 
     #[test]
