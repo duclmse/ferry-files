@@ -228,6 +228,7 @@ fn bench_ipc(
             IndexMetrics::new(),
             tokio::sync::watch::channel(false).0,
             Arc::new(Default::default()),
+            fs_server::watch_list::WatchList::new(Arc::clone(cfg)),
             false,
             tokio_util::sync::CancellationToken::new(),
         ));
