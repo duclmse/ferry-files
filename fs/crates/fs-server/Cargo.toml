@@ -129,7 +129,8 @@ protoc-bin-vendored = { version = "3", optional = true }
 tempfile   = "3"
 tokio-test = "0.4"
 assert_fs  = "1"
-reqwest    = { version = "0.12", default-features = false, features = ["json", "rustls-tls"] }
+# The tests talk plain HTTP to a local daemon, so no TLS.
+reqwest    = { version = "0.13", default-features = false, features = ["json"] }
 criterion  = { version = "0.8", features = ["async_tokio"] }
 
 [[bench]]
