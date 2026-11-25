@@ -14,7 +14,7 @@ use tokio::sync::{OwnedSemaphorePermit, Semaphore};
 // SchedulerConfig
 // ---------------------------------------------------------------------------
 
-#[derive(Debug, Clone, serde::Deserialize)]
+#[derive(Debug, Clone, serde::Deserialize, serde::Serialize)]
 pub struct SchedulerConfig {
     /// Max concurrent inflate tasks per archive. Default: 4.
     #[serde(default = "default_max_per_archive")]

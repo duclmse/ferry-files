@@ -159,8 +159,8 @@ mod tests {
         let shutdown_c = shutdown.clone();
 
         tokio::spawn(async move {
-            let _ =
-                fs_ext_rar2zip::app::run(config, PathBuf::from("config.toml"), shutdown_c).await;
+            let config = std::sync::Arc::new(tokio::sync::RwLock::new(config));
+            let _ = fs_ext_rar2zip::app::run(config, shutdown_c).await;
         });
 
         // Give the service a moment to start the watcher.
@@ -210,8 +210,8 @@ mod tests {
         let watch_path = watch.path().to_path_buf();
 
         tokio::spawn(async move {
-            let _ =
-                fs_ext_rar2zip::app::run(config, PathBuf::from("config.toml"), shutdown_c).await;
+            let config = std::sync::Arc::new(tokio::sync::RwLock::new(config));
+            let _ = fs_ext_rar2zip::app::run(config, shutdown_c).await;
         });
 
         tokio::time::sleep(std::time::Duration::from_secs(1)).await;

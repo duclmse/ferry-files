@@ -1,10 +1,6 @@
 use std::path::{Path, PathBuf};
-use std::sync::Arc;
-use std::time::Duration;
 
 use serde::Deserialize;
-use tokio::sync::RwLock;
-use tokio_util::sync::CancellationToken;
 
 use crate::error::{AppError, Result};
 use crate::hostkey::{self, HostKeyCheck, HostKeyPolicy};
@@ -293,63 +289,6 @@ pub fn validate(cfg: &Config) -> Vec<String> {
     errors
 }
 
-/// Watch the config file for changes. On a valid change the shared config is
-/// atomically replaced. Invalid configs are logged and the current config is
-/// kept. Exits when `shutdown` is cancelled.
-pub async fn watch_config(path: PathBuf, config: Arc<RwLock<Config>>, shutdown: CancellationToken) {
-    use notify::{recommended_watcher, RecursiveMode, Watcher};
-
-    let (tx, rx) = std::sync::mpsc::channel();
-    let mut watcher = match recommended_watcher(move |res| {
-        let _ = tx.send(res);
-    }) {
-        Ok(w) => w,
-        Err(e) => {
-            tracing::error!("failed to create config watcher: {e}");
-            return;
-        }
-    };
-
-    if let Err(e) = watcher.watch(&path, RecursiveMode::NonRecursive) {
-        tracing::error!("failed to watch config path {}: {e}", path.display());
-        return;
-    }
-
-    loop {
-        tokio::select! {
-            _ = shutdown.cancelled() => {
-                tracing::debug!("config watcher shutting down");
-                break;
-            }
-            _ = tokio::time::sleep(Duration::from_millis(500)) => {
-                let mut should_reload = false;
-                while let Ok(Ok(event)) = rx.try_recv() {
-                    use notify::EventKind;
-                    if matches!(event.kind, EventKind::Modify(_)) {
-                        should_reload = true;
-                    }
-                }
-                if should_reload {
-                    match load(&path) {
-                        Ok(new_cfg) => {
-                            let errs = validate(&new_cfg);
-                            if errs.is_empty() {
-                                *config.write().await = new_cfg;
-                                tracing::info!("config reloaded from {}", path.display());
-                            } else {
-                                tracing::warn!(
-                                    "config reload rejected - validation errors: {:?}", errs
-                                );
-                            }
-                        }
-                        Err(e) => tracing::warn!("config reload parse error: {e}"),
-                    }
-                }
-            }
-        }
-    }
-}
-
 // ---------------------------------------------------------------------------
 
 #[cfg(test)]
@@ -505,59 +444,5 @@ host_keys = ["not-a-fingerprint"]
         let f = write_config(&minimal_config_toml(dir.path()));
         let cfg = load(f.path()).unwrap();
         assert_eq!(cfg.conversion.multipart_timeout_hours, 24);
-    }
-
-    #[tokio::test]
-    async fn hot_reload_updates_config() {
-        let dir = tempfile::tempdir().unwrap();
-        let mut f = NamedTempFile::new_in(dir.path()).unwrap();
-        f.write_all(minimal_config_toml(dir.path()).as_bytes())
-            .unwrap();
-        f.flush().unwrap();
-
-        let cfg = load(f.path()).unwrap();
-        let shared = Arc::new(RwLock::new(cfg));
-        let token = CancellationToken::new();
-
-        let path = f.path().to_path_buf();
-        let shared_clone = shared.clone();
-        let token_clone = token.clone();
-        tokio::spawn(async move {
-            watch_config(path, shared_clone, token_clone).await;
-        });
-
-        tokio::time::sleep(Duration::from_millis(200)).await;
-
-        {
-            // Write a complete replacement config - do NOT append to the
-            // existing one, as that would create a duplicate [conversion]
-            // section and fail TOML parsing.
-            let watch = dir.path().to_string_lossy().replace('\\', "/");
-            let mut file = std::fs::OpenOptions::new()
-                .write(true)
-                .truncate(true)
-                .open(f.path())
-                .unwrap();
-            write!(
-                file,
-                r#"
-[extensions.rar2zip]
-watch_folder  = "{watch}"
-failed_folder = "{watch}/failed"
-destinations  = []
-
-[extensions.rar2zip.conversion]
-compression_level        = 1
-multipart_timeout_hours  = 48
-"#
-            )
-            .unwrap();
-        }
-
-        tokio::time::sleep(Duration::from_secs(1)).await;
-
-        let level = shared.read().await.conversion.compression_level;
-        token.cancel();
-        assert_eq!(level, 1);
     }
 }

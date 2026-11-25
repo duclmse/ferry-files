@@ -20,7 +20,15 @@ pub const EXTENSION_PROTOCOL_VERSION: u32 = 1;
 #[derive(Debug, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(tag = "type", rename_all = "snake_case")]
 pub enum HostMessage {
-    Command { id: u64, command: String },
+    Command {
+        id: u64,
+        command: String,
+    },
+    /// Apply the config file again (`Extension::reload`); answered like a
+    /// command, with empty output.
+    Reload {
+        id: u64,
+    },
     Shutdown,
 }
 
@@ -83,7 +91,14 @@ where
             while let Ok(Some(line)) = lines.next_line().await {
                 match serde_json::from_str::<HostMessage>(&line) {
                     Ok(HostMessage::Command { id, command }) => {
-                        tokio::spawn(answer(Arc::clone(&ext), id, command, reply_tx.clone()));
+                        let ext = Arc::clone(&ext);
+                        let run = move || ext.command(&command);
+                        tokio::spawn(answer(id, run, reply_tx.clone()));
+                    }
+                    Ok(HostMessage::Reload { id }) => {
+                        let ext = Arc::clone(&ext);
+                        let run = move || ext.reload().map(|()| String::new());
+                        tokio::spawn(answer(id, run, reply_tx.clone()));
                     }
                     Ok(HostMessage::Shutdown) => break,
                     Err(e) => tracing::warn!("ignoring malformed host message: {e}"),
@@ -101,12 +116,11 @@ where
 }
 
 async fn answer(
-    ext: Arc<dyn Extension>,
     id: u64,
-    command: String,
+    run: impl FnOnce() -> anyhow::Result<String> + Send + 'static,
     replies: mpsc::Sender<ExtensionReply>,
 ) {
-    let reply = match tokio::task::spawn_blocking(move || ext.command(&command)).await {
+    let reply = match tokio::task::spawn_blocking(run).await {
         Ok(Ok(output)) => ExtensionReply {
             id,
             ok: true,
@@ -177,6 +191,13 @@ mod tests {
             assert_eq!(reply.ok, id == 1);
             assert_eq!(reply.output, if id == 1 { "echo hi" } else { "boom" });
         }
+
+        send(&mut host_in, &HostMessage::Reload { id: 3 }).await;
+        let line = replies.next_line().await.unwrap().unwrap();
+        let reply: ExtensionReply = serde_json::from_str(&line).unwrap();
+        assert_eq!(reply.id, 3);
+        assert!(!reply.ok, "Echo does not reload");
+        assert!(reply.output.contains("restarts"), "{}", reply.output);
 
         send(&mut host_in, &HostMessage::Shutdown).await;
         server.await.unwrap().unwrap();

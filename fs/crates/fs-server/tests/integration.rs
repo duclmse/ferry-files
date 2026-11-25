@@ -174,13 +174,31 @@ impl TestDaemon {
         }
     }
 
-    /// Adds `dir` to the running daemon's watch paths, as an edit of its
-    /// config would.
-    fn add_watch_path(&self, dir: &Path) {
+    /// Adds `dir` to the watch paths in the config file, by hand: the
+    /// running daemon does not see it until `apply_config_file`.
+    fn edit_watch_paths_by_hand(&self, dir: &Path) {
         let text = std::fs::read_to_string(&self.config_path).unwrap();
         let dir = dir.to_string_lossy().replace('\\', "/");
         let text = text.replacen("watch_paths = [", &format!("watch_paths = [\"{dir}\", "), 1);
         std::fs::write(&self.config_path, text).unwrap();
+    }
+
+    /// Sends the config file's text to the daemon as a config change.
+    async fn apply_config_file(&self) -> fs_protocol::ipc_protocol::ConfigApplied {
+        use fs_protocol::ipc_protocol::{ConfigChange, IpcRequest, IpcResponse};
+        let text = std::fs::read_to_string(&self.config_path).unwrap();
+        let mut client = fs_protocol::ipc_client::IpcClient::connect(Path::new(&self.ipc))
+            .await
+            .unwrap();
+        let change = ConfigChange::Replace { text };
+        match client
+            .request(IpcRequest::ConfigChange { change })
+            .await
+            .unwrap()
+        {
+            IpcResponse::ConfigApplied(a) => a,
+            other => panic!("unexpected {other:?}"),
+        }
     }
 
     fn url(&self, path: &str) -> String {
@@ -416,7 +434,8 @@ async fn test_incremental_update() {
 }
 
 /// A folder added to watch_paths while the daemon runs is crawled, and
-/// then watched.
+/// then watched. An edit of the file alone does nothing until it is sent
+/// as a config change.
 #[tokio::test]
 async fn test_watch_path_added_while_running() {
     let dir = TempDir::new().unwrap();
@@ -430,7 +449,15 @@ async fn test_watch_path_added_while_running() {
         .await;
     assert_eq!(daemon.search("was_there.txt").await.total, 0);
 
-    daemon.add_watch_path(added.path());
+    daemon.edit_watch_paths_by_hand(added.path());
+    tokio::time::sleep(Duration::from_secs(2)).await;
+    assert_eq!(
+        daemon.search("was_there.txt").await.total,
+        0,
+        "not followed"
+    );
+    let applied = daemon.apply_config_file().await;
+    assert!(applied.restart.is_empty(), "{applied:?}");
     wait_for_hits(&daemon, "was_there.txt", 30, |p| p.len() == 1).await;
 
     std::fs::write(added.path().join("came_later.txt"), b"y").unwrap();
@@ -503,6 +530,38 @@ async fn test_watch_paths_change_over_the_apis() {
         .await
         .unwrap();
     assert_eq!(refused.status(), reqwest::StatusCode::FORBIDDEN);
+    let refused = reqwest::get(daemon.url("/config")).await.unwrap();
+    assert_eq!(refused.status(), reqwest::StatusCode::FORBIDDEN);
+
+    // The config over IPC: a key's value, and a change the daemon runs with.
+    use fs_protocol::ipc_protocol::ConfigChange;
+    let key = |k: &str| IpcRequest::ConfigGet {
+        key: Some(k.into()),
+    };
+    match client
+        .request(key("indexer.commit_interval_secs"))
+        .await
+        .unwrap()
+    {
+        IpcResponse::Config(v) => assert_eq!((v.text.as_str(), v.from_file), ("1", true)),
+        other => panic!("unexpected {other:?}"),
+    }
+    let change = ConfigChange::Set {
+        key: "search.default_limit".into(),
+        value: "3".into(),
+    };
+    match client
+        .request(IpcRequest::ConfigChange { change })
+        .await
+        .unwrap()
+    {
+        IpcResponse::ConfigApplied(a) => assert!(a.restart.is_empty(), "{a:?}"),
+        other => panic!("unexpected {other:?}"),
+    }
+    match client.request(key("search.default_limit")).await.unwrap() {
+        IpcResponse::Config(v) => assert_eq!((v.text.as_str(), v.from_file), ("3", true)),
+        other => panic!("unexpected {other:?}"),
+    }
 
     let roots = match client
         .request(IpcRequest::WatchRemove {
@@ -821,6 +880,7 @@ async fn test_a_polled_watch_path_with_its_own_settings() {
          content = false\nexclude = [\"**/@eaDir/**\"]\n"
     ));
     std::fs::write(&daemon.config_path, text).unwrap();
+    daemon.apply_config_file().await;
 
     wait_for_hits(&daemon, "on_share.txt", 30, |p| p.len() == 1).await;
     std::fs::write(share.path().join("polled_in.txt"), b"y").unwrap();

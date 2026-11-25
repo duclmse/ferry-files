@@ -77,7 +77,8 @@ crates/
     main.rs       daemon and offline commands (binary `fsd`)
     daemon.rs     startup orchestration, graceful shutdown
     service.rs    install-service: Windows SCM, systemd, launchd
-    config.rs     TOML config, hot-reload
+    config.rs     TOML config, read once at startup
+    config_edit.rs  config get / set / reload for the APIs; edits the file
     watcher/      notify wrapper; live/ native backends (ReadDirectoryChangesW, USN)
     indexer/      crawler, archive (ZIP), content, exclusions
     store/        sqlite_store, tantivy_store
@@ -176,7 +177,11 @@ disk. The commit loop in `daemon.rs` runs every `commit_interval_secs`.
   extension commands). A new IPC request that does that must be refused too.
   Watch path changes are allowed from an administrator only
   (`client_is_admin`, `may_change_watch_paths`).
-- `follow_watch_paths` in `daemon.rs` follows hot-reloaded watch paths: it
+- fsd does not follow its config file. The APIs change it through
+  `ConfigEditor` (`config_edit.rs`), which writes the file and swaps the
+  shared config; a setting read only at startup goes in its `AT_STARTUP`
+  list. Extensions get `HostMessage::Reload` when their section changes.
+- `follow_watch_paths` in `daemon.rs` follows changed watch paths: it
   restarts the watcher and crawls only the added roots (`crawl_roots`).
   A removed root stops being watched; its rows stay unless it was removed
   with `forget` (`forget_roots`). No watch paths means no watcher.

@@ -25,4 +25,15 @@ pub trait Extension: Send + Sync + 'static {
     /// Handles a client command and returns text to show the user. May block;
     /// the daemon calls it from the blocking pool.
     fn command(&self, command: &str) -> anyhow::Result<String>;
+
+    /// Reads the config file again and applies it: the daemon asks after an
+    /// API change to `[extensions.<name>]`, since nothing follows the file.
+    /// May block; called from the blocking pool. An error keeps the running
+    /// settings and is shown to whoever made the change.
+    fn reload(&self) -> anyhow::Result<()> {
+        anyhow::bail!(
+            "{} does not reload its settings; they apply when fsd restarts",
+            self.name()
+        )
+    }
 }

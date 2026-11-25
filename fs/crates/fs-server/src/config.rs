@@ -1,15 +1,10 @@
+use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
-use std::sync::Arc;
-use std::time::Duration;
-
-use serde::Deserialize;
-use tokio::sync::RwLock;
-use tokio_util::sync::CancellationToken;
 
 use crate::error::{AppError, Result};
 
-#[derive(Debug, Clone, Deserialize)]
+#[derive(Debug, Clone, Deserialize, Serialize)]
 pub struct Config {
     /// Folders to crawl and watch. None, or an empty list, watches nothing;
     /// paths added while the daemon runs are crawled and watched then.
@@ -68,7 +63,7 @@ pub struct Config {
 /// A `[[watch]]` table: one watch path and how it is followed. Inside another
 /// watch path, its `content` and `exclude` apply to that folder, and its
 /// mode is ignored.
-#[derive(Debug, Clone, Deserialize, PartialEq, Eq)]
+#[derive(Debug, Clone, Deserialize, Serialize, PartialEq, Eq)]
 pub struct RootConfig {
     pub path: PathBuf,
     #[serde(default)]
@@ -89,7 +84,7 @@ fn default_poll_secs() -> u64 {
 }
 
 /// How a watch path's changes reach the index.
-#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Deserialize)]
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Deserialize, Serialize)]
 #[serde(rename_all = "lowercase")]
 pub enum RootMode {
     /// The live watcher (`[watcher]`).
@@ -126,7 +121,7 @@ impl Config {
 }
 
 /// How live changes reach the index (`watcher/live/`).
-#[derive(Debug, Clone, Deserialize)]
+#[derive(Debug, Clone, Deserialize, Serialize)]
 pub struct WatcherConfig {
     #[serde(default)]
     pub backend: WatcherBackend,
@@ -160,7 +155,7 @@ impl Default for WatcherConfig {
 
 /// `watcher.backend`. Every backend runs the timestamp scan when it learns
 /// that changes were lost.
-#[derive(Debug, Clone, Copy, Deserialize, Default, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, Deserialize, Serialize, Default, PartialEq, Eq)]
 #[serde(rename_all = "lowercase")]
 pub enum WatcherBackend {
     /// The `notify` crate on every platform. On Windows it loses changes
@@ -178,7 +173,7 @@ pub enum WatcherBackend {
 
 /// Everything file lists (`.efu`) whose entries are searchable alongside
 /// the crawled ones: catalogues of offline drives, other machines, discs.
-#[derive(Debug, Clone, Deserialize)]
+#[derive(Debug, Clone, Deserialize, Serialize)]
 pub struct FileListsConfig {
     /// Absolute paths of `.efu` files. Rows under a watch path are left out,
     /// since the crawl knows those files first-hand.
@@ -203,7 +198,7 @@ impl Default for FileListsConfig {
 }
 
 /// Which backend persists the file-metadata index.
-#[derive(Debug, Clone, Copy, Deserialize, Default, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, Deserialize, Serialize, Default, PartialEq, Eq)]
 #[serde(rename_all = "lowercase")]
 pub enum StoreMode {
     /// The memory store, unless the data dir holds only a SQLite index from
@@ -234,7 +229,7 @@ impl StoreMode {
     }
 }
 
-#[derive(Debug, Clone, Deserialize)]
+#[derive(Debug, Clone, Deserialize, Serialize)]
 pub struct StoreConfig {
     #[serde(default)]
     pub mode: StoreMode,
@@ -266,7 +261,7 @@ impl Default for StoreConfig {
     }
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Deserialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Deserialize, Serialize)]
 #[serde(rename_all = "lowercase")]
 pub enum SqliteIndex {
     Name,
@@ -290,7 +285,7 @@ fn default_sqlite_indexes() -> Vec<SqliteIndex> {
     SqliteIndex::ALL.to_vec()
 }
 
-#[derive(Debug, Clone, Deserialize, Default)]
+#[derive(Debug, Clone, Deserialize, Serialize, Default)]
 pub struct ExclusionConfig {
     #[serde(default)]
     pub path_patterns: Vec<String>,
@@ -305,7 +300,7 @@ pub struct ExclusionConfig {
     pub skip_network_content: bool,
 }
 
-#[derive(Debug, Clone, Deserialize, Default)]
+#[derive(Debug, Clone, Deserialize, Serialize, Default)]
 pub struct ContentConfig {
     /// Extension → max bytes. `"*"` is the fallback for unlisted extensions.
     #[serde(default)]
@@ -328,7 +323,7 @@ impl ContentConfig {
     }
 }
 
-#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Deserialize)]
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Deserialize, Serialize)]
 #[serde(rename_all = "snake_case")]
 pub enum AuthMode {
     /// Only REST routes that change files need the token.
@@ -338,7 +333,7 @@ pub enum AuthMode {
     All,
 }
 
-#[derive(Debug, Clone, Deserialize)]
+#[derive(Debug, Clone, Deserialize, Serialize)]
 pub struct ApiConfig {
     #[serde(default = "default_rest_port")]
     pub rest_port: u16,
@@ -445,7 +440,7 @@ impl Default for ApiConfig {
     }
 }
 
-#[derive(Debug, Clone, Deserialize)]
+#[derive(Debug, Clone, Deserialize, Serialize)]
 pub struct SearchConfig {
     #[serde(default = "default_default_limit")]
     pub default_limit: usize,
@@ -499,7 +494,7 @@ impl Default for SearchConfig {
     }
 }
 
-#[derive(Debug, Clone, Deserialize)]
+#[derive(Debug, Clone, Deserialize, Serialize)]
 pub struct IndexerConfig {
     #[serde(default = "default_crawl_threads")]
     pub crawl_threads: usize,
@@ -533,6 +528,16 @@ pub enum MftMode {
     Auto,
     On,
     Off,
+}
+
+impl Serialize for MftMode {
+    fn serialize<S: serde::Serializer>(&self, s: S) -> std::result::Result<S::Ok, S::Error> {
+        match self {
+            MftMode::Auto => s.serialize_str("auto"),
+            MftMode::On => s.serialize_bool(true),
+            MftMode::Off => s.serialize_bool(false),
+        }
+    }
 }
 
 impl<'de> Deserialize<'de> for MftMode {
@@ -587,7 +592,7 @@ impl Default for IndexerConfig {
     }
 }
 
-#[derive(Debug, Clone, Deserialize)]
+#[derive(Debug, Clone, Deserialize, Serialize)]
 pub struct ArchiveIndexConfig {
     #[serde(default = "default_true")]
     pub enabled: bool,
@@ -628,13 +633,13 @@ impl Default for ArchiveIndexConfig {
     }
 }
 
-#[derive(Debug, Clone, Deserialize, Default)]
+#[derive(Debug, Clone, Deserialize, Serialize, Default)]
 pub struct MacroConfig {
     #[serde(flatten)]
     pub entries: HashMap<String, String>,
 }
 
-#[derive(Debug, Clone, Deserialize, Default)]
+#[derive(Debug, Clone, Deserialize, Serialize, Default)]
 pub struct ArchiveServiceConfig {
     /// Enable archive service routes and .zidx sidecar generation.
     #[serde(default)]
@@ -677,7 +682,12 @@ fn default_dzx_max_concurrent_builds() -> usize {
 /// Load config from a TOML file.
 pub fn load(path: &Path) -> Result<Config> {
     let text = std::fs::read_to_string(path).map_err(AppError::Io)?;
-    let mut cfg: Config = toml::from_str(&text).map_err(|e| AppError::Config(e.to_string()))?;
+    from_text(&text, path)
+}
+
+/// The config `text`, read from `path`, as `load` gives it.
+pub fn from_text(text: &str, path: &Path) -> Result<Config> {
+    let mut cfg: Config = toml::from_str(text).map_err(|e| AppError::Config(e.to_string()))?;
 
     // Canonicalize watch roots so the crawler's on-disk paths and the fs
     // watcher's reported event paths agree byte-for-byte. On macOS, FSEvents
@@ -858,62 +868,6 @@ pub fn missing_watch_paths(cfg: &Config) -> Vec<&Path> {
         .filter(|p| !p.exists())
         .map(PathBuf::as_path)
         .collect()
-}
-
-/// Watch the config file for changes. On a valid change the shared config is
-/// atomically replaced. Invalid configs are logged and the current config is
-/// kept. Exits when `shutdown` is cancelled.
-pub async fn watch_config(path: PathBuf, config: Arc<RwLock<Config>>, shutdown: CancellationToken) {
-    use notify::{recommended_watcher, RecursiveMode, Watcher};
-
-    let (tx, rx) = std::sync::mpsc::channel();
-    let mut watcher = match recommended_watcher(move |res| {
-        let _ = tx.send(res);
-    }) {
-        Ok(w) => w,
-        Err(e) => {
-            tracing::error!("failed to create config watcher: {e}");
-            return;
-        }
-    };
-
-    if let Err(e) = watcher.watch(&path, RecursiveMode::NonRecursive) {
-        tracing::error!("failed to watch config path {}: {e}", path.display());
-        return;
-    }
-
-    loop {
-        tokio::select! {
-            _ = shutdown.cancelled() => {
-                tracing::debug!("config watcher shutting down");
-                break;
-            }
-            _ = tokio::time::sleep(Duration::from_millis(500)) => {
-                // Drain all pending events and reload once if any modify event arrived.
-                let mut should_reload = false;
-                while let Ok(Ok(event)) = rx.try_recv() {
-                    use notify::EventKind;
-                    if matches!(event.kind, EventKind::Modify(_)) {
-                        should_reload = true;
-                    }
-                }
-                if should_reload {
-                    match load(&path) {
-                        Ok(new_cfg) => {
-                            let errs = validate(&new_cfg);
-                            if errs.is_empty() {
-                                *config.write().await = new_cfg;
-                                tracing::info!("config reloaded from {}", path.display());
-                            } else {
-                                tracing::warn!("config reload rejected - validation errors: {:?}", errs);
-                            }
-                        }
-                        Err(e) => tracing::warn!("config reload parse error: {e}"),
-                    }
-                }
-            }
-        }
-    }
 }
 
 // ---------------------------------------------------------------------------
@@ -1224,51 +1178,6 @@ log_dir     = "{dir}/logs"
         let cfg = load(f.path()).unwrap();
         let errs = validate(&cfg);
         assert!(errs.iter().any(|e| e.contains("rar")));
-    }
-
-    #[tokio::test]
-    async fn hot_reload_updates_config() {
-        let dir = tempfile::tempdir().unwrap();
-        let mut f = NamedTempFile::new_in(dir.path()).unwrap();
-        f.write_all(minimal_config_toml(dir.path()).as_bytes())
-            .unwrap();
-        f.flush().unwrap();
-
-        let cfg = load(f.path()).unwrap();
-        let shared = Arc::new(RwLock::new(cfg));
-        let token = CancellationToken::new();
-
-        let path = f.path().to_path_buf();
-        let shared_clone = shared.clone();
-        let token_clone = token.clone();
-        tokio::spawn(async move {
-            watch_config(path, shared_clone, token_clone).await;
-        });
-
-        // Give watcher time to start up.
-        tokio::time::sleep(Duration::from_millis(200)).await;
-
-        // Write an updated config with a different port.
-        {
-            let mut file = std::fs::OpenOptions::new()
-                .write(true)
-                .truncate(true)
-                .open(f.path())
-                .unwrap();
-            write!(
-                file,
-                "{}\n[api]\nrest_port = 8800",
-                minimal_config_toml(dir.path())
-            )
-            .unwrap();
-        }
-
-        // Wait for the watcher to pick up the change (poll interval is 500 ms).
-        tokio::time::sleep(Duration::from_secs(1)).await;
-
-        let port = shared.read().await.api.rest_port;
-        token.cancel();
-        assert_eq!(port, 8800);
     }
 
     #[test]

@@ -3,7 +3,7 @@ use std::sync::Arc;
 
 // ---------------------------------------------------------------------------
 // `.dzx` build throttle - process-wide, sized from the first archive crawled.
-// `dzx_max_concurrent_builds` is not expected to change at hot-reload time.
+// `dzx_max_concurrent_builds` is read once, so a config change applies at restart.
 // ---------------------------------------------------------------------------
 
 fn dzx_build_semaphore(permits: usize) -> Arc<tokio::sync::Semaphore> {

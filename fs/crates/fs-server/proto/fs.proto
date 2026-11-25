@@ -12,6 +12,11 @@ service FileSearch {
   rpc RemoveWatchPath (WatchPathRequest)      returns (WatchPathsResponse);
   // What changes, as it happens, until the client cancels.
   rpc Subscribe       (SubscribeRequest)      returns (stream Notice);
+  // The config file, read and changed while the daemon runs, which reads
+  // the file only at startup. Both need the bearer token whatever
+  // api.auth_mode is: the config may hold passwords.
+  rpc GetConfig       (GetConfigRequest)      returns (ConfigValue);
+  rpc ChangeConfig    (ChangeConfigRequest)   returns (ConfigApplied);
 }
 
 message SearchRequest {
@@ -100,4 +105,40 @@ message Notice {
   string state = 3;
   // root: entries. applied: changes. lagged: notices missed.
   uint64 count = 4;
+}
+
+message GetConfigRequest {
+  // A dotted key, as in "search.default_limit"; empty for the whole file.
+  string key = 1;
+}
+message ConfigValue {
+  // The whole file, or the key's value as TOML.
+  string text = 1;
+  // For a key: whether the file sets it; otherwise it is the default.
+  bool from_file = 2;
+}
+message ChangeConfigRequest {
+  oneof change {
+    SetConfig set = 1;
+    // Removes the key, so its default applies.
+    string unset = 2;
+    // Replaces the whole file with this text.
+    string replace = 3;
+    // Applies the file as it is now, after an edit by hand.
+    bool reload = 4;
+  }
+}
+message SetConfig {
+  string key = 1;
+  // A TOML value; text that is not one is taken as a string.
+  string value = 2;
+}
+message ConfigApplied {
+  // Keys that differ from what the daemon started with and that it reads
+  // only at startup: they apply when it restarts.
+  repeated string restart = 1;
+  // Extensions whose section changed and that took the new settings.
+  repeated string reloaded = 2;
+  // Extensions whose section changed but that did not take it, with why.
+  repeated string problems = 3;
 }

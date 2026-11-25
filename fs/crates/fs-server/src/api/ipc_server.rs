@@ -351,6 +351,15 @@ async fn dispatch(req: IpcRequest, request_id: u128, ctx: &ConnCtx) -> IpcEnvelo
     {
         return error_response(request_id, "NOT_ALLOWED", SHARED_WATCH_REFUSAL);
     }
+    // The config may hold passwords (archive and extension settings), and
+    // a change acts as the daemon's account; the same rule as watch paths.
+    if matches!(
+        req,
+        IpcRequest::ConfigGet { .. } | IpcRequest::ConfigChange { .. }
+    ) && !may_change_watch_paths(ctx.shared, ctx.shared && peer_is_admin(ctx).await)
+    {
+        return error_response(request_id, "NOT_ALLOWED", SHARED_CONFIG_REFUSAL);
+    }
     match req {
         IpcRequest::Search {
             query,
@@ -381,10 +390,39 @@ async fn dispatch(req: IpcRequest, request_id: u128, ctx: &ConnCtx) -> IpcEnvelo
             let changed = ctx.watch_list.remove(&path, forget).await;
             watch_handler(request_id, changed, ctx).await
         }
+        IpcRequest::ConfigGet { key } => {
+            let got = ctx.watch_list.config().get(key.as_deref()).await;
+            config_response(request_id, got.map(IpcResponse::Config))
+        }
+        IpcRequest::ConfigChange { change } => {
+            let applied = ctx.watch_list.config().change(change).await;
+            config_response(request_id, applied.map(IpcResponse::ConfigApplied))
+        }
+    }
+}
+
+fn config_response(
+    request_id: u128,
+    answer: Result<IpcResponse, crate::config_edit::ConfigError>,
+) -> IpcEnvelope {
+    use crate::config_edit::ConfigError;
+    match answer {
+        Ok(r) => IpcEnvelope::new(request_id, IpcMessage::Response(r)),
+        Err(e) => {
+            let code = match e {
+                ConfigError::Invalid(_) => "INVALID_CONFIG",
+                ConfigError::NotFound(_) => "NOT_FOUND",
+                ConfigError::Refused(_) => "NOT_ALLOWED",
+                ConfigError::Io(_) => "CONFIG_ERROR",
+            };
+            error_response(request_id, code, e.to_string())
+        }
     }
 }
 
 const SHARED_REFUSAL: &str = "fsd runs as a system service for all users, so it does not open files or run extension commands for a client; open the file yourself";
+
+const SHARED_CONFIG_REFUSAL: &str = "fsd runs as a system service for all users, so only an administrator reads or changes its config over IPC (root or api.admin_group on Unix, an elevated prompt on Windows); or use REST or gRPC with the token";
 
 const SHARED_WATCH_REFUSAL: &str = "fsd runs as a system service for all users, so only an administrator changes its watch paths over IPC (root or api.admin_group on Unix, an elevated prompt on Windows); or edit its config file, or use REST or gRPC with the token";
 

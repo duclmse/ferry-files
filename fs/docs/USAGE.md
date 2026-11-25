@@ -109,14 +109,37 @@ platform.
 **Paths.** Relative paths are read from the folder fsd starts in. A service
 installed with `install-service` starts in its config file's folder.
 
-**Reloading.** fsd rereads the file when it changes. If the new file doesn't
-validate, fsd logs why and keeps the running config. Most settings take
-effect at once:
-- An added watch path is crawled and then watched.
-- A removed watch path is no longer watched.
+**Changing it while fsd runs.** fsd reads the file only at startup; an
+edit by hand does nothing until fsd restarts or is told to apply it. Change
+the config through fsd instead:
 
-These need a restart: ports, binds and the IPC path, `store.mode` and
-`store.indexes`, and which extensions are loaded.
+| How | Show | Set a key | Remove a key | Apply a hand edit | Replace the file |
+| --- | ---- | --------- | ------------ | ----------------- | ---------------- |
+| `fs` (IPC) | `fs config [get [key]]` | `fs config set <key> <value>` | `fs config unset <key>` | `fs config reload` | `fs config replace <file>` |
+| REST | `GET /config[?key=]` | `PATCH /config {"key", "value"}` | `DELETE /config?key=` | `POST /config/reload` | `PUT /config` (TOML body) |
+| gRPC | `GetConfig` | `ChangeConfig` `set` | `ChangeConfig` `unset` | `ChangeConfig` `reload` | `ChangeConfig` `replace` |
+
+- **Keys** are dotted: `search.default_limit`, `content.extension_limits."*"`.
+  A value is TOML (`200`, `true`, `"text"`, `["zip"]`); other text is taken
+  as a string, so `fs config set store.mode memory` works. `get` with a key
+  the file doesn't set shows the default.
+- **Checked first.** A change that doesn't parse or validate changes
+  nothing. Otherwise fsd writes the file in place, keeping its comments,
+  layout and permissions, and runs with the new config.
+- **What applies when.** Most settings apply at once: an added watch path
+  is crawled and then watched, a removed one is no longer watched. These
+  apply when fsd restarts, and a change lists them under `restart` until
+  they match what fsd started with again: `data_dir`, `log_dir`,
+  `store.mode`, `store.indexes`, `[archive_service]`, `[watcher]`, and the
+  API switches, ports, binds, CORS origins and IPC path.
+- **Extensions.** An extension whose `[extensions.<name>]` changed is asked
+  to reload (`reload` asks every one). rar2zip takes the new settings, or
+  keeps its running ones and says why. sftpd takes them at restart.
+- **Not through the API:** `extensions_dir`, which names the programs fsd
+  runs. Change it in the file while fsd is stopped.
+- **Who may.** REST and gRPC need the token in every `api.auth_mode`, even
+  to read: the config may hold passwords. A system service takes these
+  over IPC only from an administrator, as with watch paths (section 4).
 
 **Minimal config:**
 
@@ -142,7 +165,7 @@ them later in any of these ways:
 
 | How | List | Add | Remove |
 | --- | ---- | --- | ------ |
-| Config file | edit `watch_paths` | edit `watch_paths` | edit `watch_paths` |
+| Config file | edit `watch_paths` | edit, then `fs config reload` | edit, then `fs config reload` |
 | `fs` (IPC) | `fs watch` | `fs watch add <dir>` | `fs watch remove [--forget] <dir>` |
 | REST | `GET /watch_paths` | `POST /watch_paths {"path": "..."}` | `DELETE /watch_paths?path=...[&forget=true]` |
 | gRPC | `ListWatchPaths` | `AddWatchPath` | `RemoveWatchPath` (`forget`) |
@@ -225,6 +248,7 @@ fs [--config <file>] <command>       # --config defaults to ./config.toml
 | `reindex [--full]` | Crawls every watch path again |
 | `open <path>` | Opens a file with its default app, through the daemon. For a file inside a ZIP, it extracts it to a temp folder first |
 | `watch [list\|add <dir>\|remove [--forget] <dir>]` | Watch paths (section 4) |
+| `config [get [key]\|set <key> <value>\|unset <key>\|reload\|replace <file>]` | The daemon's config (section 3) |
 | `ext <name> <command>` | Sends a command to an extension, e.g. `fs ext rar2zip status` |
 | `events [--kinds root,applied]` | Prints what changes in the daemon as it happens (section 9.5) |
 | `tui` | The terminal UI |
@@ -395,6 +419,9 @@ for a system service).
 | `GET /watch_paths` | Watch paths, each with its crawl state and entry count |
 | `POST /watch_paths` `{"path": "..."}` | Adds a watch path (token) |
 | `DELETE /watch_paths?path=[&forget=true]` | Removes one (token); `forget` drops its entries too |
+| `GET /config[?key=]` | The config file, or a key's value: `{text, from_file}` (token) |
+| `PATCH /config` `{"key", "value"}`, `DELETE /config?key=` | Sets or removes a key (token) |
+| `PUT /config`, `POST /config/reload` | Replaces the file with the body, or applies it after a hand edit (token) |
 | `GET /metrics` | Archive scheduler metrics, Prometheus text |
 | `GET /events?kinds=` | What changes, as server-sent events (section 9.5) |
 | `GET /health` | `{"status": "ok"}`, never needs a token |
@@ -434,6 +461,7 @@ reflection, so `grpcurl` needs no proto file.
 | `Reindex` | Asks for a crawl |
 | `ListWatchPaths`, `AddWatchPath`, `RemoveWatchPath` | Watch paths; add and remove need the token |
 | `Subscribe` | What changes, as a stream (section 9.5) |
+| `GetConfig`, `ChangeConfig` | The config (section 3); both need the token |
 
 ```sh
 grpcurl -plaintext 127.0.0.1:7701 list
@@ -453,7 +481,9 @@ id. fsd refuses any other protocol version, so a client and fsd must be
 built from matching sources.
 
 **Requests:** `Search`, `Stats`, `Reindex`, `Open`, `Extension`, `Roots`,
-`WatchAdd`, `WatchRemove` and `Subscribe`. Errors come back as
+`WatchAdd`, `WatchRemove`, `Subscribe`, `ConfigGet` and `ConfigChange`.
+A config change is answered with `ConfigApplied {restart, reloaded,
+problems}`. Errors come back as
 `Error {code, message}`.
 
 ### 9.5 Change notifications
@@ -760,7 +790,7 @@ noted.
 | ------- | ------- |
 | `fs`: cannot connect | Is fsd running (`scripts/start`)? Does `fs` read the same config, so the same `api.ipc_path`? |
 | `fs`: unsupported version | `fs` and `fsd` come from different builds; rebuild both |
-| A config edit has no effect | The log in `log_dir` says why the reload was rejected; run `fsd validate-config` |
+| A config edit has no effect | fsd reads the file only at startup: run `fs config reload`, which says what is wrong with it, or restart fsd |
 | Search finds nothing yet | `fs stats`: the first crawl may still be running (`last_crawl_secs` is 0 until it ends) |
 | `NOT_ALLOWED` from `fs open`, `fs ext` or `fs watch add` | fsd runs as a system service (section 8); for `fs watch`, run it as an administrator |
 | REST 403 "this route is disabled" | No `api.auth_token_hash` (section 9.1) |

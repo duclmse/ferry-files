@@ -215,8 +215,8 @@ When `fsd daemon` is invoked the following steps execute in order inside
     ├─ SqliteStore  → {data_dir}/index.db  (WAL, r2d2 pool)
     └─ TantivyStore → {data_dir}/tantivy/  (exclusive writer lock)
  6. Build ArchiveRegistry (warm from existing .zidx files if archive_service.enabled)
- 7. Wrap config in Arc<RwLock<Config>> for shared hot-reload access
- 8. Spawn: config hot-reload watcher (notify, 500 ms poll)
+ 7. Wrap config in Arc<RwLock<Config>>; the APIs change it (config_edit)
+ 8. (the config file is not watched)
  9. Spawn: filesystem watcher → IndexEvent channel (notify-debouncer)
 10. Spawn: IPC server  (Unix socket / Named Pipe)
 11. Spawn: REST server (Axum, {rest_bind}:{rest_port}, loopback by default)
@@ -237,10 +237,12 @@ When `fsd daemon` is invoked the following steps execute in order inside
 `reindex_tx` watch channel. The main loop picks it up, checks the `crawl_active`
 flag, and calls `spawn_crawl` if no crawl is already running.
 
-**Config hot-reload**: the watcher re-parses the TOML and validates it on every
-`Modify` event. Invalid configs are logged and discarded; the running config is kept.
-An added watch path is crawled and watched at once. A removed one is no longer
-watched, but its entries stay in the index.
+**Config changes**: fsd reads the file only at startup. `fs config`, REST
+`/config` and gRPC `GetConfig` / `ChangeConfig` edit it and the running
+config; a change that does not validate changes nothing, and settings read
+only at startup are reported as needing a restart. An added watch path is
+crawled and watched at once. A removed one is no longer watched, but its
+entries stay in the index.
 
 ---
 

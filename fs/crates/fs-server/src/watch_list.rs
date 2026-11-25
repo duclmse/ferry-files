@@ -4,16 +4,16 @@
 //! it crawls an added path and starts watching it, and stops watching a
 //! removed one (forgetting its entries when asked to).
 //!
-//! The file is edited in place, keeping its comments and layout, and written
-//! over rather than replaced: the config watcher follows the file itself, and
-//! a rename would leave it watching the old one.
+//! The file is edited in place, keeping its comments and layout, as
+//! `config_edit` edits it, and under the same lock.
 
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
-use tokio::sync::{Mutex, RwLock};
+use tokio::sync::RwLock;
 
 use crate::config::{without_verbatim, Config};
+use crate::config_edit::ConfigEditor;
 
 #[derive(Debug, thiserror::Error)]
 pub enum WatchListError {
@@ -38,19 +38,30 @@ pub struct Outcome {
 /// shared by the APIs and `daemon::follow_watch_paths`.
 pub struct WatchList {
     config: Arc<RwLock<Config>>,
-    /// One change at a time: each reads the file the last one wrote.
-    changing: Mutex<()>,
+    /// The rest of the config; its lock keeps one change at a time.
+    editor: Arc<ConfigEditor>,
     /// Removed roots whose entries are to go, for `follow_watch_paths`.
     forget: std::sync::Mutex<Vec<PathBuf>>,
 }
 
 impl WatchList {
+    /// With a config editor that knows no extensions.
     pub fn new(config: Arc<RwLock<Config>>) -> Arc<Self> {
+        let editor = ConfigEditor::new(Arc::clone(&config), Arc::default());
+        Self::with_editor(config, editor)
+    }
+
+    pub fn with_editor(config: Arc<RwLock<Config>>, editor: Arc<ConfigEditor>) -> Arc<Self> {
         Arc::new(Self {
             config,
-            changing: Mutex::new(()),
+            editor,
             forget: std::sync::Mutex::new(Vec::new()),
         })
+    }
+
+    /// Reads and changes the rest of the config.
+    pub fn config(&self) -> &ConfigEditor {
+        &self.editor
     }
 
     pub async fn paths(&self) -> Vec<PathBuf> {
@@ -62,7 +73,7 @@ impl WatchList {
     /// Watch paths inside `path` are replaced by it: kept, each would be
     /// crawled twice and report each change twice.
     pub async fn add(&self, path: &str) -> Result<Outcome, WatchListError> {
-        let _one = self.changing.lock().await;
+        let _one = self.editor.lock().await;
         let path = folder(path)?;
         let (mut paths, source) = self.current().await;
         if let Some(outer) = paths.iter().find(|p| path.starts_with(p)) {
@@ -109,7 +120,7 @@ impl WatchList {
     /// Removes `path`, as given or as it resolves. With `forget`, its
     /// entries leave the index too; otherwise they stay.
     pub async fn remove(&self, path: &str, forget: bool) -> Result<Outcome, WatchListError> {
-        let _one = self.changing.lock().await;
+        let _one = self.editor.lock().await;
         let target = resolved(Path::new(path));
         let (mut paths, source) = self.current().await;
         let Some(at) = paths.iter().position(|p| resolved(p) == target) else {

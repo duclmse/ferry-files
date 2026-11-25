@@ -33,7 +33,8 @@ pub(super) struct Spec {
 }
 
 struct Request {
-    command: String,
+    /// A client command, or `None` to reload.
+    command: Option<String>,
     reply: ReplySender,
 }
 
@@ -97,12 +98,19 @@ impl Extension for ProcessExtension {
     }
 
     fn command(&self, command: &str) -> anyhow::Result<String> {
+        self.ask(Some(command.to_owned()))
+    }
+
+    fn reload(&self) -> anyhow::Result<()> {
+        self.ask(None).map(drop)
+    }
+}
+
+impl ProcessExtension {
+    fn ask(&self, command: Option<String>) -> anyhow::Result<String> {
         let (reply, response) = std_mpsc::channel();
         self.requests
-            .blocking_send(Request {
-                command: command.to_owned(),
-                reply,
-            })
+            .blocking_send(Request { command, reply })
             .map_err(|_| anyhow::anyhow!("extension is not running"))?;
         response
             .recv_timeout(COMMAND_TIMEOUT)
@@ -184,7 +192,10 @@ async fn run_child(
             }
             Some(request) = requests.recv() => {
                 next_id += 1;
-                let message = HostMessage::Command { id: next_id, command: request.command };
+                let message = match request.command {
+                    Some(command) => HostMessage::Command { id: next_id, command },
+                    None => HostMessage::Reload { id: next_id },
+                };
                 match send(&mut stdin, &message).await {
                     Ok(()) => { pending.insert(next_id, request.reply); }
                     Err(e) => { let _ = request.reply.send(Err(e)); }

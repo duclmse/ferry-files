@@ -110,6 +110,31 @@ enum Command {
         #[command(subcommand)]
         action: Option<WatchAction>,
     },
+
+    /// Show or change the daemon's config while it runs; it reads its
+    /// config file only at startup
+    Config {
+        #[command(subcommand)]
+        action: Option<ConfigAction>,
+    },
+}
+
+#[derive(Subcommand)]
+enum ConfigAction {
+    /// Print the config file, or one key's value (the default)
+    Get {
+        /// A dotted key, as in search.default_limit
+        key: Option<String>,
+    },
+    /// Set a key to a TOML value: 200, true, "text", ["zip"]; other text is
+    /// taken as a string
+    Set { key: String, value: String },
+    /// Remove a key from the file, so its default applies
+    Unset { key: String },
+    /// Apply the daemon's config file after editing it by hand
+    Reload,
+    /// Replace the daemon's config file with this file
+    Replace { file: std::path::PathBuf },
 }
 
 #[derive(Subcommand)]
@@ -214,6 +239,13 @@ async fn main() {
         Command::Watch { action } => {
             if let Err(e) = run_watch(cli.config, action.unwrap_or(WatchAction::List)).await {
                 eprintln!("watch error: {e}");
+                std::process::exit(1);
+            }
+        }
+        Command::Config { action } => {
+            let action = action.unwrap_or(ConfigAction::Get { key: None });
+            if let Err(e) = run_config(cli.config, action).await {
+                eprintln!("config error: {e}");
                 std::process::exit(1);
             }
         }
@@ -597,9 +629,71 @@ async fn run_watch(config_path: std::path::PathBuf, action: WatchAction) -> anyh
     Ok(())
 }
 
+async fn run_config(config_path: std::path::PathBuf, action: ConfigAction) -> anyhow::Result<()> {
+    use fs_protocol::ipc_protocol::ConfigChange;
+    let request = match action {
+        ConfigAction::Get { key } => IpcRequest::ConfigGet { key },
+        ConfigAction::Set { key, value } => IpcRequest::ConfigChange {
+            change: ConfigChange::Set { key, value },
+        },
+        ConfigAction::Unset { key } => IpcRequest::ConfigChange {
+            change: ConfigChange::Unset { key },
+        },
+        ConfigAction::Reload => IpcRequest::ConfigChange {
+            change: ConfigChange::Reload,
+        },
+        ConfigAction::Replace { file } => IpcRequest::ConfigChange {
+            change: ConfigChange::Replace {
+                text: std::fs::read_to_string(&file)
+                    .map_err(|e| anyhow::anyhow!("{}: {e}", file.display()))?,
+            },
+        },
+    };
+    let mut client = ipc_client_for(config_path).await?;
+    let resp = client
+        .request(request)
+        .await
+        .map_err(|e| anyhow::anyhow!("{e}"))?;
+    match resp {
+        IpcResponse::Config(v) if v.from_file => println!("{}", v.text.trim_end()),
+        IpcResponse::Config(v) => println!("{}  (default)", v.text),
+        IpcResponse::ConfigApplied(a) => print!("{}", applied_lines(&a)),
+        _ => {}
+    }
+    Ok(())
+}
+
+fn applied_lines(a: &fs_protocol::ipc_protocol::ConfigApplied) -> String {
+    let mut out = String::from("applied\n");
+    if !a.restart.is_empty() {
+        out.push_str(&format!("restart fsd to apply: {}\n", a.restart.join(", ")));
+    }
+    if !a.reloaded.is_empty() {
+        out.push_str(&format!("reloaded: {}\n", a.reloaded.join(", ")));
+    }
+    for p in &a.problems {
+        out.push_str(&format!("not reloaded: {p}\n"));
+    }
+    out
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn a_config_change_says_what_needs_a_restart() {
+        let a = fs_protocol::ipc_protocol::ConfigApplied {
+            restart: vec!["data_dir".into(), "api.rest_port".into()],
+            reloaded: vec!["rar2zip".into()],
+            problems: vec!["sftpd: does not reload".into()],
+        };
+        assert_eq!(
+            applied_lines(&a),
+            "applied\nrestart fsd to apply: data_dir, api.rest_port\nreloaded: rar2zip\n\
+             not reloaded: sftpd: does not reload\n"
+        );
+    }
 
     #[test]
     fn notices_print_one_line_each() {

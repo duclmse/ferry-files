@@ -187,11 +187,12 @@ pending
 - Log at `info` for significant state changes, `debug` for per-file events,
   `trace` for inner loops.
 
-### Config hot-reload
+### Config changes
 
-Both crates watch their config files via a secondary `notify` watcher.
-Hot-reload is additive-only for watch paths (new paths are added; removed paths
-are not un-watched until restart). Do not assume config is static after startup.
+fsd reads its config file once, at startup, and does not watch it. The
+APIs change it through `config_edit::ConfigEditor`: the file is edited in
+place and the shared `Arc<RwLock<Config>>` replaced, so do not assume the
+config is static after startup. Extensions reload on `HostMessage::Reload`.
 
 ### Testing
 

@@ -238,8 +238,12 @@ pub async fn run_with_options(
 
     // ── 6. Shared config ───────────────────────────────────────────────────
     crate::indexer::exclusions::log_own_dirs_under(&cfg);
+    // Read once: the APIs change it (`config_edit`), nothing follows the file.
     let shared_cfg = Arc::new(RwLock::new(cfg));
-    let watch_list = crate::watch_list::WatchList::new(Arc::clone(&shared_cfg));
+    let watch_list = crate::watch_list::WatchList::with_editor(
+        Arc::clone(&shared_cfg),
+        crate::config_edit::ConfigEditor::new(Arc::clone(&shared_cfg), Arc::clone(&extensions)),
+    );
 
     // ── 7. Crawl-in-progress guard ─────────────────────────────────────────
     // Prevents two concurrent full crawls (initial + API-triggered reindex)
@@ -326,13 +330,6 @@ pub async fn run_with_options(
         Arc::clone(&crawl_active),
         shutdown.clone(),
     ));
-
-    // ── 12. Config hot-reload watcher ──────────────────────────────────────
-    {
-        let shutdown_c = shutdown.clone();
-        let shared_cfg2 = Arc::clone(&shared_cfg);
-        tokio::spawn(config::watch_config(config_path, shared_cfg2, shutdown_c));
-    }
 
     // ── 13. Filesystem watcher → IndexEvent channel ────────────────────────
     let (ev_tx, mut ev_rx) = mpsc::channel::<IndexEvent>(1024);
@@ -834,7 +831,7 @@ async fn keep_snapshot_fresh(
             let c = cfg.read().await;
             (c.store.snapshot_interval_secs, c.data_dir.clone())
         };
-        // At 0, keep polling so a hot-reloaded interval takes effect.
+        // At 0, keep polling so a changed interval takes effect.
         let wait = Duration::from_secs(if interval == 0 { 60 } else { interval });
         tokio::select! {
             _ = shutdown.cancelled() => return,
@@ -852,7 +849,7 @@ async fn keep_snapshot_fresh(
     }
 }
 
-/// Loads `[file_lists]` and keeps them current, following hot reloads. It
+/// Loads `[file_lists]` and keeps them current, following config changes. It
 /// waits for the first crawl: with the store still empty, SQLite crawls
 /// with its indexes dropped, and rows from a list would make it keep them.
 /// Keeps the stats' file and folder counts true to the store: once at start,
@@ -969,7 +966,7 @@ async fn keep_file_lists(
 // Watch paths
 // ---------------------------------------------------------------------------
 
-/// How often the watch paths are compared with the config, which hot reload
+/// How often the watch paths are compared with the config, which a config change
 /// replaces.
 const WATCH_PATHS_POLL: Duration = Duration::from_secs(1);
 

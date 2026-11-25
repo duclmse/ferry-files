@@ -111,7 +111,7 @@ pub fn require_grpc_token(api: &ApiConfig, header: Option<&str>) -> Result<(), t
 /// Builds the interceptor for gRPC services.
 ///
 /// Interceptors are synchronous, so the config lock can only be tried. It is
-/// held just for the swap during a hot reload, and clients retry `UNAVAILABLE`.
+/// held just for the swap during a config change, and clients retry `UNAVAILABLE`.
 #[cfg(feature = "grpc")]
 pub fn grpc_interceptor(
     config: Arc<RwLock<Config>>,

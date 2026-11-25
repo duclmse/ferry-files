@@ -11,7 +11,7 @@ use serde::{Deserialize, Serialize};
 // ---------------------------------------------------------------------------
 
 pub const MAGIC: [u8; 4] = *b"ZFS1";
-pub const PROTOCOL_VERSION: u16 = 8;
+pub const PROTOCOL_VERSION: u16 = 9;
 pub const MAX_FRAME_BYTES: u32 = 16 * 1024 * 1024; // 16 MiB
 
 // ---------------------------------------------------------------------------
@@ -86,6 +86,32 @@ pub enum IpcRequest {
     Subscribe {
         kinds: Vec<NoticeKind>,
     },
+    /// The daemon's config file, or with `key` (dotted, as in
+    /// `search.default_limit`) the value it runs with. Answered with
+    /// `Config`.
+    ConfigGet {
+        key: Option<String>,
+    },
+    /// Changes the config file and the running daemon, which reads the file
+    /// only at startup. Answered with `ConfigApplied`.
+    ConfigChange {
+        change: ConfigChange,
+    },
+}
+
+/// A change to the daemon's config.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub enum ConfigChange {
+    /// Sets the dotted `key` to `value`, a TOML value (`200`, `"memory"`,
+    /// `["zip"]`); text that is not one is taken as a string.
+    Set { key: String, value: String },
+    /// Removes `key` from the file, so its default applies.
+    Unset { key: String },
+    /// Replaces the whole file with `text`.
+    Replace { text: String },
+    /// Applies the file as it is now, after an edit by hand; every
+    /// extension is asked to reload.
+    Reload,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -109,6 +135,31 @@ pub enum IpcResponse {
     Roots(RootsResponse),
     Subscribed,
     Notice(Notice),
+    Config(ConfigValue),
+    ConfigApplied(ConfigApplied),
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct ConfigValue {
+    /// The whole file, or the key's value as TOML.
+    pub text: String,
+    /// For a key: whether the file sets it; otherwise it is the default.
+    pub from_file: bool,
+}
+
+/// What a config change did. The file is written and the running daemon
+/// follows it, except for what `restart` names.
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
+pub struct ConfigApplied {
+    /// Keys that differ from what the daemon started with and that it reads
+    /// only at startup: they apply when it restarts.
+    pub restart: Vec<String>,
+    /// Extensions whose `[extensions.<name>]` changed and that took the
+    /// new settings.
+    pub reloaded: Vec<String>,
+    /// Extensions whose section changed but that did not take it, each
+    /// with why.
+    pub problems: Vec<String>,
 }
 
 /// Something that changed in the daemon, sent to subscribers as it happens.
@@ -349,7 +400,7 @@ mod tests {
         let frame = |m| encode_frame(&IpcEnvelope::new(1, m)).unwrap();
         assert_eq!(
             frame(IpcMessage::Request(IpcRequest::Roots)),
-            b"\x08\0\0\0ZFS1\x08\x01\x00\x05"
+            b"\x08\0\0\0ZFS1\x09\x01\x00\x05"
         );
         assert_eq!(
             frame(IpcMessage::Request(IpcRequest::Search {
@@ -357,7 +408,7 @@ mod tests {
                 limit: 2,
                 offset: 3,
             })),
-            b"\x0c\0\0\0ZFS1\x08\x01\x00\x00\x01a\x02\x03"
+            b"\x0c\0\0\0ZFS1\x09\x01\x00\x00\x01a\x02\x03"
         );
         assert_eq!(
             frame(IpcMessage::Response(IpcResponse::Roots(RootsResponse {
@@ -365,7 +416,7 @@ mod tests {
                 crawled: true,
                 status: vec![],
             }))),
-            b"\x0d\0\0\0ZFS1\x08\x01\x01\x06\x01\x01C\x01\x00"
+            b"\x0d\0\0\0ZFS1\x09\x01\x01\x06\x01\x01C\x01\x00"
         );
     }
 
@@ -409,6 +460,33 @@ mod tests {
                 assert_eq!(r.status[0].state, RootState::Crawling);
                 assert_eq!(r.status[0].entries, 7);
             }
+            other => panic!("unexpected {other:?}"),
+        }
+    }
+
+    #[test]
+    fn round_trip_config() {
+        let change = ConfigChange::Set {
+            key: "search.default_limit".into(),
+            value: "200".into(),
+        };
+        let env = round_trip(IpcMessage::Request(IpcRequest::ConfigChange {
+            change: change.clone(),
+        }));
+        match env.message {
+            IpcMessage::Request(IpcRequest::ConfigChange { change: c }) => assert_eq!(c, change),
+            other => panic!("unexpected {other:?}"),
+        }
+        let applied = ConfigApplied {
+            restart: vec!["data_dir".into()],
+            reloaded: vec!["rar2zip".into()],
+            problems: Vec::new(),
+        };
+        let env = round_trip(IpcMessage::Response(IpcResponse::ConfigApplied(
+            applied.clone(),
+        )));
+        match env.message {
+            IpcMessage::Response(IpcResponse::ConfigApplied(a)) => assert_eq!(a, applied),
             other => panic!("unexpected {other:?}"),
         }
     }

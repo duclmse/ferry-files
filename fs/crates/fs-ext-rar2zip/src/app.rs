@@ -18,11 +18,11 @@ use crate::watcher::run_watcher;
 
 // ---------------------------------------------------------------------------
 
-pub async fn run(
-    config: Config,
-    config_path: std::path::PathBuf,
-    shutdown: CancellationToken,
-) -> Result<()> {
+/// Runs until `shutdown`. `cfg_lock` is the config jobs read as they start;
+/// `Extension::reload` replaces it. Settings read here, before the loop,
+/// apply from the next start.
+pub async fn run(cfg_lock: Arc<RwLock<Config>>, shutdown: CancellationToken) -> Result<()> {
+    let config = cfg_lock.read().await.clone();
     // Open job queue; DB lives beside the watch folder
     let db_path = config.watch_folder.join(".rar2zip.db");
     let queue = Arc::new(JobQueue::new(&db_path)?);
@@ -37,21 +37,9 @@ pub async fn run(
     // before fully exiting (up to 30 s).
     let tracker = TaskTracker::new();
 
-    // Shared mutable config (for hot-reload)
-    let cfg_lock: Arc<RwLock<Config>> = Arc::new(RwLock::new(config.clone()));
-
     // Shared state
     let metrics = Metrics::new();
     let sem = Arc::new(Semaphore::new(config.transfer.max_concurrent));
-
-    // Config hot-reload watcher (best-effort; errors are logged inside)
-    {
-        let cfg_arc = Arc::clone(&cfg_lock);
-        let shutdown = shutdown.clone();
-        tokio::spawn(async move {
-            crate::config::watch_config(config_path, cfg_arc, shutdown).await;
-        });
-    }
 
     // Metrics HTTP server in a background thread
     let metrics_flag = Arc::new(AtomicBool::new(false));

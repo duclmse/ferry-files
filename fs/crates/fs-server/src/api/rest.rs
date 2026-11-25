@@ -11,6 +11,11 @@
 //!   GET    /events[?kinds=watch_paths,root,applied]   server-sent events
 //!   POST   /watch_paths         { "path": "..." }  (token)
 //!   DELETE /watch_paths?path=[&forget=true]       (token)
+//!   GET    /config[?key=]                         (token)
+//!   PUT    /config              TOML text          (token)
+//!   PATCH  /config              { "key": "...", "value": "<TOML>" }  (token)
+//!   DELETE /config?key=                           (token)
+//!   POST   /config/reload       applies the file after an edit by hand (token)
 
 use std::sync::{atomic::Ordering, Arc};
 
@@ -126,6 +131,7 @@ pub fn router(state: AppState) -> Router {
         .route("/watch_paths", get(watch_paths_handler))
         .route("/events", get(events_handler))
         .merge(watch_changes(state.clone()))
+        .merge(config_routes(state.clone()))
         .merge(crate::api::fs::router(state.clone()));
 
     if state.archive_registry.is_enabled() {
@@ -263,6 +269,106 @@ fn watch_changes(state: AppState) -> Router<AppState> {
             post(watch_add_handler).delete(watch_remove_handler),
         )
         .route_layer(from_fn_with_state(state, crate::api::auth::require_token))
+}
+
+/// The config needs the token whatever `api.auth_mode` is: it may hold
+/// passwords, and a change acts as the daemon's account.
+fn config_routes(state: AppState) -> Router<AppState> {
+    Router::new()
+        .route(
+            "/config",
+            get(config_get_handler)
+                .put(config_replace_handler)
+                .patch(config_set_handler)
+                .delete(config_unset_handler),
+        )
+        .route("/config/reload", post(config_reload_handler))
+        .route_layer(from_fn_with_state(state, crate::api::auth::require_token))
+}
+
+#[derive(Deserialize)]
+struct ConfigKeyParams {
+    key: Option<String>,
+}
+
+#[derive(Deserialize)]
+struct ConfigSetBody {
+    key: String,
+    /// A TOML value; text that is not one is taken as a string.
+    value: String,
+}
+
+async fn config_get_handler(
+    State(state): State<AppState>,
+    Query(params): Query<ConfigKeyParams>,
+) -> axum::response::Response {
+    let got = state.watch_list.config().get(params.key.as_deref()).await;
+    config_response(got)
+}
+
+async fn config_replace_handler(
+    State(state): State<AppState>,
+    text: String,
+) -> axum::response::Response {
+    use fs_protocol::ipc_protocol::ConfigChange;
+    let applied = state
+        .watch_list
+        .config()
+        .change(ConfigChange::Replace { text })
+        .await;
+    config_response(applied)
+}
+
+async fn config_set_handler(
+    State(state): State<AppState>,
+    Json(body): Json<ConfigSetBody>,
+) -> axum::response::Response {
+    use fs_protocol::ipc_protocol::ConfigChange;
+    let change = ConfigChange::Set {
+        key: body.key,
+        value: body.value,
+    };
+    config_response(state.watch_list.config().change(change).await)
+}
+
+async fn config_reload_handler(State(state): State<AppState>) -> axum::response::Response {
+    use fs_protocol::ipc_protocol::ConfigChange;
+    config_response(state.watch_list.config().change(ConfigChange::Reload).await)
+}
+
+async fn config_unset_handler(
+    State(state): State<AppState>,
+    Query(params): Query<ConfigKeyParams>,
+) -> axum::response::Response {
+    use fs_protocol::ipc_protocol::ConfigChange;
+    let Some(key) = params.key else {
+        return api_error(StatusCode::BAD_REQUEST, "key is required").into_response();
+    };
+    config_response(
+        state
+            .watch_list
+            .config()
+            .change(ConfigChange::Unset { key })
+            .await,
+    )
+}
+
+fn config_response<T: Serialize>(
+    answer: Result<T, crate::config_edit::ConfigError>,
+) -> axum::response::Response {
+    use crate::config_edit::ConfigError;
+    match answer {
+        Ok(body) => Json(body).into_response(),
+        Err(e) => {
+            let status = match e {
+                ConfigError::Invalid(_) => StatusCode::BAD_REQUEST,
+                ConfigError::NotFound(_) => StatusCode::NOT_FOUND,
+                ConfigError::Refused(_) => StatusCode::FORBIDDEN,
+                ConfigError::Io(_) => StatusCode::INTERNAL_SERVER_ERROR,
+            };
+            api_error(status, e.to_string()).into_response()
+        }
+    }
 }
 
 #[derive(Serialize)]

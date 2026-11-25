@@ -2,9 +2,11 @@
 
 use std::net::{TcpStream, ToSocketAddrs};
 use std::path::{Path, PathBuf};
+use std::sync::Arc;
 use std::time::Duration;
 
 use common::extension::{Extension, ExtensionFuture};
+use tokio::sync::RwLock;
 use tokio_util::sync::CancellationToken;
 
 use crate::config::{self, Config};
@@ -16,14 +18,19 @@ const PING_TIMEOUT: Duration = Duration::from_secs(5);
 
 pub struct Rar2zipExtension {
     config_path: PathBuf,
+    /// As loaded at startup: the queue and `validate` use it.
     config: Config,
+    /// What jobs run with; `reload` replaces it.
+    live: Arc<RwLock<Config>>,
 }
 
 impl Rar2zipExtension {
     pub fn load(config_path: &Path) -> Result<Self> {
+        let config = config::load(config_path)?;
         Ok(Self {
             config_path: config_path.to_path_buf(),
-            config: config::load(config_path)?,
+            live: Arc::new(RwLock::new(config.clone())),
+            config,
         })
     }
 
@@ -73,12 +80,22 @@ impl Extension for Rar2zipExtension {
     }
 
     fn run(&self, shutdown: CancellationToken) -> ExtensionFuture {
-        let config = self.config.clone();
-        let config_path = self.config_path.clone();
+        let live = Arc::clone(&self.live);
         Box::pin(async move {
-            crate::app::run(config, config_path, shutdown).await?;
+            crate::app::run(live, shutdown).await?;
             Ok(())
         })
+    }
+
+    fn reload(&self) -> anyhow::Result<()> {
+        let next = config::load(&self.config_path)?;
+        let errors = config::validate(&next);
+        if !errors.is_empty() {
+            anyhow::bail!("kept the running settings: {}", errors.join("; "));
+        }
+        *self.live.blocking_write() = next;
+        tracing::info!("settings reloaded from {}", self.config_path.display());
+        Ok(())
     }
 
     fn command(&self, command: &str) -> anyhow::Result<String> {
@@ -140,6 +157,22 @@ destinations = []
         let dir = TempDir::new().unwrap();
         let out = extension(&dir).command("retry-failed").unwrap();
         assert_eq!(out, "Reset 0 failed job(s) to pending.");
+    }
+
+    #[test]
+    fn reload_takes_valid_settings_and_keeps_the_running_ones_otherwise() {
+        let dir = TempDir::new().unwrap();
+        let ext = extension(&dir);
+        let path = dir.path().join("config.toml");
+        let text = std::fs::read_to_string(&path).unwrap();
+        std::fs::write(&path, format!("{text}compression_level = 1\n")).unwrap();
+        ext.reload().unwrap();
+        assert_eq!(ext.live.blocking_read().conversion.compression_level, 1);
+
+        std::fs::write(&path, format!("{text}compression_level = 99\n")).unwrap();
+        let err = ext.reload().unwrap_err().to_string();
+        assert!(err.contains("kept the running settings"), "{err}");
+        assert_eq!(ext.live.blocking_read().conversion.compression_level, 1);
     }
 
     #[test]

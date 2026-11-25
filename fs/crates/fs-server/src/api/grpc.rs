@@ -21,9 +21,11 @@ pub mod proto {
 }
 
 use proto::{
+    change_config_request,
     file_search_server::{FileSearch, FileSearchServer},
-    ListWatchPathsRequest, Notice as NoticeMsg, ReindexRequest, ReindexResponse, SearchRequest,
-    SearchResponse, SearchResult, StatsRequest, StatsResponse, SubscribeRequest, WatchPathRequest,
+    ChangeConfigRequest, ConfigApplied, ConfigValue, GetConfigRequest, ListWatchPathsRequest,
+    Notice as NoticeMsg, ReindexRequest, ReindexResponse, SearchRequest, SearchResponse,
+    SearchResult, StatsRequest, StatsResponse, SubscribeRequest, WatchPathRequest,
     WatchPathsResponse,
 };
 
@@ -199,6 +201,66 @@ impl FileSearch for FileSearchService {
         let outcome = self.watch_list.remove(&req.path, req.forget).await;
         self.watch_change(outcome)
     }
+
+    async fn get_config(
+        &self,
+        request: Request<GetConfigRequest>,
+    ) -> Result<Response<ConfigValue>, Status> {
+        let req = self.authorized(request).await?;
+        let key = Some(req.key).filter(|k| !k.is_empty());
+        let v = self
+            .watch_list
+            .config()
+            .get(key.as_deref())
+            .await
+            .map_err(config_status)?;
+        Ok(Response::new(ConfigValue {
+            text: v.text,
+            from_file: v.from_file,
+        }))
+    }
+
+    async fn change_config(
+        &self,
+        request: Request<ChangeConfigRequest>,
+    ) -> Result<Response<ConfigApplied>, Status> {
+        use change_config_request::Change;
+        use fs_protocol::ipc_protocol::ConfigChange;
+        let req = self.authorized(request).await?;
+        let change = match req.change {
+            Some(Change::Set(s)) => ConfigChange::Set {
+                key: s.key,
+                value: s.value,
+            },
+            Some(Change::Unset(key)) => ConfigChange::Unset { key },
+            Some(Change::Replace(text)) => ConfigChange::Replace { text },
+            Some(Change::Reload(true)) => ConfigChange::Reload,
+            Some(Change::Reload(false)) | None => {
+                return Err(Status::invalid_argument("no change given"))
+            }
+        };
+        let a = self
+            .watch_list
+            .config()
+            .change(change)
+            .await
+            .map_err(config_status)?;
+        Ok(Response::new(ConfigApplied {
+            restart: a.restart,
+            reloaded: a.reloaded,
+            problems: a.problems,
+        }))
+    }
+}
+
+fn config_status(e: crate::config_edit::ConfigError) -> Status {
+    use crate::config_edit::ConfigError;
+    match e {
+        ConfigError::Invalid(_) => Status::invalid_argument(e.to_string()),
+        ConfigError::NotFound(_) => Status::not_found(e.to_string()),
+        ConfigError::Refused(_) => Status::permission_denied(e.to_string()),
+        ConfigError::Io(_) => Status::internal(e.to_string()),
+    }
 }
 
 // ---------------------------------------------------------------------------
@@ -221,10 +283,7 @@ where
 
 impl FileSearchService {
     /// The request, once its token is checked.
-    async fn authorized(
-        &self,
-        request: Request<WatchPathRequest>,
-    ) -> Result<WatchPathRequest, Status> {
+    async fn authorized<T>(&self, request: Request<T>) -> Result<T, Status> {
         let header = request
             .metadata()
             .get("authorization")
