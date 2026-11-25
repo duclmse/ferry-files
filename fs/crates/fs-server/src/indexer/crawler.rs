@@ -468,8 +468,12 @@ pub async fn crawl_roots(
                     let side_work = Arc::clone(&side_work);
                     let root_str = root_str.clone();
                     let kept = Arc::clone(&kept);
+                    let stop = shutdown_w.clone();
 
                     Box::new(move |result| {
+                        if stop.is_cancelled() {
+                            return ignore::WalkState::Quit;
+                        }
                         let entry = match result {
                             Ok(e) => e,
                             Err(e) => {
@@ -519,6 +523,12 @@ pub async fn crawl_roots(
             // Join before removing stale rows so all crawl_generation marks are committed.
             drop(tx);
             let mut entries = writer_thread.join().ok();
+            // A walk cut short saw only part of the root: sweeping after it
+            // would remove the rest. The next crawl finishes the job.
+            if shutdown_w.is_cancelled() {
+                tracing::info!("{watch_root}: crawl stopped for shutdown; its entries stay");
+                break;
+            }
             for k in kept.iter() {
                 match sqlite_w.retag_under(&k.to_string_lossy(), &watch_root, generation) {
                     Ok(n) => {
@@ -545,6 +555,12 @@ pub async fn crawl_roots(
     })
     .await
     .map_err(|e| AppError::Index(e.to_string()))??;
+
+    // Not a finished crawl: without `last_crawl_time` the next start crawls
+    // again. The daemon commits and saves on its way out.
+    if shutdown.is_cancelled() {
+        return Ok(());
+    }
 
     // Blocking: the commit drains Tantivy's indexing queue and fsyncs, and
     // total_files counts every row.

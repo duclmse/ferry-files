@@ -3,7 +3,7 @@
 #
 #   - Installed as a service (systemd unit, launchd job): starts it if stopped.
 #   - Otherwise: starts `fsd daemon` in the background and waits until it
-#     answers over IPC. Stop it with `kill <pid>` (a clean stop).
+#     answers over IPC. Stop it with scripts/stop.sh (a clean stop).
 #
 # Override discovery with FS_BIN / FS_CONFIG, as for run.sh; FS_WAIT sets how
 # many seconds to wait (default 30).

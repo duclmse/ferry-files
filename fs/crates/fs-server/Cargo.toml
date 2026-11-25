@@ -97,7 +97,7 @@ async-stream = "0.3"
 futures      = "0.3"
 
 [target.'cfg(unix)'.dependencies]
-nix = { version = "0.28", features = ["fs", "process", "resource", "user"] }
+nix = { version = "0.28", features = ["fs", "process", "resource", "signal", "user"] }
 
 # FSEvents history replay (watcher/journal.rs); already pulled in by `notify`.
 [target.'cfg(target_os = "macos")'.dependencies]

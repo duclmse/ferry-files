@@ -328,6 +328,7 @@ fsd [--config <file>] <command>      # --config defaults to ./config.toml
 | Command | Does |
 | ------- | ---- |
 | `daemon [--service]` | Runs the daemon in the foreground. The service manager passes `--service` for a system service |
+| `stop [--wait <secs>]` | Stops the daemon that uses this config's data folder, cleanly: it saves its index first. Exit code 3 when none is running |
 | `validate-config` | Checks the config, including each extension's section, and prints every problem |
 | `generate-token` | Prints a new bearer token, and the digest to put in `api.auth_token_hash` |
 | `install-service [--user\|--system]` | Registers fsd with the service manager and starts it (section 8) |
@@ -772,9 +773,10 @@ noted.
 
 | Script | Does |
 | ------ | ---- |
-| `build` | Release build of fsd and fs. The PowerShell version also builds both extensions; pass `-p <crate>` to the shell version |
+| `build` | Release build of fsd and fs. The PowerShell version also builds both extensions; pass `-p <crate>` to the shell version. An fsd running from `target/release` is stopped first and started again with its config after (`-NoRestart` / `FS_NO_RESTART=1` leaves it stopped) |
 | `install` | Installs the binaries and a config, optionally as a service; `-Uninstall` / `--uninstall` reverses it |
 | `start` | Starts fsd if it isn't running (section 2) |
+| `stop` | Stops fsd cleanly: the service, or each background fsd through `fsd stop` (SIGTERM on Unix). `-Force` / `FS_FORCE=1` kills one that doesn't stop |
 | `run` | Runs fsd in the foreground |
 | `config.default.toml` | Every config field at its default |
 | `db` | Inspects an fs or rar2zip SQLite database through `sqlite3` |

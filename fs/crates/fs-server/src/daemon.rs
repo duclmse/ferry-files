@@ -43,7 +43,7 @@ use tonic::codegen::InterceptedService;
 /// other folder, and a test daemon still shutting down blocked the next one.
 /// Lowercased because Windows paths ignore case.
 #[cfg_attr(not(windows), allow(dead_code))]
-fn instance_mutex_name(data_dir: &std::path::Path) -> String {
+pub(crate) fn instance_mutex_name(data_dir: &std::path::Path) -> String {
     let dir = data_dir
         .canonicalize()
         .unwrap_or_else(|_| data_dir.to_path_buf());
@@ -96,6 +96,10 @@ mod win_guard {
 // Beyond this, new events wait for a running task to finish rather than
 // spawning unboundedly. Keeps memory and SQLite-pool contention bounded
 // under inotify/FSEvents bursts (e.g. large `git checkout`).
+
+// How long shutdown waits for a running crawl to wind down. The walk quits at
+// once; a file-table read (`indexer.use_mft`) runs to its end.
+const CRAWL_STOP: Duration = Duration::from_secs(20);
 
 // Longer than the time an extension process is given to stop.
 const EXTENSION_DRAIN: Duration = Duration::from_secs(35);
@@ -179,6 +183,10 @@ pub async fn run_with_options(
     write_pid_file(&pid_path)?;
     #[cfg(windows)]
     let _instance_guard = win_guard::acquire(&cfg.data_dir)?;
+    #[cfg(windows)]
+    if let Err(e) = crate::stop::listen(&cfg.data_dir, shutdown.clone()) {
+        tracing::warn!("`fsd stop` will not reach this daemon: {e}");
+    }
 
     // ── 4-5. Stores ────────────────────────────────────────────────────────
     let sqlite = Arc::new(FileStore::from_config(&cfg)?);
@@ -630,6 +638,18 @@ pub async fn run_with_options(
         {
             tracing::warn!("in-flight events not all applied before the deadline");
         }
+    }
+
+    // A crawl's writer may still be adding rows; wait for it to stop (its
+    // walk quits on the token), so the save below holds all it wrote and
+    // nothing writes after it.
+    let crawl_deadline = tokio::time::Instant::now() + CRAWL_STOP;
+    while crawl_active.load(Ordering::Acquire) {
+        if tokio::time::Instant::now() >= crawl_deadline {
+            tracing::warn!("crawl did not stop within {CRAWL_STOP:?}; saving without it");
+            break;
+        }
+        tokio::time::sleep(Duration::from_millis(50)).await;
     }
 
     tracing::info!("final tantivy commit…");
@@ -1425,6 +1445,8 @@ fn spawn_crawl(c: Crawler, scope: Scope, shutdown: CancellationToken) {
         if let Err(e) = crawl_roots(cfg, scope, sqlite, tantivy, metrics, registry, shutdown).await
         {
             tracing::error!("{what} error: {e}");
+        } else if cancelled.is_cancelled() {
+            tracing::info!("{what} stopped for shutdown");
         } else {
             tracing::info!("{what} complete");
             let warm = Arc::clone(&store);
@@ -1477,7 +1499,30 @@ async fn wait_for_shutdown_signal() {
             }
         }
     }
-    #[cfg(not(unix))]
+    #[cfg(windows)]
+    {
+        // Closing the console window gives the process about 5 s before
+        // Windows ends it: enough to save the index, which a kill loses.
+        use tokio::signal::windows::{ctrl_break, ctrl_close};
+        match (ctrl_break(), ctrl_close()) {
+            (Ok(mut brk), Ok(mut close)) => {
+                tokio::select! {
+                    r = tokio::signal::ctrl_c() => {
+                        r.ok();
+                        tracing::info!("ctrl-c received, shutting down");
+                    }
+                    _ = brk.recv() => tracing::info!("ctrl-break received, shutting down"),
+                    _ = close.recv() => tracing::info!("console closed, shutting down"),
+                }
+            }
+            (Err(e), _) | (_, Err(e)) => {
+                tracing::error!("failed to register console handlers: {e}; ctrl-c only");
+                tokio::signal::ctrl_c().await.ok();
+                tracing::info!("ctrl-c received, shutting down");
+            }
+        }
+    }
+    #[cfg(not(any(unix, windows)))]
     {
         tokio::signal::ctrl_c().await.ok();
         tracing::info!("ctrl-c received, shutting down");

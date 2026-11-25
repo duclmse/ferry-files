@@ -9,6 +9,7 @@ pub mod indexer;
 pub mod query;
 pub mod scheduler;
 pub mod service;
+pub mod stop;
 pub mod store;
 pub mod watch_list;
 pub mod watcher;

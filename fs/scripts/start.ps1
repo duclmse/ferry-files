@@ -7,9 +7,8 @@
 #
 # Override discovery with $env:FS_BIN / $env:FS_CONFIG, as for run.ps1. With
 # neither $env:FS_CONFIG nor a config.toml, it uses scripts\config.default.toml.
-# A background fsd can only be stopped by killing it (Stop-Process), so the
-# memory store saves index.bin only every store.snapshot_interval_secs. For a
-# clean stop, use the service or scripts\run.ps1.
+# Stop it with scripts\stop.ps1 (or `fsd --config <config> stop`), which
+# lets it save its index first.
 param(
     [int]$WaitSeconds = 30
 )

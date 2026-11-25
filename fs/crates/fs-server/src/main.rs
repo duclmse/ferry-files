@@ -26,6 +26,14 @@ enum Command {
         service: bool,
     },
 
+    /// Stop the daemon that uses this config's data folder, cleanly: it
+    /// saves its index first
+    Stop {
+        /// Seconds to wait for it to finish
+        #[arg(long, default_value = "60")]
+        wait: u64,
+    },
+
     /// Validate the configuration file
     ValidateConfig,
 
@@ -118,6 +126,26 @@ async fn main() {
             println!("  {token}");
             println!("Add under [api] in the config:");
             println!("  auth_token_hash = \"{hash}\"");
+        }
+        Command::Stop { wait } => {
+            use fs_server::stop::{stop, Outcome};
+            let outcome = config::load(&cli.config)
+                .and_then(|cfg| stop(&cfg.data_dir, std::time::Duration::from_secs(wait)));
+            match outcome {
+                Ok(Outcome::Stopped) => println!("fsd stopped"),
+                Ok(Outcome::Stopping) => {
+                    eprintln!("fsd was told to stop and is still shutting down after {wait}s");
+                    std::process::exit(2);
+                }
+                Ok(Outcome::NotRunning) => {
+                    eprintln!("fsd is not running for {}", cli.config.display());
+                    std::process::exit(3);
+                }
+                Err(e) => {
+                    eprintln!("stop: {e}");
+                    std::process::exit(1);
+                }
+            }
         }
         Command::ValidateConfig => match config::load(&cli.config) {
             Ok(cfg) => {

@@ -59,6 +59,40 @@ async fn full_crawl_indexes_all_files() {
     assert!(total >= 5, "expected ≥5 files, got {total}");
 }
 
+/// A crawl stopped by shutdown leaves the rows it did not reach, and is not
+/// recorded as finished, so the next start crawls again.
+#[tokio::test]
+async fn a_crawl_stopped_for_shutdown_removes_nothing() {
+    let dir = TempDir::new().unwrap();
+    let root = crate::config::without_verbatim(dir.path().canonicalize().unwrap()).join("r");
+    std::fs::create_dir_all(&root).unwrap();
+    std::fs::write(root.join("known.txt"), b"x").unwrap();
+    let store = make_store(&dir);
+    let crawl = |shutdown: CancellationToken| {
+        crawl_roots(
+            make_config(&root),
+            Scope::default(),
+            store.clone(),
+            make_tantivy(&dir),
+            IndexMetrics::new(),
+            Arc::new(ArchiveRegistry::disabled()),
+            shutdown,
+        )
+    };
+    crawl(CancellationToken::new()).await.unwrap();
+    let finished = store.get_meta("last_crawl_time").unwrap();
+    assert!(finished.is_some());
+
+    std::fs::write(root.join("unseen.txt"), b"x").unwrap();
+    let stopped = CancellationToken::new();
+    stopped.cancel();
+    crawl(stopped).await.unwrap();
+    let has = |p: &Path| store.get_by_path(&p.to_string_lossy()).unwrap().is_some();
+    assert!(has(&root.join("known.txt")), "not swept");
+    assert!(!has(&root.join("unseen.txt")), "not walked");
+    assert_eq!(store.get_meta("last_crawl_time").unwrap(), finished);
+}
+
 /// A kept folder (a watch path the crawled root took in) is not walked
 /// again: its rows survive the sweep as they were, in both stores.
 #[tokio::test]
