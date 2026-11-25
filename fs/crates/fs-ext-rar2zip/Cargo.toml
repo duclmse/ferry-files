@@ -45,7 +45,7 @@ bzip2       = "0.4"
 zip         = { version = "2", default-features = false, features = ["deflate"] }
 
 # Hashing
-sha2 = "0.10"
+sha2 = "0.11"
 hex  = "0.4"
 
 # HTTP (metrics + dashboard)

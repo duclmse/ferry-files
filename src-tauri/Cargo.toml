@@ -54,8 +54,8 @@ syntect = { version = "5", default-features = false, features = [
 # HTTP: Everything (plain http), WebDAV and S3 (https too, with rustls and its root certificates).
 ureq = { version = "2", default-features = false, features = ["tls"] }
 # S3's request signatures (AWS Signature Version 4).
-hmac = "0.12"
-sha2 = "0.10"
+hmac = "0.13"
+sha2 = "0.11"
 hex = "0.4"
 # Terminals: a real pseudo-terminal (ConPTY on Windows), so programs can ask for input.
 portable-pty = "0.9"

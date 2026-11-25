@@ -7,7 +7,7 @@
 use crate::device::{basename, dirname, err, Result, Transport};
 use crate::devices::connect;
 use crate::*;
-use hmac::{Hmac, Mac};
+use hmac::{Hmac, KeyInit, Mac};
 use percent_encoding::{utf8_percent_encode, AsciiSet, NON_ALPHANUMERIC};
 use sha2::{Digest, Sha256};
 use std::io::Read;

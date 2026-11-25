@@ -22,7 +22,7 @@ russh      = { version = "0.60", default-features = false, features = ["ring", "
 russh-sftp = "2"
 # Host key generation; the version russh's ssh-key uses.
 rand       = "0.10"
-sha2       = "0.10"
+sha2       = "0.11"
 hex        = "0.4"
 
 [dev-dependencies]
