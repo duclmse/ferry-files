@@ -1089,6 +1089,14 @@ td.name input.rename {
   flex: 1;
 }
 
+.pdf-bar .pdf-unread {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: 12px;
+}
+
 .preview .pdf-body {
   width: 100%;
   flex: 1 1 0;
@@ -1165,6 +1173,102 @@ td.name input.rename {
   border: none;
   transform-origin: 0 0;
   background: #fff;
+}
+
+/* Pages drawn by PDFium: a column as tall as them all, each page placed in it (and drawn only
+   near what's shown), turned in CSS. */
+.preview .pdf-stage.drawn {
+  background: var(--hover);
+}
+
+.preview .pdf-stage .pdf-wait {
+  display: block;
+  padding: 12px;
+}
+
+.preview .pdf-col {
+  position: relative;
+  margin: 0 auto;
+}
+
+.preview .pdf-leaf {
+  position: absolute;
+  overflow: hidden;
+  background: #fff;
+  box-shadow: 0 0 0 1px var(--line), 0 1px 3px rgb(0 0 0 / 0.12);
+}
+
+.preview .pdf-sheet {
+  position: absolute;
+  top: 0;
+  left: 0;
+  transform-origin: 0 0;
+}
+
+/* The page drawn roughly, whole, and over it sharp, whole or the piece in view (app/pdf.rs). */
+.preview .pdf-sheet canvas {
+  position: absolute;
+  display: block;
+  user-select: none;
+}
+
+.preview .pdf-sheet canvas.rough {
+  inset: 0;
+  width: 100%;
+  height: 100%;
+}
+
+/* Above the text, so a click on a link follows it rather than starting a selection. */
+.preview .pdf-link {
+  position: absolute;
+  cursor: pointer;
+  border-radius: 2px;
+}
+
+.preview .pdf-link:hover,
+.preview .pdf-link:focus-visible {
+  background: color-mix(in srgb, var(--accent) 14%, transparent);
+  outline: none;
+}
+
+/* The page's text over it, unseen but selectable (pdf_text_layer). The font is the one
+   run_width measures with. */
+.preview .pdf-text {
+  position: absolute;
+  inset: 0;
+  overflow: hidden;
+  line-height: 1;
+  font-family: sans-serif;
+  cursor: text;
+  -webkit-user-select: text;
+  user-select: text;
+}
+
+.preview .pdf-text span {
+  position: absolute;
+  -webkit-user-select: text;
+  user-select: text;
+  white-space: pre;
+  color: transparent;
+  transform-origin: 0 0;
+}
+
+.preview .pdf-text span::selection {
+  color: transparent;
+  background: rgb(0 100 255 / 0.3);
+}
+
+/* Pages stay white in the dark theme, so the marks are the same in both. */
+.preview .pdf-mark {
+  position: absolute;
+  background: rgb(255 200 0 / 0.38);
+  border-radius: 2px;
+  pointer-events: none;
+}
+
+.preview .pdf-mark.here {
+  background: rgb(255 140 0 / 0.55);
+  outline: 2px solid var(--accent);
 }
 
 /* An EPUB in the preview: Read and Edit at the end of the line above; the chapter's (or the

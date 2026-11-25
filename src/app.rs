@@ -35,6 +35,7 @@ mod nav;
 mod near;
 mod palette;
 mod pane;
+mod pdf;
 mod preview;
 mod reading;
 mod rows;
@@ -1546,10 +1547,10 @@ pub fn App() -> impl IntoView {
         }
         clicked.set_value(e.target().and_then(|t| t.dyn_into::<web_sys::Element>().ok()));
     });
-    // The pane whose preview is reading a book, with `el` in it.
+    // The pane whose preview is reading a book or showing a PDF, with `el` in it.
     let in_reader = |el: &web_sys::Element| {
         let preview = el.closest(".preview").ok().flatten()?;
-        preview.query_selector(".book-reader").ok().flatten()?;
+        preview.query_selector(".book-reader, .pdf-reader").ok().flatten()?;
         preview.closest("[data-pane]").ok().flatten()?.get_attribute("data-pane")?.parse::<usize>().ok()
     };
     let _keys = window_event_listener(ev::keydown, move |e| {

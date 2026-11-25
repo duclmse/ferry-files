@@ -127,7 +127,7 @@ impl Book {
     }
 
     /// The regular expression `q` asks for, if it asks for one.
-    fn regex(q: &Query) -> Result<Option<regex::Regex>> {
+    pub(crate) fn regex(q: &Query) -> Result<Option<regex::Regex>> {
         if !q.regex {
             return Ok(None);
         }

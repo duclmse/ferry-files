@@ -530,8 +530,8 @@ pub(super) fn text_selected() -> bool {
     window().get_selection().ok().flatten().is_some_and(|s| !s.is_collapsed())
 }
 
-/// When some of a text preview is selected, selects all of it (as far as it's loaded) and says so;
-/// ⌘A then picks text, not files.
+/// When some of a text preview (or a PDF's pages) is selected, selects all of it (as far as it's
+/// loaded or drawn) and says so; ⌘A then picks text, not files.
 pub(super) fn select_all_peek() -> bool {
     let Some(sel) = window().get_selection().ok().flatten() else { return false };
     if sel.is_collapsed() {
@@ -540,7 +540,7 @@ pub(super) fn select_all_peek() -> bool {
     let Some(pre) = sel
         .anchor_node()
         .and_then(|n| n.dyn_ref::<web_sys::Element>().cloned().or_else(|| n.parent_element()))
-        .and_then(|e| e.closest(".peek pre").ok().flatten())
+        .and_then(|e| e.closest(".peek pre, .pdf-col").ok().flatten())
     else {
         return false;
     };

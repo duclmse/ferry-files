@@ -407,12 +407,27 @@ pub(super) fn unmark(frame: &web_sys::HtmlIFrameElement) {
     }
 }
 
+/// What the Search tab calls what it searches: the find box's label, and the parts the matches
+/// are grouped by.
+#[derive(Clone, Copy)]
+pub(super) struct FindWords {
+    pub find: &'static str,
+    pub part: &'static str,
+    pub parts: &'static str,
+}
+
+pub(super) const BOOK_WORDS: FindWords = FindWords { find: "Find in the book", part: "chapter", parts: "chapters" };
+pub(super) const PDF_WORDS: FindWords = FindWords { find: "Find in the PDF", part: "page", parts: "pages" };
+
 /// Find, while reading, in the Search tab beside the page: the find box with its options, how
 /// many matches, and under it a tree: the chapters, each with its matches. A click on a match
 /// opens its chapter there, that match marked as the current one (`pick`, with its place among
 /// the chapter's matches; `current` is the one picked).
 /// It searches as you type (`search` waits for typing to stop); Esc calls `close`.
+/// `words` names what's searched and its parts: a book's chapters, a PDF's pages.
+#[allow(clippy::too_many_arguments)]
 pub(super) fn find_bar(
+    words: FindWords,
     q: RwSignal<Query>,
     found: RwSignal<Option<Result<Found, String>>>,
     busy: RwSignal<bool>,
@@ -455,7 +470,7 @@ pub(super) fn find_bar(
                 f.total,
                 if f.total == 1 { "match" } else { "matches" },
                 f.hits.len(),
-                if f.hits.len() == 1 { "chapter" } else { "chapters" }
+                if f.hits.len() == 1 { words.part } else { words.parts }
             ),
         })
     };
@@ -465,8 +480,8 @@ pub(super) fn find_bar(
                 <div class="filter-box find" class:bad=move || found.with(|f| matches!(f, Some(Err(_))) || matches!(f, Some(Ok(f)) if f.total == 0))
                     title=move || found.with(|f| match f { Some(Err(e)) => e.clone(), _ => String::new() })>
                     {ico(Icon::Search)}
-                    <input class="filter" node_ref=find_box type="text" spellcheck="false" aria-label="Find in the book"
-                        placeholder=move || if q.with(|x| x.regex) { "Find in the book (regex)" } else { "Find in the book" }
+                    <input class="filter" node_ref=find_box type="text" spellcheck="false" aria-label=words.find
+                        placeholder=move || if q.with(|x| x.regex) { format!("{} (regex)", words.find) } else { words.find.to_string() }
                         prop:value=move || q.with(|x| x.find.clone())
                         on:input=move |e| { q.update(|x| x.find = event_target_value(&e)); search(false); }
                         on:keydown=move |e| if e.key() == "Enter" { e.prevent_default(); search(true); }/>

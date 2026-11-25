@@ -212,6 +212,11 @@ pub fn open(path: &Path) -> Result<(), String> {
     tauri_plugin_opener::open_path(path, None::<&str>).map_err(|e| format!("Can't open {}: {e}", path.display()))
 }
 
+/// Opens a web or mail address in its default app.
+pub fn open_url(url: &str) -> Result<(), String> {
+    tauri_plugin_opener::open_url(url, None::<&str>).map_err(|e| format!("Can't open {url}: {e}"))
+}
+
 /// Shows a file in Quick Look (`qlmanage -p`) on macOS. Other systems have no such preview, so
 /// the file opens in its default app instead.
 pub fn quick_look(path: &Path) -> Result<(), String> {
@@ -900,7 +905,6 @@ mod tests {
         assert_eq!(app_path(Path::new("/a/b")), "/a/b");
     }
 
-    #[cfg(windows)]
     #[test]
     fn finds_the_file_system_holding_a_folder() {
         let mount = "/dev/disk3s1s1 on / (apfs, sealed, local, read-only, journaled)\n\
@@ -913,6 +917,7 @@ mod tests {
         assert_eq!(fs_in_mount(mount, "/Users/me").as_deref(), Some("apfs"));
     }
 
+    #[cfg(windows)]
     #[test]
     fn drives_are_top_folders() {
         assert_eq!(native("/C:/Users/me"), PathBuf::from(r"C:\Users\me"));

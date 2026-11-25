@@ -14,7 +14,8 @@ if [ ! -f "$mtp" ] || [ ! -f "$usb" ]; then
   echo "libmtp isn't installed. Install it with: brew install libmtp" >&2
   exit 1
 fi
-rm -rf "$out"
+# Only libmtp's own files: PDFium (fetch-pdfium.sh) lives in libs/pdfium.
+rm -f "$out"/libmtp.9.dylib "$out"/libusb-1.0.0.dylib "$out"/libmtp-COPYING.txt "$out"/libusb-COPYING.txt
 mkdir -p "$out"
 cp "$mtp" "$usb" "$out/"
 chmod u+w "$out"/*.dylib

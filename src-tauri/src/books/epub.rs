@@ -347,7 +347,7 @@ fn squash(s: &str) -> String {
     s.split_whitespace().collect::<Vec<_>>().join(" ")
 }
 
-fn snippet(hay: &str, (s, e): (usize, usize)) -> Snippet {
+pub(crate) fn snippet(hay: &str, (s, e): (usize, usize)) -> Snippet {
     let before: Vec<char> = hay[..s].chars().rev().take(48).collect();
     let before: String = before.into_iter().rev().collect();
     let after: String = hay[e..].chars().take(48).collect();

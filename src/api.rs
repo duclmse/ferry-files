@@ -501,6 +501,31 @@ pub struct PdfOutline {
     pub headings: Vec<Heading>,
 }
 
+/// Text along one line of a PDF page, to lay over the page drawn: `t` stretched across the box
+/// `b` (fractions of the page: left, top, width, height), then `e` ("", a space or a line end).
+#[derive(Clone, Debug, Deserialize, PartialEq)]
+pub struct PdfRun {
+    pub t: String,
+    pub b: [f64; 4],
+    pub e: String,
+}
+
+/// A link on a PDF page: its box (as `PdfRun`'s), and the page it goes to (from 1) or the web or
+/// mail address it opens.
+#[derive(Clone, Debug, Deserialize, PartialEq)]
+pub struct PdfLink {
+    pub b: [f64; 4],
+    pub page: Option<usize>,
+    pub uri: Option<String>,
+}
+
+/// What's laid over a PDF page drawn: its text and its links.
+#[derive(Clone, Debug, Default, Deserialize, PartialEq)]
+pub struct PdfLayer {
+    pub runs: Vec<PdfRun>,
+    pub links: Vec<PdfLink>,
+}
+
 #[derive(Clone, Debug, Deserialize, PartialEq)]
 pub struct Heading {
     pub title: String,

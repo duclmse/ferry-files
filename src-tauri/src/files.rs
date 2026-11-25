@@ -711,22 +711,126 @@ pub(super) async fn zip_list(state: State<'_, AppState>, src: Option<String>, pa
     blocking(move || crate::preview::archive::list(size, &mut |at, len| dev.read_range(&path, at, len).map_err(msg))).await
 }
 
-/// A PDF's page count and outline. `inner`, `zip_size`: as for `peek_text`. The PDF is read whole,
-/// up to the size the preview shows.
+/// A PDF's page count and outline. `inner`, `zip_size`: as for `peek_text`.
 #[tauri::command(rename_all = "snake_case")]
 pub(super) async fn pdf_outline(
     state: State<'_, AppState>,
     src: Option<String>,
     path: String,
     size: u64,
+    mtime: i64,
     inner: Option<String>,
     zip_size: Option<u64>,
 ) -> Result<crate::preview::pdf::Outline, String> {
-    if size > UNPACK_MAX {
-        return Err("Too big to read the outline.".into());
-    }
+    let key = src.clone().unwrap_or_else(|| "mac".into());
     let dev = state.source(src.as_deref())?;
-    blocking(move || crate::preview::pdf::outline(&read_part(&dev, &path, inner.as_deref(), zip_size, 0, size)?)).await
+    blocking(move || crate::preview::pdf::outline(&*pdf_doc(&dev, &key, &path, size, mtime, inner.as_deref(), zip_size)?)).await
+}
+
+/// A PDF opened by PDFium for the preview, kept for the next page drawn or search
+/// (`pdfium::doc`). `inner`, `zip_size`: as for `peek_text`; `mtime` is the PDF's own.
+pub(crate) fn pdf_doc(
+    dev: &Device,
+    src: &str,
+    path: &str,
+    size: u64,
+    mtime: i64,
+    inner: Option<&str>,
+    zip_size: Option<u64>,
+) -> Result<std::sync::Arc<crate::preview::pdfium::Doc>, String> {
+    if size > UNPACK_MAX {
+        return Err("Too big to show.".into());
+    }
+    let key = crate::preview::pdfium::Key { src: src.to_string(), path: path.to_string(), size, mtime, inner: inner.map(str::to_string) };
+    crate::preview::pdfium::doc(key, || read_part(dev, path, inner, zip_size, 0, size))
+}
+
+/// The matches of `query` in a PDF's text, page by page, for the preview's Search tab.
+#[tauri::command(rename_all = "snake_case")]
+#[allow(clippy::too_many_arguments)]
+pub(super) async fn pdf_find(
+    state: State<'_, AppState>,
+    src: Option<String>,
+    path: String,
+    size: u64,
+    mtime: i64,
+    inner: Option<String>,
+    zip_size: Option<u64>,
+    query: crate::books::epub::Query,
+) -> Result<crate::books::epub::Found, String> {
+    let key = src.clone().unwrap_or_else(|| "mac".into());
+    let dev = state.source(src.as_deref())?;
+    blocking(move || crate::preview::pdf::find(&*pdf_doc(&dev, &key, &path, size, mtime, inner.as_deref(), zip_size)?, &query)).await
+}
+
+/// Each page's size in points, for the preview to lay the pages out and draw them with PDFium
+/// (`ferry://…/pdfpage`). None when PDFium isn't there: the preview shows the web view's viewer.
+#[tauri::command(rename_all = "snake_case")]
+pub(super) async fn pdf_pages(
+    state: State<'_, AppState>,
+    src: Option<String>,
+    path: String,
+    size: u64,
+    mtime: i64,
+    inner: Option<String>,
+    zip_size: Option<u64>,
+) -> Result<Option<Vec<[f32; 2]>>, String> {
+    let key = src.clone().unwrap_or_else(|| "mac".into());
+    let dev = state.source(src.as_deref())?;
+    blocking(move || {
+        if crate::preview::pdfium::pdfium().is_none() {
+            return Ok(None);
+        }
+        Ok(Some(crate::preview::pdfium::sizes(&*pdf_doc(&dev, &key, &path, size, mtime, inner.as_deref(), zip_size)?)))
+    })
+    .await
+}
+
+/// Where the matches of `query` are on `page` (from 1), to mark them on the page drawn.
+#[tauri::command(rename_all = "snake_case")]
+#[allow(clippy::too_many_arguments)]
+pub(super) async fn pdf_marks(
+    state: State<'_, AppState>,
+    src: Option<String>,
+    path: String,
+    size: u64,
+    mtime: i64,
+    inner: Option<String>,
+    zip_size: Option<u64>,
+    page: usize,
+    query: crate::books::epub::Query,
+) -> Result<Vec<Vec<[f32; 4]>>, String> {
+    let key = src.clone().unwrap_or_else(|| "mac".into());
+    let dev = state.source(src.as_deref())?;
+    blocking(move || crate::preview::pdf::marks(&*pdf_doc(&dev, &key, &path, size, mtime, inner.as_deref(), zip_size)?, page, &query)).await
+}
+
+/// The text on `page` (from 1) in runs placed on the page, for the preview to lay over the page
+/// drawn, so it can be selected and copied.
+#[tauri::command(rename_all = "snake_case")]
+#[allow(clippy::too_many_arguments)]
+pub(super) async fn pdf_text(
+    state: State<'_, AppState>,
+    src: Option<String>,
+    path: String,
+    size: u64,
+    mtime: i64,
+    inner: Option<String>,
+    zip_size: Option<u64>,
+    page: usize,
+) -> Result<crate::preview::pdfium::Layer, String> {
+    let key = src.clone().unwrap_or_else(|| "mac".into());
+    let dev = state.source(src.as_deref())?;
+    blocking(move || crate::preview::pdf::layer(&*pdf_doc(&dev, &key, &path, size, mtime, inner.as_deref(), zip_size)?, page)).await
+}
+
+/// Opens a link in a PDF shown in the browser or mail app: web and mail addresses only.
+#[tauri::command(rename_all = "snake_case")]
+pub(super) async fn open_link(url: String) -> Result<(), String> {
+    if !crate::preview::pdfium::openable(&url) {
+        return Err("Only web and mail links open.".into());
+    }
+    crate::platform::open_url(&url)
 }
 
 #[derive(serde::Serialize)]

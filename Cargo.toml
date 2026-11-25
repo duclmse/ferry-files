@@ -48,6 +48,10 @@ web-sys = { version = "0.3", features = [
     "Blob",
     "BlobPropertyBag",
     "Url",
+    "HtmlCanvasElement",
+    "CanvasRenderingContext2d",
+    "ImageData",
+    "TextMetrics",
     "Response",
 ] }
 serde = { version = "1", features = ["derive"] }

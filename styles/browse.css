@@ -133,7 +133,7 @@ td.name .where {
   background: var(--bg);
   color: var(--muted);
   cursor: text;
-  transition: width .15s ease;
+  transition: width 0.15s ease;
 }
 
 .filter-box:focus-within {
@@ -189,7 +189,11 @@ td.name .where {
   border-radius: 5px;
   background: none;
   color: var(--muted);
-  font: 600 11px/1 ui-monospace, SFMono-Regular, Menlo, monospace;
+  font:
+    600 11px/1 ui-monospace,
+    SFMono-Regular,
+    Menlo,
+    monospace;
   cursor: pointer;
 }
 
@@ -325,7 +329,7 @@ td.name .where {
 }
 
 .search-filters .chevron svg {
-  transition: transform .15s ease;
+  transition: transform 0.15s ease;
 }
 
 .search-filters .chevron.open svg {
@@ -478,10 +482,18 @@ td.name .where {
 
 /* A stripe at the start of each compared item: blue only here, green newer, orange older, red
    different; the same ones fade. */
-[data-cmp="only"] { --cmp: var(--accent); }
-[data-cmp="newer"] { --cmp: var(--ok); }
-[data-cmp="older"] { --cmp: #d98a1c; }
-[data-cmp="differs"] { --cmp: var(--danger); }
+[data-cmp="only"] {
+  --cmp: var(--accent);
+}
+[data-cmp="newer"] {
+  --cmp: var(--ok);
+}
+[data-cmp="older"] {
+  --cmp: #d98a1c;
+}
+[data-cmp="differs"] {
+  --cmp: var(--danger);
+}
 
 tr[data-cmp] > td.name,
 .row[data-cmp],

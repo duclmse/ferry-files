@@ -46,7 +46,11 @@ regex = { version = "1", default-features = false, features = [
     "perf",
 ] }
 # Colours for code in the preview. Pure-Rust regexes (fancy-regex), so no C library to build.
-syntect = { version = "5", default-features = false, features = ["parsing", "default-syntaxes", "regex-fancy"] }
+syntect = { version = "5", default-features = false, features = [
+    "parsing",
+    "default-syntaxes",
+    "regex-fancy",
+] }
 # HTTP: Everything (plain http), WebDAV and S3 (https too, with rustls and its root certificates).
 ureq = { version = "2", default-features = false, features = ["tls"] }
 # S3's request signatures (AWS Signature Version 4).
@@ -56,15 +60,29 @@ hex = "0.4"
 # Terminals: a real pseudo-terminal (ConPTY on Windows), so programs can ask for input.
 portable-pty = "0.9"
 base64 = "0.22"
-lopdf = { version = "0.47.0", default-features = false }
+# PDF pages drawn for the preview.
+pdfium-render = { version = "0.9.6", default-features = false, features = [
+    "pdfium_8125",
+    "thread_safe",
+] }
 # FTP and FTPS (rustls with its root certificates, no OpenSSL).
-suppaftp = { version = "13.0.0", default-features = false, features = ["rustls-ring"] }
+suppaftp = { version = "13.0.0", default-features = false, features = [
+    "rustls-ring",
+] }
 webpki-roots = "0.26"
 # iPhone and iPad over USB: Apple's usbmuxd and AFC protocols, in pure Rust (async, on tokio).
-idevice = { version = "0.1.68", default-features = false, features = ["ring", "usbmuxd", "afc", "house_arrest", "installation_proxy"] }
+idevice = { version = "0.1.68", default-features = false, features = [
+    "ring",
+    "usbmuxd",
+    "afc",
+    "house_arrest",
+    "installation_proxy",
+] }
 tokio = { version = "1", features = ["rt", "io-util"] }
 # fsd's IPC messages (feature `fsd`).
-postcard = { version = "1", default-features = false, features = ["alloc"], optional = true }
+postcard = { version = "1", default-features = false, features = [
+    "alloc",
+], optional = true }
 plist = "1.8"
 # Run script…: Lua 5.4, built from source with the app (needs a C compiler).
 mlua = { version = "0.10", features = ["lua54", "vendored"] }
@@ -102,3 +120,7 @@ windows = { version = "0.62", features = [
     "Win32_UI_Shell",
     "Win32_UI_Shell_PropertiesSystem",
 ] }
+
+[dev-dependencies]
+# The PDF tests build their sample PDFs with it.
+lopdf = { version = "0.47.0", default-features = false }

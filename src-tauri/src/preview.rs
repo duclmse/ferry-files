@@ -5,6 +5,7 @@ pub mod archive;
 pub(crate) mod highlight;
 pub mod media;
 pub mod pdf;
+pub mod pdfium;
 pub(crate) mod player;
 pub(crate) mod stream;
 pub(crate) mod subs;

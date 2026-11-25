@@ -24,7 +24,9 @@ jobs:
 
       - name: libmtp (macOS)
         if: runner.os == 'macOS'
-        run: brew install libmtp
+        run: |
+          brew install libmtp
+          bash scripts/bundle-libmtp.sh
 
       - uses: dtolnay/rust-toolchain@stable
         with:
@@ -34,6 +36,12 @@ jobs:
 
       - name: Tools
         run: cargo install --locked trunk tauri-cli
+
+      # The PDF preview's renderer: the Linux and Windows bundles list it as a resource, which
+      # the build checks for, and the PDFium tests need it.
+      - name: PDFium
+        shell: bash
+        run: bash scripts/fetch-pdfium.sh
 
       - name: Frontend
         run: cargo build --target wasm32-unknown-unknown

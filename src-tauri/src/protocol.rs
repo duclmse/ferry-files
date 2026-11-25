@@ -8,6 +8,9 @@
 //!   GET ferry://localhost/file?src={mac|device id}&p={path}&s={size}&m={mtime}
 //!       a file itself, for the preview's image, video and audio. Honours Range, and reads only the
 //!       part asked for, so a video starts and seeks without copying the file to the Mac.
+//!   GET ferry://localhost/pdfpage?src=…&p=…&s=…&m=…&n={page from 1}&w={pixels}[&e={name}&z={zip size}]
+//!       a PDF's page drawn by PDFium, as pixels for the preview's PDF viewer to put on a canvas
+//!       (preview/pdfium.rs `render`).
 
 use crate::preview::thumbs::{self, Thumb};
 use percent_encoding::{percent_decode_str, utf8_percent_encode, AsciiSet, NON_ALPHANUMERIC};
@@ -82,6 +85,9 @@ pub fn handle(app: &AppHandle, req: Request<Vec<u8>>) -> Response<Vec<u8>> {
     }
     if path == "/cover" {
         return cover(app, req.uri().query().unwrap_or(""));
+    }
+    if path == "/pdfpage" {
+        return pdf_page(app, req.uri().query().unwrap_or(""));
     }
     if path == "/file" {
         let range = req.headers().get("range").and_then(|v| v.to_str().ok()).map(str::to_string);
@@ -232,6 +238,40 @@ fn cover(app: &AppHandle, q: &str) -> Response<Vec<u8>> {
         // Size and mtime are in the URL, so it changes when the book does.
         Ok(Some((data, mime))) => respond_with(StatusCode::OK, &mime, "max-age=86400", data),
         Ok(None) => respond(StatusCode::NOT_FOUND, "text/plain", b"No cover.".to_vec()),
+        Err(e) => respond(StatusCode::INTERNAL_SERVER_ERROR, "text/plain", e.into_bytes()),
+    }
+}
+
+/// Page `n` (from 1) of a PDF drawn by PDFium, `w` pixels wide; with `t` (left,top,width,height
+/// in those pixels), only that piece of it. With `e`, the PDF is that file packed in the ZIP at
+/// `p` (`z` bytes); `s` and `m` are then the PDF's own.
+fn pdf_page(app: &AppHandle, q: &str) -> Response<Vec<u8>> {
+    let bad = || respond(StatusCode::BAD_REQUEST, "text/plain", b"Bad page request.".to_vec());
+    let (Some(path), Some(src)) = (query_param(q, "p"), query_param(q, "src")) else { return bad() };
+    let num = |k: &str| query_param(q, k).and_then(|s| s.parse::<u64>().ok());
+    let (Some(size), Some(n), Some(w)) = (num("s"), num("n"), num("w")) else { return bad() };
+    let Some(mtime) = query_param(q, "m").and_then(|s| s.parse::<i64>().ok()) else { return bad() };
+    let (inner, zip_size) = (query_param(q, "e"), num("z"));
+    let tile = match query_param(q, "t") {
+        None => None,
+        Some(t) => {
+            let v: Vec<u32> = t.split(',').filter_map(|x| x.parse().ok()).collect();
+            let Ok(t) = <[u32; 4]>::try_from(v) else { return bad() };
+            Some(t)
+        }
+    };
+    if crate::preview::pdfium::pdfium().is_none() {
+        return respond(StatusCode::NOT_FOUND, "text/plain", b"PDFium isn't there.".to_vec());
+    }
+    let dev = match crate::state(app).source(Some(&src)) {
+        Ok(d) => d,
+        Err(e) => return respond(StatusCode::NOT_FOUND, "text/plain", e.into_bytes()),
+    };
+    let drawn = crate::files::pdf_doc(&dev, &src, &path, size, mtime, inner.as_deref(), zip_size)
+        .and_then(|doc| crate::preview::pdfium::render(&doc, (n as usize).saturating_sub(1), w.min(u32::MAX as u64) as u32, tile));
+    match drawn {
+        // Kept by the preview while shown, not by the web view: each is megabytes of pixels.
+        Ok(px) => respond(StatusCode::OK, "application/octet-stream", px),
         Err(e) => respond(StatusCode::INTERNAL_SERVER_ERROR, "text/plain", e.into_bytes()),
     }
 }

@@ -23,7 +23,11 @@ own files and disks, with tools for EPUB books in particular.
     screen the controls hide while the mouse is still;
   - text and code in colour (about 50 languages), read as you scroll;
   - hex, read by range, with go-to-offset;
-  - PDFs, with an outline, go to page, zoom, turn, Open and Show in Finder;
+  - PDFs, with an outline, search (matches marked on the page), selectable text, links that work, go to
+    page, zoom, turn, Open and Show in Finder. Everything is read and drawn by PDFium,
+    only the pages near what's shown: roughly at once, then sharp (zoomed in, only the part in
+    view). Zooming, turning and resizing keep your place;
+    without PDFium the web view's own viewer shows the PDF, with no outline or search;
   - fonts as samples;
   - EPUBs as their cover, or read a chapter at a time, with the chapters beside the page
     and a bigger or smaller text. Only the chapter shown (and its pictures) is read from
@@ -130,6 +134,12 @@ cd src-tauri && cargo test --lib   # backend tests
 On macOS the build runs `scripts/bundle-libmtp.sh`, which bundles Homebrew's
 libmtp and libusb (LGPL-2.1), so the build machine needs `brew install libmtp`.
 
+`scripts/fetch-pdfium.sh` downloads a prebuilt PDFium (BSD-3-Clause, from
+bblanchon/pdfium-binaries, chromium/8125 to match `pdfium-render`'s bindings) into
+`src-tauri/libs/pdfium`, where development builds find it and the bundles take it
+from. The macOS bundle runs it; on Linux and Windows run it once before building,
+as the bundle lists the library as a resource and the build checks it's there.
+
 Searches through fsd are the `fsd` cargo feature. `cargo tauri dev` and `cargo tauri build`
 turn it on (`build.features` in `tauri.conf.json`); plain `cargo build` and `cargo test --lib`
 leave it off, so add `--features fsd` there. CI builds the app without them (overriding
@@ -162,7 +172,7 @@ cargo run --example epub_smoke [-- adb|mtp]
     `everything.rs`, and `secrets.rs` (passwords in the keychain).
   - `books/`: EPUB: `epub.rs` and `epub/`, `xml.rs`, `batch.rs` and `library.rs` (many books
     at once), `editor.rs` (the editor's commands).
-  - `preview/`: `archive.rs` (ZIPs), `pdf.rs`, `media.rs`, `thumbs.rs`, `highlight.rs`,
+  - `preview/`: `archive.rs` (ZIPs), `pdf.rs` and `pdfium.rs` (pages drawn, text found), `media.rs`, `thumbs.rs`, `highlight.rs`,
     `subs.rs`, `stream.rs` and `player.rs`.
   - File work: `files.rs`, `transfer.rs`, `dupes.rs`, `import.rs`, `safety.rs`, `scripts.rs`,
     `terminal.rs`. `fsd.rs` answers searches of the computer from fsd's index.
