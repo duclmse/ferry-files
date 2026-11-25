@@ -1,7 +1,7 @@
 use std::path::PathBuf;
 use std::time::{Duration, SystemTime};
 
-use notify::{EventKind, Watcher};
+use notify::EventKind;
 use notify_debouncer_full::{new_debouncer, DebounceEventResult};
 use tokio::sync::{mpsc, RwLock};
 use tokio_util::sync::CancellationToken;
@@ -138,7 +138,6 @@ pub async fn run_watcher(
     {
         let cfg = config.read().await;
         debouncer
-            .watcher()
             .watch(&cfg.watch_folder, notify::RecursiveMode::Recursive)
             .map_err(|e| AppError::Config(format!("watch folder: {e}")))?;
         tracing::info!("watching folder: {}", cfg.watch_folder.display());

@@ -5,7 +5,7 @@ use std::collections::HashMap;
 use std::path::PathBuf;
 use std::time::Duration;
 
-use notify::{EventKind, Watcher};
+use notify::EventKind;
 use notify_debouncer_full::{new_debouncer, DebounceEventResult};
 use tokio::sync::mpsc;
 use tokio::sync::{watch, RwLock};
@@ -226,7 +226,6 @@ async fn run_notify(
 
     for path in roots {
         debouncer
-            .watcher()
             .watch(path, notify::RecursiveMode::Recursive)
             .map_err(|e| AppError::Index(format!("watch {}: {e}", path.display())))?;
     }

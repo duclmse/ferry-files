@@ -337,33 +337,21 @@ fn deleted_event(path: PathBuf, formats: &[String]) -> IndexEvent {
 #[cfg(target_os = "macos")]
 mod fsevents {
     use std::collections::HashMap;
-    use std::ffi::{c_char, c_void, CStr, CString};
+    use std::ffi::{c_char, c_void, CStr};
     use std::os::unix::ffi::OsStrExt;
     use std::os::unix::fs::MetadataExt;
     use std::path::{Path, PathBuf};
+    use std::ptr::NonNull;
     use std::time::{Duration, Instant};
 
-    use fse::core_foundation as cf;
-    use fsevent_sys as fse;
+    use objc2_core_foundation::{CFMutableArray, CFRunLoop, CFString, CFUUID};
+    use objc2_core_services as fse;
 
     use super::Position;
 
     /// Upper bound on one history replay; FSEvents normally delivers weeks of
     /// history in seconds.
     const REPLAY_TIMEOUT: Duration = Duration::from_secs(120);
-
-    #[link(name = "CoreServices", kind = "framework")]
-    extern "C" {
-        // Missing from fsevent-sys. Returns NULL for volumes without an
-        // FSEvents store (e.g. network shares), which cannot be replayed.
-        fn FSEventsCopyUUIDForDevice(dev: i32) -> cf::CFRef;
-    }
-
-    #[link(name = "CoreFoundation", kind = "framework")]
-    extern "C" {
-        fn CFUUIDCreateString(alloc: cf::CFRef, uuid: cf::CFRef) -> cf::CFStringRef;
-        fn CFRunLoopRunInMode(mode: cf::CFStringRef, seconds: f64, return_after_source: u8) -> i32;
-    }
 
     pub(super) fn current_position(roots: &[PathBuf]) -> Option<Position> {
         // Read the event id first: an event racing with the UUID lookups is
@@ -373,7 +361,7 @@ mod fsevents {
         let mut out = Vec::with_capacity(roots.len());
         for root in roots {
             let dev = std::fs::metadata(root).ok()?.dev();
-            out.push((root.to_str()?.to_owned(), volume_uuid(dev as i32)?));
+            out.push((root.to_str()?.to_owned(), volume_uuid(dev as _)?));
         }
         Some(Position {
             event_id,
@@ -382,29 +370,12 @@ mod fsevents {
         })
     }
 
+    /// None for volumes without an FSEvents store (e.g. network shares),
+    /// which cannot be replayed.
     fn volume_uuid(dev: i32) -> Option<String> {
-        // SAFETY: both calls follow the CF Create/Copy rule; every non-null
-        // object returned is released below.
-        unsafe {
-            let uuid = FSEventsCopyUUIDForDevice(dev);
-            if uuid.is_null() {
-                return None;
-            }
-            let s = CFUUIDCreateString(cf::kCFAllocatorDefault, uuid);
-            cf::CFRelease(uuid);
-            if s.is_null() {
-                return None;
-            }
-            let mut buf = [0 as c_char; 64];
-            let ok = cf::CFStringGetCString(
-                s,
-                buf.as_mut_ptr(),
-                buf.len() as cf::CFIndex,
-                cf::kCFStringEncodingUTF8,
-            );
-            cf::CFRelease(s);
-            ok.then(|| CStr::from_ptr(buf.as_ptr()).to_string_lossy().into_owned())
-        }
+        // SAFETY: takes a device number and returns a retained object or null.
+        let uuid = unsafe { fse::FSEventsCopyUUIDForDevice(dev) }?;
+        Some(CFUUID::new_string(None, Some(&uuid))?.to_string())
     }
 
     struct Collector {
@@ -435,21 +406,23 @@ mod fsevents {
         }
     }
 
-    extern "C" fn callback(
-        _stream: fse::FSEventStreamRef,
+    unsafe extern "C-unwind" fn callback(
+        _stream: fse::ConstFSEventStreamRef,
         info: *mut c_void,
         count: usize,
-        paths: *mut c_void,
-        flags: *const fse::FSEventStreamEventFlags,
-        _ids: *const fse::FSEventStreamEventId,
+        paths: NonNull<c_void>,
+        flags: NonNull<fse::FSEventStreamEventFlags>,
+        _ids: NonNull<fse::FSEventStreamEventId>,
     ) {
         // SAFETY: `info` is the `Collector` passed in the stream context and
         // outlives the stream; without kFSEventStreamCreateFlagUseCFTypes
         // `paths` is an array of `count` C strings and `flags` has `count`
-        // entries, all valid for the duration of the callback.
+        // entries, all valid for the duration of the callback. `add` does
+        // not panic, so nothing unwinds into CoreServices.
         unsafe {
             let col = &mut *info.cast::<Collector>();
-            let paths = paths.cast::<*const c_char>();
+            let paths = paths.cast::<*const c_char>().as_ptr();
+            let flags = flags.as_ptr();
             for i in 0..count {
                 let f = *flags.add(i);
                 if f & fse::kFSEventStreamEventFlagHistoryDone != 0 {
@@ -473,58 +446,54 @@ mod fsevents {
             changed: HashMap::new(),
             done: false,
         };
-        let ctx = fse::FSEventStreamContext {
+        let paths = CFMutableArray::<CFString>::empty();
+        for root in roots {
+            let root = root
+                .to_str()
+                .ok_or_else(|| format!("not UTF-8: {}", root.display()))?;
+            paths.append(&CFString::from_str(root));
+        }
+        let mut ctx = fse::FSEventStreamContext {
             version: 0,
             info: (&raw mut col).cast(),
             retain: None,
             release: None,
-            copy_description: None,
+            copyDescription: None,
         };
+        let run_loop = CFRunLoop::current().ok_or("no run loop on this thread")?;
         let deadline = Instant::now() + REPLAY_TIMEOUT;
 
         // SAFETY: standard FSEvents lifecycle on this thread's run loop. The
         // stream is stopped, invalidated and released before `col` and `ctx`
         // go out of scope, so the callback never sees a dangling pointer;
-        // the path array and its strings are released after stream creation
-        // (the stream keeps its own copy).
+        // the stream keeps its own copy of the path array.
+        #[allow(deprecated)] // the dispatch queue API needs a queue; a run loop is simpler here
         unsafe {
-            let array =
-                cf::CFArrayCreateMutable(cf::kCFAllocatorDefault, 0, &cf::kCFTypeArrayCallBacks);
-            for root in roots {
-                let c = CString::new(root.as_os_str().as_bytes()).map_err(|e| e.to_string())?;
-                let s = cf::CFStringCreateWithCString(
-                    cf::kCFAllocatorDefault,
-                    c.as_ptr(),
-                    cf::kCFStringEncodingUTF8,
-                );
-                cf::CFArrayAppendValue(array, s);
-                cf::CFRelease(s);
-            }
+            let mode = objc2_core_foundation::kCFRunLoopDefaultMode;
             let stream = fse::FSEventStreamCreate(
-                cf::kCFAllocatorDefault,
-                callback,
-                &ctx,
-                array,
+                None,
+                Some(callback),
+                &raw mut ctx,
+                paths.as_opaque(),
                 since,
                 0.0,
                 fse::kFSEventStreamCreateFlagFileEvents | fse::kFSEventStreamCreateFlagNoDefer,
             );
-            cf::CFRelease(array);
             if stream.is_null() {
                 return Err("FSEventStreamCreate failed".into());
             }
-            fse::FSEventStreamScheduleWithRunLoop(
-                stream,
-                cf::CFRunLoopGetCurrent(),
-                cf::kCFRunLoopDefaultMode,
-            );
-            if fse::FSEventStreamStart(stream) == 0 {
+            let Some(mode) = mode else {
+                fse::FSEventStreamRelease(stream);
+                return Err("no default run loop mode".into());
+            };
+            fse::FSEventStreamScheduleWithRunLoop(stream, &run_loop, mode);
+            if !fse::FSEventStreamStart(stream) {
                 fse::FSEventStreamInvalidate(stream);
                 fse::FSEventStreamRelease(stream);
                 return Err("FSEventStreamStart failed".into());
             }
             while !col.done && Instant::now() < deadline {
-                CFRunLoopRunInMode(cf::kCFRunLoopDefaultMode, 0.25, 0);
+                CFRunLoop::run_in_mode(Some(mode), 0.25, false);
             }
             fse::FSEventStreamStop(stream);
             fse::FSEventStreamInvalidate(stream);

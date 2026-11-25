@@ -33,8 +33,8 @@ russh      = { version = "0.60", default-features = false, features = ["ring", "
 russh-sftp = "2"
 
 # Filesystem watching
-notify                = "6"
-notify-debouncer-full = "0.3"
+notify                = "9"
+notify-debouncer-full = "0.8"
 
 # Archive formats
 unrar       = "0.5"
