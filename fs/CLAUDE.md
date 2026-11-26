@@ -82,6 +82,7 @@ crates/
   fs-server/src/
     main.rs       daemon and offline commands (binary `fsd`)
     daemon.rs     startup orchestration, graceful shutdown
+    daemon/       background loops, watch path following, polled roots, crawl spawner
     service.rs    install-service: Windows SCM, systemd, launchd
     config.rs     TOML config, read once at startup
     config_edit.rs  config get / set / reload for the APIs; edits the file
@@ -187,7 +188,7 @@ disk. The commit loop in `daemon.rs` runs every `commit_interval_secs`.
   `ConfigEditor` (`config_edit.rs`), which writes the file and swaps the
   shared config; a setting read only at startup goes in its `AT_STARTUP`
   list. Extensions get `HostMessage::Reload` when their section changes.
-- `follow_watch_paths` in `daemon.rs` follows changed watch paths: it
+- `follow_watch_paths` in `daemon/watch_paths.rs` follows changed watch paths: it
   restarts the watcher and crawls only the added roots (`crawl_roots`).
   A removed root stops being watched; its rows stay unless it was removed
   with `forget` (`forget_roots`). No watch paths means no watcher.
@@ -198,7 +199,7 @@ disk. The commit loop in `daemon.rs` runs every `commit_interval_secs`.
 - `[[watch]]` tables (`config::RootConfig`) join `watch_paths` in `load`,
   so code that walks the roots sees them; look settings up with
   `Config::root_config` / `content_under` / `polled`. Polled roots get no
-  watcher; `daemon::Polls` scans them.
+  watcher; `daemon::polls::Polls` scans them.
 - Change-log positions are per watch path (`journal::root_key`); an older
   fsd's shared `journal_position` is split once (`split_shared`).
 - Extension executables must keep stdout for the protocol and log to stderr.
