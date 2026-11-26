@@ -64,7 +64,7 @@ impl Ctx {
                 danger: false,
                 enabled: !p.entries.with_untracked(Vec::is_empty) && self.renamable(p),
             });
-            v.push(self.script_menu());
+            v.extend(self.script_menus());
             v.extend([MenuItem::Sep, self.sort_menu(p), self.group_menu(p)]);
             v.extend([
                 MenuItem::Sep,
@@ -193,7 +193,7 @@ impl Ctx {
                 danger: false,
                 enabled: renamable,
             });
-            v.push(self.script_menu());
+            v.extend(self.script_menus());
             v.push(MenuItem::Sep);
             v.extend(self.delete_items(p, &format!("{picked} items"), false));
             return v;
@@ -297,12 +297,9 @@ impl Ctx {
         if !device {
             v.push(item(crate::os::properties(), "", Act::Properties));
         }
-        v.extend([
-            MenuItem::Sep,
-            self.script_menu(),
-            item("Refresh", "", Act::Refresh),
-            MenuItem::Sep,
-        ]);
+        v.push(MenuItem::Sep);
+        v.extend(self.script_menus());
+        v.extend([item("Refresh", "", Act::Refresh), MenuItem::Sep]);
         v.extend(self.delete_items(p, "", e.dir));
         v
     }
@@ -367,28 +364,37 @@ impl Ctx {
         }
     }
 
-    /// Run script ▸: the scripts (Settings > Scripts), then a way to add some.
-    pub(super) fn script_menu(self) -> MenuItem {
+    /// Run script ▸: the scripts (Settings > Scripts), then a way to add some; and Try script ▸,
+    /// the same scripts run without changing anything.
+    pub(super) fn script_menus(self) -> Vec<MenuItem> {
         // A tab before its shortcut puts the shortcut where the menu shows them.
-        let mut items: Vec<MenuItem> = self.scripts.with_untracked(|v| {
-            v.iter()
-                .enumerate()
-                .map(|(i, s)| {
-                    let key = untrack(|| self.script_key_label(&s.path));
-                    item(
-                        if key.is_empty() {
-                            s.name.clone()
+        let list = |act: fn(usize) -> Act, keys: bool| -> Vec<MenuItem> {
+            self.scripts.with_untracked(|v| {
+                v.iter()
+                    .enumerate()
+                    .map(|(i, s)| {
+                        let key = if keys {
+                            untrack(|| self.script_key_label(&s.path))
                         } else {
-                            format!("{}\t{key}", s.name)
-                        },
-                        "",
-                        Act::Script(i),
-                    )
-                })
-                .collect()
-        });
-        if items.is_empty() {
-            items.push(MenuItem::Do {
+                            String::new()
+                        };
+                        item(
+                            if key.is_empty() {
+                                s.name.clone()
+                            } else {
+                                format!("{}\t{key}", s.name)
+                            },
+                            "",
+                            act(i),
+                        )
+                    })
+                    .collect()
+            })
+        };
+        let mut run = list(Act::Script, true);
+        let tries = list(Act::TryScript, false);
+        if run.is_empty() {
+            run.push(MenuItem::Do {
                 label: "No scripts yet".into(),
                 key: "",
                 act: Act::ScriptSettings,
@@ -396,13 +402,20 @@ impl Ctx {
                 enabled: false,
             });
         }
-        items.extend([MenuItem::Sep, item("Scripts…", "", Act::ScriptSettings)]);
+        run.extend([MenuItem::Sep, item("Scripts…", "", Act::ScriptSettings)]);
         // Found again for the next time, in case the scripts folder changed.
         self.load_scripts();
-        MenuItem::Sub {
+        let mut v = vec![MenuItem::Sub {
             label: "Run script".into(),
-            items,
+            items: run,
+        }];
+        if !tries.is_empty() {
+            v.push(MenuItem::Sub {
+                label: "Try script".into(),
+                items: tries,
+            });
         }
+        v
     }
 
     /// Delete: to the Trash on the computer (Delete permanently is only a shortcut, ⌥⌘⌫).

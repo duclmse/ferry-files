@@ -320,7 +320,7 @@ pub fn App() -> impl IntoView {
             if let Some(s) = chord.as_deref().and_then(|c| ctx.script_for(c)) {
                 e.prevent_default();
                 let items = p.picked().into_iter().map(|x| x.path).collect();
-                ctx.run_script(p, s, items);
+                ctx.run_script(p, s, items, false);
                 return;
             }
         }
@@ -586,6 +586,14 @@ pub fn App() -> impl IntoView {
         }
     });
 
+    crate::api::listen("script", move |s: crate::api::ScriptProgress| {
+        ctx.script_live.update(|(lines, changed)| {
+            lines.extend(s.lines);
+            let over = lines.len().saturating_sub(super::scripts::LIVE_MAX);
+            lines.drain(..over);
+            *changed = s.changed;
+        })
+    });
     crate::api::listen("dupes", move |d: DupeProgress| {
         ctx.dupe_progress.set(Some((d.job, d.text)))
     });

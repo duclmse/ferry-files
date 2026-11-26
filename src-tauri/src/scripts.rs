@@ -214,16 +214,31 @@ pub(super) struct ScriptReport {
     changed: u32,
 }
 
+/// What a script printed since the last of these, and how much it has changed so far: sent as
+/// the "script" event while it runs.
+#[derive(Serialize, Clone)]
+pub(super) struct ScriptProgress {
+    lines: Vec<String>,
+    changed: u32,
+}
+
+/// How often a running script's new lines are sent.
+const TICK: std::time::Duration = std::time::Duration::from_millis(250);
+
 /// Runs the script at `script` (an app path of a .lua file on this computer) on `items` (paths on
-/// `src`) in folder `dir`.
+/// `src`) in folder `dir`. With `trial`, nothing is changed: each change it would make is a line
+/// of its output instead. What it prints comes as "script" events while it runs.
 #[tauri::command(rename_all = "snake_case")]
 pub(super) async fn run_script(
+    app: AppHandle,
     state: State<'_, AppState>,
     src: String,
     dir: String,
     items: Vec<String>,
     script: String,
+    trial: Option<bool>,
 ) -> Result<ScriptReport, String> {
+    use tauri::Emitter;
     let dev = state.source(Some(&src))?;
     blocking(move || {
         let path = crate::platform::native(&script);
@@ -240,7 +255,19 @@ pub(super) async fn run_script(
             return Err("A script is already running. Stop it first.".into());
         }
         STOP.store(false, Ordering::SeqCst);
-        let r = run(dev, &dir, &items, &name, &code, &STOP);
+        let tick = move |p: ScriptProgress| {
+            let _ = app.emit("script", p);
+        };
+        let r = run(
+            dev,
+            &dir,
+            &items,
+            &name,
+            &code,
+            &STOP,
+            trial.unwrap_or(false),
+            &tick,
+        );
         RUNNING.store(false, Ordering::SeqCst);
         Ok(r)
     })
@@ -253,7 +280,35 @@ pub(super) fn stop_script() {
     STOP.store(true, Ordering::SeqCst);
 }
 
-/// Runs `code` with `ferry` set up for `dev`, until it ends or `stop` is set.
+/// What a script prints: the last OUTPUT_MAX lines, and how many it has printed in all.
+#[derive(Default)]
+struct Out {
+    lines: Mutex<std::collections::VecDeque<String>>,
+    printed: std::sync::atomic::AtomicU64,
+}
+
+impl Out {
+    fn push(&self, line: String) {
+        let mut o = self.lines.lock().unwrap_or_else(|e| e.into_inner());
+        o.push_back(line);
+        if o.len() > OUTPUT_MAX {
+            o.pop_front();
+        }
+        self.printed.fetch_add(1, Ordering::Relaxed);
+    }
+
+    /// The lines printed after the first `seen`, of those still kept.
+    fn since(&self, seen: u64) -> (Vec<String>, u64) {
+        let o = self.lines.lock().unwrap_or_else(|e| e.into_inner());
+        let printed = self.printed.load(Ordering::Relaxed);
+        let new = ((printed - seen) as usize).min(o.len());
+        (o.iter().skip(o.len() - new).cloned().collect(), printed)
+    }
+}
+
+/// Runs `code` with `ferry` set up for `dev`, until it ends or `stop` is set; with `trial`,
+/// without changing anything. `tick` gets what it prints as it goes, every TICK.
+#[allow(clippy::too_many_arguments)]
 fn run(
     dev: Arc<Device>,
     dir: &str,
@@ -261,10 +316,54 @@ fn run(
     name: &str,
     code: &str,
     stop: &'static AtomicBool,
+    trial: bool,
+    tick: &(dyn Fn(ScriptProgress) + Sync),
 ) -> ScriptReport {
-    let output = Arc::new(Mutex::new(Vec::<String>::new()));
+    let output = Arc::new(Out::default());
     let changed = Arc::new(std::sync::atomic::AtomicU32::new(0));
-    let result = (|| -> mlua::Result<()> {
+    let done = AtomicBool::new(false);
+    let result = std::thread::scope(|s| {
+        s.spawn(|| {
+            let (mut seen, mut was) = (0, 0);
+            while !done.load(Ordering::Relaxed) {
+                // In short sleeps, so a script that ends quickly isn't kept waiting.
+                let start = std::time::Instant::now();
+                while start.elapsed() < TICK && !done.load(Ordering::Relaxed) {
+                    std::thread::sleep(std::time::Duration::from_millis(20));
+                }
+                let (lines, printed) = output.since(seen);
+                let n = changed.load(Ordering::Relaxed);
+                if printed != seen || n != was {
+                    (seen, was) = (printed, n);
+                    tick(ScriptProgress { lines, changed: n });
+                }
+            }
+        });
+        let r = lua_run(dev, dir, items, name, code, stop, trial, &output, &changed);
+        done.store(true, Ordering::Relaxed);
+        r
+    });
+    let output = std::mem::take(&mut *output.lines.lock().unwrap_or_else(|e| e.into_inner()));
+    ScriptReport {
+        output: output.into(),
+        error: result.err().map(|e| plain_error(&e)),
+        changed: changed.load(Ordering::Relaxed),
+    }
+}
+
+#[allow(clippy::too_many_arguments)]
+fn lua_run(
+    dev: Arc<Device>,
+    dir: &str,
+    items: &[String],
+    name: &str,
+    code: &str,
+    stop: &'static AtomicBool,
+    trial: bool,
+    output: &Arc<Out>,
+    changed: &Changed,
+) -> mlua::Result<()> {
+    {
         let libs = StdLib::STRING | StdLib::TABLE | StdLib::MATH | StdLib::UTF8 | StdLib::COROUTINE;
         let lua = Lua::new_with(libs, LuaOptions::default())?;
         lua.set_memory_limit(MEMORY)?;
@@ -278,30 +377,203 @@ fn run(
                 }
             },
         )?;
-        let ferry = api(&lua, dev, dir, items, &changed, stop)?;
+        let pretend = trial.then(|| {
+            Arc::new(Pretend {
+                dev: dev.clone(),
+                dir: dir.to_string(),
+                t: Mutex::default(),
+                out: output.clone(),
+                changed: changed.clone(),
+            })
+        });
+        let ferry = api(&lua, dev, dir, items, changed, stop, pretend)?;
         let g = lua.globals();
         g.set("ferry", ferry)?;
         let out = output.clone();
         g.set(
             "print",
             lua.create_function(move |_, args: mlua::Variadic<Value>| {
-                let line = args.iter().map(show).collect::<Vec<_>>().join("\t");
-                let mut o = out.lock().unwrap_or_else(|e| e.into_inner());
-                o.push(line);
-                if o.len() > OUTPUT_MAX {
-                    o.remove(0);
-                }
+                out.push(args.iter().map(show).collect::<Vec<_>>().join("\t"));
                 Ok(())
             })?,
         )?;
         // "@": named as a file, so errors say "name.lua:3:".
         lua.load(code).set_name(format!("@{name}.lua")).exec()
-    })();
-    let output = std::mem::take(&mut *output.lock().unwrap_or_else(|e| e.into_inner()));
-    ScriptReport {
-        output,
-        error: result.err().map(|e| plain_error(&e)),
-        changed: changed.load(Ordering::Relaxed),
+    }
+}
+
+/// A change a script asks for in a trial, where it's only told.
+enum Would {
+    Write(String),
+    Create(String),
+    Append(String),
+    Mkdir(String, bool),
+    Copy(String, String),
+    Move(String, String),
+    Rename(String, String),
+    Remove(String, bool),
+}
+
+/// A trial's changes, none of them made: what would be at a path (true: a folder), and what
+/// would be gone.
+#[derive(Default)]
+struct Trial {
+    made: HashMap<String, bool>,
+    gone: HashSet<String>,
+}
+
+/// What a trial run tells instead of changing anything.
+struct Pretend {
+    dev: Arc<Device>,
+    /// The pane's folder: paths in it are told from there.
+    dir: String,
+    t: Mutex<Trial>,
+    out: Arc<Out>,
+    changed: Changed,
+}
+
+/// Whether `path` is `base` or inside it.
+fn within(path: &str, base: &str) -> bool {
+    path == base || path.starts_with(&format!("{}/", base.trim_end_matches('/')))
+}
+
+impl Pretend {
+    /// What would be at `path` after the trial's changes so far: None, or whether a folder.
+    fn there(&self, t: &Trial, path: &str) -> Result<Option<bool>, String> {
+        if let Some(&dir) = t.made.get(path) {
+            return Ok(Some(dir));
+        }
+        if t.gone.iter().any(|g| within(path, g)) {
+            return Ok(None);
+        }
+        Ok(self
+            .dev
+            .stat(path)
+            .map_err(|e| e.to_string())?
+            .map(|e| e.dir))
+    }
+
+    /// `path` as the output shows it: from the pane's folder when it's in it.
+    fn shown<'a>(&self, path: &'a str) -> &'a str {
+        let base = format!("{}/", self.dir.trim_end_matches('/'));
+        path.strip_prefix(&base).unwrap_or(path)
+    }
+
+    fn take(t: &mut Trial, path: &str) {
+        t.made.retain(|m, _| !within(m, path));
+        t.gone.insert(path.to_string());
+    }
+
+    /// Checks `w` as the real change would, then tells it in the output instead of making it.
+    fn act(&self, w: Would) -> mlua::Result<()> {
+        let mut t = self.t.lock().unwrap_or_else(|e| e.into_inner());
+        let line = self.check(&mut t, w).map_err(fail)?;
+        if let Some(line) = line {
+            self.out.push(line);
+            self.changed.fetch_add(1, Ordering::Relaxed);
+        }
+        Ok(())
+    }
+
+    fn check(&self, t: &mut Trial, w: Would) -> Result<Option<String>, String> {
+        let missing = |p: &str| format!("No such file or folder: {p}");
+        Ok(Some(match w {
+            Would::Write(p) => {
+                let was = self.there(t, &p)?;
+                if was == Some(true) {
+                    return Err(format!("{p} is a folder."));
+                }
+                t.made.insert(p.clone(), false);
+                let verb = if was.is_some() { "replace" } else { "write" };
+                format!("Would {verb} {}", self.shown(&p))
+            }
+            Would::Create(p) => {
+                if self.there(t, &p)?.is_some() {
+                    return Err(format!("{p} is already there. Not replaced."));
+                }
+                t.made.insert(p.clone(), false);
+                format!("Would make {}", self.shown(&p))
+            }
+            Would::Append(p) => {
+                if self.there(t, &p)? == Some(true) {
+                    return Err(format!("{p} is a folder."));
+                }
+                t.made.insert(p.clone(), false);
+                format!("Would add to {}", self.shown(&p))
+            }
+            Would::Mkdir(p, parents) => {
+                match self.there(t, &p)? {
+                    Some(true) if parents => return Ok(None),
+                    Some(_) => return Err(format!("{p} is already there.")),
+                    None => {}
+                }
+                let mut up = device::dirname(&p);
+                if !parents && up != p && self.there(t, &up)?.is_none() {
+                    return Err(format!("The folder {up} isn't there."));
+                }
+                while parents && up != p && self.there(t, &up)?.is_none() {
+                    t.made.insert(up.clone(), true);
+                    let next = device::dirname(&up);
+                    if next == up {
+                        break;
+                    }
+                    up = next;
+                }
+                t.made.insert(p.clone(), true);
+                format!("Would make folder {}", self.shown(&p))
+            }
+            Would::Copy(a, b) => {
+                let dir = self.there(t, &a)?.ok_or_else(|| missing(&a))?;
+                match self.there(t, &b)? {
+                    Some(false) if dir => {
+                        return Err(format!(
+                            "A file is already at {b}, where the folder would go."
+                        ))
+                    }
+                    Some(_) if !dir => return Err(format!("{b} is already there. Not replaced.")),
+                    _ => {}
+                }
+                t.made.insert(b.clone(), dir);
+                format!("Would copy {} to {}", self.shown(&a), self.shown(&b))
+            }
+            Would::Move(a, b) => {
+                if self.there(t, &b)?.is_some() {
+                    return Err(format!("{b} is already there. Nothing was moved."));
+                }
+                let dir = self.there(t, &a)?.ok_or_else(|| missing(&a))?;
+                Self::take(t, &a);
+                t.made.insert(b.clone(), dir);
+                format!("Would move {} to {}", self.shown(&a), self.shown(&b))
+            }
+            Would::Rename(p, to) => {
+                let dir = self.there(t, &p)?.ok_or_else(|| missing(&p))?;
+                if self.there(t, &to)?.is_some() {
+                    return Err(format!("{to} is already there."));
+                }
+                Self::take(t, &p);
+                t.made.insert(to.clone(), dir);
+                format!(
+                    "Would rename {} to {}",
+                    self.shown(&p),
+                    device::basename(&to)
+                )
+            }
+            Would::Remove(p, all) => {
+                let dir = self.there(t, &p)?.ok_or_else(|| missing(&p))?;
+                let full = dir
+                    && !t.made.contains_key(&p)
+                    && !self.dev.listdir(&p).map_err(|e| e.to_string())?.is_empty();
+                if full && !all {
+                    return Err(format!("{p} isn't empty."));
+                }
+                Self::take(t, &p);
+                if full {
+                    format!("Would delete {} and everything in it", self.shown(&p))
+                } else {
+                    format!("Would delete {}", self.shown(&p))
+                }
+            }
+        }))
     }
 }
 
@@ -504,6 +776,7 @@ fn api(
     items: &[String],
     changed: &Changed,
     stop: &'static AtomicBool,
+    pretend: Option<Arc<Pretend>>,
 ) -> mlua::Result<Table> {
     let t = lua.create_table()?;
     t.set("dir", dir)?;
@@ -512,6 +785,7 @@ fn api(
         lua.create_sequence_from(items.iter().map(String::as_str))?,
     )?;
     t.set("device", dev.label())?;
+    t.set("trial", pretend.is_some())?;
     let d = dev.clone();
     t.set(
         "list",
@@ -524,10 +798,17 @@ fn api(
             )
         })?,
     )?;
-    let d = dev.clone();
+    let (d, pt) = (dev.clone(), pretend.clone());
     t.set(
         "stat",
         func(lua, move |lua, path: String| {
+            if let Some(p) = &pt {
+                // Gone in the trial; one it made has no entry to give.
+                let t = p.t.lock().unwrap_or_else(|e| e.into_inner());
+                if p.there(&t, &path).map_err(fail)?.is_none() {
+                    return Ok(Value::Nil);
+                }
+            }
             match d.stat(&path).map_err(fail)? {
                 Some(e) => Ok(Value::Table(entry(lua, &e)?)),
                 None => Ok(Value::Nil),
@@ -555,10 +836,13 @@ fn api(
             lua.create_string(&data)
         })?,
     )?;
-    let (d, c) = (dev.clone(), changed.clone());
+    let (d, c, pt) = (dev.clone(), changed.clone(), pretend.clone());
     t.set(
         "write",
         func(lua, move |_, (path, data): (String, mlua::LuaString)| {
+            if let Some(p) = &pt {
+                return p.act(Would::Write(path));
+            }
             d.write(&path, &data.as_bytes(), None, false)
                 .map_err(fail)?;
             c.fetch_add(1, Ordering::Relaxed);
@@ -613,19 +897,26 @@ fn api(
     })?;
     t.set("colour", colour.clone())?;
     t.set("color", colour)?;
-    let d = dev.clone();
+    let (d, pt) = (dev.clone(), pretend.clone());
     t.set(
         "exists",
         func(lua, move |_, path: String| {
+            if let Some(p) = &pt {
+                let t = p.t.lock().unwrap_or_else(|e| e.into_inner());
+                return Ok(p.there(&t, &path).map_err(fail)?.is_some());
+            }
             Ok(d.stat(&path).map_err(fail)?.is_some())
         })?,
     )?;
-    let (d, c) = (dev.clone(), changed.clone());
+    let (d, c, pt) = (dev.clone(), changed.clone(), pretend.clone());
     t.set(
         "create",
         func(
             lua,
             move |_, (path, data): (String, Option<mlua::LuaString>)| {
+                if let Some(p) = &pt {
+                    return p.act(Would::Create(path));
+                }
                 let bytes = data.map(|s| s.as_bytes().to_vec()).unwrap_or_default();
                 d.write(&path, &bytes, None, true).map_err(fail)?;
                 c.fetch_add(1, Ordering::Relaxed);
@@ -633,10 +924,13 @@ fn api(
             },
         )?,
     )?;
-    let (d, c) = (dev.clone(), changed.clone());
+    let (d, c, pt) = (dev.clone(), changed.clone(), pretend.clone());
     t.set(
         "append",
         func(lua, move |_, (path, data): (String, mlua::LuaString)| {
+            if let Some(p) = &pt {
+                return p.act(Would::Append(path));
+            }
             let mut now = match d.stat(&path).map_err(fail)? {
                 Some(e) if e.dir => return Err(fail(format!("{path} is a folder."))),
                 Some(e) if e.size > READ_MAX => {
@@ -654,40 +948,58 @@ fn api(
             Ok(())
         })?,
     )?;
-    let (d, c) = (dev.clone(), changed.clone());
+    let (d, c, pt) = (dev.clone(), changed.clone(), pretend.clone());
     t.set(
         "mkdir",
         func(lua, move |_, (path, parents): (String, Option<bool>)| {
+            if let Some(p) = &pt {
+                return p.act(Would::Mkdir(path, parents.unwrap_or(false)));
+            }
             make_dirs(&d, &path, parents.unwrap_or(false), &c).map_err(fail)
         })?,
     )?;
-    let (d, c) = (dev.clone(), changed.clone());
+    let (d, c, pt) = (dev.clone(), changed.clone(), pretend.clone());
     t.set(
         "copy",
         func(lua, move |_, (from, to): (String, String)| {
+            if let Some(p) = &pt {
+                return p.act(Would::Copy(from, to));
+            }
             copy_tree(&d, &from, &to, stop, &c).map_err(fail)
         })?,
     )?;
-    let (d, c) = (dev.clone(), changed.clone());
+    let (d, c, pt) = (dev.clone(), changed.clone(), pretend.clone());
     t.set(
         "move",
         func(lua, move |_, (from, to): (String, String)| {
+            if let Some(p) = &pt {
+                return p.act(Would::Move(from, to));
+            }
             move_tree(&d, &from, &to, stop, &c).map_err(fail)
         })?,
     )?;
-    let (d, c) = (dev.clone(), changed.clone());
+    let (d, c, pt) = (dev.clone(), changed.clone(), pretend.clone());
     t.set(
         "rename",
         func(lua, move |_, (path, new_name): (String, String)| {
+            if let Some(p) = &pt {
+                let to = device::join(&device::dirname(&path), &new_name);
+                p.act(Would::Rename(path, to.clone()))?;
+                return Ok(to);
+            }
             let to = d.rename(&path, &new_name).map_err(fail)?;
             c.fetch_add(1, Ordering::Relaxed);
             Ok(to)
         })?,
     )?;
-    let (d, c) = (dev, changed.clone());
+    let (d, c, pt) = (dev, changed.clone(), pretend);
     t.set(
         "remove",
         func(lua, move |_, (path, all): (String, Option<bool>)| {
+            if let Some(p) = &pt {
+                p.act(Would::Remove(path, all.unwrap_or(false)))?;
+                return Ok(None);
+            }
             if all.unwrap_or(false) {
                 return remove_tree(&d, &path, stop, &c).map(|_| None).map_err(fail);
             }
@@ -760,6 +1072,18 @@ mod tests {
     use super::*;
 
     static NEVER: AtomicBool = AtomicBool::new(false);
+
+    /// A script run for real, its progress dropped.
+    fn run(
+        dev: Arc<Device>,
+        dir: &str,
+        items: &[String],
+        name: &str,
+        code: &str,
+        stop: &'static AtomicBool,
+    ) -> ScriptReport {
+        super::run(dev, dir, items, name, code, stop, false, &|_| {})
+    }
 
     /// A scratch folder on this computer, removed afterwards.
     struct Scratch(std::path::PathBuf);
@@ -1025,6 +1349,20 @@ print('skipped: ' .. e)",
         dev.write(&device::join(&dir, "notes.txt"), b"hi", None, true)
             .unwrap();
         let code = include_str!("../../docs/scripts/move grayscale pictures.lua");
+        // Tried first: it says what it would move, and moves nothing.
+        let r = super::run(dev.clone(), &dir, &[], "t", code, &NEVER, true, &|_| {});
+        assert_eq!(r.error, None, "{:?}", r.output);
+        assert!(r
+            .output
+            .contains(&"Would move x/a.png to Grayscale/x/a.png".to_string()));
+        assert_eq!(
+            r.output.last().unwrap(),
+            "Would move 3 grayscale pictures to Grayscale."
+        );
+        assert!(dev
+            .stat(&device::join(&dir, "Grayscale"))
+            .unwrap()
+            .is_none());
         let r = run(dev.clone(), &dir, &[], "t", code, &NEVER);
         assert_eq!(r.error, None, "{:?}", r.output);
         let is = |p: &str| dev.stat(&device::join(&dir, p)).unwrap().is_some();
@@ -1043,6 +1381,102 @@ print('skipped: ' .. e)",
             r.output.last().unwrap(),
             "Moved 3 grayscale pictures to Grayscale."
         );
+    }
+
+    #[test]
+    fn a_trial_tells_its_changes_and_makes_none() {
+        let (_s, dir) = scratch("trial");
+        let dev = Arc::new(Device::new(Box::new(crate::local::Local)));
+        let a = device::join(&dir, "a.txt");
+        dev.write(&a, b"hello", None, true).unwrap();
+        let code = r#"
+            ferry.write(ferry.join(ferry.dir, "b.txt"), "new")
+            ferry.mkdir(ferry.join(ferry.dir, "sub/deeper"), true)
+            print(ferry.exists(ferry.join(ferry.dir, "sub")))
+            ferry.move(ferry.items[1], ferry.join(ferry.dir, "sub/a.txt"))
+            print(ferry.exists(ferry.items[1]), ferry.stat(ferry.items[1]))
+            print(pcall(ferry.create, ferry.join(ferry.dir, "sub/a.txt")))
+            ferry.remove(ferry.join(ferry.dir, "sub"), true)
+        "#;
+        let r = super::run(
+            dev.clone(),
+            &dir,
+            &[a.clone()],
+            "t",
+            code,
+            &NEVER,
+            true,
+            &|_| {},
+        );
+        assert_eq!(r.error, None, "{:?}", r.output);
+        let sub_a = device::join(&dir, "sub/a.txt");
+        assert_eq!(
+            r.output,
+            [
+                "Would write b.txt".to_string(),
+                "Would make folder sub/deeper".into(),
+                "true".into(),
+                "Would move a.txt to sub/a.txt".into(),
+                "false\tnil".into(),
+                format!("false\t{sub_a} is already there. Not replaced."),
+                "Would delete sub".into(),
+            ]
+        );
+        assert_eq!(r.changed, 4);
+        let names: Vec<String> = dev
+            .listdir(&dir)
+            .unwrap()
+            .into_iter()
+            .map(|e| e.name)
+            .collect();
+        assert_eq!(names, ["a.txt"]);
+        assert_eq!(dev.read(&a).unwrap().0, b"hello");
+    }
+
+    #[test]
+    fn what_a_script_prints_comes_while_it_runs() {
+        let (s, dir) = scratch("live");
+        let dev = Arc::new(Device::new(Box::new(crate::local::Local)));
+        let flag = s.0.join("seen");
+        let got = Mutex::new(Vec::<ScriptProgress>::new());
+        let tick = |p: ScriptProgress| {
+            if p.lines.iter().any(|l| l == "first") {
+                let _ = std::fs::write(&flag, b"");
+            }
+            got.lock().unwrap().push(p);
+        };
+        // Waits (for a while at most) until the first line has been sent.
+        let code = r#"
+            print("first")
+            local seen = ferry.join(ferry.dir, "seen")
+            for _ = 1, 1000000 do
+              if ferry.exists(seen) then break end
+            end
+            print("second")
+        "#;
+        let r = super::run(dev, &dir, &[], "t", code, &NEVER, false, &tick);
+        assert_eq!(r.error, None);
+        assert_eq!(r.output, ["first", "second"]);
+        let got = got.into_inner().unwrap();
+        assert_eq!(
+            got.first().map(|p| p.lines.clone()),
+            Some(vec!["first".to_string()])
+        );
+    }
+
+    #[test]
+    fn new_lines_are_told_once_even_past_the_last_kept() {
+        let out = Out::default();
+        out.push("a".into());
+        let (lines, seen) = out.since(0);
+        assert_eq!((lines, seen), (vec!["a".to_string()], 1));
+        for i in 0..OUTPUT_MAX + 5 {
+            out.push(i.to_string());
+        }
+        let (lines, seen) = out.since(seen);
+        assert_eq!(lines.len(), OUTPUT_MAX);
+        assert_eq!(lines.last().map(String::as_str), Some("2004"));
+        assert_eq!(out.since(seen).0, Vec::<String>::new());
     }
 
     #[test]

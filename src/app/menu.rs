@@ -97,14 +97,14 @@ impl Ctx {
                 }
             }
             (Act::GroupBy(g), _) => p.set_group(g),
-            (Act::Script(i), e) => {
+            (act @ (Act::Script(i) | Act::TryScript(i)), e) => {
                 // The items picked (the one right-clicked among them), or the folder.
                 let items: Vec<String> = match e {
                     Some(_) => p.picked().into_iter().map(|x| x.path).collect(),
                     None => vec![],
                 };
                 if let Some(s) = self.scripts.with_untracked(|v| v.get(i).cloned()) {
-                    self.run_script(p, s, items);
+                    self.run_script(p, s, items, matches!(act, Act::TryScript(_)));
                 }
             }
             (Act::ScriptSettings, _) => {

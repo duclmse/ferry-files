@@ -103,23 +103,28 @@ impl Ctx {
     }
 
     /// Runs `script` on `items` in pane `p`'s folder (none: on the folder); the folder is listed
-    /// again when the script changed something.
-    pub(super) fn run_script(self, p: Pane, script: ScriptInfo, items: Vec<String>) {
-        p.notice.set(Notice::ScriptRunning(script.name.clone()));
+    /// again when the script changed something. With `trial`, nothing is changed: the script
+    /// says what it would change.
+    pub(super) fn run_script(self, p: Pane, script: ScriptInfo, items: Vec<String>, trial: bool) {
+        self.script_live.set((vec![], 0));
+        p.notice.set(Notice::ScriptRunning {
+            name: script.name.clone(),
+            trial,
+        });
         let (src, dir) = (p.src.get_untracked(), p.cwd.get_untracked());
         let again = items.clone();
         spawn_local(async move {
-            let args =
-                json!({ "src": src.key(), "dir": dir, "items": items, "script": script.path });
+            let args = json!({ "src": src.key(), "dir": dir, "items": items, "script": script.path, "trial": trial });
             match call::<ScriptReport>("run_script", args).await {
                 Ok(report) => {
-                    if report.changed > 0 {
+                    if report.changed > 0 && !trial {
                         self.reload(p);
                     }
                     p.notice.set(Notice::ScriptDone {
                         script,
                         items: again,
                         report,
+                        trial,
                     });
                 }
                 Err(e) => p.error(e),
@@ -128,41 +133,88 @@ impl Ctx {
     }
 }
 
-/// A script running, with Stop.
-pub(super) fn running(name: String) -> AnyView {
+/// Lines of a running script's output kept to show, the last ones (as the backend keeps).
+pub(super) const LIVE_MAX: usize = 2000;
+
+/// A script running, with what it has printed so far and Stop.
+pub(super) fn running(ctx: Ctx, name: String, trial: bool) -> AnyView {
+    let head = if trial {
+        format!("Trying “{name}”. Nothing is changed…")
+    } else {
+        format!("Running “{name}”…")
+    };
+    let changed = move || {
+        let n = ctx.script_live.with(|l| l.1);
+        let s = if n == 1 { "" } else { "s" };
+        match (n, trial) {
+            (0, _) => String::new(),
+            (n, false) => format!(" {n} item{s} changed so far."),
+            (n, true) => format!(" {n} change{s} so far."),
+        }
+    };
+    let out = NodeRef::<leptos::html::Pre>::new();
+    // The newest line in view as lines come, unless the reader scrolled up.
+    Effect::new(move |_| {
+        ctx.script_live.track();
+        if let Some(el) = out.get_untracked() {
+            let bottom = el.scroll_height() - el.client_height() - el.scroll_top() < 40;
+            if bottom {
+                request_animation_frame(move || el.set_scroll_top(el.scroll_height()));
+            }
+        }
+    });
     view! {
-        <div class="notice"><span class="text">{format!("Running “{name}”…")}</span>
+        <div class="notice script-done">
+            <span class="text">{head}{changed}</span>
             <button class="btn" title="Stop the script" aria-label="Stop the script"
                 on:click=move |_| spawn_local(async move { let _ = call::<()>("stop_script", json!({})).await; })>{ico(Icon::Stop)}"Stop"</button>
+            <pre class="script-out" node_ref=out hidden=move || ctx.script_live.with(|l| l.0.is_empty())>
+                {move || ctx.script_live.with(|l| l.0.join("\n"))}
+            </pre>
         </div>
     }
     .into_any()
 }
 
-/// What a script printed, why it stopped (when it didn't end by itself), and how much it changed.
+/// What a script printed, why it stopped (when it didn't end by itself), and how much it
+/// changed, or in a trial would have changed.
 pub(super) fn done(
     ctx: Ctx,
     p: Pane,
     script: ScriptInfo,
     items: Vec<String>,
     r: ScriptReport,
+    trial: bool,
 ) -> AnyView {
     let name = &script.name;
     let n = r.changed;
     let s = if n == 1 { "" } else { "s" };
-    let summary = match (&r.error, n) {
-        (Some(_), 0) => format!("“{name}” stopped. Nothing was changed."),
-        (Some(_), n) => format!("“{name}” stopped after changing {n} item{s}. Files it replaced or deleted are in Backups."),
-        (None, 0) => format!("“{name}” ran. Nothing was changed."),
-        (None, n) => format!("“{name}” ran and changed {n} item{s}. Files it replaced or deleted are in Backups."),
+    let summary = match (&r.error, n, trial) {
+        (Some(_), 0, true) => format!("Trying “{name}” stopped. Nothing was changed."),
+        (Some(_), n, true) => format!("Trying “{name}” stopped after {n} change{s}, listed below. Nothing was changed."),
+        (None, 0, true) => format!("Tried “{name}”. It would change nothing."),
+        (None, n, true) => format!("Tried “{name}”. It would make {n} change{s}, listed below. Nothing was changed."),
+        (Some(_), 0, false) => format!("“{name}” stopped. Nothing was changed."),
+        (Some(_), n, false) => format!("“{name}” stopped after changing {n} item{s}. Files it replaced or deleted are in Backups."),
+        (None, 0, false) => format!("“{name}” ran. Nothing was changed."),
+        (None, n, false) => format!("“{name}” ran and changed {n} item{s}. Files it replaced or deleted are in Backups."),
     };
     let failed = r.error.is_some();
     let again = StoredValue::new((script, items));
+    let rerun = move |trial: bool| {
+        let (s, i) = again.get_value();
+        ctx.run_script(p, s, i, trial)
+    };
     view! {
         <div class="notice script-done" class:error=failed>
             <span class="text">{summary}</span>
-            <button class="btn icon-only" title="Run the script again" aria-label="Run again"
-                on:click=move |_| { let (s, i) = again.get_value(); ctx.run_script(p, s, i) }>{ico(Icon::Play)}</button>
+            {trial.then(|| view! {
+                <button class="btn icon-only" title="Try the script again" aria-label="Try again"
+                    on:click=move |_| rerun(true)>{ico(Icon::Refresh)}</button>
+            })}
+            <button class="btn icon-only" aria-label=if trial { "Run for real" } else { "Run again" }
+                title=if trial { "Run the script for real, making its changes" } else { "Run the script again" }
+                on:click=move |_| rerun(false)>{ico(Icon::Play)}</button>
             <button class="btn icon-only" title="Dismiss" aria-label="Dismiss" on:click=move |_| p.notice.set(Notice::None)>{ico(Icon::Close)}</button>
             {(!r.output.is_empty() || failed).then(|| view! {
                 <pre class="script-out">

@@ -14,8 +14,9 @@ local MIN_HEIGHT = 500
 local KEEP_SOUNDS = true
 -- Go into the folders inside the folders as well.
 local INTO_SUBFOLDERS = false
--- true: only list what would be deleted, and delete nothing.
-local LIST_ONLY = false
+-- true: only list what would be deleted, and delete nothing. Try script ▸ (in the right-click
+-- menu) does that too.
+local LIST_ONLY = ferry.trial
 
 local deleted, kept, unknown, failed = 0, 0, 0, 0
 

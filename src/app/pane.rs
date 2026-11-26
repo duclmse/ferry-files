@@ -313,8 +313,8 @@ pub(super) fn Notices(pane: Pane) -> impl IntoView {
                     </div>
                 }.into_any()
             }
-            Notice::ScriptRunning(name) => super::scripts::running(name),
-            Notice::ScriptDone { script, items, report } => super::scripts::done(ctx, p, script, items, report),
+            Notice::ScriptRunning { name, trial } => super::scripts::running(ctx, name, trial),
+            Notice::ScriptDone { script, items, report, trial } => super::scripts::done(ctx, p, script, items, report, trial),
             Notice::NewItem { folder } => {
                 name.set(String::new());
                 let submit = move || ctx.create(p, name.get_untracked(), folder);

@@ -11,6 +11,8 @@
 -- A picture is grayscale when no part of it is in colour (ferry.colour's peak): a gray manga
 -- page with one colour panel stays. Pictures ferry.colour can't read (HEIC, AVIF, JPEG XL,
 -- camera raw) stay, and are counted.
+--
+-- Try script ▸ in the right-click menu lists what it would move, and moves nothing.
 
 -- The new folder's name, in the pane's folder.
 local TO = "Grayscale"
@@ -19,8 +21,6 @@ local DEPTH = 3
 -- The most of any part of a picture (1/16 of it) that may be in colour for it still to count
 -- as grayscale. Raise it a little if scans with a coloured speck are kept.
 local MAX_PEAK = 0.02
--- true: only list what would be moved, and move nothing.
-local LIST_ONLY = false
 
 local to = ferry.join(ferry.dir, TO)
 local found = {}
@@ -66,24 +66,19 @@ end
 local moved, failed = 0, 0
 for _, f in ipairs(found) do
   local dest = ferry.join(to, f.rel)
-  if LIST_ONLY then
-    print("would move " .. f.rel)
+  local ok, err = pcall(function()
+    ferry.mkdir(ferry.dirname(dest), true)
+    ferry.move(f.path, dest)
+  end)
+  if ok then
     moved = moved + 1
   else
-    local ok, err = pcall(function()
-      ferry.mkdir(ferry.dirname(dest), true)
-      ferry.move(f.path, dest)
-    end)
-    if ok then
-      moved = moved + 1
-    else
-      print("couldn't move " .. f.rel .. ": " .. tostring(err))
-      failed = failed + 1
-    end
+    print("couldn't move " .. f.rel .. ": " .. tostring(err))
+    failed = failed + 1
   end
 end
 
 print(string.format("%s %d grayscale %s to %s%s%s.",
-  LIST_ONLY and "Would move" or "Moved", moved, moved == 1 and "picture" or "pictures", TO,
+  ferry.trial and "Would move" or "Moved", moved, moved == 1 and "picture" or "pictures", TO,
   failed > 0 and string.format(", couldn't move %d", failed) or "",
   unreadable > 0 and string.format(", %d pictures can't be read and stayed", unreadable) or ""))

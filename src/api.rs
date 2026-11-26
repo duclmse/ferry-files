@@ -79,6 +79,13 @@ pub struct ScriptReport {
     pub changed: u32,
 }
 
+/// What a running script printed since the last of these, and how many items it has changed.
+#[derive(Clone, Debug, PartialEq, Deserialize)]
+pub struct ScriptProgress {
+    pub lines: Vec<String>,
+    pub changed: u32,
+}
+
 #[derive(Clone, Debug, PartialEq, Deserialize)]
 pub struct TransferReport {
     pub copied: u32,

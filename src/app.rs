@@ -498,6 +498,8 @@ enum Act {
     DeletePlace,
     /// Runs a Lua script (`Ctx::scripts`' index) on what's picked (or the folder).
     Script(usize),
+    /// Runs a Lua script the same way without changing anything: it says what it would change.
+    TryScript(usize),
     /// Opens Settings > Scripts.
     ScriptSettings,
 }
@@ -547,13 +549,17 @@ enum Notice {
     NewItem {
         folder: bool,
     },
-    /// A script running.
-    ScriptRunning(String),
-    /// What a script did, which can be run again on `items`.
+    /// A script running (`trial`: changing nothing).
+    ScriptRunning {
+        name: String,
+        trial: bool,
+    },
+    /// What a script did (or, in a trial, would do), which can be run again on `items`.
     ScriptDone {
         script: crate::api::ScriptInfo,
         items: Vec<String>,
         report: crate::api::ScriptReport,
+        trial: bool,
     },
 }
 
@@ -980,6 +986,9 @@ struct Ctx {
     /// The script whose shortcut is being typed, in Settings > Scripts; and what the last try said.
     script_capturing: RwSignal<Option<String>>,
     script_key_note: RwSignal<Option<String>>,
+    /// What the script running has printed so far (the last lines kept), and how many items
+    /// it has changed.
+    script_live: RwSignal<(Vec<String>, u32)>,
     /// The sidebar's folders open down to the one the active pane shows, which is scrolled to.
     follow_folder: RwSignal<bool>,
     /// The sidebar's sections, top to bottom (keys of `SECTIONS`).

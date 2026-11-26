@@ -14,11 +14,27 @@ elsewhere.
 
 1. Pick files or folders in a pane, or pick nothing to run on the folder itself.
 2. Right-click, then **Run script ▸** and the script's name.
-3. A notice at the bottom of the pane says the script is running, with **Stop**.
-   When it ends, the notice shows what the script printed, any error, and how
-   many items it changed. ▶ runs it again on the same items.
+3. A notice at the bottom of the pane says the script is running, with **Stop**,
+   and shows what it prints as it goes and how many items it has changed. When
+   it ends, the notice shows what the script printed, any error, and how many
+   items it changed. ▶ runs it again on the same items.
 
 The pane lists its folder again when the script changed something.
+
+### Trying a script first
+
+**Try script ▸**, next to **Run script ▸**, runs a script without changing
+anything. Each change it asks for (writing, making, copying, moving, renaming or
+deleting) is checked as it would be, then becomes a line of its output instead:
+`Would move a.jpg to Grayscale/a.jpg`. A change that would fail fails the same
+way. When it ends, ▶ runs it for real.
+
+In a trial, `ferry.exists` and `ferry.stat` answer as if the changes so far had
+been made: a folder the script would have made is there, and a file it would
+have moved isn't. Other functions see the files as they are: `ferry.list` doesn't
+show a file the trial would have made, and `ferry.read` reads a file as it was.
+`ferry.trial` is `true` in a trial, so a script can say "would move" instead of
+"moved".
 
 A script can also have a shortcut: in **Settings > Scripts**, click **Add shortcut** beside it and
 press the keys (Esc stops, ⌫ takes the shortcut away). Pressing it runs the script on what's
@@ -72,6 +88,7 @@ adding `/` by hand.
 | `ferry.dir`    | The pane's folder.                                                     |
 | `ferry.items`  | The paths picked, in the pane's order. Empty when nothing was picked.  |
 | `ferry.device` | Where the files are: the computer's name, the phone's or the server's. |
+| `ferry.trial`  | `true` when run with **Try script ▸**, which changes nothing.          |
 
 ### Looking
 
@@ -151,8 +168,8 @@ computer, not memory.
 ### Output
 
 `print(...)` adds a line to what the notice shows when the script ends, its
-values separated by tabs. The last 2,000 lines are kept. Nothing shows while the
-script runs.
+values separated by tabs. The last 2,000 lines are kept. They show in the notice
+as the script runs, a few times a second.
 
 ## When something goes wrong
 
@@ -246,7 +263,8 @@ print(#lines .. " items listed")
 ### Delete what isn't media, and small pictures
 
 The full version of this one, with settings at its top (the smallest size kept,
-whether sounds count, whether to go into folders inside, and a list-only mode),
+whether sounds count, whether to go into folders inside, and a list-only mode,
+which **Try script ▸** turns on),
 is in the app's source as `docs/scripts/delete non-media and small media.lua`.
 
 ```lua
