@@ -365,21 +365,32 @@ impl Everything {
 
     /// Names under `dir` (any depth) that Everything's index has for `text`: up to `max`, and
     /// whether that's all of them. With `regex`, `text` is a regular expression; with `case`,
-    /// upper and lower case are different.
+    /// upper and lower case are different. With `typed`, `text` is Everything's own search
+    /// syntax (`ext:pdf`), passed on as it is.
     pub fn search(
         &self,
         dir: &str,
         text: &str,
         regex: bool,
         case: bool,
+        typed: bool,
         max: usize,
     ) -> Result<(Vec<Entry>, bool)> {
-        let text = text.trim().replace('"', "");
-        let term = format!(
-            "{}{}\"{text}\"",
-            if case { "case:" } else { "" },
-            if regex { "regex:" } else { "" }
-        );
+        let term = if typed {
+            // In < > so an | in it doesn't leave the folder out of one side.
+            if dir == "/" {
+                text.trim().to_string()
+            } else {
+                format!("<{}>", text.trim())
+            }
+        } else {
+            let text = text.trim().replace('"', "");
+            format!(
+                "{}{}\"{text}\"",
+                if case { "case:" } else { "" },
+                if regex { "regex:" } else { "" }
+            )
+        };
         let query = if dir == "/" {
             term
         } else {
@@ -562,9 +573,10 @@ impl Transport for Everything {
         text: &str,
         regex: bool,
         case: bool,
+        typed: bool,
         max: usize,
     ) -> Option<Result<(Vec<Entry>, bool)>> {
-        Some(Everything::search(self, dir, text, regex, case, max))
+        Some(Everything::search(self, dir, text, regex, case, typed, max))
     }
 }
 
@@ -587,10 +599,12 @@ pub(crate) async fn everything_find(
     query: String,
     regex: bool,
     case: bool,
+    typed: Option<bool>,
 ) -> std::result::Result<crate::files::find::Matches, String> {
     let dev = state.source(Some(&src))?;
+    let typed = typed.unwrap_or(false);
     blocking(
-        move || match dev.search(&dir, &query, regex, case, FIND_MAX) {
+        move || match dev.search(&dir, &query, regex, case, typed, FIND_MAX) {
             Some(Ok((entries, complete))) => Ok(crate::files::find::Matches { entries, complete }),
             Some(Err(e)) => Err(e.to_string()),
             None => Err("Only Everything servers can search all their drives.".into()),
@@ -787,7 +801,9 @@ mod tests {
             (b"hello".to_vec(), "5:0".to_string())
         );
         assert_eq!(ev.read_range("/C:/x.md", 1, 3).unwrap(), b"ell");
-        let (found, all) = ev.search("/C:/Users", "x.md", false, false, 10).unwrap();
+        let (found, all) = ev
+            .search("/C:/Users", "x.md", false, false, false, 10)
+            .unwrap();
         assert_eq!((found.len(), all), (1, false));
         assert!(ev.replace("/C:/x.md", b"", true).is_err());
 
@@ -818,6 +834,37 @@ mod tests {
             first(5).contains("search=%22C%3A%5CUsers%5C%22"),
             "{}",
             first(5)
+        );
+    }
+
+    #[test]
+    fn a_typed_search_goes_as_it_is() {
+        let hit = r#"{"totalResults":"1","results":[{"type":"file","name":"a.pdf","path":"C:\\Users","size":"3"}]}"#;
+        let (asked, at) = serve(vec![
+            ("200 OK", r#"{"results":[]}"#),
+            ("200 OK", hit),
+            ("200 OK", hit),
+        ]);
+        let ev = Everything::open(&at, None).unwrap();
+        let (found, all) = ev
+            .search("/", "ext:pdf|ext:epub", true, true, true, 10)
+            .unwrap();
+        assert_eq!((found[0].path.as_str(), all), ("/C:/Users/a.pdf", true));
+        ev.search("/C:/Users", "ext:pdf|ext:epub", false, false, true, 10)
+            .unwrap();
+        let lines = asked.join().unwrap();
+        let first = |i: usize| lines[i].lines().next().unwrap_or_default().to_string();
+        // Not quoted, and regex and case left out.
+        assert!(
+            first(1).contains("search=ext%3Apdf%7Cext%3Aepub&"),
+            "{}",
+            first(1)
+        );
+        // The folder outside the < >, so it counts for both sides of the |.
+        assert!(
+            first(2).contains("search=%22C%3A%5CUsers%5C%22%20%3Cext%3Apdf%7Cext%3Aepub%3E"),
+            "{}",
+            first(2)
         );
     }
 

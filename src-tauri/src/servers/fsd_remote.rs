@@ -326,14 +326,24 @@ impl FsdRemote {
         text: &str,
         regex: bool,
         case: bool,
+        typed: bool,
         max: usize,
     ) -> Result<(Vec<Entry>, bool)> {
-        let text = text.trim().replace('"', "");
-        let case = if case { "case: " } else { "" };
-        let term = if regex {
-            format!("{case}regex: \"{text}\"")
+        let term = if typed {
+            // In < > so an | in it doesn't leave the folder out of one side.
+            if dir == "/" {
+                text.trim().to_string()
+            } else {
+                format!("<{}>", text.trim())
+            }
         } else {
-            format!("{case}\"{text}\"")
+            let text = text.trim().replace('"', "");
+            let case = if case { "case: " } else { "" };
+            if regex {
+                format!("{case}regex: \"{text}\"")
+            } else {
+                format!("{case}\"{text}\"")
+            }
         };
         let under = if dir == "/" {
             "/".to_string()
@@ -542,9 +552,10 @@ impl Transport for FsdRemote {
         text: &str,
         regex: bool,
         case: bool,
+        typed: bool,
         max: usize,
     ) -> Option<Result<(Vec<Entry>, bool)>> {
-        Some(self.find(dir, text, regex, case, max.min(FIND_MAX)))
+        Some(self.find(dir, text, regex, case, typed, max.min(FIND_MAX)))
     }
 }
 
@@ -631,7 +642,7 @@ mod tests {
         assert_eq!(st.size as usize, data.len());
         assert_eq!(version, format!("{}:{}", st.size, st.mtime));
         assert_eq!(fsd.read_range(&one, 1, 3).unwrap(), data[1..4].to_vec());
-        let (found, all) = fsd.find(&dir, "one", false, false, 10).unwrap();
+        let (found, all) = fsd.find(&dir, "one", false, false, false, 10).unwrap();
         assert!(
             all && found.iter().any(|e| e.path == one),
             "{:?}",

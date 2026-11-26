@@ -283,25 +283,45 @@ impl Ctx {
         });
     }
 
-    /// Searches fsd's index of the computer for `query` (fsd's search syntax, typed in the path
-    /// box), and shows what it finds in place of the folder, as `find_all` does.
+    /// Searches the index for `query` (search syntax, typed in the path box), and shows what it
+    /// finds in place of the folder, as `find_all` does: fsd's index of the computer, or an
+    /// Everything or remote fsd server's of all its drives.
     pub(super) fn find_typed(self, p: Pane, query: String) {
         #[derive(serde::Deserialize)]
         struct FoundFiles {
             entries: Vec<Entry>,
             next: Option<u32>,
         }
+        #[derive(serde::Deserialize)]
+        struct Matches {
+            entries: Vec<Entry>,
+            complete: bool,
+        }
         self.stop_compare();
         let dir = p.cwd.get_untracked();
+        let src = p.src.get_untracked();
         p.loading.set(true);
         spawn_local(async move {
-            let args = json!({ "text": query, "max": 1000 });
-            match call::<FoundFiles>("find_files", args).await {
+            let found = if src == Src::Mac {
+                let args = json!({ "text": query, "max": 1000 });
+                call::<FoundFiles>("find_files", args)
+                    .await
+                    .map(|f| (f.entries, f.next.is_none()))
+            } else {
+                let args = json!({ "src": src.key(), "dir": "/", "query": query,
+                    "regex": false, "case": false, "typed": true });
+                call::<Matches>("everything_find", args)
+                    .await
+                    .map(|m| (m.entries, m.complete))
+            };
+            match found {
                 // Not when the pane went elsewhere meanwhile.
-                Ok(f) if p.cwd.get_untracked() == dir && p.src.get_untracked() == Src::Mac => {
-                    p.all.set(f.entries);
+                Ok((entries, all))
+                    if p.cwd.get_untracked() == dir && p.src.get_untracked() == src =>
+                {
+                    p.all.set(entries);
                     p.more.set(false);
-                    p.found.set(Some((format!("“{query}”"), f.next.is_none())));
+                    p.found.set(Some((format!("“{query}”"), all)));
                     p.select_only(None);
                     p.arrange();
                 }

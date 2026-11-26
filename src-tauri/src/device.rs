@@ -121,13 +121,16 @@ pub trait Transport: Send + Sync {
     fn refresh(&self) {}
     /// Names under `dir` (any depth) that the transport's own index has for `text` (a regular
     /// expression with `regex`; in the same case with `case`): up to `max`, and whether that's
-    /// all of them. None when it has no index (only Everything servers do).
+    /// all of them. With `typed`, `text` is a search in the index's own syntax (`ext:pdf`),
+    /// passed on as it is, and `regex` and `case` don't count. None when it has no index (only
+    /// Everything and remote fsd servers do).
     fn search(
         &self,
         _dir: &str,
         _text: &str,
         _regex: bool,
         _case: bool,
+        _typed: bool,
         _max: usize,
     ) -> Option<Result<(Vec<Entry>, bool)>> {
         None
@@ -344,6 +347,7 @@ impl Device {
         text: &str,
         regex: bool,
         case: bool,
+        typed: bool,
         max: usize,
     ) -> Option<Result<(Vec<Entry>, bool)>> {
         let dir = match norm(dir) {
@@ -351,7 +355,7 @@ impl Device {
             Err(e) => return Some(Err(e)),
         };
         let _g = self.lock();
-        self.t.search(&dir, text, regex, case, max)
+        self.t.search(&dir, text, regex, case, typed, max)
     }
 
     /// See `Transport::stop`.

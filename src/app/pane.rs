@@ -151,8 +151,10 @@ fn PathEdit(pane: Pane) -> impl IntoView {
         let mac = p.src.get_untracked() == Src::Mac;
         // The computer's own way of writing it, as Copy path gives it ("C:\Users", "\\nas\Photos").
         let own = mac && crate::os::is_native_path(typed);
-        // On the computer, fsd's search syntax (`*.pdf`, `ext:pdf`, `a|b`) searches its index.
-        if mac && !own && super::palette::is_search(typed) {
+        // fsd's search syntax (`*.pdf`, `ext:pdf`, `a|b`) searches the computer's index, or an
+        // Everything or remote fsd server's.
+        let src = p.src.get_untracked();
+        if (mac || ctx.read_only(src)) && !own && super::palette::is_search(typed) {
             ctx.find_typed(p, typed.to_string());
             return;
         }

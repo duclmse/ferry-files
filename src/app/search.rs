@@ -62,7 +62,10 @@ impl Ctx {
         p.filters_open.set(false);
         p.replacing.set(false);
         // A server's search came from the filter; one typed in the path box stays.
-        if p.found.with_untracked(Option::is_some) && self.read_only(p.src.get_untracked()) {
+        if p.found.with_untracked(Option::is_some)
+            && self.read_only(p.src.get_untracked())
+            && !p.filter.with_untracked(|f| f.trim().is_empty())
+        {
             p.filter.set(String::new());
             self.reload(p);
         } else if !p.filter.with_untracked(String::is_empty) {
