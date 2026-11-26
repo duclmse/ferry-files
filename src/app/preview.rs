@@ -264,6 +264,8 @@ pub(super) fn Preview(
                         {forced.map(|now| peek_as_buttons(now, true, move |how| p.peek_as.set(how.map(|h| (path.clone(), h)))))}
                     }.into_any());
                     let thumb = |e: &Entry| view! { <div class="pic"><Thumbnail src=src entry=e.clone()/></div> };
+                    // The pane's columns show what's in a ZIP already: not in a preview of its own.
+                    let columns = Signal::derive(move || !alone && p.view.get() == ViewMode::Columns);
                     // Set when the body is text, which puts the wrap and line-number toggles in the line.
                     let mut text = false;
                     let body = match (forced, media(&e)) {
@@ -271,7 +273,7 @@ pub(super) fn Preview(
                         (Some(PeekAs::Hex), _) => view! { <HexPeek src entry=e.clone()/> }.into_any(),
                         (Some(PeekAs::Image), _) => view! { <FullImage pane=p src entry=e.clone() info turn=pic_turn url=stream_url(src, &e)/> }.into_any(),
                         (Some(PeekAs::Video), _) => view! { <Player pane=p entry=e.clone() url=stream_url(src, &e) video=true info turn=video_turn alone/> }.into_any(),
-                        (Some(PeekAs::Zip), _) => view! { <ZipList src entry=e.clone()/> }.into_any(),
+                        (Some(PeekAs::Zip), _) => view! { <ZipList src entry=e.clone() columns/> }.into_any(),
                         (None, Some(Media::Image)) if alone => view! { <FullImage pane=p src entry=e.clone() info turn=pic_turn url=stream_url(src, &e)/> }.into_any(),
                         (None, Some(Media::Image)) => view! { <FullImage pane=p src entry=e.clone() info turn=pic_turn/> }.into_any(),
                         (None, Some(Media::Video)) => view! { <Player pane=p entry=e.clone() url=stream_url(src, &e) video=true info turn=video_turn alone/> }.into_any(),
@@ -285,7 +287,7 @@ pub(super) fn Preview(
                             let line = line.take().unwrap_or_else(|| ().into_any());
                             view! { <EpubView pane=p src entry=e.clone() line/> }.into_any()
                         }
-                        _ if has_ext(&e, ZIP_EXTS) => view! { <ZipList src entry=e.clone()/> }.into_any(),
+                        _ if has_ext(&e, ZIP_EXTS) => view! { <ZipList src entry=e.clone() columns/> }.into_any(),
                         _ if is_text(&e) => { text = true; view! { <TextPeek src entry=e.clone()/> }.into_any() }
                         _ if e.dir => thumb(&e).into_any(),
                         // A type the preview doesn't know: offer to look inside anyway.

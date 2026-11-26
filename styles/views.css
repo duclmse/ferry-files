@@ -1514,7 +1514,11 @@ td.name input.rename {
   vertical-align: middle;
 }
 
-/* What's in a ZIP. */
+/* What's in a ZIP: at the top, opening folders grows it down. */
+.preview > .view:has(> .zip) {
+  justify-content: flex-start;
+}
+
 .preview .zip {
   width: 100%;
   flex: 0 1 auto;

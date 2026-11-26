@@ -78,9 +78,14 @@ fn zip_parents(path: &str) -> impl Iterator<Item = &str> {
 }
 
 /// What's in a ZIP (or APK, JAR, CBZ), as a tree whose folders open and close, read from the end
-/// of the file.
+/// of the file. With `columns` (the pane's column view, which shows what's in it as columns of
+/// its own), only how many items and how big.
 #[component]
-pub(super) fn ZipList(src: Src, entry: Entry) -> impl IntoView {
+pub(super) fn ZipList(
+    src: Src,
+    entry: Entry,
+    #[prop(into)] columns: Signal<bool>,
+) -> impl IntoView {
     let got = RwSignal::new(None::<Result<Listing, String>>);
     let packed = entry.size;
     let args = json!({ "src": src.key(), "path": entry.path, "size": entry.size });
@@ -108,7 +113,7 @@ pub(super) fn ZipList(src: Src, entry: Entry) -> impl IntoView {
                     }
                     view! {
                         <span class="sub">{format!("{} {} · {} packed, {} unpacked", l.total, if l.total == 1 { "item" } else { "items" }, human_size(packed), human_size(unpacked))}</span>
-                        <div class="zip-list">
+                        <div class="zip-list" hidden=move || columns.get()>
                             <table>
                                 <tbody>
                                     {rows.into_iter().map(|r| {
