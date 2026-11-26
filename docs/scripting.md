@@ -81,6 +81,23 @@ adding `/` by hand.
 | `ferry.stat(path)`   | The item at `path`, or `nil` when there's nothing there.                                                                                                                                                                                                                                  |
 | `ferry.exists(path)` | `true` when there's a file or folder at `path`.                                                                                                                                                                                                                                           |
 | `ferry.media(path)`  | For a picture, video or sound (by its extension), a table: `kind` (`"picture"`, `"video"` or `"sound"`), and `width` and `height` in pixels and `duration` in seconds where the file's header tells them (`nil` otherwise). `nil` for any other file. Only the start of the file is read. |
+| `ferry.colour(path)` | How colourful a picture is: a table with `share`, how much of it is in colour (0 to 1), and `peak`, the same for the most colourful of its 16 parts (a 4 × 4 grid). `nil` for a file that isn't a picture, or one it can't read (only JPEG, PNG, GIF, WebP and BMP can be). The whole file is read, up to 64 MB. `ferry.color` is the same. |
+
+`ferry.colour` doesn't count faint colour (the fringes a JPEG leaves around black lines) or a pale tint over the whole picture (yellowed paper). A gray manga page has `share` and `peak` near 0; one with a colour panel in a corner has a small `share` and a high `peak`; a colour page has both high:
+
+```lua
+for _, e in ipairs(ferry.list(ferry.dir)) do
+  local c = ferry.colour(e.path)
+  if c then
+    local what = c.share > 0.3 and "colour" or c.peak > 0.3 and "colour patch" or "gray"
+    print(e.name, what)
+  end
+end
+```
+
+`docs/scripts/move grayscale pictures.lua` in the app's source uses it to move
+the grayscale pictures in a folder, and in the folders inside it down to three
+levels, into a new folder.
 
 An item is a table:
 

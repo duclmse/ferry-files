@@ -587,6 +587,33 @@ fn api(
         })?,
     )?;
     let d = dev.clone();
+    let colour = func(lua, move |lua, path: String| {
+        if media_kind(device::basename(&path)) != Some("picture") {
+            return Ok(Value::Nil);
+        }
+        let e = d
+            .stat(&path)
+            .map_err(fail)?
+            .ok_or_else(|| fail(format!("No such file: {path}")))?;
+        if e.size > READ_MAX {
+            return Err(fail(format!(
+                "{path} is bigger than {} MB, which is as much as ferry.colour reads.",
+                READ_MAX / 1024 / 1024
+            )));
+        }
+        let (data, _) = d.read(&path).map_err(fail)?;
+        // Decoding and shrinking a big photo takes a moment; the script waits, as for read.
+        let Some(c) = crate::preview::colour::colour(&data) else {
+            return Ok(Value::Nil);
+        };
+        let m = lua.create_table()?;
+        m.set("share", c.share)?;
+        m.set("peak", c.peak)?;
+        Ok(Value::Table(m))
+    })?;
+    t.set("colour", colour.clone())?;
+    t.set("color", colour)?;
+    let d = dev.clone();
     t.set(
         "exists",
         func(lua, move |_, path: String| {
@@ -917,6 +944,105 @@ print('skipped: ' .. e)",
             .unwrap()
             .is_some());
         assert_eq!(r.changed, 3);
+    }
+
+    #[test]
+    fn scripts_tell_gray_pages_from_colour_ones() {
+        let (_s, dir) = scratch("colour");
+        let dev = Arc::new(Device::new(Box::new(crate::local::Local)));
+        let put = |name: &str, img: image::RgbImage| {
+            let mut b = std::io::Cursor::new(Vec::new());
+            img.write_to(&mut b, image::ImageFormat::Png).unwrap();
+            dev.write(&device::join(&dir, name), b.get_ref(), None, true)
+                .unwrap()
+        };
+        let gray = image::RgbImage::from_fn(200, 200, |x, _| {
+            image::Rgb(if x % 10 < 2 { [0; 3] } else { [240; 3] })
+        });
+        let mut corner = gray.clone();
+        for (x, y, p) in corner.enumerate_pixels_mut() {
+            if x < 50 && y < 50 {
+                *p = image::Rgb([200, 30, 30]);
+            }
+        }
+        put("gray.png", gray);
+        put("corner.png", corner);
+        put(
+            "photo.png",
+            image::RgbImage::from_pixel(80, 60, image::Rgb([40, 120, 220])),
+        );
+        dev.write(&device::join(&dir, "notes.txt"), b"hi", None, true)
+            .unwrap();
+        let code = r#"
+            for _, n in ipairs({"gray.png", "corner.png", "photo.png", "notes.txt"}) do
+                local c = ferry.color(ferry.join(ferry.dir, n))
+                if c then print(n, c.share > 0.5, c.peak > 0.5) else print(n, "nil") end
+            end
+        "#;
+        let r = run(dev.clone(), &dir, &[], "t", code, &NEVER);
+        assert_eq!(r.error, None, "{:?}", r.output);
+        assert_eq!(
+            r.output,
+            [
+                "gray.png\tfalse\tfalse",
+                "corner.png\tfalse\ttrue",
+                "photo.png\ttrue\ttrue",
+                "notes.txt\tnil"
+            ]
+        );
+        assert_eq!(r.changed, 0);
+    }
+
+    #[test]
+    fn the_grayscale_script_moves_gray_pictures_three_levels_down() {
+        let (s, dir) = scratch("gray");
+        let dev = Arc::new(Device::new(Box::new(crate::local::Local)));
+        let put = |name: &str, img: image::RgbImage| {
+            let mut b = std::io::Cursor::new(Vec::new());
+            img.write_to(&mut b, image::ImageFormat::Png).unwrap();
+            let path = device::join(&dir, name);
+            std::fs::create_dir_all(s.0.join(name).parent().unwrap()).unwrap();
+            dev.write(&path, b.get_ref(), None, true).unwrap()
+        };
+        let gray = image::RgbImage::from_fn(120, 120, |x, _| {
+            image::Rgb(if x % 10 < 2 { [0; 3] } else { [240; 3] })
+        });
+        let mut corner = gray.clone();
+        for (x, y, p) in corner.enumerate_pixels_mut() {
+            if x < 30 && y < 30 {
+                *p = image::Rgb([200, 30, 30]);
+            }
+        }
+        put("a.png", gray.clone());
+        put("b.png", corner);
+        put(
+            "c.png",
+            image::RgbImage::from_pixel(40, 40, image::Rgb([40, 120, 220])),
+        );
+        put("x/a.png", gray.clone());
+        put("x/y/z/deep.png", gray.clone());
+        put("x/y/z/w/too deep.png", gray);
+        dev.write(&device::join(&dir, "notes.txt"), b"hi", None, true)
+            .unwrap();
+        let code = include_str!("../../docs/scripts/move grayscale pictures.lua");
+        let r = run(dev.clone(), &dir, &[], "t", code, &NEVER);
+        assert_eq!(r.error, None, "{:?}", r.output);
+        let is = |p: &str| dev.stat(&device::join(&dir, p)).unwrap().is_some();
+        for p in [
+            "Grayscale/a.png",
+            "Grayscale/x/a.png",
+            "Grayscale/x/y/z/deep.png",
+        ] {
+            assert!(is(p), "{p} {:?}", r.output);
+        }
+        for p in ["b.png", "c.png", "notes.txt", "x/y/z/w/too deep.png"] {
+            assert!(is(p), "{p} {:?}", r.output);
+        }
+        assert!(!is("a.png") && !is("x/a.png"));
+        assert_eq!(
+            r.output.last().unwrap(),
+            "Moved 3 grayscale pictures to Grayscale."
+        );
     }
 
     #[test]

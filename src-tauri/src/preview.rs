@@ -2,6 +2,7 @@
 //! coloured code, subtitles, files copied to be streamed, and the pop-out video player.
 
 pub mod archive;
+pub mod colour;
 pub(crate) mod highlight;
 pub mod media;
 pub mod pdf;
