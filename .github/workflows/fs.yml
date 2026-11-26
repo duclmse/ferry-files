@@ -1,9 +1,23 @@
-name: CI
+# The fs crates (fsd, fs, fs-protocol, fs-common and the extensions). Ferry's app is built by
+# build.yml; this runs only when something the fs crates build from changes.
+name: fs
 
 on:
   push:
     branches: [main]
+    paths:
+      - "fs/**"
+      - "Cargo.toml"
+      - "Cargo.lock"
+      - ".cargo/config.toml"
+      - ".github/workflows/fs.yml"
   pull_request:
+    paths:
+      - "fs/**"
+      - "Cargo.toml"
+      - "Cargo.lock"
+      - ".cargo/config.toml"
+      - ".github/workflows/fs.yml"
   workflow_dispatch:
 
 env:
@@ -23,11 +37,14 @@ jobs:
         with:
           components: clippy, rustfmt
       - uses: Swatinem/rust-cache@v2
+      # The whole workspace, Ferry too: each folder's rustfmt.toml applies.
       - name: Format
         if: matrix.os == 'ubuntu-latest'
         run: cargo fmt --all -- --check
+      # The fs crates only (the aliases in .cargo/config.toml): --workspace takes in Ferry,
+      # whose clippy warnings aren't enforced yet.
       - name: Clippy
-        run: cargo clippy --workspace --all-targets -- -D warnings
+        run: cargo fs-clippy -- -D warnings
       - name: Clippy (fsd with only one API, or none)
         shell: bash
         run: |
@@ -38,9 +55,9 @@ jobs:
       - name: Clippy (rar2zip integration feature)
         run: cargo clippy -p fs-ext-rar2zip --all-targets --features integration -- -D warnings
       - name: Test
-        run: cargo test --workspace
+        run: cargo fs-test
       - name: Release build
-        run: cargo build --release --workspace
+        run: cargo fs-build --release
 
   # Runner jobs are elevated, and C: is NTFS, so this is a real-volume run of
   # the file table crawl next to the directory walk it replaces.
@@ -60,15 +77,15 @@ jobs:
         timeout-minutes: 20
         shell: pwsh
         run: >
-          .\scripts\bench-windows.ps1 -TargetDir C:\Windows\System32 -CrawlTimeout 600
-          -OutDir target\bench-walk -LoadSeconds 5 -IdleSeconds 3 -Iterations 3
+          .\fs\scripts\bench-windows.ps1 -TargetDir C:\Windows\System32 -CrawlTimeout 600
+          -OutDir ..\target\bench-walk -LoadSeconds 5 -IdleSeconds 3 -Iterations 3
       - name: Crawl from the file table
         if: always()
         timeout-minutes: 20
         shell: pwsh
         run: >
-          .\scripts\bench-windows.ps1 -TargetDir C:\Windows\System32 -UseMft -CrawlTimeout 600
-          -OutDir target\bench-mft -LoadSeconds 5 -IdleSeconds 3 -Iterations 3
+          .\fs\scripts\bench-windows.ps1 -TargetDir C:\Windows\System32 -UseMft -CrawlTimeout 600
+          -OutDir ..\target\bench-mft -LoadSeconds 5 -IdleSeconds 3 -Iterations 3
       - name: Run as a Windows Service
         if: always()
         timeout-minutes: 10
@@ -223,15 +240,15 @@ jobs:
         timeout-minutes: 60
         shell: pwsh
         run: >
-          .\scripts\bench-windows.ps1 -TargetDir C:\ -NoContent -UseMft -CrawlTimeout 3000
-          -OutDir target\volume-mft -LoadSeconds 5 -IdleSeconds 3 -Iterations 3
+          .\fs\scripts\bench-windows.ps1 -TargetDir C:\ -NoContent -UseMft -CrawlTimeout 3000
+          -OutDir ..\target\volume-mft -LoadSeconds 5 -IdleSeconds 3 -Iterations 3
       - name: Crawl C:\ by walking directories
         if: always()
         timeout-minutes: 60
         shell: pwsh
         run: >
-          .\scripts\bench-windows.ps1 -TargetDir C:\ -NoContent -CrawlTimeout 3000
-          -OutDir target\volume-walk -LoadSeconds 5 -IdleSeconds 3 -Iterations 3
+          .\fs\scripts\bench-windows.ps1 -TargetDir C:\ -NoContent -CrawlTimeout 3000
+          -OutDir ..\target\volume-walk -LoadSeconds 5 -IdleSeconds 3 -Iterations 3
       - name: Summaries
         if: always()
         shell: pwsh
@@ -271,21 +288,21 @@ jobs:
       - name: Everything, all of C:\
         timeout-minutes: 40
         shell: pwsh
-        run: .\scripts\bench-everything.ps1 -OutDir target\h2h-everything -Iterations 3
+        run: .\fs\scripts\bench-everything.ps1 -OutDir ..\target\h2h-everything -Iterations 3
       - name: fsd memory store, all of C:\
         if: always()
         timeout-minutes: 60
         shell: pwsh
         run: >
-          .\scripts\bench-windows.ps1 -TargetDir C:\ -NoContent -UseMft -Store memory -CrawlTimeout 3000
-          -OutDir target\h2h-fsd-memory -LoadSeconds 5 -IdleSeconds 3 -Iterations 3
+          .\fs\scripts\bench-windows.ps1 -TargetDir C:\ -NoContent -UseMft -Store memory -CrawlTimeout 3000
+          -OutDir ..\target\h2h-fsd-memory -LoadSeconds 5 -IdleSeconds 3 -Iterations 3
       - name: fsd SQLite store, all of C:\
         if: always()
         timeout-minutes: 60
         shell: pwsh
         run: >
-          .\scripts\bench-windows.ps1 -TargetDir C:\ -NoContent -UseMft -Store sqlite -CrawlTimeout 3000
-          -OutDir target\h2h-fsd-sqlite -LoadSeconds 5 -IdleSeconds 3 -Iterations 3
+          .\fs\scripts\bench-windows.ps1 -TargetDir C:\ -NoContent -UseMft -Store sqlite -CrawlTimeout 3000
+          -OutDir ..\target\h2h-fsd-sqlite -LoadSeconds 5 -IdleSeconds 3 -Iterations 3
       - name: Summaries
         if: always()
         shell: pwsh

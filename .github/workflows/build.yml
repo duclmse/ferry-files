@@ -3,7 +3,23 @@ name: build
 on:
   push:
     branches: [main]
+    paths:
+      - "**"
+      # fs.yml builds the fs crates. The app needs fs-protocol and the fsd it bundles
+      # (fs-server, with fs-common and fs-protocol), so changes there build it too.
+      - "!fs/**"
+      - "fs/crates/fs-protocol/**"
+      - "fs/crates/fs-server/**"
+      - "fs/crates/fs-common/**"
   pull_request:
+    paths:
+      - "**"
+      # fs.yml builds the fs crates. The app needs fs-protocol and the fsd it bundles
+      # (fs-server, with fs-common and fs-protocol), so changes there build it too.
+      - "!fs/**"
+      - "fs/crates/fs-protocol/**"
+      - "fs/crates/fs-server/**"
+      - "fs/crates/fs-common/**"
   workflow_dispatch:
 
 jobs:
