@@ -191,12 +191,13 @@ impl TantivyStore {
         // Fetch more than `limit` so we have room after post-filtering
         let fetch = (limit * 4).max(limit + 64);
         let top_docs = searcher
-            .search(&parsed, &TopDocs::with_limit(fetch))
+            .search(&parsed, &TopDocs::with_limit(fetch).order_by_score())
             .map_err(AppError::Tantivy)?;
 
         // Snippet generator for the content field
-        let snippet_gen = tantivy::SnippetGenerator::create(&searcher, &parsed, self.f_content)
-            .map_err(AppError::Tantivy)?;
+        let snippet_gen =
+            tantivy::snippet::SnippetGenerator::create(&searcher, &parsed, self.f_content)
+                .map_err(AppError::Tantivy)?;
 
         let mut hits = Vec::with_capacity(limit);
         for (score, addr) in top_docs {

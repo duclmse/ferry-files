@@ -44,7 +44,7 @@ notify                = "9"
 notify-debouncer-full = "0.8"
 
 # Full-text index
-tantivy = "0.22"
+tantivy = "0.27"
 
 # gRPC
 tonic            = { version = "0.14", optional = true }
