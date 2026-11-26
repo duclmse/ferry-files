@@ -139,6 +139,7 @@ pub(super) fn EpubView(pane: Pane, src: Src, entry: Entry, line: AnyView) -> imp
     // Its box and results are the Search tab of the pane beside the page (the other tab is the
     // chapters); finding is that tab showing.
     let search_tab = RwSignal::new(false);
+    let side_w = stored_px(crate::epub::EPUB_SIDE_W_KEY);
     let finding = Memo::new(move |_| ep.outline.get() && search_tab.get());
     let fq = RwSignal::new(Query::default());
     let found = RwSignal::new(None::<Result<Found, String>>);
@@ -417,8 +418,12 @@ pub(super) fn EpubView(pane: Pane, src: Src, entry: Entry, line: AnyView) -> imp
                     </div>
                     <div class="epub-body book-reader">
                         {move || outline.get().then(|| view! {
-                            <nav class="pdf-outline epub-outline">
+                            <nav class="pdf-outline epub-outline" style=move || match side_w.get() { w if w > 0.0 => format!("flex-basis: {w}px; max-width: none"), _ => String::new() }>
                                 <div class="outline-tabs" role="tablist">
+                                    {tab_pick(vec![
+                                        ("Chapters", Signal::derive(move || !search_tab.get()), Callback::new(move |_| search_tab.set(false))),
+                                        ("Search", search_tab.into(), Callback::new(move |_| open_find())),
+                                    ])}
                                     <button role="tab" class:on=move || !search_tab.get() aria-selected=move || (!search_tab.get()).to_string()
                                         title="Chapters" on:click=move |_| search_tab.set(false)>{ico(Icon::Contents)}"Chapters"</button>
                                     <button role="tab" class:on=search_tab aria-selected=move || search_tab.get().to_string()
@@ -430,6 +435,7 @@ pub(super) fn EpubView(pane: Pane, src: Src, entry: Entry, line: AnyView) -> imp
                                     outline_list().into_any()
                                 }}
                             </nav>
+                            <Grip size=side_w key=crate::epub::EPUB_SIDE_W_KEY.to_string() min=140.0 max=640.0 room=200.0 target=Target::Prev class="grip pdf-grip"/>
                         })}
                         {chapter}
                     </div>

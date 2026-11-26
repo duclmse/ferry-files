@@ -509,8 +509,14 @@ pub(super) const PDF_WORDS: FindWords = FindWords {
 /// many matches, and under it a tree: the chapters, each with its matches. A click on a match
 /// opens its chapter there, that match marked as the current one (`pick`, with its place among
 /// the chapter's matches; `current` is the one picked).
-/// It searches as you type (`search` waits for typing to stop); Esc calls `close`.
+/// It searches as you type (`search` waits for typing to stop); Enter and Shift+Enter (or the
+/// arrows) go to the next and previous match, over all the parts, and the count says which one
+/// is current. Esc calls `close`. The first `FIND_PAGE` matches are listed, and Show more lists
+/// the next ones (going to a match lists as far as it).
 /// `words` names what's searched and its parts: a book's chapters, a PDF's pages.
+/// How many matches the Search tab lists at first, and how many more Show more adds.
+const FIND_PAGE: usize = 100;
+
 #[allow(clippy::too_many_arguments)]
 pub(super) fn find_bar(
     words: FindWords,
@@ -533,6 +539,14 @@ pub(super) fn find_bar(
             }
         });
     });
+    // Typed since the last search: Enter searches now instead of moving on.
+    let dirty = StoredValue::new(false);
+    // How many matches are listed; new results start again from the first page.
+    let listed = RwSignal::new(FIND_PAGE);
+    Effect::new(move |_| {
+        found.track();
+        listed.set(FIND_PAGE);
+    });
     let opt = move |label: &'static str,
                     on: fn(&Query) -> bool,
                     flip: fn(&mut Query),
@@ -543,13 +557,81 @@ pub(super) fn find_bar(
                 on:mousedown=|e: web_sys::MouseEvent| e.prevent_default()
                 on:click=move |_| {
                     q.update(flip);
+                    dirty.set_value(false);
                     search(true);
                 }>
                 <span class=class>{glyph}</span>
             </button>
         }
     };
+    // Every match in order, as (part, its place in the part): the one `by` from the current,
+    // round from the end to the start; the first (or last) when none is current.
+    let step = move |by: isize| {
+        let to = found.with_untracked(|f| {
+            let f = f.as_ref()?.as_ref().ok()?;
+            let order = || {
+                f.hits
+                    .iter()
+                    .flat_map(|h| (0..h.count).map(move |k| (&h.path, k)))
+            };
+            let n = f.total.max(1) as isize;
+            let at = current.with_untracked(|c| {
+                c.as_ref()
+                    .and_then(|(p, k)| order().position(|(q, j)| q == p && j == *k))
+            });
+            let i = match at {
+                Some(i) => (i as isize + by).rem_euclid(n),
+                None if by < 0 => n - 1,
+                None => 0,
+            };
+            order().nth(i as usize).map(|(p, k)| (p.clone(), k))
+        });
+        if let Some((p, k)) = to {
+            // List as far as the match, when it's one with its text listed.
+            let at = found.with_untracked(|f| {
+                let f = f.as_ref()?.as_ref().ok()?;
+                let mut before = 0;
+                for h in &f.hits {
+                    if h.path == p {
+                        return (k < h.snippets.len()).then_some(before + k);
+                    }
+                    before += h.snippets.len();
+                }
+                None
+            });
+            if let Some(at) = at.filter(|&at| at >= listed.get_untracked()) {
+                listed.set((at / FIND_PAGE + 1) * FIND_PAGE);
+            }
+            pick(p, k);
+        }
+    };
+    let enter = move |back: bool| {
+        if dirty.get_value() || found.with_untracked(Option::is_none) {
+            dirty.set_value(false);
+            search(true);
+        } else {
+            step(if back { -1 } else { 1 });
+        }
+    };
+    let which = move || {
+        let (p, k) = current.get()?;
+        found.with(|f| {
+            let f = f.as_ref()?.as_ref().ok()?;
+            let mut before = 0;
+            for h in &f.hits {
+                if h.path == p {
+                    return Some(format!("{} / {}", before + k + 1, f.total));
+                }
+                before += h.count;
+            }
+            None
+        })
+    };
+    let has_hits = move || found.with(|f| matches!(f, Some(Ok(f)) if f.total > 0));
     let count = move || {
+        if let Some(w) = which() {
+            return w;
+        }
         found.with(|f| match f {
             None if busy.get() => "Finding…".to_string(),
             None => String::new(),
@@ -577,11 +659,18 @@ pub(super) fn find_bar(
                     <input class="filter" node_ref=find_box type="text" spellcheck="false" aria-label=words.find
                         placeholder=move || if q.with(|x| x.regex) { format!("{} (regex)", words.find) } else { words.find.to_string() }
                         prop:value=move || q.with(|x| x.find.clone())
-                        on:input=move |e| { q.update(|x| x.find = event_target_value(&e)); search(false); }
-                        on:keydown=move |e| if e.key() == "Enter" { e.prevent_default(); search(true); }/>
+                        on:input=move |e| { q.update(|x| x.find = event_target_value(&e)); dirty.set_value(true); search(false); }
+                        on:keydown=move |e| if e.key() == "Enter" { e.prevent_default(); enter(e.shift_key()); }/>
                     {opt("Match case", |x| x.match_case, |x| x.match_case = !x.match_case, "Aa", "")}
                     {opt("Match whole word", |x| x.whole_word, |x| x.whole_word = !x.whole_word, "ab", "word")}
                     {opt("Use regular expression", |x| x.regex, |x| x.regex = !x.regex, ".*", "")}
+                    // One above the other, in the room of one button (views.css).
+                    <span class="find-steps">
+                        <button class="filter-opt" title="Previous match (⇧↵)" aria-label="Previous match" disabled=move || !has_hits()
+                            on:mousedown=|e: web_sys::MouseEvent| e.prevent_default() on:click=move |_| step(-1)>{ico(Icon::PrevMatch)}</button>
+                        <button class="filter-opt" title="Next match (↵)" aria-label="Next match" disabled=move || !has_hits()
+                            on:mousedown=|e: web_sys::MouseEvent| e.prevent_default() on:click=move |_| step(1)>{ico(Icon::NextMatch)}</button>
+                    </span>
                 </div>
                 <div class="find-tools">
                     <span class="count">{count}</span>
@@ -589,12 +678,28 @@ pub(super) fn find_bar(
             </div>
             {move || found.get().map(|f| match f {
                 Err(e) => view! { <p class="hint">{e}</p> }.into_any(),
-                Ok(f) => view! {
+                Ok(f) => {
+                    let limit = listed.get();
+                    let all: usize = f.hits.iter().map(|h| h.snippets.len()).sum();
+                    let left = all.saturating_sub(limit);
+                    let mut room = limit;
+                    // The parts with a match still listed, each with as many as there's room for.
+                    let hits: Vec<_> = f.hits.into_iter().map_while(|mut h| {
+                        if room == 0 {
+                            return None;
+                        }
+                        let whole = h.snippets.len() <= room;
+                        h.snippets.truncate(room);
+                        room -= h.snippets.len();
+                        Some((h, whole))
+                    }).collect();
+                    view! {
                     <ul class="hit-tree" role="tree">
-                        {f.hits.into_iter().map(|h| {
+                        {hits.into_iter().map(|(h, whole)| {
                             let open = RwSignal::new(true);
                             let path = StoredValue::new(h.path.clone());
-                            let more = h.count.saturating_sub(h.snippets.len());
+                            // Past the text listed for a part, matches are only counted.
+                            let more = if whole { h.count.saturating_sub(h.snippets.len()) } else { 0 };
                             view! {
                                 <li role="treeitem" aria-expanded=move || open.get().to_string()>
                                     <div class="hit-head">
@@ -624,7 +729,14 @@ pub(super) fn find_bar(
                             }
                         }).collect_view()}
                     </ul>
-                }.into_any(),
+                    {(left > 0).then(|| view! {
+                        <button class="btn small find-more" title="List more of the matches" aria-label="List more of the matches"
+                            on:click=move |_| listed.update(|n| *n += FIND_PAGE)>
+                            {format!("Show {} more", left.min(FIND_PAGE))}
+                        </button>
+                    })}
+                    }.into_any()
+                }
             })}
         </div>
     }

@@ -1089,6 +1089,77 @@ td.name input.rename {
   flex: 1;
 }
 
+/* Narrow, as the book's bar (fold_bar in util.rs): first the zoom percentage goes, then the
+   page box, then the zoom. */
+.viewer-bar.pdf-bar.measuring {
+  flex-wrap: nowrap;
+  overflow: hidden;
+}
+
+.viewer-bar.pdf-bar.fold-1 .btn.zoom,
+.viewer-bar.pdf-bar.fold-2 .pdf-page,
+.viewer-bar.pdf-bar.fold-2 .pdf-pages,
+.viewer-bar.pdf-bar.fold-3 .pdf-zoom {
+  display: none;
+}
+
+/* The fits, on a right-click on the zoom percentage. */
+.pdf-bar .pdf-zoom {
+  position: relative;
+}
+
+.pdf-bar .zoom-menu {
+  position: absolute;
+  top: calc(100% + 2px);
+  left: 0;
+  z-index: 20;
+  display: flex;
+  flex-direction: column;
+  padding: 4px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: var(--panel);
+  box-shadow: 0 6px 18px rgba(0, 0, 0, 0.18);
+}
+
+.pdf-bar .zoom-menu button {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 5px 8px;
+  border: 0;
+  border-radius: 5px;
+  background: none;
+  color: var(--ink);
+  font: inherit;
+  white-space: nowrap;
+  text-align: left;
+  cursor: pointer;
+}
+
+.pdf-bar .zoom-menu button:hover {
+  background: var(--hover);
+}
+
+.pdf-bar .zoom-menu .tick {
+  visibility: hidden;
+  display: inline-flex;
+}
+
+.pdf-bar .zoom-menu .tick.on {
+  visibility: visible;
+}
+
+.pdf-bar .zoom-menu .what {
+  flex: 1;
+}
+
+.pdf-bar .zoom-menu .key {
+  margin-left: 16px;
+  color: var(--muted);
+  font-size: 12px;
+}
+
 .pdf-bar .pdf-unread {
   min-width: 0;
   overflow: hidden;
@@ -1103,6 +1174,12 @@ td.name input.rename {
   min-height: 240px;
   display: flex;
   gap: 6px;
+}
+
+/* The grip between the side pane and the pages, in the middle of the gap. */
+.preview .pdf-body .pdf-grip,
+.preview .epub-body .pdf-grip {
+  margin: 0 -3px;
 }
 
 .pdf-outline {
@@ -1147,6 +1224,58 @@ td.name input.rename {
 }
 
 .pdf-outline .pdf-head .pg {
+  color: var(--muted);
+  font-variant-numeric: tabular-nums;
+}
+
+/* The Info tab: label above value, so long titles wrap in the narrow pane. */
+.pdf-outline .pdf-info {
+  margin: 0;
+  padding: 4px 8px;
+  font-size: 12px;
+}
+
+.pdf-outline .pdf-info dt {
+  margin-top: 6px;
+  color: var(--muted);
+}
+
+.pdf-outline .pdf-info dd {
+  margin: 1px 0 0;
+  color: var(--ink);
+  overflow-wrap: anywhere;
+  user-select: text;
+}
+
+.pdf-outline .pdf-info-files {
+  padding: 4px 8px;
+  font-size: 12px;
+}
+
+.pdf-outline .pdf-info-head {
+  margin-top: 4px;
+  color: var(--muted);
+}
+
+.pdf-outline .pdf-info-files ul {
+  margin: 2px 0 0;
+  padding: 0;
+  list-style: none;
+}
+
+.pdf-outline .pdf-info-files li {
+  display: flex;
+  gap: 8px;
+  padding: 1px 0;
+}
+
+.pdf-outline .pdf-info-files .name {
+  flex: 1;
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+
+.pdf-outline .pdf-info-files .size {
   color: var(--muted);
   font-variant-numeric: tabular-nums;
 }
@@ -1210,6 +1339,16 @@ td.name input.rename {
   position: absolute;
   display: block;
   user-select: none;
+}
+
+/* Night: the page's colours turned round and the hues turned back, so white paper is dark and
+   pictures keep their colours roughly. */
+.preview .pdf-stage.night .pdf-leaf {
+  background: #000;
+}
+
+.preview .pdf-stage.night .pdf-sheet canvas {
+  filter: invert(1) hue-rotate(180deg);
 }
 
 .preview .pdf-sheet canvas.rough {
@@ -1751,6 +1890,14 @@ td.name .ext {
   align-items: flex-end;
 }
 
+/* An unseen copy of the extension before the stem, as wide as the one after it, so the cut
+   name stays in the middle of the tile. */
+.tile .label .split::before {
+  content: attr(data-ext);
+  flex: none;
+  visibility: hidden;
+}
+
 .tile .label .stem {
   min-width: 0;
   display: -webkit-box;
@@ -1896,6 +2043,42 @@ td.name .ext {
   color: var(--ink);
 }
 
+/* Too narrow for the tabs: a list to pick from instead (layout.rs `tab_pick`). Three tabs need
+   more room than two. */
+.epub-outline {
+  container: side / inline-size;
+}
+
+.epub-outline .outline-pick {
+  display: none;
+  width: 100%;
+  min-width: 0;
+}
+
+@container side (max-width: 250px) {
+  .epub-outline .outline-tabs.many {
+    padding-bottom: 4px;
+  }
+  .epub-outline .outline-tabs.many button {
+    display: none;
+  }
+  .epub-outline .outline-tabs.many .outline-pick {
+    display: block;
+  }
+}
+
+@container side (max-width: 180px) {
+  .epub-outline .outline-tabs {
+    padding-bottom: 4px;
+  }
+  .epub-outline .outline-tabs button {
+    display: none;
+  }
+  .epub-outline .outline-tabs .outline-pick {
+    display: block;
+  }
+}
+
 .epub-outline .outline-tabs button.on {
   border-color: var(--line);
   border-bottom-color: var(--panel);
@@ -1923,6 +2106,34 @@ td.name .ext {
 .read-find .filter-box {
   width: auto;
   min-width: 0;
+}
+
+/* Previous and next match, at the end of the find box: one above the other, in the room of one
+   button. */
+.read-find .find-steps {
+  flex: none;
+  display: flex;
+  flex-direction: column;
+}
+
+.read-find .find-steps .filter-opt {
+  height: 11px;
+  border-radius: 3px;
+}
+
+.read-find .find-steps .filter-opt svg {
+  width: 10px;
+  height: 10px;
+}
+
+.read-find .find-steps .filter-opt:disabled {
+  opacity: 0.4;
+  pointer-events: none;
+}
+
+.read-find .find-more {
+  align-self: center;
+  margin: 2px 0;
 }
 
 .read-find .find-tools {

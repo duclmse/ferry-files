@@ -558,6 +558,24 @@ pub struct Packed {
 }
 
 /// A PDF's page count and outline (empty when it has none).
+/// What a PDF says about itself (the backend's `preview::pdf::Info`).
+#[derive(Deserialize, Clone, Debug, PartialEq, Default)]
+pub struct PdfInfo {
+    pub title: Option<String>,
+    pub author: Option<String>,
+    pub subject: Option<String>,
+    pub keywords: Option<String>,
+    pub creator: Option<String>,
+    pub producer: Option<String>,
+    pub created: Option<String>,
+    pub modified: Option<String>,
+    pub pages: usize,
+    pub page_size: Option<[f32; 2]>,
+    pub version: Option<String>,
+    pub encrypted: bool,
+    pub attachments: Vec<(String, u64)>,
+}
+
 #[derive(Clone, Debug, Deserialize, PartialEq)]
 pub struct PdfOutline {
     pub pages: usize,

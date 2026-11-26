@@ -29,6 +29,7 @@ fn main() {
             "subtitle",
             "zip_list",
             "pdf_outline",
+            "pdf_info",
             "pdf_find",
             "pdf_pages",
             "pdf_marks",

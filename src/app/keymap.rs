@@ -61,6 +61,24 @@ pub(super) const COMMANDS: &[Command] = &[
         false,
     ),
     c(
+        "pdf_actual",
+        "The PDF in the preview at its actual size",
+        &["cmd+Digit0"],
+        false,
+    ),
+    c(
+        "pdf_fit_width",
+        "The PDF in the preview as wide as the preview",
+        &["cmd+Digit1"],
+        false,
+    ),
+    c(
+        "pdf_fit_page",
+        "The PDF in the preview a whole page at a time",
+        &["cmd+Digit2"],
+        false,
+    ),
+    c(
         "palette",
         "Commands: every action, favourites, devices, recent folders",
         &["cmd+KeyK"],

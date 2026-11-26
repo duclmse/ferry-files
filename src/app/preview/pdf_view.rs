@@ -14,6 +14,114 @@ const PDF_GAP: f64 = 10.0;
 /// again only now and then (they're scaled to fit in between).
 const PDF_RES_STEP: f64 = 128.0;
 
+/// How the pages are sized: as wide as the stage, a whole page in view, at their printed size
+/// (72 dpi points as CSS pixels), or as zoomed. The first three are kept through a resize.
+#[derive(Clone, Copy, PartialEq, Debug, serde::Serialize, serde::Deserialize)]
+pub(crate) enum Fit {
+    Width,
+    Page,
+    Actual,
+    Free,
+}
+
+/// The zoom limits, for the buttons and the fits alike.
+const ZOOM_MIN: f64 = 0.25;
+const ZOOM_MAX: f64 = 8.0;
+
+/// The zoom that `fit` is (None for `Free`): `room` is the stage's size and `page` the page's in
+/// points (unturned), `side` whether it's turned on its side. Zoom 1 is the column as wide as
+/// the stage, less the padding. A whole page is never wider than the stage.
+fn fit_zoom(fit: Fit, room: (f64, f64), page: [f64; 2], side: bool) -> Option<f64> {
+    let col = (room.0 - 2.0 * PDF_PAD).max(50.0);
+    let [pw, ph] = page.map(|v| v.max(1.0));
+    let (pw, ph) = if side { (ph, pw) } else { (pw, ph) };
+    let z = match fit {
+        Fit::Free => return None,
+        Fit::Width => 1.0,
+        Fit::Page => ((room.1 - 2.0 * PDF_PAD).max(50.0) / (col * ph / pw)).min(1.0),
+        Fit::Actual => pw / col,
+    };
+    Some(z.clamp(ZOOM_MIN, ZOOM_MAX))
+}
+
+/// Where each PDF was left, most recently read first: localStorage, under this key.
+const PLACES_KEY: &str = "ferry-files.pdf-places";
+const PLACES_MAX: usize = 200;
+
+/// Where a PDF was left: `key` names the file as it was (`place_key`), the rest is how it was
+/// shown: the `anchor`, the zoom and fit, and the turns.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize)]
+struct Place {
+    key: String,
+    page: usize,
+    down: f64,
+    across: f64,
+    zoom: f64,
+    fit: Fit,
+    turns: u8,
+}
+
+/// A PDF's key among the places: where it is, its size and when it changed, so a PDF changed
+/// since starts at the top again.
+fn place_key(src: &str, path: &str, size: u64, mtime: i64, inner: Option<&str>) -> String {
+    match inner {
+        Some(i) => format!("{src}\n{path}\n{size}\n{mtime}\n{i}"),
+        None => format!("{src}\n{path}\n{size}\n{mtime}"),
+    }
+}
+
+/// `p` put first among `places`, in place of the PDF's old place, and the least recently read
+/// dropped past `PLACES_MAX`.
+fn remember(places: &mut Vec<Place>, p: Place) {
+    places.retain(|q| q.key != p.key);
+    places.insert(0, p);
+    places.truncate(PLACES_MAX);
+}
+
+fn places() -> Vec<Place> {
+    crate::app::stored(PLACES_KEY)
+        .and_then(|s| serde_json::from_str(&s).ok())
+        .unwrap_or_default()
+}
+
+/// Where the side pane's width is kept.
+const SIDE_W_KEY: &str = "ferry-files.pdf-side-w";
+
+/// How often the pages in view are drawn sharp while the reader keeps scrolling.
+const SHARPEN_MS: f64 = 300.0;
+
+/// Night: the pages drawn light on dark (their colours turned round, hues kept), for every PDF.
+const NIGHT_KEY: &str = "ferry-files.pdf-night";
+
+thread_local! {
+    static NIGHT: ArcRwSignal<bool> = ArcRwSignal::new(crate::app::stored_flag(NIGHT_KEY, false));
+}
+
+fn night() -> ArcRwSignal<bool> {
+    NIGHT.with(Clone::clone)
+}
+
+type FitKey = std::rc::Rc<dyn Fn(Fit) -> bool>;
+
+thread_local! {
+    /// The PDF in each pane's preview that takes ⌘0, ⌘1 and ⌘2: (pane, viewer, handler).
+    static FIT_KEYS: std::cell::RefCell<Vec<(usize, u64, FitKey)>> = const { std::cell::RefCell::new(Vec::new()) };
+    static NEXT_VIEWER: std::cell::Cell<u64> = const { std::cell::Cell::new(0) };
+}
+
+/// ⌘0, ⌘1 or ⌘2 for the PDF in `pane`'s preview; false when there's none, or it's in the web
+/// view's own viewer.
+pub(crate) fn pdf_fit_key(pane: usize, fit: Fit) -> bool {
+    let f = FIT_KEYS.with(|k| {
+        k.borrow()
+            .iter()
+            .rev()
+            .find(|(p, _, _)| *p == pane)
+            .map(|(_, _, f)| f.clone())
+    });
+    f.is_some_and(|f| f(fit))
+}
+
 /// Where a page drawn sits (from its top) and how it's turned: the unturned page's box (width,
 /// height) and the CSS transform that puts it in the box the turned page takes up, `w` × `h`.
 fn pdf_sheet(t: u8, w: f64, h: f64) -> String {
@@ -100,8 +208,8 @@ fn pdf_link_layer(links: &[PdfLink], go: impl Fn(usize) + Copy + 'static) -> imp
         .collect_view()
 }
 
-/// A PDF with a bar above it: the outline, find in its text, go to a page, zoom, turn, open it in
-/// its app, show it in its folder.
+/// A PDF with a bar above it: the outline, find in its text, go to a page, zoom, turn; and its
+/// info in the side pane.
 ///
 /// The pages are drawn by PDFium in the backend (`ferry://…/pdfpage`, pixels put straight on a
 /// canvas, `pdf`): roughly those near what's scrolled to, then sharp those in view, at the
@@ -121,15 +229,19 @@ pub(super) fn PdfView(
     let ctx = expect_context::<Ctx>();
     let p = pane;
     let frame = NodeRef::<html::Iframe>::new();
-    let in_zip = inner.is_some();
     let (path, size, mtime) = (entry.path.clone(), entry.size, entry.mtime);
     let what = StoredValue::new((path.clone(), inner));
     let page_url = StoredValue::new(url.clone());
     let outline = RwSignal::new(None::<Result<PdfOutline, String>>);
     // The pane beside the pages, hidden until asked for, every time: its Outline tab, or its
-    // Search tab (`search_tab`).
+    // Search tab (`search_tab`) or its Info tab (`info_tab`).
     let show = RwSignal::new(false);
     let search_tab = RwSignal::new(false);
+    // The Info tab, instead of the outline (search_tab false).
+    let info_tab = RwSignal::new(false);
+    let info = RwSignal::new(None::<Result<PdfInfo, String>>);
+    // The side pane's width, dragged, for every PDF (0: the layout's own).
+    let side_w = stored_px(SIDE_W_KEY);
     let typed = RwSignal::new(String::new());
     let page_input = NodeRef::<html::Input>::new();
     let args = move || {
@@ -169,13 +281,28 @@ pub(super) fn PdfView(
         });
     };
     let show_outline = move || {
-        if show.get_untracked() && !search_tab.get_untracked() {
+        if show.get_untracked() && !search_tab.get_untracked() && !info_tab.get_untracked() {
             show.set(false);
         } else {
             search_tab.set(false);
+            info_tab.set(false);
             show.set(true);
             load();
         }
+    };
+    let show_info = move || {
+        search_tab.set(false);
+        info_tab.set(true);
+        show.set(true);
+        if info.with_untracked(|i| matches!(i, Some(Ok(_)))) {
+            return;
+        }
+        info.set(None);
+        let args = args();
+        spawn_local(async move {
+            let r = call::<PdfInfo>("pdf_info", args).await;
+            let _ = info.try_set(Some(r));
+        });
     };
     let pages = move || {
         sizes
@@ -183,6 +310,7 @@ pub(super) fn PdfView(
             .or_else(|| outline.with(|o| o.as_ref().and_then(|o| o.as_ref().ok()).map(|o| o.pages)))
     };
     let zoom = RwSignal::new(1.0f64);
+    let fit = RwSignal::new(Fit::Width);
     let turns = RwSignal::new(0u8);
     let stage = NodeRef::<html::Div>::new();
     let room = RwSignal::new(None::<(f64, f64)>);
@@ -215,6 +343,17 @@ pub(super) fn PdfView(
     let near = Memo::new(move |_| {
         let (top, ch) = scrolled.get();
         let (lo, hi) = (top - ch, top + 2.0 * ch);
+        layout.with(|(_, at, _)| {
+            (
+                at.partition_point(|&(y, h)| y + h < lo),
+                at.partition_point(|&(y, _)| y <= hi),
+            )
+        })
+    });
+    // Pages from two screens above what's shown to two below: those already made stay made.
+    let far = Memo::new(move |_| {
+        let (top, ch) = scrolled.get();
+        let (lo, hi) = (top - 2.0 * ch, top + 3.0 * ch);
         layout.with(|(_, at, _)| {
             (
                 at.partition_point(|&(y, h)| y + h < lo),
@@ -277,11 +416,13 @@ pub(super) fn PdfView(
             return;
         }
         search_tab.set(true);
+        info_tab.set(false);
         show.set(true);
         find_focus.update(|n| *n += 1);
     };
     let close_find = move || {
         search_tab.set(false);
+        info_tab.set(false);
         load();
     };
     // A search still running when another starts is let go: only the last one's results show.
@@ -406,18 +547,6 @@ pub(super) fn PdfView(
             }
         }
     };
-    let open = {
-        let path = path.clone();
-        move |_| ctx.open_in_app_from(p, src, path.clone())
-    };
-    let reveal = move |_| {
-        let path = path.clone();
-        spawn_local(async move {
-            if let Err(e) = call::<()>("reveal", json!({ "path": path })).await {
-                p.error(e);
-            }
-        });
-    };
     // The width the web view's viewer lays its pages out at: the stage's when first measured.
     // Resizing the preview then scales that layout to the new width rather than resizing the
     // viewer, which keeps its page scale (and leaves a gap or cuts the pages off) and can't be
@@ -506,13 +635,53 @@ pub(super) fn PdfView(
     };
     // Drawn pages keep their place through `anchor` instead.
     let set_zoom = move |z: f64| {
-        let z = z.clamp(0.25, 8.0);
+        let z = z.clamp(ZOOM_MIN, ZOOM_MAX);
+        fit.set(Fit::Free);
         if drawn() {
             zoom.set(z)
         } else {
             keep_place(&|| zoom.set(z))
         }
     };
+    // A fit's zoom, again whenever the stage is resized or the pages turned. Fit page fits the
+    // page in view when it's picked or the stage changes, not every page scrolled past.
+    Effect::new(move |_| {
+        let f = fit.get();
+        let Some(room) = room.get() else { return };
+        let side = turns.get() % 2 == 1;
+        let Some(page) = sizes.with(|s| {
+            let s = s.as_ref()?.as_ref()?;
+            s.get(here.get_untracked()).or(s.first()).copied()
+        }) else {
+            return;
+        };
+        if let Some(z) = fit_zoom(f, room, page, side) {
+            if (zoom.get_untracked() - z).abs() > 1e-6 {
+                zoom.set(z);
+            }
+        }
+    });
+    let pick_fit = move |f: Fit| {
+        if !drawn() {
+            return false;
+        }
+        // Set even when it's on, so Fit page picked again fits the page now in view.
+        fit.set(f);
+        true
+    };
+    {
+        let id = NEXT_VIEWER.with(|n| {
+            let id = n.get();
+            n.set(id + 1);
+            id
+        });
+        let pane_id = p.id;
+        FIT_KEYS.with(|k| {
+            k.borrow_mut()
+                .push((pane_id, id, std::rc::Rc::new(pick_fit)))
+        });
+        on_cleanup(move || FIT_KEYS.with(|k| k.borrow_mut().retain(|(_, i, _)| *i != id)));
+    }
     let turn = move |by: u8| {
         if drawn() {
             turns.update(|t| *t = (*t + by) % 4)
@@ -580,8 +749,7 @@ pub(super) fn PdfView(
             anchor.set_value(at);
         }
     };
-    Effect::new(move |_| {
-        layout.track();
+    let put_back = move || {
         let Some((i, down, across)) = anchor.get_value() else {
             return;
         };
@@ -609,21 +777,98 @@ pub(super) fn PdfView(
                 let _ = restoring.try_set_value(false);
             });
         });
+    };
+    Effect::new(move |_| {
+        layout.track();
+        put_back();
     });
+    // Where this PDF was left, the last time it was read: put back once its pages are in, before
+    // they're drawn sharp; and kept each time the reader stops (`settled`).
+    let key = {
+        let (path, inner) = what.get_value();
+        match &inner {
+            Some(i) => place_key(
+                &src.key(),
+                &i.zip_path,
+                size,
+                mtime,
+                Some(&format!("{}\n{}", i.zip_size, i.name)),
+            ),
+            None => place_key(&src.key(), &path, size, mtime, None),
+        }
+    };
+    let key = StoredValue::new(key);
+    let restored = StoredValue::new(false);
+    Effect::new(move |_| {
+        if !drawn() || restored.get_value() {
+            return;
+        }
+        restored.set_value(true);
+        let Some(p) = key.with_value(|k| places().into_iter().find(|p| &p.key == k)) else {
+            return;
+        };
+        let n = sizes.with_untracked(|s| s.as_ref().and_then(|s| s.as_ref()).map_or(0, Vec::len));
+        if p.page >= n {
+            return;
+        }
+        anchor.set_value(Some((
+            p.page,
+            p.down.clamp(0.0, 1.0),
+            p.across.clamp(0.0, 1.0),
+        )));
+        turns.set(p.turns % 4);
+        fit.set(p.fit);
+        if p.fit == Fit::Free {
+            zoom.set(p.zoom.clamp(ZOOM_MIN, ZOOM_MAX));
+        }
+        put_back();
+    });
+    let keep = move || {
+        let Some((page, down, across)) = anchor.try_get_value().flatten() else {
+            return;
+        };
+        let Some(p) = key.try_with_value(|key| Place {
+            key: key.clone(),
+            page,
+            down,
+            across,
+            zoom: zoom.get_untracked(),
+            fit: fit.get_untracked(),
+            turns: turns.get_untracked(),
+        }) else {
+            return;
+        };
+        let mut all = places();
+        if all.first() != Some(&p) {
+            remember(&mut all, p);
+            if let Ok(s) = serde_json::to_string(&all) {
+                crate::app::store(PLACES_KEY, &s);
+            }
+        }
+    };
     // Bumped once scrolling, zooming or resizing has stopped for a moment: the pages in view
-    // are drawn sharp then, not on every step.
+    // are drawn sharp then, not on every step; and every `SHARPEN_MS` during a long scroll, so
+    // the pages coming into view don't stay rough all the way.
     let settled = RwSignal::new(0u32);
     let settle_timer = StoredValue::new_local(None::<TimeoutHandle>);
+    let last_settled = StoredValue::new(0.0f64);
     Effect::new(move |_| {
         scrolled.track();
         layout.track();
         res.track();
         if let Some(h) = settle_timer.try_update_value(Option::take).flatten() {
             h.clear();
+            let now = js_sys::Date::now();
+            if now - last_settled.get_value() >= SHARPEN_MS {
+                last_settled.set_value(now);
+                settled.update(|n| *n += 1);
+            }
         }
         let h = set_timeout_with_handle(
             move || {
+                let _ = last_settled.try_set_value(js_sys::Date::now());
                 settled.try_update(|n| *n += 1);
+                keep();
             },
             std::time::Duration::from_millis(120),
         );
@@ -658,8 +903,14 @@ pub(super) fn PdfView(
     };
     // Page `i` (from 0): a box of its size, with the page drawn in it when it's near what's shown.
     let page_view = move |i: usize| {
-        let shown = Memo::new(move |_| {
-            let (a, b) = near.get();
+        // Dropped only once it's further off than `near` reaches again (`far`), so a page at the
+        // edge isn't made and dropped (and drawn rough again) on every small scroll back and forth.
+        let shown = Memo::new(move |was: Option<&bool>| {
+            let (a, b) = if was == Some(&true) {
+                far.get()
+            } else {
+                near.get()
+            };
             i >= a && i < b
         });
         let place = move || {
@@ -752,14 +1003,22 @@ pub(super) fn PdfView(
                             (left - m * sw - lx).max(0.0), (top - m * ch - ly).max(0.0),
                             (left + (1.0 + m) * sw - lx).min(cw), (top + (1.0 + m) * ch - ly).min(lh),
                         ];
-                        let seen = view(0.0);
-                        if seen[2] <= seen[0] || seen[3] <= seen[1] {
+                        // A sharp drawing is let go only a screen out of view, so one scrolled
+                        // just past and back isn't blurred and drawn again; and pages about to
+                        // come into view are drawn sharp already.
+                        let keep_to = view(1.0);
+                        if keep_to[2] <= keep_to[0] || keep_to[3] <= keep_to[1] {
                             drawer.forget(page, true);
                             let _ = asked.try_update_value(|a| a.1 += 1);
                             if have.try_get_value().flatten().is_some() {
                                 have.set_value(None);
                                 super::pdf::clear(&c);
                             }
+                            return;
+                        }
+                        let seen = view(0.25);
+                        if seen[2] <= seen[0] || seen[3] <= seen[1] {
+                            drawer.forget(page, true);
                             return;
                         }
                         let t = turns.get_untracked();
@@ -833,6 +1092,31 @@ pub(super) fn PdfView(
             </div>
         }
     };
+    // The page shown (from 1): the one scrolled to, or the one typed in the web view's viewer.
+    let page_now = move || {
+        if drawn() {
+            here.get_untracked() + 1
+        } else {
+            typed.get_untracked().trim().parse().unwrap_or(1)
+        }
+    };
+    // Right-click on the zoom: the fits. Closed by a click anywhere else.
+    let fits_open = RwSignal::new(false);
+    let zoom_menu = NodeRef::<html::Span>::new();
+    let away = window_event_listener(ev::mousedown, move |e| {
+        let inside = zoom_menu
+            .get_untracked()
+            .zip(e.target().and_then(|t| t.dyn_into::<web_sys::Node>().ok()))
+            .is_some_and(|(m, t)| m.contains(Some(&t)));
+        if !inside {
+            fits_open.set(false);
+        }
+    });
+    on_cleanup(move || away.remove());
+    // Narrow, the bar drops the zoom percentage, then the page box, then the zoom (as the
+    // book's bar does).
+    let bar = NodeRef::<html::Div>::new();
+    fold_bar(bar, 3);
     let heading_list = move || match outline.get() {
         None => view! { <span class="hint">"Loading…"</span> }.into_any(),
         Some(Err(e)) => view! { <span class="hint">{e}</span> }.into_any(),
@@ -884,56 +1168,272 @@ pub(super) fn PdfView(
     }
     };
     view! {
-        <div class="viewer-bar pdf-bar pdf-reader">
+        <div class="viewer-bar pdf-bar pdf-reader" node_ref=bar>
             // Rendered only with PDFium: `hidden` loses to `.btn-group`'s display.
             {move || drawn().then(|| view! {
                 <span class="btn-group" role="group">
-                    <button class="btn" class:active=move || show.get() && !search_tab.get() title="Outline" aria-label="Outline"
+                    <button class="btn" class:active=move || show.get() && !search_tab.get() && !info_tab.get() title="Outline" aria-label="Outline"
                         on:click=move |_| show_outline()>{ico(Icon::Contents)}</button>
                     <button class="btn" class:active=move || show.get() && search_tab.get() title=crate::os::keys("Find in the PDF (⌘F)") aria-label="Find in the PDF"
                         aria-pressed=move || (show.get() && search_tab.get()).to_string()
                         on:click=move |_| if show.get_untracked() && search_tab.get_untracked() { show.set(false) } else { open_find() }>{ico(Icon::Search)}</button>
                 </span>
             })}
+            <span class="btn-group pdf-zoom" role="group" node_ref=zoom_menu>
+                <button class="btn" title="Zoom out" aria-label="Zoom out" on:click=move |_| set_zoom(zoom.get_untracked() / 1.25)>{ico(Icon::ZoomOut)}</button>
+                <button class="btn zoom" class:active=fits_open aria-haspopup="menu" aria-expanded=move || fits_open.get().to_string()
+                    title=move || if drawn() { crate::os::keys("Fit the width (⌘1). Right-click for the other fits.").to_string() } else { "Fit the width".to_string() }
+                    on:click=move |_| { fits_open.set(false); if !pick_fit(Fit::Width) { set_zoom(1.0) } }
+                    on:contextmenu=move |e: web_sys::MouseEvent| if drawn() { e.prevent_default(); fits_open.update(|o| *o = !*o); }>
+                    {move || format!("{:.0}%", zoom.get() * 100.0)}</button>
+                <button class="btn" title="Zoom in" aria-label="Zoom in" on:click=move |_| set_zoom(zoom.get_untracked() * 1.25)>{ico(Icon::ZoomIn)}</button>
+                {move || fits_open.get().then(|| {
+                    let item = move |f: Fit, what: &'static str, key: &'static str| view! {
+                        <button role="menuitemradio" aria-checked=move || (fit.get() == f).to_string()
+                            on:click=move |_| { fits_open.set(false); pick_fit(f); }>
+                            <span class="tick" class:on=move || fit.get() == f>{ico(Icon::Check)}</span>
+                            <span class="what">{what}</span>
+                            <span class="key">{crate::os::keys(key)}</span>
+                        </button>
+                    };
+                    view! {
+                        <span class="zoom-menu" role="menu">
+                            {item(Fit::Width, "Fit the width", "⌘1")}
+                            {item(Fit::Page, "Fit the page", "⌘2")}
+                            {item(Fit::Actual, "Actual size", "⌘0")}
+                        </span>
+                    }
+                })}
+            </span>
             {move || unread.get().map(|e| view! { <span class="hint pdf-unread" title=e.clone()>{format!("No outline or search: {e}")}</span> })}
-            <span class="gap"></span>
+            <span class="pdf-fill"></span>
             <input class="pdf-page" node_ref=page_input type="text" inputmode="numeric" placeholder="Page" aria-label="Go to page"
                 prop:value=move || typed.get() on:input=move |ev| typed.set(event_target_value(&ev)) on:keydown=on_key/>
             {move || pages().map(|n| view! { <span class="pdf-pages">{format!("of {n}")}</span> })}
-            <span class="gap"></span>
             <span class="btn-group" role="group">
-                <button class="btn" title="Zoom out" aria-label="Zoom out" on:click=move |_| set_zoom(zoom.get_untracked() / 1.25)>{ico(Icon::ZoomOut)}</button>
-                <button class="btn zoom" title="Fit the width" on:click=move |_| set_zoom(1.0)>{move || format!("{:.0}%", zoom.get() * 100.0)}</button>
-                <button class="btn" title="Zoom in" aria-label="Zoom in" on:click=move |_| set_zoom(zoom.get_untracked() * 1.25)>{ico(Icon::ZoomIn)}</button>
+                <button class="btn" title="Previous page" aria-label="Previous page" disabled=move || drawn() && here.get() == 0
+                    on:click=move |_| go(page_now().saturating_sub(1))>{ico(Icon::Prev)}</button>
+                <button class="btn" title="Next page" aria-label="Next page" disabled=move || drawn() && pages().is_some_and(|n| here.get() + 1 >= n)
+                    on:click=move |_| go(page_now() + 1)>{ico(Icon::Next)}</button>
             </span>
+            {move || drawn().then(|| {
+                let on = night();
+                let flip = {
+                    let on = on.clone();
+                    move |_| {
+                        let v = !on.get_untracked();
+                        on.set(v);
+                        crate::app::store(NIGHT_KEY, if v { "1" } else { "0" });
+                    }
+                };
+                let (a, b) = (on.clone(), on);
+                view! {
+                    <button class="btn" class:active=move || a.get() aria-pressed=move || b.get().to_string()
+                        title="Night: light pages on dark" aria-label="Night: light pages on dark" on:click=flip>{ico(Icon::Night)}</button>
+                }
+            })}
             <span class="btn-group" role="group">
                 <button class="btn" title="Turn left" aria-label="Turn left" on:click=move |_| turn(3)>{ico(Icon::TurnLeft)}</button>
                 <button class="btn" title="Turn right" aria-label="Turn right" on:click=move |_| turn(1)>{ico(Icon::TurnRight)}</button>
             </span>
-            <span class="pdf-fill"></span>
-            {(!in_zip).then(|| view! { <button class="btn" title="Open in its default app" aria-label="Open in its default app" on:click=open>{ico(Icon::OpenOut)}</button> })}
-            {(!in_zip && src == Src::Mac).then(|| {
-                let tip = format!("Show in {}", crate::os::file_manager());
-                view! { <button class="btn" title=tip.clone() aria-label=tip on:click=reveal>{ico(Icon::Folder)}</button> }
-            })}
         </div>
         <div class="pdf-body">
             {move || (show.get() && drawn()).then(|| view! {
-                <nav class="pdf-outline epub-outline" aria-label="Outline and search">
-                    <div class="outline-tabs" role="tablist">
-                        <button role="tab" class:on=move || !search_tab.get() aria-selected=move || (!search_tab.get()).to_string()
+                <nav class="pdf-outline epub-outline" aria-label="Outline and search"
+                    style=move || match side_w.get() { w if w > 0.0 => format!("flex-basis: {w}px; max-width: none"), _ => String::new() }>
+                    <div class="outline-tabs many" role="tablist">
+                        {tab_pick(vec![
+                            ("Outline", Signal::derive(move || !search_tab.get() && !info_tab.get()), Callback::new(move |_| close_find())),
+                            ("Search", search_tab.into(), Callback::new(move |_| open_find())),
+                            ("Info", info_tab.into(), Callback::new(move |_| show_info())),
+                        ])}
+                        <button role="tab" class:on=move || !search_tab.get() && !info_tab.get() aria-selected=move || (!search_tab.get() && !info_tab.get()).to_string()
                             title="Outline" on:click=move |_| close_find()>{ico(Icon::Contents)}"Outline"</button>
                         <button role="tab" class:on=search_tab aria-selected=move || search_tab.get().to_string()
                             title=crate::os::keys("Search the PDF (⌘F)") on:click=move |_| open_find()>{ico(Icon::Search)}"Search"</button>
+                        <button role="tab" class:on=info_tab aria-selected=move || info_tab.get().to_string()
+                            title="About the PDF" on:click=move |_| show_info()>{ico(Icon::Info)}"Info"</button>
                     </div>
-                    {move || if search_tab.get() {
+                    {move || if info_tab.get() {
+                        info_list(info).into_any()
+                    } else if search_tab.get() {
                         super::reading::find_bar(super::reading::PDF_WORDS, fq, found, searching, find_focus, search, pick, current, close_find).into_any()
                     } else {
                         heading_list().into_any()
                     }}
                 </nav>
+                <Grip size=side_w key=SIDE_W_KEY.to_string() min=140.0 max=640.0 room=200.0 target=Target::Prev class="grip pdf-grip"/>
             })}
-            <div class="pdf-stage" class:drawn=drawn node_ref=stage on:scroll=on_scroll>{stage_body}</div>
+            <div class="pdf-stage" class:drawn=drawn class:night={let n = night(); move || n.get()} node_ref=stage on:scroll=on_scroll>{stage_body}</div>
         </div>
+    }
+}
+
+/// The Info tab: what the PDF says about itself, the rows it leaves out left out.
+fn info_list(info: RwSignal<Option<Result<PdfInfo, String>>>) -> impl IntoView {
+    move || match info.get() {
+        None => view! { <p class="hint pdf-info-note">"Reading…"</p> }.into_any(),
+        Some(Err(e)) => {
+            view! { <p class="hint pdf-info-note">{format!("Couldn't read its info: {e}")}</p> }
+                .into_any()
+        }
+        Some(Ok(i)) => {
+            let rows = info_rows(&i);
+            let files = i.attachments.clone();
+            view! {
+                <dl class="pdf-info">
+                    {rows.into_iter().map(|(k, v)| view! { <dt>{k}</dt><dd>{v}</dd> }).collect_view()}
+                </dl>
+                {(!files.is_empty()).then(|| view! {
+                    <div class="pdf-info-files">
+                        <div class="pdf-info-head">"Attached files"</div>
+                        <ul>{files.into_iter().map(|(name, n)| view! {
+                            <li><span class="name">{name}</span><span class="size">{crate::app::util::human_size(n)}</span></li>
+                        }).collect_view()}</ul>
+                    </div>
+                })}
+            }
+            .into_any()
+        }
+    }
+}
+
+/// The Info tab's rows, as label and value.
+fn info_rows(i: &PdfInfo) -> Vec<(&'static str, String)> {
+    let mut rows = vec![];
+    for (k, v) in [
+        ("Title", &i.title),
+        ("Author", &i.author),
+        ("Subject", &i.subject),
+        ("Keywords", &i.keywords),
+    ] {
+        if let Some(v) = v {
+            rows.push((k, v.clone()));
+        }
+    }
+    rows.push(("Pages", i.pages.to_string()));
+    if let Some([w, h]) = i.page_size {
+        rows.push(("Page size", page_size(w as f64, h as f64)));
+    }
+    for (k, v) in [
+        ("Created", &i.created),
+        ("Modified", &i.modified),
+        ("Made with", &i.creator),
+        ("PDF made by", &i.producer),
+    ] {
+        if let Some(v) = v {
+            rows.push((k, v.clone()));
+        }
+    }
+    if let Some(v) = &i.version {
+        rows.push(("PDF version", v.clone()));
+    }
+    rows.push(("Encrypted", if i.encrypted { "Yes" } else { "No" }.into()));
+    rows
+}
+
+/// A page size in points as millimetres, named when it's a usual paper size (either way up).
+fn page_size(w: f64, h: f64) -> String {
+    const PAPER: [(&str, f64, f64); 7] = [
+        ("A3", 297.0, 420.0),
+        ("A4", 210.0, 297.0),
+        ("A5", 148.0, 210.0),
+        ("Letter", 215.9, 279.4),
+        ("Legal", 215.9, 355.6),
+        ("Tabloid", 279.4, 431.8),
+        ("B5", 176.0, 250.0),
+    ];
+    let mm = |pt: f64| pt * 25.4 / 72.0;
+    let (wm, hm) = (mm(w), mm(h));
+    let near = |a: f64, b: f64| (a - b).abs() < 2.0;
+    let name = PAPER
+        .iter()
+        .find(|(_, pw, ph)| (near(wm, *pw) && near(hm, *ph)) || (near(wm, *ph) && near(hm, *pw)));
+    let size = format!("{:.0} × {:.0} mm", wm, hm);
+    match name {
+        Some((n, ..)) => format!("{n}, {size}"),
+        None => size,
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    const A4: [f64; 2] = [595.0, 842.0];
+
+    #[test]
+    fn info_rows_and_sizes() {
+        assert_eq!(page_size(595.0, 842.0), "A4, 210 × 297 mm");
+        assert_eq!(page_size(792.0, 612.0), "Letter, 279 × 216 mm");
+        assert_eq!(page_size(500.0, 500.0), "176 × 176 mm");
+        let i = PdfInfo {
+            title: Some("T".into()),
+            pages: 3,
+            version: Some("1.7".into()),
+            ..Default::default()
+        };
+        let keys: Vec<_> = info_rows(&i).into_iter().map(|(k, _)| k).collect();
+        assert_eq!(keys, ["Title", "Pages", "PDF version", "Encrypted"]);
+    }
+
+    #[test]
+    fn fits() {
+        // A stage 624 × 524: a column of 600, 500 high inside the padding.
+        let room = (600.0 + 2.0 * PDF_PAD, 500.0 + 2.0 * PDF_PAD);
+        assert_eq!(fit_zoom(Fit::Free, room, A4, false), None);
+        assert_eq!(fit_zoom(Fit::Width, room, A4, false), Some(1.0));
+        // At zoom 1 the page is 600 × 842/595 high; 500 of it shows.
+        let z = fit_zoom(Fit::Page, room, A4, false).unwrap();
+        assert!((z * 600.0 * 842.0 / 595.0 - 500.0).abs() < 1e-9);
+        assert!((fit_zoom(Fit::Actual, room, A4, false).unwrap() - 595.0 / 600.0).abs() < 1e-12);
+    }
+
+    #[test]
+    fn places_kept_most_recent_first() {
+        let at = |key: &str, page| Place {
+            key: key.into(),
+            page,
+            down: 0.5,
+            across: 0.5,
+            zoom: 1.0,
+            fit: Fit::Width,
+            turns: 0,
+        };
+        let mut all = vec![];
+        for i in 0..PLACES_MAX + 5 {
+            remember(&mut all, at(&i.to_string(), 0));
+        }
+        assert_eq!(all.len(), PLACES_MAX);
+        assert_eq!(all[0].key, (PLACES_MAX + 4).to_string());
+        // The oldest are gone; one read again moves to the front, once.
+        assert!(all.iter().all(|p| p.key != "4"));
+        remember(&mut all, at("100", 7));
+        assert_eq!((all[0].key.as_str(), all[0].page), ("100", 7));
+        assert_eq!(all.iter().filter(|p| p.key == "100").count(), 1);
+        assert_eq!(all.len(), PLACES_MAX);
+        // Changed since, a PDF is another one.
+        assert_ne!(
+            place_key("mac", "/a.pdf", 1, 2, None),
+            place_key("mac", "/a.pdf", 1, 3, None)
+        );
+        assert_ne!(
+            place_key("mac", "/a.zip", 1, 2, Some("x.pdf")),
+            place_key("mac", "/a.zip", 1, 2, None)
+        );
+    }
+
+    #[test]
+    fn turned_and_wide_pages() {
+        let room = (600.0 + 2.0 * PDF_PAD, 500.0 + 2.0 * PDF_PAD);
+        // On its side it's 842 wide: actual size is wider than the column.
+        assert!((fit_zoom(Fit::Actual, room, A4, true).unwrap() - 842.0 / 600.0).abs() < 1e-12);
+        // A page wider than tall already fits at the stage's width: no wider than that.
+        assert_eq!(fit_zoom(Fit::Page, room, [1000.0, 200.0], false), Some(1.0));
+        // Limited like the zoom buttons.
+        assert_eq!(
+            fit_zoom(Fit::Actual, (100.0, 100.0), [10000.0, 10.0], false),
+            Some(ZOOM_MAX)
+        );
     }
 }

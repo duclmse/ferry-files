@@ -203,6 +203,7 @@ pub fn run() {
             files::preview::subtitle,
             files::preview::zip_list,
             files::preview::pdf_outline,
+            files::preview::pdf_info,
             files::preview::pdf_find,
             files::preview::pdf_pages,
             files::preview::pdf_marks,

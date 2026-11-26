@@ -70,6 +70,122 @@ pub fn outline(doc: &PdfDocument) -> Result<Outline, String> {
     })
 }
 
+/// What a PDF says about itself, for the preview's Info tab. Text fields are None when the PDF
+/// leaves them out (or empty).
+#[derive(Serialize, Debug, PartialEq, Default)]
+pub struct Info {
+    pub title: Option<String>,
+    pub author: Option<String>,
+    pub subject: Option<String>,
+    pub keywords: Option<String>,
+    pub creator: Option<String>,
+    pub producer: Option<String>,
+    /// As "2024-03-01 14:05", in the time zone the PDF gives (named after it when it does).
+    pub created: Option<String>,
+    pub modified: Option<String>,
+    pub pages: usize,
+    /// The first page's size in points, as shown (turned when the page is).
+    pub page_size: Option<[f32; 2]>,
+    /// "1.7"; None when the file doesn't say.
+    pub version: Option<String>,
+    /// Encrypted: a password to open it, or limits on what may be done with it.
+    pub encrypted: bool,
+    /// The files attached: name and size in bytes.
+    pub attachments: Vec<(String, u64)>,
+}
+
+pub fn info(doc: &PdfDocument) -> Info {
+    use pdfium_render::prelude::{
+        PdfDocumentMetadataTagType as Tag, PdfDocumentVersion as V, PdfSecurityHandlerRevision,
+    };
+    let meta = doc.metadata();
+    let text = |t: Tag| {
+        meta.get(t)
+            .map(|v| v.value().trim().to_string())
+            .filter(|v| !v.is_empty())
+    };
+    let date = |t: Tag| text(t).map(|d| pdf_date(&d).unwrap_or(d));
+    let version = match doc.version() {
+        V::Unset => None,
+        V::Pdf1_0 => Some("1.0".to_string()),
+        V::Pdf1_1 => Some("1.1".into()),
+        V::Pdf1_2 => Some("1.2".into()),
+        V::Pdf1_3 => Some("1.3".into()),
+        V::Pdf1_4 => Some("1.4".into()),
+        V::Pdf1_5 => Some("1.5".into()),
+        V::Pdf1_6 => Some("1.6".into()),
+        V::Pdf1_7 => Some("1.7".into()),
+        V::Pdf2_0 => Some("2.0".into()),
+        V::Other(n) => Some(format!("{}.{}", n / 10, n % 10)),
+    };
+    let encrypted = !matches!(
+        doc.permissions().security_handler_revision(),
+        Ok(PdfSecurityHandlerRevision::Unprotected) | Err(_)
+    );
+    let attachments = doc
+        .attachments()
+        .iter()
+        .map(|a| (a.name(), a.len() as u64))
+        .collect();
+    let sizes = super::pdfium::sizes(doc);
+    Info {
+        title: text(Tag::Title),
+        author: text(Tag::Author),
+        subject: text(Tag::Subject),
+        keywords: text(Tag::Keywords),
+        creator: text(Tag::Creator),
+        producer: text(Tag::Producer),
+        created: date(Tag::CreationDate),
+        modified: date(Tag::ModificationDate),
+        pages: sizes.len(),
+        page_size: sizes.first().copied(),
+        version,
+        encrypted,
+        attachments,
+    }
+}
+
+/// A PDF date ("D:20240301140500+01'00'") as "2024-03-01 14:05 +01:00"; None when it isn't one.
+/// Everything after the year may be left out, and is then the first month, day and so on.
+fn pdf_date(d: &str) -> Option<String> {
+    let d = d.strip_prefix("D:").unwrap_or(d);
+    let digits = d.bytes().take_while(u8::is_ascii_digit).count();
+    if digits < 4 || digits % 2 == 1 || digits > 14 {
+        return None;
+    }
+    let part = |at: usize, or: &str| {
+        d.get(at..at + 2)
+            .filter(|_| at + 2 <= digits)
+            .unwrap_or(or)
+            .to_string()
+    };
+    let (y, mo, da, h, mi) = (
+        &d[..4],
+        part(4, "01"),
+        part(6, "01"),
+        part(8, "00"),
+        part(10, "00"),
+    );
+    let mut out = format!("{y}-{mo}-{da}");
+    if digits >= 12 {
+        out += &format!(" {h}:{mi}");
+    }
+    let zone = d[digits..].replace('\'', "");
+    match zone.as_bytes().first() {
+        Some(b'Z') => out += " UTC",
+        Some(b'+' | b'-') if zone.len() >= 3 => {
+            let (sign, rest) = zone.split_at(1);
+            let (zh, zm) = (rest.get(..2)?, rest.get(2..4).unwrap_or("00"));
+            if !(zh.bytes().chain(zm.bytes())).all(|b| b.is_ascii_digit()) {
+                return None;
+            }
+            out += &format!(" {sign}{zh}:{zm}");
+        }
+        _ => {}
+    }
+    Some(out)
+}
+
 /// A page's matches listed with their text around them; past this, only counted.
 const SNIPPETS_MAX: usize = 200;
 
@@ -271,6 +387,75 @@ mod tests {
         q.regex = true;
         assert_eq!(super::find(&file, &q).unwrap().total, 3);
         assert_eq!(super::find(&file, &query("  ")).unwrap().total, 0);
+    }
+
+    #[test]
+    fn pdf_dates() {
+        use super::pdf_date;
+        assert_eq!(
+            pdf_date("D:20240301140500+01'00'").unwrap(),
+            "2024-03-01 14:05 +01:00"
+        );
+        assert_eq!(
+            pdf_date("D:20240301140500Z").unwrap(),
+            "2024-03-01 14:05 UTC"
+        );
+        assert_eq!(pdf_date("D:2024").unwrap(), "2024-01-01");
+        assert_eq!(pdf_date("20240301").unwrap(), "2024-03-01");
+        assert_eq!(
+            pdf_date("D:199912311259-05'30").unwrap(),
+            "1999-12-31 12:59 -05:30"
+        );
+        assert_eq!(pdf_date("yesterday"), None);
+        assert_eq!(pdf_date("D:202"), None);
+    }
+
+    #[test]
+    fn info_of_a_pdf() {
+        if no_pdfium() {
+            return;
+        }
+        let mut doc = lopdf::Document::load_mem(&with_text(&["One", "Two"])).unwrap();
+        let at = doc.add_object(dictionary! {
+            "Title" => Object::string_literal("A title"),
+            "Author" => Object::string_literal("Someone"),
+            "CreationDate" => Object::string_literal("D:20240301140500Z"),
+            "Producer" => Object::string_literal(""),
+        });
+        doc.trailer.set("Info", at);
+        let mut file = Vec::new();
+        doc.save_to(&mut file).unwrap();
+        let i = super::info(&opened(&file));
+        assert_eq!(i.title.as_deref(), Some("A title"));
+        assert_eq!(i.author.as_deref(), Some("Someone"));
+        assert_eq!(i.created.as_deref(), Some("2024-03-01 14:05 UTC"));
+        assert_eq!(i.producer, None);
+        assert_eq!(i.pages, 2);
+        assert_eq!(i.page_size, Some([612.0, 792.0]));
+        assert_eq!(i.version.as_deref(), Some("1.5"));
+        assert!(!i.encrypted);
+        assert!(i.attachments.is_empty());
+    }
+
+    #[test]
+    fn finds_whole_words() {
+        if no_pdfium() {
+            return;
+        }
+        let file = with_text(&["cat concat cats (cat)", "Cat_1 cat."]);
+        let file = opened(&file);
+        let mut q = query("cat");
+        q.whole_word = true;
+        let f = super::find(&file, &q).unwrap();
+        let got: Vec<_> = f.hits.iter().map(|h| (h.path.as_str(), h.count)).collect();
+        assert_eq!(got, [("1", 2), ("2", 1)]);
+        // The marks are of the same matches.
+        assert_eq!(super::marks(&file, 1, &q).unwrap().len(), 2);
+        q.regex = true;
+        q.find = "c.t".into();
+        assert_eq!(super::find(&file, &q).unwrap().total, 3);
+        q.whole_word = false;
+        assert_eq!(super::find(&file, &q).unwrap().total, 6);
     }
 
     #[test]

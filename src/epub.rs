@@ -4,7 +4,7 @@
 //! backend copy is always complete when the book is saved.
 
 use crate::api::*;
-use crate::app::{ico, Icon};
+use crate::app::{ico, Grip, Icon, Target};
 use leptos::html;
 use leptos::prelude::*;
 use leptos::task::spawn_local;
@@ -89,6 +89,9 @@ pub struct Ep {
 const COLOURS_KEY: &str = "ferry-files.epub-colours";
 const ZOOM_KEY: &str = "ferry-files.epub-edit-zoom";
 const OUTLINE_KEY: &str = "ferry-files.epub-outline";
+/// The width the side pane (chapters, contents, search) is dragged to, in the preview's book
+/// and the editor.
+pub(crate) const EPUB_SIDE_W_KEY: &str = "ferry-files.epub-side-w";
 /// How long typing in a find box waits before searching.
 const FIND_DELAY: std::time::Duration = std::time::Duration::from_millis(300);
 const ZOOM_MIN: u32 = 60;
@@ -605,6 +608,8 @@ pub fn EditBody() -> impl IntoView {
     ep.reshow();
     let shown = move |v: &View| ep.view.with(|w| w == v);
     let in_chapter = Memo::new(move |_| ep.view.with(|v| matches!(v, View::Chapter(_))));
+    // The side pane's width, dragged: the same for the book in the preview and here.
+    let side_w = crate::app::stored_px(EPUB_SIDE_W_KEY);
     let outline = move || {
         let chapters = ep
             .book
@@ -626,8 +631,13 @@ pub fn EditBody() -> impl IntoView {
     view! {
         <div class="epub-body book-editor">
         {move || ep.outline.get().then(|| view! {
-            <nav class="pdf-outline epub-outline" aria-label="Chapters and search">
-                <div class="outline-tabs" role="tablist">
+            <nav class="pdf-outline epub-outline" aria-label="Chapters and search" style=move || match side_w.get() { w if w > 0.0 => format!("flex-basis: {w}px; max-width: none"), _ => String::new() }>
+                <div class="outline-tabs many" role="tablist">
+                    {crate::app::tab_pick(vec![
+                        ("Chapters", Signal::derive(move || !ep.finding.get() && !ep.contents.get()), Callback::new(move |_| { ep.finding.set(false); ep.contents.set(false); })),
+                        ("Contents", Signal::derive(move || !ep.finding.get() && ep.contents.get()), Callback::new(move |_| { ep.finding.set(false); ep.contents.set(true); })),
+                        ("Search", Signal::derive(move || ep.finding.get()), Callback::new(move |_| ep.open_find(false))),
+                    ])}
                     <button role="tab" class:on=move || !ep.finding.get() && !ep.contents.get() aria-selected=move || (!ep.finding.get() && !ep.contents.get()).to_string()
                         title="The chapters, in reading order" on:click=move |_| { ep.finding.set(false); ep.contents.set(false); }>{ico(Icon::File)}"Chapters"</button>
                     <button role="tab" class:on=move || !ep.finding.get() && ep.contents.get() aria-selected=move || (!ep.finding.get() && ep.contents.get()).to_string()
@@ -643,6 +653,7 @@ pub fn EditBody() -> impl IntoView {
                     outline().into_any()
                 }}
             </nav>
+            <Grip size=side_w key=EPUB_SIDE_W_KEY.to_string() min=140.0 max=640.0 room=200.0 target=Target::Prev class="grip pdf-grip"/>
         })}
         <div class="epub-edit">
             {move || ep.confirm_close.get().then(|| view! {

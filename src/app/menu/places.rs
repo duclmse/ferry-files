@@ -40,15 +40,17 @@ impl Ctx {
         if self.split.get_untracked() {
             v.push(item("Open in the other pane", "", Act::OtherPane));
         }
-        v.extend([
-            MenuItem::Sep,
-            MenuItem::Do {
+        v.push(MenuItem::Sep);
+        if writable && self.can_paste() {
+            v.push(MenuItem::Do {
                 label: self.paste_label(),
                 key: "",
                 act: Act::Paste,
                 danger: false,
-                enabled: writable && self.can_paste(),
-            },
+                enabled: true,
+            });
+        }
+        v.extend([
             MenuItem::Do {
                 label: "New folder…".into(),
                 key: "",

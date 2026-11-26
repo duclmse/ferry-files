@@ -24,6 +24,9 @@ pub(crate) enum Icon {
     Plus,
     Prev,
     Next,
+    /// The previous and next match, in a find box.
+    PrevMatch,
+    NextMatch,
     ZoomIn,
     ZoomOut,
     TurnLeft,
@@ -54,10 +57,11 @@ pub(crate) enum Icon {
     LineNumbers,
     /// A list with indented lines: a book's or a PDF's contents.
     Contents,
+    Info,
+    Night,
     /// A marker pen: colours in source code.
     Highlight,
     /// A box and an arrow out of it: open in another app.
-    OpenOut,
     /// A prompt: › and a line.
     Terminal,
     /// A box, and an arrow from it into another.
@@ -123,6 +127,8 @@ impl Icon {
             Icon::Plus => r#"<path d="M8 3v10M3 8h10"/>"#,
             Icon::Prev => r#"<path d="M10 3.5 5.5 8l4.5 4.5"/>"#,
             Icon::Next => r#"<path d="M6 3.5 10.5 8 6 12.5"/>"#,
+            Icon::PrevMatch => r#"<path d="M3.5 10 8 5.5l4.5 4.5"/>"#,
+            Icon::NextMatch => r#"<path d="M3.5 6 8 10.5 12.5 6"/>"#,
             Icon::ToPrevPart => {
                 r#"<path d="M2.5 2.5h11M8 12.5v-7M5.5 8 8 5.5 10.5 8M3 10.5h2M11 10.5h2M3 13.5h3M10 13.5h3"/>"#
             }
@@ -190,9 +196,8 @@ impl Icon {
                 r#"<path d="M5.5 10.5l-1 3h3l1-1M5.5 10.5l6-6 2 2-6 6zM2.5 14.5h4"/>"#
             }
             Icon::Contents => r#"<path d="M2.5 3.5h11M5.5 6.5h8M5.5 9.5h8M2.5 12.5h11"/>"#,
-            Icon::OpenOut => {
-                r#"<path d="M9 2.5h4.5V7M13.5 2.5l-6 6"/><path d="M11.5 9.5v3a1 1 0 0 1-1 1h-7a1 1 0 0 1-1-1v-7a1 1 0 0 1 1-1h3"/>"#
-            }
+            Icon::Night => r#"<path d="M13.5 9.5A5.75 5.75 0 1 1 6.5 2.5a4.5 4.5 0 0 0 7 7z"/>"#,
+            Icon::Info => r#"<circle cx="8" cy="8" r="6"/><path d="M8 7.5v4M8 5v.5"/>"#,
             Icon::LineNumbers => {
                 r#"<path d="M2.5 3.5l1-.75V6.5M2 9.5h2l-2 3h2M7 4h7M7 8h7M7 12h7"/>"#
             }

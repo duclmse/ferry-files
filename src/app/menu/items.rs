@@ -8,15 +8,19 @@ impl Ctx {
         let split = self.split.get_untracked();
         let Some(e) = entry else {
             let here = self.in_storage(p);
-            let mut v = vec![
-                MenuItem::Do {
+            let mut v = vec![];
+            // Paste only when there's something to paste and somewhere to put it.
+            if here && self.can_paste() {
+                v.push(MenuItem::Do {
                     label: self.paste_label(),
                     key: "paste",
                     act: Act::Paste,
                     danger: false,
-                    enabled: here && self.can_paste(),
-                },
-                MenuItem::Sep,
+                    enabled: true,
+                });
+                v.push(MenuItem::Sep);
+            }
+            v.extend([
                 MenuItem::Do {
                     label: "New folder…".into(),
                     key: "",
@@ -31,7 +35,7 @@ impl Ctx {
                     danger: false,
                     enabled: here,
                 },
-            ];
+            ]);
             if device {
                 v.push(MenuItem::Do {
                     label: "Upload files…".into(),

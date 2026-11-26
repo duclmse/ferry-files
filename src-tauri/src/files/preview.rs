@@ -244,6 +244,33 @@ pub(crate) async fn pdf_outline(
     .await
 }
 
+/// What a PDF says about itself (title, author, dates, version …), for the preview's Info tab.
+#[tauri::command(rename_all = "snake_case")]
+pub(crate) async fn pdf_info(
+    state: State<'_, AppState>,
+    src: Option<String>,
+    path: String,
+    size: u64,
+    mtime: i64,
+    inner: Option<String>,
+    zip_size: Option<u64>,
+) -> Result<crate::preview::pdf::Info, String> {
+    let key = src.clone().unwrap_or_else(|| "mac".into());
+    let dev = state.source(src.as_deref())?;
+    blocking(move || {
+        Ok(crate::preview::pdf::info(&*pdf_doc(
+            &dev,
+            &key,
+            &path,
+            size,
+            mtime,
+            inner.as_deref(),
+            zip_size,
+        )?))
+    })
+    .await
+}
+
 /// A PDF opened by PDFium for the preview, kept for the next page drawn or search
 /// (`pdfium::doc`). `inner`, `zip_size`: as for `peek_text`; `mtime` is the PDF's own.
 pub(crate) fn pdf_doc(

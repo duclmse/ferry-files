@@ -72,7 +72,8 @@ use filetype::*;
 pub(crate) use icons::{ico, Icon};
 use import::*;
 use keymap::*;
-use layout::*;
+/// For the EPUB editor's side pane.
+pub(crate) use layout::{stored_px, tab_pick, Grip, Target};
 use menu::*;
 use palette::*;
 use pane::*;

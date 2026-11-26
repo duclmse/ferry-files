@@ -428,6 +428,9 @@ pub fn App() -> impl IntoView {
                 // Held: once, then repeats, which the player ignores until it's let go.
                 "media_forward" => e.repeat() || media_key(p.id, MediaKey::ForwardDown),
                 "media_mute" => media_key(p.id, MediaKey::Mute),
+                "pdf_actual" => pdf_fit_key(p.id, Fit::Actual),
+                "pdf_fit_width" => pdf_fit_key(p.id, Fit::Width),
+                "pdf_fit_page" => pdf_fit_key(p.id, Fit::Page),
                 "filter" => {
                     ctx.open_search(p, false);
                     true

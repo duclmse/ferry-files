@@ -5,7 +5,8 @@
 use super::sidebar::chev;
 use super::*;
 use crate::api::{
-    Bytes, EpubContents, Listing, MediaInfo, Packed, PdfLayer, PdfLink, PdfOutline, PdfRun, Peek,
+    Bytes, EpubContents, Listing, MediaInfo, Packed, PdfInfo, PdfLayer, PdfLink, PdfOutline,
+    PdfRun, Peek,
 };
 use crate::api::{Found, Query};
 use wasm_bindgen::closure::Closure;

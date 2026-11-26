@@ -3,13 +3,13 @@
 use super::*;
 
 /// A width in px kept in localStorage. 0 means "not set": the layout's own default.
-pub(super) fn stored_px(key: &str) -> RwSignal<f64> {
+pub(crate) fn stored_px(key: &str) -> RwSignal<f64> {
     RwSignal::new(stored(key).and_then(|v| v.parse().ok()).unwrap_or(0.0))
 }
 
 /// What a grip resizes.
 #[derive(Clone, Copy, PartialEq)]
-pub(super) enum Target {
+pub(crate) enum Target {
     /// The element just before the grip.
     Prev,
     /// The element the grip is in (a table header cell). Dragging left makes it wider.
@@ -24,7 +24,7 @@ pub(super) enum Target {
 /// when `room` is set, leaves that much of the grip's container free on the side it grows to
 /// (the right, or for `Target::Next` the left).
 #[component]
-pub(super) fn Grip(
+pub(crate) fn Grip(
     size: RwSignal<f64>,
     key: String,
     #[prop(default = 80.0)] min: f64,
@@ -112,5 +112,31 @@ pub(super) fn Grip(
                 size.set(0.0);
                 save("0");
             }></div>
+    }
+}
+
+/// One of a side pane's tabs, for `tab_pick`: its name, whether it's the one showing, and what
+/// picking it does.
+pub(crate) type SideTab = (&'static str, Signal<bool>, Callback<()>);
+
+/// A side pane's tabs as a list to pick from, which the styles show in place of the tabs when
+/// the pane is too narrow for them (`.outline-pick` in styles/views.css).
+pub(crate) fn tab_pick(tabs: Vec<SideTab>) -> impl IntoView {
+    let acts: Vec<Callback<()>> = tabs.iter().map(|t| t.2).collect();
+    let pick = move |e: leptos::ev::Event| {
+        if let Some(act) = event_target_value(&e)
+            .parse::<usize>()
+            .ok()
+            .and_then(|i| acts.get(i))
+        {
+            act.run(());
+        }
+    };
+    view! {
+        <select class="outline-pick" title="What the pane shows" aria-label="What the pane shows" on:change=pick>
+            {tabs.into_iter().enumerate().map(|(i, (name, on, _))| view! {
+                <option value=i.to_string() prop:selected=move || on.get()>{name}</option>
+            }).collect_view()}
+        </select>
     }
 }

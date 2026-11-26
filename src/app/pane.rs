@@ -335,7 +335,7 @@ pub(super) fn Notices(pane: Pane) -> impl IntoView {
 pub(super) fn split_name(name: &str, dir: bool) -> AnyView {
     match name.rsplit_once('.') {
         Some((stem, ext)) if !dir && !stem.is_empty() && !ext.is_empty() && ext.chars().count() <= 10 => view! {
-            <span class="split" title=name.to_string()><span class="stem">{stem.to_string()}</span><span class="ext">"."{ext.to_string()}</span></span>
+            <span class="split" title=name.to_string() data-ext=format!(".{ext}")><span class="stem">{stem.to_string()}</span><span class="ext">"."{ext.to_string()}</span></span>
         }
         .into_any(),
         _ => name.to_string().into_any(),
