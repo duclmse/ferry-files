@@ -285,7 +285,8 @@ pub fn App() -> impl IntoView {
             } else if id == Some("close_tab") && p.docs.with_untracked(|ds| !ds.is_empty()) {
                 e.prevent_default();
                 ctx.close_doc(p, p.doc_at.get_untracked(), false);
-            } else if bound.is_some_and(|b| b.anywhere && b.id != "replace")
+            } else if bound
+                .is_some_and(|b| b.anywhere && !matches!(b.id, "replace" | "replace_names"))
                 && chord.as_deref().is_some_and(held)
             {
                 // Falls through to the shortcut below.

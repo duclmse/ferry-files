@@ -95,7 +95,7 @@ pub(super) const COMMANDS: &[Command] = &[
         "replace_names",
         "Find and replace in names (what's picked, or everything shown)",
         &["alt+cmd+KeyF"],
-        false,
+        true,
     ),
     c(
         "delete",
