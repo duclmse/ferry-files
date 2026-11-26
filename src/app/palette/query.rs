@@ -133,6 +133,85 @@ pub(super) fn content_query(text: &str) -> String {
     format!("content:\"{}\"", words.join(" "))
 }
 
+/// fsd's functions and type macros (`ext:pdf`, `size:>1mb`, `pic:`), and the modifiers that
+/// are functions with a value (`path:src`, `regex:a.b`), as fs's query-language reference lists them.
+const FUNCTIONS: &[&str] = &[
+    "dm",
+    "datemodified",
+    "dc",
+    "datecreated",
+    "da",
+    "dateaccessed",
+    "rc",
+    "recentchange",
+    "dr",
+    "daterun",
+    "size",
+    "ext",
+    "type",
+    "parent",
+    "infolder",
+    "nosubfolders",
+    "dir",
+    "child",
+    "startwith",
+    "startswith",
+    "endwith",
+    "endswith",
+    "len",
+    "length",
+    "depth",
+    "parents",
+    "root",
+    "attrib",
+    "content",
+    "utf8content",
+    "ansicontent",
+    "childcount",
+    "childfilecount",
+    "childfoldercount",
+    "empty",
+    "dupe",
+    "namedupe",
+    "namepartdupe",
+    "sizedupe",
+    "dmdupe",
+    "dcdupe",
+    "dadupe",
+    "attribdupe",
+    "count",
+    "sort",
+    "archiveof",
+    "fuzzy",
+    "audio",
+    "zip",
+    "doc",
+    "exe",
+    "pic",
+    "video",
+    "path",
+    "regex",
+    "archive",
+    "noarchive",
+];
+
+/// Whether `text`, typed where a path goes, is a search in fsd's syntax instead: it has a
+/// wildcard (* ?), an operator (| ! < >), a "quoted phrase", or a modifier or function fsd
+/// knows (`ext:pdf`, `size:>1mb`, `file:`). Plain words aren't: they name a folder.
+pub(in crate::app) fn is_search(text: &str) -> bool {
+    tokens(text).iter().any(|t| match t.kind {
+        Kind::Op(_) | Kind::Phrase => true,
+        Kind::Word => {
+            let w = &text[t.start..t.end];
+            w.contains(['*', '?'])
+                || w.split_once(':').is_some_and(|(kw, val)| {
+                    let kw = kw.to_ascii_lowercase();
+                    modifier(&kw, val).is_some() || FUNCTIONS.contains(&kw.as_str())
+                })
+        }
+    })
+}
+
 #[derive(Clone, Copy, PartialEq)]
 enum Kind {
     Word,
@@ -302,5 +381,39 @@ mod tests {
             ..BOTH
         };
         assert_eq!(fsd_query("a\"b", all), "case: regex: \"\\b(?:a\\x22b)\\b\"");
+    }
+
+    #[test]
+    fn searches_are_told_from_paths() {
+        for s in [
+            "*.pdf",
+            "report?.txt",
+            "ext:pdf",
+            "EXT:jpg;png",
+            "size:>1mb",
+            "pic: holiday",
+            "file: notes",
+            "path:src main",
+            "dm:today",
+            "a|b",
+            "!node_modules",
+            "<a b>",
+            "\"my notes\"",
+            "/Users/me *.rs",
+        ] {
+            assert!(is_search(s), "{s}");
+        }
+        for s in [
+            "/Users/me/Documents",
+            "/Users/me/My Notes",
+            "Documents",
+            "../Downloads",
+            "/C:/Users",
+            "/Volumes/Backup (old)",
+            "/tmp/a:b",
+            "",
+        ] {
+            assert!(!is_search(s), "{s}");
+        }
     }
 }

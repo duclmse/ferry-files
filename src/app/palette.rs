@@ -7,6 +7,8 @@ use super::*;
 
 mod query;
 
+pub(super) use query::is_search;
+
 /// The palette's `:` matches case, whole words only, or takes a regular expression.
 const CASE_KEY: &str = "ferry-files.find-files-case";
 const WORD_KEY: &str = "ferry-files.find-files-word";

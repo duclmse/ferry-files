@@ -283,6 +283,35 @@ impl Ctx {
         });
     }
 
+    /// Searches fsd's index of the computer for `query` (fsd's search syntax, typed in the path
+    /// box), and shows what it finds in place of the folder, as `find_all` does.
+    pub(super) fn find_typed(self, p: Pane, query: String) {
+        #[derive(serde::Deserialize)]
+        struct FoundFiles {
+            entries: Vec<Entry>,
+            next: Option<u32>,
+        }
+        self.stop_compare();
+        let dir = p.cwd.get_untracked();
+        p.loading.set(true);
+        spawn_local(async move {
+            let args = json!({ "text": query, "max": 1000 });
+            match call::<FoundFiles>("find_files", args).await {
+                // Not when the pane went elsewhere meanwhile.
+                Ok(f) if p.cwd.get_untracked() == dir && p.src.get_untracked() == Src::Mac => {
+                    p.all.set(f.entries);
+                    p.more.set(false);
+                    p.found.set(Some((format!("“{query}”"), f.next.is_none())));
+                    p.select_only(None);
+                    p.arrange();
+                }
+                Ok(_) => {}
+                Err(e) => p.error(e),
+            }
+            p.loading.set(false);
+        });
+    }
+
     pub(super) fn quick_look(self, p: Pane) {
         let picked = p.picked();
         let [e] = picked.as_slice() else { return };

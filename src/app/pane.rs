@@ -93,7 +93,11 @@ pub(super) fn Crumbs(pane: Pane) -> impl IntoView {
         }
     });
     view! {
-        <div class="crumbs" node_ref=el title=move || match ctx.key_label("type_path") { k if k.is_empty() => "Click here to type a path".to_string(), k => format!("Click here or press {k} to type a path") } on:click=edit>
+        <div class="crumbs" node_ref=el title=move || {
+            // On the computer, fsd's search syntax searches its index.
+            let what = if p.src.get() == Src::Mac { "a path or a search (*.pdf, ext:pdf)" } else { "a path" };
+            match ctx.key_label("type_path") { k if k.is_empty() => format!("Click here to type {what}"), k => format!("Click here or press {k} to type {what}") }
+        } on:click=edit>
             {move || if p.editing_path.get() {
                 view! { <PathEdit pane=p/> }.into_any()
             } else {
@@ -144,8 +148,14 @@ fn PathEdit(pane: Pane) -> impl IntoView {
             .unwrap_or_default();
         let typed = typed.trim();
         p.editing_path.set(false);
+        let mac = p.src.get_untracked() == Src::Mac;
         // The computer's own way of writing it, as Copy path gives it ("C:\Users", "\\nas\Photos").
-        let own = p.src.get_untracked() == Src::Mac && crate::os::is_native_path(typed);
+        let own = mac && crate::os::is_native_path(typed);
+        // On the computer, fsd's search syntax (`*.pdf`, `ext:pdf`, `a|b`) searches its index.
+        if mac && !own && super::palette::is_search(typed) {
+            ctx.find_typed(p, typed.to_string());
+            return;
+        }
         let typed = if own {
             crate::os::app_path(typed)
         } else {

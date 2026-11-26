@@ -61,7 +61,8 @@ impl Ctx {
     pub(super) fn close_search(self, p: Pane) {
         p.filters_open.set(false);
         p.replacing.set(false);
-        if p.found.with_untracked(Option::is_some) {
+        // A server's search came from the filter; one typed in the path box stays.
+        if p.found.with_untracked(Option::is_some) && self.read_only(p.src.get_untracked()) {
             p.filter.set(String::new());
             self.reload(p);
         } else if !p.filter.with_untracked(String::is_empty) {
@@ -210,7 +211,7 @@ pub(super) fn SearchPane(pane: Pane) -> impl IntoView {
         if input.value().trim().is_empty() {
             // Clearing shows everything right away, and the folder again after a search.
             apply(&input);
-            if p.found.with_untracked(Option::is_some) {
+            if indexed() && p.found.with_untracked(Option::is_some) {
                 ctx.reload(p);
             }
             return;
