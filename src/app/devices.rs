@@ -354,8 +354,7 @@ pub(super) fn DeviceFinder() -> impl IntoView {
             {
                 return view! { {iphones} {waiting} {access} {error} }.into_any();
             }
-            let mut notes =
-                vec!["No phone found. Plug one in by USB: an Android phone with debugging (adb) or File transfer mode (MTP), or an iPhone.".to_string()];
+            let mut notes = vec!["No phone found. Plug one in.".to_string()];
             if !d.adb_found {
                 notes.push(format!("adb isn't installed. {}", crate::os::adb_install()));
             }
