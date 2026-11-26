@@ -221,8 +221,8 @@ const USUAL_SKIP: &[&str] = &[
     "**/.terraform/**",
 ];
 
-/// Ferry's settings for fsd: the home folder, by name only (no file contents, nothing inside
-/// zips), over the local socket or pipe alone, without the web and gRPC APIs.
+/// Ferry's settings for fsd: the home folder, by name only (no file contents until Settings >
+/// Search turns on reading text, nothing inside zips), over the local socket or pipe alone, without the web and gRPC APIs.
 fn config_text(home: &Path, dir: &Path) -> String {
     let path = |p: &Path| toml_str(&p.to_string_lossy());
     format!(
@@ -285,7 +285,52 @@ pub(super) struct FsdSettings {
     skip: Vec<String>,
     /// Whether it leaves out hidden files and folders (`exclusions.exclude_hidden`).
     hidden: bool,
+    /// Whether it reads the text of text files, for finding the words in them
+    /// (`content.extension_limits` not empty).
+    #[serde(default)]
+    text: bool,
 }
+
+/// The files whose text fsd reads when told to (Find the words inside text files), and how much
+/// of each: text and code people write, by extension. Others aren't read, so a home folder of
+/// photos and builds costs little.
+const TEXT_LIMITS: &[(&str, i64)] = &[
+    ("txt", 131072),
+    ("md", 131072),
+    ("markdown", 131072),
+    ("org", 131072),
+    ("rst", 131072),
+    ("tex", 131072),
+    ("csv", 65536),
+    ("log", 65536),
+    ("rs", 524288),
+    ("py", 524288),
+    ("go", 524288),
+    ("swift", 524288),
+    ("c", 524288),
+    ("h", 524288),
+    ("cpp", 524288),
+    ("hpp", 524288),
+    ("java", 524288),
+    ("kt", 524288),
+    ("cs", 524288),
+    ("rb", 262144),
+    ("php", 262144),
+    ("lua", 262144),
+    ("sh", 65536),
+    ("js", 262144),
+    ("ts", 262144),
+    ("tsx", 262144),
+    ("jsx", 262144),
+    ("css", 131072),
+    ("html", 131072),
+    ("xml", 65536),
+    ("json", 65536),
+    ("toml", 65536),
+    ("yaml", 65536),
+    ("yml", 65536),
+    ("sql", 131072),
+];
 
 #[derive(Serialize)]
 pub(super) struct FsdShown {
@@ -342,6 +387,11 @@ fn settings_in(text: &str) -> Result<FsdSettings, String> {
             .and_then(|e| e.get("exclude_hidden"))
             .and_then(Item::as_bool)
             .unwrap_or(false),
+        text: doc
+            .get("content")
+            .and_then(|c| c.get("extension_limits"))
+            .and_then(Item::as_table_like)
+            .is_some_and(|t| t.iter().any(|(_, v)| v.as_integer().is_some_and(|n| n > 0))),
     })
 }
 
@@ -399,6 +449,25 @@ fn with_settings(text: &str, s: &FsdSettings) -> Result<String, String> {
     }
     ex["path_patterns"] = value(listed(&skip));
     ex["exclude_hidden"] = value(s.hidden);
+    // The text setting: the usual limits when turned on (a table of the user's own stays), none
+    // when turned off.
+    let was = settings_in(&doc.to_string())?.text;
+    if s.text != was {
+        let content = &mut doc["content"];
+        if content.is_none() {
+            *content = toml_edit::Item::Table(toml_edit::Table::new());
+        }
+        if !content.is_table_like() {
+            return Err("fsd's settings file has content as something other than a table. Fix it in the file.".into());
+        }
+        let mut limits = toml_edit::Table::new();
+        if s.text {
+            for (ext, n) in TEXT_LIMITS {
+                limits[*ext] = value(*n);
+            }
+        }
+        content["extension_limits"] = toml_edit::Item::Table(limits);
+    }
     Ok(doc.to_string())
 }
 
@@ -668,6 +737,7 @@ mod tests {
                 "**/build/**".into(),
             ],
             hidden: true,
+            text: false,
         };
         let out = with_settings(&text, &changed).unwrap();
         assert_eq!(
@@ -676,6 +746,7 @@ mod tests {
                 folders: vec!["/Users/me".into(), "/Volumes/Photos".into()],
                 skip: vec!["**/build/**".into()],
                 hidden: true,
+                text: false,
             }
         );
         // Comments and the other settings keep their place.
@@ -689,6 +760,29 @@ mod tests {
         // A file without exclusions gets them.
         let bare = with_settings("data_dir = \"/d\"\nlog_dir = \"/l\"\n", &changed).unwrap();
         assert!(settings_in(&bare).unwrap().hidden);
+    }
+
+    #[test]
+    fn reading_text_turns_on_and_off() {
+        let text = config_text(Path::new("/Users/me"), Path::new("/tmp/f"));
+        let mut s = settings_in(&text).unwrap();
+        assert!(!s.text);
+        s.text = true;
+        let on = with_settings(&text, &s).unwrap();
+        assert!(settings_in(&on).unwrap().text);
+        let cfg: toml::Value = toml::from_str(&on).unwrap();
+        assert_eq!(
+            cfg["content"]["extension_limits"]["md"].as_integer(),
+            Some(131072)
+        );
+        assert!(cfg["content"]["extension_limits"].get("*").is_none());
+        // The user's own limits stay while it's on.
+        let own = format!("{on}").replace("md = 131072", "md = 7");
+        assert!(with_settings(&own, &s).unwrap().contains("md = 7"));
+        s.text = false;
+        let off = with_settings(&on, &s).unwrap();
+        assert!(!settings_in(&off).unwrap().text);
+        assert!(!off.contains("md = "), "{off}");
     }
 
     #[test]
@@ -711,6 +805,7 @@ mod tests {
             folders: folders.iter().map(|f| f.to_string()).collect(),
             skip: vec![],
             hidden: false,
+            text: false,
         };
         assert!(with_settings("", &s(&[]))
             .unwrap_err()

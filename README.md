@@ -9,7 +9,7 @@ with tools for EPUB books.
 - **Panes**: one or two (⌘\\), each with tabs (⌘T, ⌘W; drag them between panes), shown as a
   list, thumbnails or columns. The list can show a folder tree and group items by name, kind,
   date or size. Sort, filter (⌘F), show hidden files (⌘.), type a path (⌘L). Edges resize and
-  sizes are remembered.
+  sizes are remembered. Folders on the computer list again when fsd sees them change.
 - **Preview** beside the files:
   - pictures: zoom, turn, full screen (F), the next one read ahead;
   - video and audio streamed from the device, with full screen, a pop-out window and
@@ -29,17 +29,22 @@ with tools for EPUB books.
   server in the sidebar). ⌘⇧F finds files anywhere on the
   computer from fsd's index (the search service of [fs](fs/), in this repo), in fsd's search syntax
   (`case:`, `ww:`, `regex:`, `ext:`, `size:`, `dm:`, `|`, `!` …), with match case, whole word
-  and regular expression buttons, 100 at a time. The app carries fsd, and
-  Settings > Search installs it as a service, shows its index, and changes what it indexes.
+  and regular expression buttons, 100 at a time, or the words inside text files (when
+  Settings > Search reads them). The app carries fsd, and Settings > Search installs it as a
+  service, shows its index, and changes what it indexes.
 - **Scripts**: Lua 5.4 scripts run on the files picked (right-click, Run script). They can read
   and change files only through the app, so what they replace or delete is backed up.
   [docs/scripting.md](docs/scripting.md) is the guide.
+- **Duplicates**: files with the same contents across folders, on any devices. For one folder
+  on the computer, fsd's index gives the files of a shared size, so the folder isn't walked.
 - **Sync** a folder to the other pane: copy missing, update or mirror, with a list of what will
   happen first. Pairs can be saved.
 - **Sidebar**: favourites, workspaces, disks (with eject), devices, servers, sync pairs, backups
   and history, as trees. Sections can be moved and hidden.
 - **Connections**: SFTP, SMB, NFS, WebDAV, FTP and FTPS, S3 (AWS, R2, B2, MinIO), and
-  Everything (voidtools) over HTTP. Passwords and keys stay in the system keychain.
+  Everything (voidtools) over HTTP, and fsd on another computer (its REST API). Everything and
+  fsd are read-only, and the filter box searches their index. Passwords, keys and tokens stay
+  in the system keychain.
 - **Terminal** in a pane, on this computer, an adb phone or an SFTP server.
 - **Editor view**: a folder tree beside text files in tabs.
 - **Books**: list every EPUB under a folder; check them, change their info, or make smaller
@@ -116,7 +121,8 @@ cargo run --example epub_smoke [-- adb|mtp]
 - `src-tauri/src/`: the backend.
   - `device.rs`: the `Device` every read and write goes through; `local.rs`: the computer.
   - `devices/`: adb, MTP (`wpd.rs` on Windows), iPhones, and finding and connecting them.
-  - `servers/`: SFTP, SMB and NFS, WebDAV, FTP, S3, Everything, and the keychain.
+  - `servers/`: SFTP, SMB and NFS, WebDAV, FTP, S3, Everything, another computer's fsd, and
+    the keychain.
   - `books/`: EPUB reading, editing and batch work.
   - `preview/`: ZIPs, PDFs, media, thumbnails, colouring, subtitles and streaming.
   - `files.rs`, `transfer.rs`, `safety.rs`, `scripts.rs`, `terminal.rs`: file work.

@@ -82,6 +82,7 @@
     "allow-script-guide",
     "allow-everything-connect",
     "allow-everything-find",
+    "allow-fsd-connect",
     "allow-sftp-connect",
     "allow-webdav-connect",
     "allow-ftp-connect",

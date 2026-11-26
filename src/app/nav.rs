@@ -409,6 +409,34 @@ impl Ctx {
         self.kids_changed(src, dir);
     }
 
+    /// The computer's folders `dirs` changed, as fsd saw them (any of them when empty): the shown
+    /// panes in one are listed again, and the tree's open folders among them. A pane where the
+    /// user is renaming, replacing, looking at what a search found, or paging through a folder
+    /// too big to list at once is left as it is.
+    pub(super) fn changed_outside(self, dirs: Vec<String>) {
+        let any = dirs.is_empty();
+        for p in self.shown() {
+            if p.src.get_untracked() != Src::Mac
+                || p.renaming.with_untracked(Option::is_some)
+                || p.replacing.get_untracked()
+                || p.found.with_untracked(Option::is_some)
+                || p.more.get_untracked()
+                || p.loading.get_untracked()
+            {
+                continue;
+            }
+            if any || dirs.contains(&p.cwd.get_untracked()) {
+                self.reload(p);
+            } else {
+                for d in &dirs {
+                    if p.kids.with_untracked(|k| k.contains_key(d)) {
+                        self.load_kids(p, d.clone(), true);
+                    }
+                }
+            }
+        }
+    }
+
     pub(super) fn reload_all(self) {
         for p in self.shown() {
             self.reload(p);

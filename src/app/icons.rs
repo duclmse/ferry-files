@@ -15,6 +15,8 @@ pub(crate) enum Icon {
     Trash,
     Folder,
     File,
+    /// A page with lines of text: search inside files.
+    FileText,
     Book,
     Edit,
     Check,
@@ -117,6 +119,9 @@ impl Icon {
                 r#"<path d="M8 4.5C6.5 3.5 4.5 3 2 3v9.5c2.5 0 4.5.5 6 1.5 1.5-1 3.5-1.5 6-1.5V3c-2.5 0-4.5.5-6 1.5zM8 4.5V14"/>"#
             }
             Icon::File => r#"<path d="M3.5 1.5h6l3 3v10h-9z"/><path d="M9.5 1.5v3h3"/>"#,
+            Icon::FileText => {
+                r#"<path d="M3.5 1.5h6l3 3v10h-9z"/><path d="M9.5 1.5v3h3M5.5 7.5h5M5.5 9.5h5M5.5 11.5h3"/>"#
+            }
             Icon::Edit => r#"<path d="M10.5 2.5l3 3-8 8h-3v-3z"/>"#,
             Icon::Check => r#"<path d="M3 8.5l3 3 7-7"/>"#,
             Icon::Stop => r#"<rect x="4" y="4" width="8" height="8" rx="1"/>"#,

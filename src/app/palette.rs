@@ -11,6 +11,7 @@ mod query;
 const CASE_KEY: &str = "ferry-files.find-files-case";
 const WORD_KEY: &str = "ferry-files.find-files-word";
 const REGEX_KEY: &str = "ferry-files.find-files-regex";
+const INSIDE_KEY: &str = "ferry-files.find-files-inside";
 /// How many files fsd is asked for at a time.
 const FIND_PAGE: u32 = 100;
 
@@ -340,6 +341,8 @@ pub(super) fn Palette(
         word: stored_flag(WORD_KEY, false),
         regex: stored_flag(REGEX_KEY, false),
     });
+    // Find the words inside text files (fsd's `content:`) instead of in names.
+    let inside = RwSignal::new(stored_flag(INSIDE_KEY, false));
     let asked = StoredValue::new(String::new());
     let finding = move || query.with(|q| q.trim_start().starts_with(':'));
     // The choices that match, best first; all of them, in order, before typing. After `>` only
@@ -399,11 +402,14 @@ pub(super) fn Palette(
     Effect::new(move |_| {
         let q = query.get();
         let o = opts.get();
-        let Some(text) = q
-            .trim_start()
-            .strip_prefix(':')
-            .map(|t| query::fsd_query(t, o))
-        else {
+        let within = inside.get();
+        let Some(text) = q.trim_start().strip_prefix(':').map(|t| {
+            if within {
+                query::content_query(t)
+            } else {
+                query::fsd_query(t, o)
+            }
+        }) else {
             return;
         };
         if let Some(t) = timer.try_update_value(Option::take).flatten() {
@@ -553,9 +559,21 @@ pub(super) fn Palette(
                         on:input=move |ev| { query.set(event_target_value(&ev)); at.set(0); }/>
                     {move || finding().then(|| view! {
                         <div class="palette-opts">
-                            {opt_btn("Match case", CASE_KEY, |o| &mut o.case, "Aa", "")}
-                            {opt_btn("Match whole word", WORD_KEY, |o| &mut o.word, "ab", "word")}
-                            {opt_btn("Regular expression", REGEX_KEY, |o| &mut o.regex, ".*", "")}
+                            // fsd's text index matches whole words in any case, so these don't apply there.
+                            {move || (!inside.get()).then(|| view! {
+                                {opt_btn("Match case", CASE_KEY, |o| &mut o.case, "Aa", "")}
+                                {opt_btn("Match whole word", WORD_KEY, |o| &mut o.word, "ab", "word")}
+                                {opt_btn("Regular expression", REGEX_KEY, |o| &mut o.regex, ".*", "")}
+                            })}
+                            <button class="filter-opt" class:on=move || inside.get() aria-pressed=move || inside.get().to_string()
+                                title=move || format!("Find the words inside text files: {}", if inside.get() { "on" } else { "off" })
+                                aria-label="Find the words inside text files"
+                                on:mousedown=|ev| ev.prevent_default()
+                                on:click=move |_| {
+                                    let v = !inside.get_untracked();
+                                    inside.set(v);
+                                    store(INSIDE_KEY, if v { "1" } else { "0" });
+                                }>{ico(Icon::FileText)}</button>
                         </div>
                     })}
                 </div>
@@ -567,9 +585,14 @@ pub(super) fn Palette(
                                 "Nothing matches.".to_string()
                             } else {
                                 match found.get() {
-                                    _ if query.with(|q| q.trim_start()[1..].trim().is_empty()) => "Type part of a file's name to find it on the computer.".to_string(),
+                                    _ if query.with(|q| q.trim_start()[1..].trim().is_empty()) => if inside.get() {
+                                        "Type words to find the text files on the computer that hold them all.".to_string()
+                                    } else {
+                                        "Type part of a file's name to find it on the computer.".to_string()
+                                    },
                                     None => "Looking…".to_string(),
                                     Some(Err(e)) => e,
+                                    Some(Ok(_)) if inside.get() => "No text file holds all those words. fsd reads the text of files only when Settings > Search says to.".to_string(),
                                     Some(Ok(_)) => "Nothing fits that search.".to_string(),
                                 }
                             };
@@ -596,7 +619,9 @@ pub(super) fn Palette(
                         </button>
                     })}
                 </div>
-                <p class="hint">{move || if finding() {
+                <p class="hint">{move || if finding() && inside.get() {
+                    "↑ ↓ to choose · ↵ to open · Esc to close. Text files on the computer holding every word typed, in any case, from fsd's index of their text (fsd reads only text files, and the start of big ones; not PDFs or EPUBs)."
+                } else if finding() {
                     "↑ ↓ to choose · ↵ to open · Esc to close. Files and folders on the computer from fsd's index, in fsd's search syntax: case: ww: regex: ext: size: dm: path:, | for or, ! for not. With .* on, the whole text is a regular expression."
                 } else {
                     "↑ ↓ to choose · ↵ to run · Esc to close. > for actions only, : to find files. Actions work on the active pane and what's picked in it."

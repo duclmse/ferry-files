@@ -262,6 +262,7 @@ pub fn run() {
             scripts::script_guide,
             servers::everything::everything_connect,
             servers::everything::everything_find,
+            servers::fsd_remote::fsd_connect,
             servers::sftp::sftp_connect,
             servers::webdav::webdav_connect,
             servers::ftp::ftp_connect,
@@ -296,6 +297,8 @@ pub fn run() {
         .expect("error while running Ferry Files");
     #[cfg(unix)]
     quit_on_signals(app.handle().clone());
+    #[cfg(feature = "fsd")]
+    fsd::follow(app.handle().clone());
     app.run(|app, event| match event {
         // The window is made now, once the app runs (not when it's built).
         tauri::RunEvent::Ready => platform::webview_ready(app),

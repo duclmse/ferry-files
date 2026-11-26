@@ -1,5 +1,6 @@
 //! What the palette's `:` sends fsd: the text as typed, in fsd's search syntax, with the Match
-//! case, Whole word and Regular expression buttons turned into fsd's modifiers. This reads the
+//! case, Whole word and Regular expression buttons turned into fsd's modifiers, or the text to
+//! find inside files. This reads the
 //! text the way fsd's parser does (fs-server's `query/parser`), only as far as it needs to.
 
 use super::find::FindOpts;
@@ -116,6 +117,22 @@ pub(super) fn fsd_query(text: &str, o: FindOpts) -> String {
     out
 }
 
+/// The query for files whose text (or name) holds every word of `text`, in any case, from fsd's
+/// content index. fsd hands `content:`'s value to its full-text index, which reads `+word` as a
+/// word that must be there and keeps only letters and digits in words, so only those are sent:
+/// `fix: the "bug"` asks for the words fix, the and bug.
+pub(super) fn content_query(text: &str) -> String {
+    let words: Vec<String> = text
+        .split(|c: char| !c.is_alphanumeric())
+        .filter(|w| !w.is_empty())
+        .map(|w| format!("+{w}"))
+        .collect();
+    if words.is_empty() {
+        return String::new();
+    }
+    format!("content:\"{}\"", words.join(" "))
+}
+
 #[derive(Clone, Copy, PartialEq)]
 enum Kind {
     Word,
@@ -130,7 +147,8 @@ struct Tok {
     end: usize,
 }
 
-/// fsd's tokens: words, "phrases", and the operators | ! < >.
+/// fsd's tokens: words (where quotes keep spaces in, as in `path:"a b"`), "phrases", and the
+/// operators | ! < >.
 fn tokens(text: &str) -> Vec<Tok> {
     let mut out = vec![];
     let mut it = text.char_indices().peekable();
@@ -157,11 +175,14 @@ fn tokens(text: &str) -> Vec<Tok> {
                 });
             }
             _ => {
+                // A quote inside a word keeps spaces and operators in it, up to the next one.
+                let mut quoted = c == '"';
                 let mut end = start + c.len_utf8();
                 while let Some(&(j, c)) = it.peek() {
-                    if c.is_whitespace() || matches!(c, '|' | '<' | '>') {
+                    if !quoted && (c.is_whitespace() || matches!(c, '|' | '<' | '>')) {
                         break;
                     }
+                    quoted ^= c == '"';
                     end = j + c.len_utf8();
                     it.next();
                 }
@@ -234,6 +255,10 @@ mod tests {
         assert_eq!(fsd_query("\"my file\"", BOTH), "case: ww: \"my file\"");
         assert_eq!(fsd_query("path:src", CASE), "case: path:src");
         assert_eq!(fsd_query("path: \"a b\"", CASE), "case: path: \"a b\"");
+        assert_eq!(
+            fsd_query("path:\"a b|c\" d", CASE),
+            "case: path:\"a b|c\" case: d"
+        );
     }
 
     #[test]
@@ -253,6 +278,16 @@ mod tests {
         assert_eq!(fsd_query("regex:^a", BOTH), "case: regex:^a");
         // A modifier with nothing after it filters on its own.
         assert_eq!(fsd_query("folder: | a", CASE), "folder: | case: a");
+    }
+
+    #[test]
+    fn content_asks_for_every_word() {
+        assert_eq!(
+            content_query("fix: the \"bug\""),
+            "content:\"+fix +the +bug\""
+        );
+        assert_eq!(content_query("Größe 2024"), "content:\"+Größe +2024\"");
+        assert_eq!(content_query(" :;\" "), "");
     }
 
     #[test]

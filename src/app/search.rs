@@ -239,7 +239,7 @@ pub(super) fn SearchPane(pane: Pane) -> impl IntoView {
     };
     // On an Everything server the box searches below the folder; elsewhere it filters the folder.
     let box_label = move || match (ctx.read_only(p.src.get()), p.cwd.with(|c| c == "/")) {
-        (true, true) => "Search all drives",
+        (true, true) => "Search everything indexed",
         (true, false) => "Search this folder and its subfolders",
         _ => "Filter this folder",
     };

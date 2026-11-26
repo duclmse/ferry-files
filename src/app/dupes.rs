@@ -247,14 +247,20 @@ pub(super) fn Duplicates(folders: Vec<(Src, String)>) -> impl IntoView {
                 {move || found.get().map(|d| {
                     let groups = d.groups.len();
                     let extra: u64 = d.groups.iter().map(|g| g[0].size * (g.len() as u64 - 1)).sum();
-                    let summary = if groups == 0 {
-                        format!("No duplicates among {} files.", d.files)
+                    let among = if d.from_index {
+                        format!("{} files of a shared size", d.files)
                     } else {
-                        format!("{groups} group{} of duplicates among {} files; the extra copies take {}.", if groups == 1 { "" } else { "s" }, d.files, human_size(extra))
+                        format!("{} files", d.files)
+                    };
+                    let summary = if groups == 0 {
+                        format!("No duplicates among {among}.")
+                    } else {
+                        format!("{groups} group{} of duplicates among {among}; the extra copies take {}.", if groups == 1 { "" } else { "s" }, human_size(extra))
                     };
                     let partial = (!d.complete).then_some(" Stopped before the end, so there may be more.");
+                    let index = d.from_index.then_some(" Sizes came from fsd's index, so folders it skips (like node_modules) weren't looked in.");
                     view! {
-                        <p class="hint">{summary}{partial}</p>
+                        <p class="hint">{summary}{partial}{index}</p>
                         <div class="dupe-groups">
                             {d.groups.into_iter().map(|g| {
                                 let head = format!("{} copies · {} each", g.len(), human_size(g[0].size));

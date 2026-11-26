@@ -14,10 +14,11 @@ impl Ctx {
             .with_untracked(|ps| ps.iter().any(Info::is_phone))
     }
 
-    /// Whether `src`'s files can only be read: an Everything server.
+    /// Whether `src`'s files can only be read: an Everything server or another computer's fsd.
+    /// Both have an index the filter box searches, and list big folders a page at a time.
     pub(super) fn read_only(self, src: Src) -> bool {
         self.src_info(src)
-            .is_some_and(|i| i.transport == "everything")
+            .is_some_and(|i| i.transport == "everything" || i.transport == "fsd")
     }
 
     /// Shows all of `src`'s drives in the active pane with the search box open, to search them all.

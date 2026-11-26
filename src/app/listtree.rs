@@ -88,7 +88,7 @@ impl Ctx {
     }
 
     /// Lists open folder `path` (quietly, when it's being listed again: it may be gone).
-    fn load_kids(self, p: Pane, path: String, quiet: bool) {
+    pub(super) fn load_kids(self, p: Pane, path: String, quiet: bool) {
         let src = p.src.get_untracked();
         spawn_local(async move {
             let got = call::<Vec<Entry>>(

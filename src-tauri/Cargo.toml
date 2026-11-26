@@ -13,9 +13,10 @@ tauri-build = { version = "2", features = [] }
 
 [features]
 default = []
-# Searches of the computer from the index of fsd (the fs project's search daemon), when it runs.
+# Searches of the computer from the index of fsd (the fs project's search daemon), and folders
+# that list again when fsd sees them change, when it runs.
 # `cargo tauri dev` and `cargo tauri build` turn it on (`build.features` in tauri.conf.json).
-fsd = ["dep:fs-protocol", "tokio/net", "tokio/time"]
+fsd = ["dep:fs-protocol", "tokio/net", "tokio/time", "tokio/sync"]
 
 [dependencies]
 tauri = { version = "2", features = [] }

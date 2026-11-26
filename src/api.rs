@@ -39,6 +39,9 @@ pub struct Dupes {
     pub groups: Vec<Vec<Dupe>>,
     pub files: u32,
     pub complete: bool,
+    /// The files came from fsd's index: `files` counts those of a shared size only.
+    #[serde(default)]
+    pub from_index: bool,
 }
 
 /// How far a duplicate search is, sent by the backend as it goes.
@@ -237,6 +240,9 @@ pub struct FsdSettings {
     pub skip: Vec<String>,
     /// Whether it leaves out hidden files and folders.
     pub hidden: bool,
+    /// Whether it reads the text of text files, for finding the words in them.
+    #[serde(default)]
+    pub text: bool,
 }
 
 #[derive(Clone, Debug, PartialEq, Deserialize)]

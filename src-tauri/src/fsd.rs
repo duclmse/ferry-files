@@ -7,8 +7,8 @@ use crate::device::Entry;
 use crate::platform::app_path;
 use fs_protocol::ipc_client::{IpcClient, IpcClientError};
 use fs_protocol::ipc_protocol::{
-    ConfigChange, DecodeError, IpcRequest as Request, IpcResponse as Response,
-    SearchHitDto as SearchHit, PROTOCOL_VERSION,
+    ConfigChange, DecodeError, IpcRequest as Request, IpcResponse as Response, Notice, NoticeKind,
+    SearchHitDto as SearchHit, NOTICE_FOLDERS, PROTOCOL_VERSION,
 };
 use std::path::Path;
 use std::time::Duration;
@@ -22,13 +22,104 @@ struct Client(IpcClient);
 
 impl Client {
     async fn connect() -> Result<Client, IpcClientError> {
-        IpcClient::connect(&fs_protocol::default_ipc_path())
-            .await
-            .map(Client)
+        IpcClient::connect(&ipc_path()).await.map(Client)
     }
 
     async fn request(&mut self, request: Request) -> Result<Response, String> {
         self.0.request(request).await.map_err(said)
+    }
+}
+
+/// Where fsd listens: its usual socket or pipe (FERRY_FSD_IPC in tests, for a scratch fsd).
+fn ipc_path() -> std::path::PathBuf {
+    #[cfg(test)]
+    if let Some(p) = std::env::var_os("FERRY_FSD_IPC") {
+        return p.into();
+    }
+    fs_protocol::default_ipc_path()
+}
+
+/// While the app runs: tells the frontend which of the computer's folders changed, as fsd sees
+/// them, with the "folders-changed" event (app paths; empty when fsd may have left some out, so
+/// every folder shown is listed again). Changes close together are sent together, at most every
+/// `GATHER`. When fsd isn't running, or stops, it's asked again every `RETRY`.
+pub fn follow(app: tauri::AppHandle) {
+    std::thread::spawn(move || {
+        let Ok(rt) = tokio::runtime::Builder::new_current_thread()
+            .enable_all()
+            .build()
+        else {
+            return;
+        };
+        rt.block_on(async {
+            loop {
+                if let Ok(fsd) = IpcClient::connect(&ipc_path()).await {
+                    follow_notices(fsd, |dirs| {
+                        use tauri::Emitter;
+                        let _ = app.emit("folders-changed", dirs);
+                    })
+                    .await;
+                }
+                tokio::time::sleep(RETRY).await;
+            }
+        })
+    });
+}
+
+const GATHER: Duration = Duration::from_millis(500);
+const RETRY: Duration = Duration::from_secs(15);
+
+/// Until fsd stops answering, or turns the subscription down: `changed` with each gathering of
+/// changed folders.
+async fn follow_notices(mut fsd: IpcClient, changed: impl Fn(Vec<String>)) {
+    let subscribe = Request::Subscribe {
+        kinds: vec![NoticeKind::Applied],
+    };
+    if !matches!(fsd.request(subscribe).await, Ok(Response::Subscribed)) {
+        return;
+    }
+    // Reading a notice isn't safe to break off halfway, so one task only reads, and the
+    // gathering waits on the channel.
+    let (tx, mut rx) = tokio::sync::mpsc::unbounded_channel();
+    let reader = tokio::spawn(async move {
+        while let Ok(n) = fsd.next_notice().await {
+            if tx.send(n).is_err() {
+                break;
+            }
+        }
+    });
+    while let Some(first) = rx.recv().await {
+        let mut dirs = Some(Vec::new());
+        let until = tokio::time::Instant::now() + GATHER;
+        let mut next = Some(first);
+        while let Some(n) = next.take() {
+            gather(&mut dirs, n);
+            next = tokio::time::timeout_at(until, rx.recv())
+                .await
+                .ok()
+                .flatten();
+        }
+        changed(dirs.unwrap_or_default());
+    }
+    reader.abort();
+}
+
+/// Adds what notice `n` names to `dirs`; None once it may be anything.
+fn gather(dirs: &mut Option<Vec<String>>, n: Notice) {
+    match n {
+        // fsd names at most NOTICE_FOLDERS folders, and leaves out the rest.
+        Notice::Applied { folders, .. } if folders.len() < NOTICE_FOLDERS => {
+            if let Some(d) = dirs {
+                for f in folders {
+                    let f = app_path(Path::new(&f));
+                    if !d.contains(&f) {
+                        d.push(f);
+                    }
+                }
+            }
+        }
+        Notice::Applied { .. } | Notice::Lagged(_) => *dirs = None,
+        Notice::WatchPaths { .. } | Notice::Root { .. } => {}
     }
 }
 
@@ -111,6 +202,81 @@ async fn find_in(text: &str, offset: u32, max: u32) -> Result<Found, String> {
         })
         .collect();
     Ok(Found { entries, next })
+}
+
+/// The files under `dir` (an app path on the computer) of at least `min_size` bytes that share
+/// their size with another file there, from fsd's index, `max` at most: the duplicate finder's
+/// first step, without walking the folder. None when fsd can't say for all of `dir` (it isn't
+/// running, doesn't index all of it, is still crawling it, or can't be asked), so the caller
+/// walks it. The sizes are the index's: the caller checks each file again.
+pub fn same_size(dir: &str, min_size: u64, max: usize) -> Option<Vec<Entry>> {
+    let rt = tokio::runtime::Builder::new_current_thread()
+        .enable_all()
+        .build()
+        .ok()?;
+    rt.block_on(async {
+        tokio::time::timeout(SAME_SIZE_TIME, same_size_in(dir, min_size, max))
+            .await
+            .ok()
+            .flatten()
+    })
+}
+
+/// How long fsd has to send all of a folder's same-size files.
+const SAME_SIZE_TIME: Duration = Duration::from_secs(60);
+/// Hits asked for at a time: fsd sends at most 10,000 unless its config says more.
+const SAME_SIZE_PAGE: u32 = 10_000;
+
+async fn same_size_in(dir: &str, min_size: u64, max: usize) -> Option<Vec<Entry>> {
+    use fs_protocol::ipc_protocol::RootState;
+    let native = crate::platform::native(dir).to_string_lossy().into_owned();
+    let mut fsd = Client::connect().await.ok()?;
+    let Response::Roots(r) = fsd.request(Request::Roots).await.ok()? else {
+        return None;
+    };
+    let ready = r
+        .roots
+        .iter()
+        .zip(&r.status)
+        .any(|(root, s)| s.state == RootState::Ready && covers(root, &native));
+    if !r.crawled || !ready {
+        return None;
+    }
+    let query = format!(
+        "{} sizedupe: file: size:>={}",
+        scope_term(&native)?,
+        min_size.max(1)
+    );
+    let inside = format!(
+        "{}{}",
+        native.trim_end_matches(std::path::MAIN_SEPARATOR),
+        std::path::MAIN_SEPARATOR
+    );
+    let mut out = Vec::new();
+    let mut offset = 0;
+    loop {
+        let (hits, _) = page(&mut fsd, &query, offset, SAME_SIZE_PAGE).await.ok()?;
+        if hits.is_empty() {
+            return Some(out);
+        }
+        offset += hits.len() as u32;
+        out.extend(
+            hits.into_iter()
+                .filter(|h| !h.is_dir && h.archive_path.is_none() && starts_with(&h.path, &inside))
+                .map(|h| Entry {
+                    path: app_path(Path::new(&h.path)),
+                    name: h.name,
+                    hidden: h.attrib_bitmask & fs_protocol::attrib::HIDDEN != 0,
+                    dir: false,
+                    size: h.size_bytes,
+                    mtime: h.mtime,
+                }),
+        );
+        if out.len() >= max {
+            out.truncate(max);
+            return Some(out);
+        }
+    }
 }
 
 /// How far fsd's index is, for Settings > Search.
@@ -290,6 +456,25 @@ mod tests {
     use super::*;
 
     #[test]
+    fn notices_gather() {
+        let applied = |f: &[&str]| Notice::Applied {
+            events: 1,
+            folders: f.iter().map(|s| s.to_string()).collect(),
+        };
+        let mut dirs = Some(vec![]);
+        gather(&mut dirs, applied(&["/a", "/b"]));
+        gather(&mut dirs, applied(&["/b"]));
+        let len = dirs.as_ref().map(Vec::len);
+        assert_eq!(len, Some(2));
+        let many: Vec<String> = (0..NOTICE_FOLDERS).map(|i| format!("/{i}")).collect();
+        let many: Vec<&str> = many.iter().map(String::as_str).collect();
+        gather(&mut dirs, applied(&many));
+        assert!(dirs.is_none());
+        gather(&mut dirs, applied(&["/c"]));
+        assert!(dirs.is_none());
+    }
+
+    #[test]
     fn another_version_is_named() {
         let e = said(IpcClientError::Decode(DecodeError::VersionMismatch(10)));
         assert!(e.contains("version 10"), "{e}");
@@ -336,6 +521,81 @@ mod tests {
         assert_eq!(scope_term("/home/me").unwrap(), "\"/home/me/\"");
         assert!(covers("/home", "/home/me"));
         assert!(!covers("/home/me", "/home"));
+    }
+
+    /// Folders changing, against a running fsd that indexes FERRY_FSD_DIR (a folder a scratch
+    /// folder is made in, then removed), at FERRY_FSD_IPC or fsd's usual socket:
+    /// FERRY_FSD_DIR=<folder> cargo test --lib --features fsd fsd::tests::follow_live -- --ignored --nocapture
+    #[test]
+    #[ignore]
+    fn follow_live() {
+        let base = std::env::var("FERRY_FSD_DIR").expect("FERRY_FSD_DIR");
+        let scratch = Path::new(&base).join(format!("ferry-follow-{}", std::process::id()));
+        std::fs::create_dir(&scratch).unwrap();
+        let rt = tokio::runtime::Builder::new_current_thread()
+            .enable_all()
+            .build()
+            .unwrap();
+        let seen = std::sync::Arc::new(std::sync::Mutex::new(Vec::<Vec<String>>::new()));
+        let want = app_path(&scratch);
+        let got = rt.block_on(async {
+            let fsd = IpcClient::connect(&ipc_path())
+                .await
+                .expect("fsd isn't running");
+            let into = seen.clone();
+            let follow = tokio::spawn(follow_notices(fsd, move |dirs| {
+                into.lock().unwrap().push(dirs)
+            }));
+            tokio::time::sleep(Duration::from_millis(300)).await;
+            std::fs::write(scratch.join("a.txt"), b"x").unwrap();
+            let until = std::time::Instant::now() + Duration::from_secs(20);
+            let hit = loop {
+                let hit = seen
+                    .lock()
+                    .unwrap()
+                    .iter()
+                    .any(|d| d.is_empty() || d.contains(&want));
+                if hit || follow.is_finished() || std::time::Instant::now() > until {
+                    break hit;
+                }
+                tokio::time::sleep(Duration::from_millis(100)).await;
+            };
+            follow.abort();
+            hit
+        });
+        std::fs::remove_dir_all(&scratch).unwrap();
+        println!("seen {:?}", seen.lock().unwrap());
+        assert!(got, "no notice for {want}");
+    }
+
+    /// Same-size files for the duplicate finder, against a running fsd as for `follow_live`:
+    /// FERRY_FSD_DIR=<folder> cargo test --lib --features fsd fsd::tests::same_size_live -- --ignored
+    #[test]
+    #[ignore]
+    fn same_size_live() {
+        let base = std::env::var("FERRY_FSD_DIR").expect("FERRY_FSD_DIR");
+        let scratch = Path::new(&base).join(format!("ferry-same-size-{}", std::process::id()));
+        std::fs::create_dir_all(scratch.join("sub")).unwrap();
+        std::fs::write(scratch.join("a.txt"), b"same").unwrap();
+        std::fs::write(scratch.join("sub/b.txt"), b"four").unwrap();
+        std::fs::write(scratch.join("c.txt"), b"other size").unwrap();
+        std::fs::write(scratch.join("d.txt"), b"x").unwrap();
+        let dir = app_path(&scratch);
+        let until = std::time::Instant::now() + Duration::from_secs(20);
+        let names = loop {
+            let mut names: Vec<String> = super::same_size(&dir, 2, 100)
+                .expect("fsd can't say")
+                .into_iter()
+                .map(|e| e.name)
+                .collect();
+            names.sort();
+            if names.len() >= 2 || std::time::Instant::now() > until {
+                break names;
+            }
+            std::thread::sleep(Duration::from_millis(200));
+        };
+        let _ = std::fs::remove_dir_all(&scratch);
+        assert_eq!(names, ["a.txt", "b.txt"]);
     }
 
     /// The palette's `:` against a running fsd:

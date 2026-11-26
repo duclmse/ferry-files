@@ -54,6 +54,10 @@ pub fn App() -> impl IntoView {
         }
     });
     crate::api::listen("devices-changed", move |_: ()| ctx.scan());
+    // fsd saw folders on the computer change (fsd.rs `follow`).
+    crate::api::listen("folders-changed", move |dirs: Vec<String>| {
+        ctx.changed_outside(dirs)
+    });
     let _ = set_interval_with_handle(
         move || {
             let waiting = ctx

@@ -1,4 +1,4 @@
-//! The connections added in Settings > Connections: SFTP, WebDAV, FTP and Everything servers, S3
+//! The connections added in Settings > Connections: SFTP, WebDAV, FTP, Everything and fsd servers, S3
 //! buckets, SMB shares and NFS exports, in one list. Each has a type, an address and how it logs in; a password is kept in
 //! the system's keychain under the connection's id, never here.
 //!
@@ -20,10 +20,12 @@ pub(super) enum ConnKind {
     Ftp,
     S3,
     Everything,
+    /// fsd's REST API on another computer.
+    Fsd,
 }
 
 impl ConnKind {
-    pub(super) const ALL: [ConnKind; 7] = [
+    pub(super) const ALL: [ConnKind; 8] = [
         ConnKind::Sftp,
         ConnKind::Smb,
         ConnKind::Nfs,
@@ -31,6 +33,7 @@ impl ConnKind {
         ConnKind::Ftp,
         ConnKind::S3,
         ConnKind::Everything,
+        ConnKind::Fsd,
     ];
 
     pub(super) fn key(self) -> &'static str {
@@ -42,6 +45,7 @@ impl ConnKind {
             ConnKind::Ftp => "ftp",
             ConnKind::S3 => "s3",
             ConnKind::Everything => "everything",
+            ConnKind::Fsd => "fsd",
         }
     }
 
@@ -54,6 +58,7 @@ impl ConnKind {
             ConnKind::Ftp => "FTP",
             ConnKind::S3 => "S3",
             ConnKind::Everything => "Everything",
+            ConnKind::Fsd => "fsd",
         }
     }
 
@@ -62,6 +67,9 @@ impl ConnKind {
         matches!(self, ConnKind::Smb | ConnKind::Nfs)
     }
 }
+
+/// The port fsd's REST API listens on unless its `api.rest_port` says otherwise.
+pub(super) const FSD_PORT: u16 = 7700;
 
 /// How a connection logs in.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
@@ -173,6 +181,13 @@ impl Conn {
             }
             ConnKind::Ftp => format!("{}{port}", self.host),
             ConnKind::Everything => format!("http://{}{port}", self.host),
+            // With fsd's own port when none is typed, as the backend names it.
+            ConnKind::Fsd => format!(
+                "{}://{}:{}",
+                if self.tls { "https" } else { "http" },
+                self.host,
+                self.port.unwrap_or(FSD_PORT)
+            ),
             ConnKind::Sftp if self.user.is_empty() => format!("{}{port}", self.host),
             ConnKind::Sftp => format!("{}@{}{port}", self.user, self.host),
             // A user without a saved password goes in the address, so the system asks for theirs.
@@ -228,6 +243,10 @@ impl Conn {
                 "everything_connect",
                 json!({ "server": self.addr(), "user": user, "secret": self.secret() }),
             ),
+            ConnKind::Fsd => (
+                "fsd_connect",
+                json!({ "server": self.addr(), "secret": self.secret() }),
+            ),
             ConnKind::Sftp => {
                 let key = (self.auth == Auth::Key).then_some(self.key_file.as_str());
                 (
@@ -280,7 +299,9 @@ impl Conn {
         if self.kind == ConnKind::S3 && self.user.trim().is_empty() {
             return Some("Enter the access key ID.");
         }
-        if self.auth == Auth::Password && self.user.trim().is_empty() && self.kind != ConnKind::Sftp
+        if self.auth == Auth::Password
+            && self.user.trim().is_empty()
+            && !matches!(self.kind, ConnKind::Sftp | ConnKind::Fsd)
         {
             return Some("Enter the user name to log in with.");
         }
@@ -648,7 +669,7 @@ impl Ctx {
         for c in self.conns.get_untracked() {
             match (c.kind, self.conn_src(&c)) {
                 (ConnKind::Smb | ConnKind::Nfs, _) => {}
-                (ConnKind::Everything, Some(src)) => self.refresh_drives(src),
+                (ConnKind::Everything | ConnKind::Fsd, Some(src)) => self.refresh_drives(src),
                 (_, Some(_)) => {}
                 (_, None) => spawn_local(async move {
                     let _ = self.connect_conn(c, false).await;
@@ -665,7 +686,7 @@ impl Ctx {
         });
     }
 
-    /// Looks again at an Everything server's drives.
+    /// Looks again at an Everything server's drives, or the drives and indexed folders of fsd.
     fn refresh_drives(self, src: Src) {
         spawn_local(async move {
             if call::<()>("refresh", json!({ "src": src.key() }))
@@ -766,6 +787,12 @@ mod tests {
             .problem()
             .is_some());
         assert!(conn(ConnKind::S3, "s3", "", None, "b").problem().is_some());
+        let mut fsd = conn(ConnKind::Fsd, "pc", "", None, "");
+        assert_eq!(fsd.addr(), "http://pc:7700");
+        fsd.auth = Auth::Password;
+        assert!(fsd.problem().is_none());
+        fsd.port = Some(8000);
+        assert_eq!(fsd.addr(), "http://pc:8000");
     }
 
     #[test]

@@ -85,6 +85,7 @@ fn main() {
             "script_guide",
             "everything_connect",
             "everything_find",
+            "fsd_connect",
             "sftp_connect",
             "webdav_connect",
             "ftp_connect",

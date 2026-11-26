@@ -335,8 +335,8 @@ pub(super) fn Sidebar() -> impl IntoView {
                         <button class="eject" title=format!("Remove {} from the connections", i.label) aria-label="Remove"
                             on:click=move |_| ctx.remove_conn_of(src)>{ico(Icon::Close)}</button>
                     }.into_any(),
-                    ("everything", _) => view! {
-                        <button class="eject" title=format!("Search all drives on {}", i.label) aria-label="Search all drives"
+                    ("everything" | "fsd", _) => view! {
+                        <button class="eject" title=format!("Search all of {}", i.label) aria-label="Search all"
                             on:click=move |_| ctx.search_all(src)>{ico(Icon::Search)}</button>
                         <button class="eject" title=format!("Remove {} from the connections", i.label) aria-label="Remove"
                             on:click=move |_| ctx.remove_conn_of(src)>{ico(Icon::Close)}</button>
@@ -521,14 +521,14 @@ pub(super) fn Sidebar() -> impl IntoView {
                 Some(path) => mounted(c.name(), path).into_any(),
                 None => off_row(c).into_any(),
             }).collect_view()}
-            {move || ctx.conns_of(servers::ConnKind::Everything).into_iter().map(|c| match ctx.conn_src(&c).and_then(|s| ctx.src_info(s)) {
+            {move || [servers::ConnKind::Everything, servers::ConnKind::Fsd].into_iter().flat_map(|k| ctx.conns_of(k)).map(|c| match ctx.conn_src(&c).and_then(|s| ctx.src_info(s)) {
                 Some(i) => device(i).into_any(),
                 None => off_row(c).into_any(),
             }).collect_view()}
             // Shares mounted outside the app (or before the list had them).
             {move || ctx.other_mounts().into_iter().map(|m| mounted(m.share.trim_start_matches("smb://").to_string(), m.path).into_any()).collect_view()}
             {move || (ctx.conns.with(Vec::is_empty) && ctx.smb_mounts.with(Vec::is_empty))
-                .then(|| add_row("Add an SFTP, WebDAV or FTP server, an SMB share (Windows sharing, NAS), an NFS export, an S3 bucket or a Windows computer running Everything"))}
+                .then(|| add_row("Add an SFTP, WebDAV or FTP server, an SMB share (Windows sharing, NAS), an NFS export, an S3 bucket, a Windows computer running Everything, or another computer running fsd"))}
         })}
     })
     };

@@ -32,6 +32,9 @@ fn status(ctx: Ctx, c: &Conn) -> (bool, String) {
 fn auth_label(c: &Conn) -> &'static str {
     match (c.kind, c.auth) {
         (ConnKind::Everything, Auth::System) => "No login",
+        (ConnKind::Fsd, Auth::System) => "No token",
+        (ConnKind::Fsd, _) if c.saved => "Token saved",
+        (ConnKind::Fsd, _) => "Token not saved",
         (ConnKind::Sftp, Auth::System) => "ssh keys",
         (ConnKind::Smb, Auth::System) => "System asks",
         (ConnKind::Nfs, _) => "No login",
@@ -67,6 +70,7 @@ fn auth_choices(kind: ConnKind) -> &'static [(Auth, &'static str)] {
             (Auth::Password, "User name and password"),
         ],
         ConnKind::S3 => &[(Auth::Password, "Access key")],
+        ConnKind::Fsd => &[(Auth::System, "No token"), (Auth::Password, "fsd's token")],
     }
 }
 
@@ -85,6 +89,7 @@ fn host_example(kind: ConnKind) -> &'static str {
         ConnKind::Ftp => "ftp.example.com or 10.0.0.2",
         ConnKind::S3 => "s3.us-east-1.amazonaws.com",
         ConnKind::Nfs => "nas or 10.0.0.2",
+        ConnKind::Fsd => "pc or 10.0.0.2",
         _ => "nas, 10.0.0.2 or a host from ~/.ssh/config",
     }
 }
@@ -141,6 +146,7 @@ fn conn_form(ctx: Ctx, editing: RwSignal<Option<Conn>>, is_new: bool) -> impl In
     let secret_label = move || match (kind.get(), auth.get()) {
         (_, Auth::Key) => "Passphrase",
         (ConnKind::S3, _) => "Secret access key",
+        (ConnKind::Fsd, _) => "Token",
         _ => "Password",
     };
     let secret_hint = move || match (
@@ -171,6 +177,7 @@ fn conn_form(ctx: Ctx, editing: RwSignal<Option<Conn>>, is_new: bool) -> impl In
                         (ConnKind::Sftp, _) => "22",
                         (ConnKind::Smb, _) => "445",
                         (ConnKind::Ftp, _) => "21",
+                        (ConnKind::Fsd, _) => "7700",
                         (ConnKind::WebDav | ConnKind::S3, true) => "443",
                         _ => "80",
                     }
@@ -189,7 +196,7 @@ fn conn_form(ctx: Ctx, editing: RwSignal<Option<Conn>>, is_new: bool) -> impl In
                 }.into_any()),
                 _ => None,
             }}
-            {move || matches!(kind.get(), ConnKind::WebDav | ConnKind::Ftp | ConnKind::S3).then(|| view! {
+            {move || matches!(kind.get(), ConnKind::WebDav | ConnKind::Ftp | ConnKind::S3 | ConnKind::Fsd).then(|| view! {
                 <label class="check">
                     <input type="checkbox" prop:checked=move || tls.get() on:change=move |e| { let on = event_target_checked(&e); set(&|c| c.tls = on) }/>
                     {move || if kind.get() == ConnKind::Ftp { "Encrypted (FTPS)" } else { "Encrypted (https)" }}
@@ -208,7 +215,7 @@ fn conn_form(ctx: Ctx, editing: RwSignal<Option<Conn>>, is_new: bool) -> impl In
                     {move || auth_choices(kind.get()).iter().map(|(a, label)| view! { <option value=auth_key(*a)>{*label}</option> }).collect_view()}
                 </select>
             </label>
-            {move || (kind.get() == ConnKind::Sftp || auth.get() != Auth::System || kind.get() == ConnKind::Smb)
+            {move || (kind.get() != ConnKind::Fsd && (kind.get() == ConnKind::Sftp || auth.get() != Auth::System || kind.get() == ConnKind::Smb))
                 .then(|| match kind.get() {
                     ConnKind::S3 => text("Access key ID", "AKIA…", Signal::derive(move || get().user), |c, v| c.user = v),
                     k => text("User name", if k == ConnKind::Sftp { "As in ~/.ssh/config when empty" } else { "me" }, Signal::derive(move || get().user), |c, v| c.user = v),

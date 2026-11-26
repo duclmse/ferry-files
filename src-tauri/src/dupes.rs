@@ -21,6 +21,9 @@ pub(super) struct Dupes {
     files: u32,
     /// False when stopped, or the limits cut the search short.
     complete: bool,
+    /// The files came from fsd's index instead of a walk of the folder: `files` counts only those
+    /// that share their size with another, and folders fsd skips weren't looked in.
+    from_index: bool,
 }
 
 /// How far along the search is, sent as the "dupes" event.
@@ -78,6 +81,73 @@ fn split<K: std::hash::Hash + Eq>(
     out
 }
 
+/// The files of the same size under the one folder given, from fsd's index, when it's a folder
+/// on the computer that fsd has indexed: the first step without walking the folder. Each file is
+/// looked at again, for its size now and whether it's hidden (fsd goes by the name only). None
+/// when the folder has to be walked: hidden files are wanted (fsd may skip some), there are
+/// several folders (a file can match one in another folder only), or fsd can't say.
+#[cfg(feature = "fsd")]
+fn from_index(
+    devs: &[(Arc<Device>, String)],
+    hidden: bool,
+    min_size: u64,
+    stop: &std::sync::atomic::AtomicBool,
+    emit: &impl Fn(String),
+) -> Option<Vec<Entry>> {
+    let [(dev, dir)] = devs else { return None };
+    if hidden || dev.kind() != "mac" {
+        return None;
+    }
+    emit("Asking fsd for files of the same size…".into());
+    let found = crate::fsd::same_size(dir, min_size.max(1), MAX_FILES)?;
+    let top = dir.trim_end_matches('/');
+    // Whether each folder between `dir` and a file is hidden, looked up once.
+    let mut hidden_dirs: HashMap<String, bool> = HashMap::new();
+    let mut out = Vec::with_capacity(found.len());
+    for (i, f) in found.into_iter().enumerate() {
+        if stop.load(Ordering::Relaxed) {
+            return Some(out);
+        }
+        if i % 500 == 499 {
+            emit(format!("Checking the files fsd found: {}…", i + 1));
+        }
+        let Ok(Some(e)) = dev.stat(&f.path) else {
+            continue;
+        };
+        if e.dir || e.is_hidden() || e.size < min_size.max(1) {
+            continue;
+        }
+        let mut d = f.path.rsplit_once('/').map_or("", |p| p.0);
+        let mut in_hidden = false;
+        while d.len() > top.len() {
+            let h = *hidden_dirs
+                .entry(d.to_string())
+                .or_insert_with(|| matches!(dev.stat(d), Ok(Some(e)) if e.is_hidden()));
+            if h {
+                in_hidden = true;
+                break;
+            }
+            d = d.rsplit_once('/').map_or("", |p| p.0);
+        }
+        if !in_hidden {
+            out.push(e);
+        }
+    }
+    // Sizes that changed since fsd saw them can leave a file alone; the step after drops it.
+    Some(out)
+}
+
+#[cfg(not(feature = "fsd"))]
+fn from_index(
+    _: &[(Arc<Device>, String)],
+    _: bool,
+    _: u64,
+    _: &std::sync::atomic::AtomicBool,
+    _: &impl Fn(String),
+) -> Option<Vec<Entry>> {
+    None
+}
+
 pub(super) fn find_dupes(
     devs: &[(Arc<Device>, String)],
     hidden: bool,
@@ -93,7 +163,17 @@ pub(super) fn find_dupes(
     let mut by_size: HashMap<u64, Vec<(usize, Entry)>> = HashMap::new();
     let mut seen = std::collections::HashSet::new();
     let mut told = 0;
+    if let Some(files) = from_index(devs, hidden, min_size, stop, &emit) {
+        report.from_index = true;
+        for e in files {
+            report.files += 1;
+            by_size.entry(e.size).or_default().push((0, e));
+        }
+    }
     'walk: for (at, (dev, dir)) in devs.iter().enumerate() {
+        if report.from_index {
+            break;
+        }
         let mut queue = std::collections::VecDeque::from([dir.clone()]);
         while let Some(d) = queue.pop_front() {
             if stop.load(Ordering::Relaxed) || report.files as usize >= MAX_FILES {

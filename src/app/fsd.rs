@@ -172,6 +172,7 @@ fn FsdForm(svc: Service) -> impl IntoView {
     let folders = RwSignal::new(Vec::<String>::new());
     let skip = RwSignal::new(String::new());
     let hidden = RwSignal::new(false);
+    let text = RwSignal::new(false);
     let loaded = RwSignal::new(None::<Result<FsdSettings, String>>);
     let saving = RwSignal::new(false);
     let note = RwSignal::new(None::<String>);
@@ -182,6 +183,7 @@ fn FsdForm(svc: Service) -> impl IntoView {
         let _ = folders.try_set(s.folders.clone());
         let _ = skip.try_set(lines(&s.skip));
         let _ = hidden.try_set(s.hidden);
+        let _ = text.try_set(s.text);
         let _ = loaded.try_set(Some(Ok(s)));
     };
     let load = move || {
@@ -208,6 +210,7 @@ fn FsdForm(svc: Service) -> impl IntoView {
                 .collect()
         }),
         hidden: hidden.get(),
+        text: text.get(),
     };
     let changed = Memo::new(move |_| match loaded.get() {
         Some(Ok(was)) => now() != was,
@@ -283,6 +286,11 @@ fn FsdForm(svc: Service) -> impl IntoView {
                     <input type="checkbox" prop:checked=move || hidden.get()
                         on:change=move |e| hidden.set(event_target_checked(&e))/>
                     "Leave out hidden files and folders"
+                </label>
+                <label class="check" title="For finding the words inside files (⌘⇧F, then the page button). fsd reads text and code files, up to 512 KB of each, and keeps their words in its index.">
+                    <input type="checkbox" prop:checked=move || text.get()
+                        on:change=move |e| text.set(event_target_checked(&e))/>
+                    "Read the text of text and code files, to find the words in them"
                 </label>
                 <label class="stack" for="fsd-skip">"Leave out paths that match (one pattern a line)"</label>
                 <textarea id="fsd-skip" class="patterns" rows="10" spellcheck="false" autocomplete="off"
