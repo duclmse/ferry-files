@@ -497,8 +497,8 @@ pub(super) const SEARCH_KINDS: &[(&str, &[&str])] = &[
     (
         "Pictures",
         &[
-            "jpg", "jpeg", "png", "gif", "webp", "bmp", "heic", "heif", "avif", "svg", "tif",
-            "tiff", "dng", "raw",
+            "jpg", "jpeg", "png", "gif", "webp", "bmp", "heic", "heif", "avif", "jxl", "svg",
+            "tif", "tiff", "dng", "raw", "arw", "cr2", "cr3", "nef", "orf", "raf", "rw2",
         ],
     ),
     (

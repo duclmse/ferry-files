@@ -10,35 +10,37 @@
 
 ### 1.1 Boolean Operators
 
-| Syntax | Meaning | Example |
-|--------|---------|---------|
-| `A B` (space) | AND | `main rs` |
-| `A\|B` | OR | `*.jpg\|*.png` |
-| `!A` | NOT | `!node_modules` |
-| `<A B>` | Grouping | `<c:\|d:\> *.mp3` |
-| `"A B"` | Literal phrase | `"program files"` |
+| Syntax        | Meaning        | Example           |
+| ------------- | -------------- | ----------------- |
+| `A B` (space) | AND            | `main rs`         |
+| `A\|B`        | OR             | `*.jpg\|*.png`    |
+| `!A`          | NOT            | `!node_modules`   |
+| `<A B>`       | Grouping       | `<c:\|d:\> *.mp3` |
+| `"A B"`       | Literal phrase | `"program files"` |
 
 Operator precedence (highest to lowest):
+
 1. `<>` grouping
 2. `!` NOT
 3. space AND
 4. `|` OR
 
 Examples:
+
 - `!A !B` = `(NOT A) AND (NOT B)`
 - `A|B C` = `A OR (B AND C)`
 
-`content:`, `fuzzy:` and `dupe:` choose how the whole query runs, so they
-cannot appear inside `|` or after `!`; such queries are rejected with a
-query error rather than evaluated with the wrong meaning.
+`content:`, `fuzzy:` and `dupe:` choose how the whole query runs, so they cannot
+appear inside `|` or after `!`; such queries are rejected with a query error
+rather than evaluated with the wrong meaning.
 
 ### 1.2 Wildcards
 
-| Wildcard | Meaning |
-|----------|---------|
-| `*` | Zero or more characters |
-| `?` | Exactly one character |
-| `*.` | Files with no extension |
+| Wildcard | Meaning                 |
+| -------- | ----------------------- |
+| `*`      | Zero or more characters |
+| `?`      | Exactly one character   |
+| `*.`     | Files with no extension |
 
 Double quotes only keep spaces and operators inside one term: `"my notes"`
 matches names containing `my notes`. Add `wfn:` to match the whole filename.
@@ -48,104 +50,103 @@ Quotes inside a word do the same and are dropped, as in Everything:
 A term containing `/` or `\` searches full paths, as if `path:` were given
 (`nopath:` turns this off).
 
-Wildcards match the **whole filename** by default (controlled by `wfn:` modifier).
-With `path:` they match the whole path, so `path: */src/*.rs` finds `.rs` files
-anywhere under a `src` directory (`*` also matches `/`).
+Wildcards match the **whole filename** by default (controlled by `wfn:`
+modifier). With `path:` they match the whole path, so `path: */src/*.rs` finds
+`.rs` files anywhere under a `src` directory (`*` also matches `/`).
 
 ### 1.3 Modifiers
 
-A modifier applies to the term after it (`case: Foo`) or to a value attached
-to it (`case:Foo`). `path:`, `dir:`, `regex:` and `archive:` with an attached
-value are functions instead, and a single letter with a value (`i:\data`) is a
-drive.
+A modifier applies to the term after it (`case: Foo`) or to a value attached to
+it (`case:Foo`). `path:`, `dir:`, `regex:` and `archive:` with an attached value
+are functions instead, and a single letter with a value (`i:\data`) is a drive.
 
-| Modifier | Aliases | Effect |
-|----------|---------|--------|
-| `case:` | `cs:` | Case-sensitive matching |
-| `nocase:` | `i:` | Case-insensitive (default), for any letter with upper and lower case (`CAFÉ` finds `café`) |
-| `path:` | | Match against full path + filename. `path:src` is `path: src`: the path contains `src` |
-| `nopath:` | | Match filename only (default) |
-| `file:` | `files:` | Files only |
-| `folder:` | `folders:` | Folders only |
-| `regex:` | | Treat term as regex (`regex: a.b` or `regex:a.b`); matches the filename, or the full path with `path:` |
-| `noregex:` | | Disable regex |
-| `wildcards:` | | Enable wildcard matching |
-| `nowildcards:` | | Disable wildcard matching |
-| `wfn:` | `wholefilename:` | Match whole filename |
-| `nowfn:` | `nowholefilename:` | Match anywhere in filename |
-| `wholeword:` | `ww:`, `w:`, `wholewords:` | Match whole words only |
-| `nowholeword:` | `noww:`, `nowholewords:` | Match anywhere (default) |
-| `ascii:` | `utf8:`, `noascii:` | Accepted for compatibility; no effect |
-| `diacritics:` | `nodiacritics:` | Accepted for compatibility; accents always match exactly |
-| `archive:` | | Inner archive entries only (`archive_path IS NOT NULL`) |
-| `noarchive:` | | Real filesystem files only (`archive_path IS NULL`) |
+| Modifier       | Aliases                    | Effect                                                                                                 |
+| -------------- | -------------------------- | ------------------------------------------------------------------------------------------------------ |
+| `case:`        | `cs:`                      | Case-sensitive matching                                                                                |
+| `nocase:`      | `i:`                       | Case-insensitive (default), for any letter with upper and lower case (`CAFÉ` finds `café`)             |
+| `path:`        |                            | Match against full path + filename. `path:src` is `path: src`: the path contains `src`                 |
+| `nopath:`      |                            | Match filename only (default)                                                                          |
+| `file:`        | `files:`                   | Files only                                                                                             |
+| `folder:`      | `folders:`                 | Folders only                                                                                           |
+| `regex:`       |                            | Treat term as regex (`regex: a.b` or `regex:a.b`); matches the filename, or the full path with `path:` |
+| `noregex:`     |                            | Disable regex                                                                                          |
+| `wildcards:`   |                            | Enable wildcard matching                                                                               |
+| `nowildcards:` |                            | Disable wildcard matching                                                                              |
+| `wfn:`         | `wholefilename:`           | Match whole filename                                                                                   |
+| `nowfn:`       | `nowholefilename:`         | Match anywhere in filename                                                                             |
+| `wholeword:`   | `ww:`, `w:`, `wholewords:` | Match whole words only                                                                                 |
+| `nowholeword:` | `noww:`, `nowholewords:`   | Match anywhere (default)                                                                               |
+| `ascii:`       | `utf8:`, `noascii:`        | Accepted for compatibility; no effect                                                                  |
+| `diacritics:`  | `nodiacritics:`            | Accepted for compatibility; accents always match exactly                                               |
+| `archive:`     |                            | Inner archive entries only (`archive_path IS NOT NULL`)                                                |
+| `noarchive:`   |                            | Real filesystem files only (`archive_path IS NULL`)                                                    |
 
 ### 1.4 Functions
 
 #### Date/Time Functions
 
-| Function | Aliases | Description |
-|----------|---------|-------------|
-| `dm:<date>` | `datemodified:` | Date modified |
-| `dc:<date>` | `datecreated:` | Date created |
+| Function    | Aliases         | Description                                                                |
+| ----------- | --------------- | -------------------------------------------------------------------------- |
+| `dm:<date>` | `datemodified:` | Date modified                                                              |
+| `dc:<date>` | `datecreated:`  | Date created                                                               |
 | `da:<date>` | `dateaccessed:` | Date accessed; approximated with date modified (no access time is indexed) |
-| `rc:<date>` | `recentchange:` | Not supported (query error) |
-| `dr:<date>` | `daterun:` | Not supported (query error) |
+| `rc:<date>` | `recentchange:` | Not supported (query error)                                                |
+| `dr:<date>` | `daterun:`      | Not supported (query error)                                                |
 
 #### Size Functions
 
-| Function | Description |
-|----------|-------------|
-| `size:<size>` | File size |
+| Function      | Description |
+| ------------- | ----------- |
+| `size:<size>` | File size   |
 
 #### Name/Path Functions
 
-| Function | Aliases | Description |
-|----------|---------|-------------|
-| `ext:<list>` | | Extension, semicolon-delimited: `ext:jpg;png;gif` |
-| `parent:<path>` | `infolder:`, `nosubfolders:`, `dir:` | Files in exactly this folder, not its subfolders. Ignores ASCII case, so `parent:c:\windows` finds `C:\Windows\notepad.exe` |
-| `child:<name>` | | Folders containing a child with this name |
-| `startwith:<text>` | `startswith:` | Filename starts with text (ignores case unless `case:`) |
-| `endwith:<text>` | `endswith:` | Filename ends with text (ignores case unless `case:`) |
-| `len:<n>` | `length:` | Filename length in characters; `len:5..10` for a range |
-| `depth:<n>` | `parents:` | Folder depth from root; `depth:1..2` for a range |
-| `root:` | | Top-level entries (one level below the filesystem root) |
+| Function           | Aliases                              | Description                                                                                                                 |
+| ------------------ | ------------------------------------ | --------------------------------------------------------------------------------------------------------------------------- |
+| `ext:<list>`       |                                      | Extension, semicolon-delimited: `ext:jpg;png;gif`                                                                           |
+| `parent:<path>`    | `infolder:`, `nosubfolders:`, `dir:` | Files in exactly this folder, not its subfolders. Ignores ASCII case, so `parent:c:\windows` finds `C:\Windows\notepad.exe` |
+| `child:<name>`     |                                      | Folders containing a child with this name                                                                                   |
+| `startwith:<text>` | `startswith:`                        | Filename starts with text (ignores case unless `case:`)                                                                     |
+| `endwith:<text>`   | `endswith:`                          | Filename ends with text (ignores case unless `case:`)                                                                       |
+| `len:<n>`          | `length:`                            | Filename length in characters; `len:5..10` for a range                                                                      |
+| `depth:<n>`        | `parents:`                           | Folder depth from root; `depth:1..2` for a range                                                                            |
+| `root:`            |                                      | Top-level entries (one level below the filesystem root)                                                                     |
 
 #### Attribute Functions
 
-| Function | Description |
-|----------|-------------|
+| Function         | Description                                     |
+| ---------------- | ----------------------------------------------- |
 | `attrib:<attrs>` | File attributes (see attribute constants below) |
-| `type:<list>` | Same as `ext:` |
+| `type:<list>`    | Same as `ext:`                                  |
 
 #### Content Functions
 
-| Function | Description |
-|----------|-------------|
-| `content:<text>` | Full-text search via Tantivy, in its query syntax: `content:"+a +b"` needs both words |
-| `utf8content:<text>` | Same as `content:` |
-| `ansicontent:<text>` | Same as `content:` |
+| Function             | Description                                                                           |
+| -------------------- | ------------------------------------------------------------------------------------- |
+| `content:<text>`     | Full-text search via Tantivy, in its query syntax: `content:"+a +b"` needs both words |
+| `utf8content:<text>` | Same as `content:`                                                                    |
+| `ansicontent:<text>` | Same as `content:`                                                                    |
 
 #### Folder Stat Functions
 
-| Function | Description |
-|----------|-------------|
-| `childcount:<n>` | Not supported (query error) |
-| `childfilecount:<n>` | Not supported (query error) |
+| Function               | Description                 |
+| ---------------------- | --------------------------- |
+| `childcount:<n>`       | Not supported (query error) |
+| `childfilecount:<n>`   | Not supported (query error) |
 | `childfoldercount:<n>` | Not supported (query error) |
-| `empty:` | Not supported (query error) |
+| `empty:`               | Not supported (query error) |
 
 #### Duplicate Functions
 
-| Function | Description |
-|----------|-------------|
-| `dupe:` | Same filename as another file (`namedupe:`); `dupe:size`, `dupe:dm` (or `dupe:date`) and `dupe:dc` pick another property |
-| `namepartdupe:` | Not supported (query error) |
-| `sizedupe:` | Same size |
-| `dmdupe:` | Same date modified |
-| `dcdupe:` | Same date created |
-| `dadupe:` | Not supported (query error) |
-| `attribdupe:` | Not supported (query error) |
+| Function        | Description                                                                                                              |
+| --------------- | ------------------------------------------------------------------------------------------------------------------------ |
+| `dupe:`         | Same filename as another file (`namedupe:`); `dupe:size`, `dupe:dm` (or `dupe:date`) and `dupe:dc` pick another property |
+| `namepartdupe:` | Not supported (query error)                                                                                              |
+| `sizedupe:`     | Same size                                                                                                                |
+| `dmdupe:`       | Same date modified                                                                                                       |
+| `dcdupe:`       | Same date created                                                                                                        |
+| `dadupe:`       | Not supported (query error)                                                                                              |
+| `attribdupe:`   | Not supported (query error)                                                                                              |
 
 Only `dupe:` takes a value, the property to compare; any other value is an
 error. The other dupe functions take none. Narrow them with separate terms, as
@@ -153,61 +154,66 @@ in `sizedupe: *.mp4`.
 
 #### Result Control
 
-| Function | Description |
-|----------|-------------|
-| `count:<n>` | Limit results to N |
+| Function                    | Description                                                                                                                 |
+| --------------------------- | --------------------------------------------------------------------------------------------------------------------------- |
+| `count:<n>`                 | Limit results to N                                                                                                          |
 | `sort:<field>[-asc\|-desc]` | Order results by `name`, `size`, `dm` or `dc`. Without a direction, names run A-Z, sizes and dates largest and newest first |
 
 #### Archive Functions (fs extension)
 
-| Function | Description |
-|----------|-------------|
+| Function           | Description                                                                                                                 |
+| ------------------ | --------------------------------------------------------------------------------------------------------------------------- |
 | `archiveof:<path>` | All indexed inner files of a specific outer archive. `*` and `?` match the whole archive path, ignoring case unless `case:` |
 
 #### fs Extensions (not in voidtools Everything)
 
-| Function | Description |
-|----------|-------------|
+| Function       | Description                                   |
+| -------------- | --------------------------------------------- |
 | `fuzzy:<term>` | Fuzzy filename match using nucleo SIMD scorer |
 
 ### 1.5 Type Macros
 
-| Macro | Expands to |
-|-------|-----------|
-| `audio:` | `ext:aac;ac3;aif;aifc;aiff;au;cda;dts;fla;flac;it;m1a;m2a;m3u;m4a;mid;midi;mka;mod;mp2;mp3;mpa;ogg;opus;ra;rmi;s3m;snd;umx;voc;wav;wma;xm` |
-| `zip:` | `ext:7z;ace;arj;bz2;cab;gz;gzip;jar;r00;r01;r02;r03;r04;r05;r06;r07;r08;r09;rar;tar;taz;tgz;xz;z;zip` |
-| `doc:` | `ext:c;chm;cpp;csv;cxx;doc;docm;docx;dot;dotm;dotx;h;hpp;htm;html;hxx;ini;java;lua;mht;mhtml;nfo;odp;ods;odt;pdf;potm;potx;ppam;pps;ppsm;ppsx;ppt;pptm;pptx;ps;py;rb;rc;rs;rtf;sldm;sldx;sql;svg;tex;toml;txt;vb;xlam;xls;xlsb;xlsm;xlsx;xltm;xltx;xml;yaml;yml` |
-| `exe:` | `ext:bat;cmd;exe;msi;ps1;sh` |
-| `pic:` | `ext:ani;bmp;gif;ico;jfif;jpeg;jpg;pcx;png;psd;tga;tif;tiff;webp` |
+| Macro    | Expands to                                                                                                                                                                                                                                                                                                                     |
+| -------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| `audio:` | `ext:aac;ac3;aif;aifc;aiff;au;cda;dts;fla;flac;it;m1a;m2a;m3u;m4a;mid;midi;mka;mod;mp2;mp3;mpa;ogg;opus;ra;rmi;s3m;snd;umx;voc;wav;wma;xm`                                                                                                                                                                                     |
+| `zip:`   | `ext:7z;ace;arj;bz2;cab;gz;gzip;jar;r00;r01;r02;r03;r04;r05;r06;r07;r08;r09;rar;tar;taz;tgz;xz;z;zip`                                                                                                                                                                                                                          |
+| `doc:`   | `ext:c;chm;cpp;csv;cxx;doc;docm;docx;dot;dotm;dotx;h;hpp;htm;html;hxx;ini;java;lua;mht;mhtml;nfo;odp;ods;odt;pdf;potm;potx;ppam;pps;ppsm;ppsx;ppt;pptm;pptx;ps;py;rb;rc;rs;rtf;sldm;sldx;sql;svg;tex;toml;txt;vb;xlam;xls;xlsb;xlsm;xlsx;xltm;xltx;xml;yaml;yml`                                                               |
+| `exe:`   | `ext:bat;cmd;exe;msi;ps1;sh`                                                                                                                                                                                                                                                                                                   |
+| `pic:`   | `ext:ani;arw;avif;bmp;cr2;cr3;dng;gif;heic;heif;ico;jfif;jpeg;jpg;jxl;nef;orf;pcx;png;psd;raf;raw;rw2;svg;tga;tif;tiff;webp`                                                                                                                                                                                                   |
 | `video:` | `ext:3g2;3gp;3gp2;3gpp;amr;amv;asf;avi;bdmv;bik;d2v;divx;drc;dsa;dsm;dss;dsv;evo;f4v;flc;fli;flic;flv;hdmov;ifo;ivf;m1v;m2p;m2t;m2ts;m2v;m4b;m4p;m4v;mkv;mov;mp2v;mp4;mp4v;mpe;mpeg;mpg;mpls;mpv2;mpv4;mqv;ogm;ogv;pss;pva;qt;ram;ratdvd;rm;rmm;rmvb;roq;rp;rpm;rsf;rts;smk;srt;swf;tp;tpr;ts;vob;vp6;webm;wm;wmp;wmv;wmx;wvx` |
+
+These are Everything's built-in filters, except that `pic:` also has what phones
+and cameras save now (HEIC, AVIF, JPEG XL, camera raw) and SVG, which
+Everything's list predates. `svg` is in `doc:` as well, as in Everything.
 
 ### 1.6 Function Value Syntax
 
 #### Comparison Operators
 
-| Syntax | Meaning |
-|--------|---------|
-| `function:value` | Equal to value |
-| `function:<value` | Less than |
-| `function:<=value` | Less than or equal |
-| `function:>value` | Greater than |
-| `function:>=value` | Greater than or equal |
-| `function:start..end` | Range (inclusive) |
-| `function:start-end` | Range (inclusive) |
+| Syntax                | Meaning               |
+| --------------------- | --------------------- |
+| `function:value`      | Equal to value        |
+| `function:<value`     | Less than             |
+| `function:<=value`    | Less than or equal    |
+| `function:>value`     | Greater than          |
+| `function:>=value`    | Greater than or equal |
+| `function:start..end` | Range (inclusive)     |
+| `function:start-end`  | Range (inclusive)     |
 
 #### Size Values
 
-| Suffix | Meaning |
-|--------|---------|
-| *(none)* | Bytes |
-| `kb` | Kilobytes |
-| `mb` | Megabytes |
-| `gb` | Gigabytes |
-| `tb` | Terabytes |
+| Suffix   | Meaning   |
+| -------- | --------- |
+| _(none)_ | Bytes     |
+| `kb`     | Kilobytes |
+| `mb`     | Megabytes |
+| `gb`     | Gigabytes |
+| `tb`     | Terabytes |
 
 `k`, `m`, `g` and `t` work too. Ranges are `1mb..2mb` or `1mb-2mb`.
 
 Size constants:
+
 - `empty` = 0 bytes
 - `tiny` = 0 < size ≤ 10 KB → `Between(1, 10240)`
 - `small` = 10 KB < size ≤ 100 KB → `Between(10241, 102400)`
@@ -218,43 +224,44 @@ Size constants:
 
 #### Date Values
 
-Absolute: `YYYY`, `YYYY-MM`, `YYYY-MM-DD`, `YYYY-MM-DDThh:mm:ss`,
-`YYYYMMDD`, in local time. Each value is a period (a year, month, day or
-second), and comparisons and ranges use the whole period:
+Absolute: `YYYY`, `YYYY-MM`, `YYYY-MM-DD`, `YYYY-MM-DDThh:mm:ss`, `YYYYMMDD`, in
+local time. Each value is a period (a year, month, day or second), and
+comparisons and ranges use the whole period:
 
 - `dm:2024-01-01` is that whole day; `dm:<=2024-01-01` includes all of it,
   `dm:>2024-01-01` starts on Jan 2.
-- `dm:2024-01-01..2024-12-31`, `dm:2024-01-01-2024-12-31` and `dm:2024` are
-  all of 2024.
+- `dm:2024-01-01..2024-12-31`, `dm:2024-01-01-2024-12-31` and `dm:2024` are all
+  of 2024.
 - Comparisons and ranges also take constants: `dm:>=lastweek`,
   `dm:yesterday..today`.
 
-Relative constants: `today`, `yesterday`, `thisweek`, `lastweek`,
-`thismonth`, `lastmonth`, `thisyear`, `lastyear`, `last7days`, `last30days`,
-month names (`january`–`december`, `jan`–`dec`),
-day names (`monday`–`sunday`, `mon`–`sun`),
-`last<N>hours`, `last<N>minutes`, `last<N>days`, `last<N>weeks`, `last<N>months`.
+Relative constants: `today`, `yesterday`, `thisweek`, `lastweek`, `thismonth`,
+`lastmonth`, `thisyear`, `lastyear`, `last7days`, `last30days`, month names
+(`january`–`december`, `jan`–`dec`), day names (`monday`–`sunday`, `mon`–`sun`),
+`last<N>hours`, `last<N>minutes`, `last<N>days`, `last<N>weeks`,
+`last<N>months`.
 
 > **Important:** Date constants are resolved at **query-execution time**, not
-> parse time. `dm:today` always means the current calendar day when the query runs.
+> parse time. `dm:today` always means the current calendar day when the query
+> runs.
 
 #### Attribute Constants
 
-| Letter | Attribute |
-|--------|-----------|
-| `A` | Archive | `C` | Compressed | `D` | Directory |
-| `E` | Encrypted | `H` | Hidden | `I` | Not supported (query error) |
-| `L` | Reparse point / symlink (also `J`) | `N` | Normal | `O` | Offline |
-| `P` | Sparse | `R` | Read only | `S` | System | `T` | Temporary |
+| Letter | Attribute                          |
+| ------ | ---------------------------------- | --- | ---------- | --- | --------------------------- | --- | --------- |
+| `A`    | Archive                            | `C` | Compressed | `D` | Directory                   |
+| `E`    | Encrypted                          | `H` | Hidden     | `I` | Not supported (query error) |
+| `L`    | Reparse point / symlink (also `J`) | `N` | Normal     | `O` | Offline                     |
+| `P`    | Sparse                             | `R` | Read only  | `S` | System                      | `T` | Temporary |
 
 ### 1.7 Character Escape Macros
 
-| Macro | Character |
-|-------|-----------|
-| `quot:` | `"` | `apos:` | `'` | `amp:` | `&` |
-| `lt:` | `<` | `gt:` | `>` |
-| `#<n>:` | Unicode codepoint (decimal) |
-| `#x<n>:` | Unicode codepoint (hex) |
+| Macro    | Character                   |
+| -------- | --------------------------- | ------- | --- | ------ | --- |
+| `quot:`  | `"`                         | `apos:` | `'` | `amp:` | `&` |
+| `lt:`    | `<`                         | `gt:`   | `>` |
+| `#<n>:`  | Unicode codepoint (decimal) |
+| `#x<n>:` | Unicode codepoint (hex)     |
 
 ---
 
@@ -353,10 +360,10 @@ pub enum AttributeFlag {
 
 1. Resolve user-defined macros from config: `name:` is replaced only where a
    token starts and outside quotes, in one pass (no recursion).
-2. Tokenise. `!` negates only at the start of a word, so `a.zip!/b` stays
-   one term.
-3. Expand character escape macros inside each word (`quot:` → `"`, etc.).
-   They expand only at a word boundary, so `result:` stays as typed, and the
+2. Tokenise. `!` negates only at the start of a word, so `a.zip!/b` stays one
+   term.
+3. Expand character escape macros inside each word (`quot:` → `"`, etc.). They
+   expand only at a word boundary, so `result:` stays as typed, and the
    characters they produce are literal text.
 4. Type macros (`audio:` → `ext:aac;...`) resolve in the predicate builder.
 
@@ -391,6 +398,7 @@ term       := modifier* (function | word_pattern)
 ### 3.4 Modifier Resolution
 
 When `word:` is encountered:
+
 1. Known **modifier** keyword → set flag on next term's `Modifiers`.
 2. Known **function** keyword → parse as `Function` with value.
 3. Known **type macro** → `TypeMacro` variant.
@@ -415,8 +423,7 @@ pub enum QueryError {
 }
 ```
 
-`InvalidRegex` → 400 Bad Request.
-`UnknownFunction` → treat as plain text term.
+`InvalidRegex` → 400 Bad Request. `UnknownFunction` → treat as plain text term.
 
 ### 3.6 Parser Tests
 
@@ -452,9 +459,11 @@ pub fn parse_size_value(s: &str) -> Result<RangeExpr<u64>, QueryError>
 ```
 
 Handles: comparison prefix (`<`, `<=`, `>`, `>=`, `=`), ranges (`1mb..10mb`,
-`1mb-10mb`), unit suffixes (`kb`, `mb`, `gb`, case-insensitive), named constants.
+`1mb-10mb`), unit suffixes (`kb`, `mb`, `gb`, case-insensitive), named
+constants.
 
 Tests:
+
 ```
 "large"     → Between(1048577, 16777216)
 ">1mb"      → Gt(1048576)
@@ -470,11 +479,11 @@ pub fn resolve_date_constant(c: &DateConstant, now: DateTime<FixedOffset>) -> (i
 ```
 
 `now` carries the caller's UTC offset (e.g. `Local::now().fixed_offset()`) so
-day/week/month boundaries resolve against the caller's local calendar day
-while still returning real UTC epoch seconds comparable against stored
-mtimes.
+day/week/month boundaries resolve against the caller's local calendar day while
+still returning real UTC epoch seconds comparable against stored mtimes.
 
 `resolve_date_constant` examples:
+
 - `Today` → midnight..23:59:59 of current local day
 - `Yesterday` → previous day
 - `ThisWeek` → Monday 00:00..Sunday 23:59 of current week
@@ -483,6 +492,7 @@ mtimes.
 - Weekday names → most recent occurrence (00:00..23:59)
 
 Tests:
+
 ```
 "today"      → (today_midnight, today_end)
 "thisweek"   → (monday_midnight, sunday_end)
@@ -500,12 +510,12 @@ pub fn glob_to_sqlite(pattern: &str, whole_filename: bool) -> String
 - `whole_filename = false` → wrap: `"*" + pattern + "*"`
 - Case-insensitive: `LOWER(name) GLOB LOWER(?)`
 
-SQLite's `LIKE` and `LOWER()` fold ASCII only. For a case-insensitive term
-with a non-ASCII letter that has another case, `like_escape_nocase` /
-`glob_to_like_nocase` turn that letter into `_` (one character), and the
-planner adds a post-filter that compares with `fold_case`. Wildcard names
-with such letters, or with `[` (a GLOB character class), go through `LIKE`
-instead of `GLOB`. Terms without them keep the plain SQL path.
+SQLite's `LIKE` and `LOWER()` fold ASCII only. For a case-insensitive term with
+a non-ASCII letter that has another case, `like_escape_nocase` /
+`glob_to_like_nocase` turn that letter into `_` (one character), and the planner
+adds a post-filter that compares with `fold_case`. Wildcard names with such
+letters, or with `[` (a GLOB character class), go through `LIKE` instead of
+`GLOB`. Terms without them keep the plain SQL path.
 
 ### 4.4 macros.rs
 
@@ -583,35 +593,36 @@ pub enum PostFilter {
 pub fn plan(expr: &Expr, default_modifiers: &Modifiers) -> Result<QueryPlan, QueryError>;
 ```
 
-| Predicate | Maps to |
-|-----------|--------|
-| Plain term (no wildcards) | `NameLike("%term%")` |
-| Term with `*`/`?` | `NameGlobNoCase(glob_to_sqlite(term))`; `NameGlob` with `case:` |
-| `path:` modifier | `PathLike` instead of `NameLike`; with wildcards, `PathLike(glob_to_like(term))` over the whole path |
-| `regex:` modifier | compile regex → `PostFilter::Regex` |
-| `file:` modifier | `IsDir(false)` |
-| `folder:` modifier | `IsDir(true)` |
-| `dm:`, `dc:`, `da:` | resolve `DateExpr` → `MtimeRange`/`CtimeRange` |
-| `size:` | `SizeRange` or `SizeOp` |
-| `ext:list` | `ExtIn(list)` |
-| `parent:path` | `ParentIs(path)`, trailing separators trimmed: `parent = ? COLLATE NOCASE` on `idx_files_parent` |
-| `content:text` | `tantivy_query = Some(text)`, strategy = `TantivyThenSqlite` |
-| `fuzzy:term` | strategy = `FuzzyFilter(term)` |
-| `dupe:` | strategy = `DupeSearch(DupeKind::Name)` |
-| `count:n` | `plan.limit = n` |
-| `sort:field` | `plan.sort = Sort { key, descending }` |
-| `len:` | `NameLen(op, val)` |
-| `depth:` | `Depth(op, val)` |
-| `attrib:` | `PostFilter::Attrib(flags)` |
-| `child:` | `PostFilter::Child(name)` |
-| `startwith:` | `NameLike("text%")`; `PostFilter::StartWith` with `case:` |
-| `endwith:` | `NameLike("%text")`; `PostFilter::EndWith` with `case:` |
-| TypeMacro | expand → `ExtIn` |
-| `archive:` modifier | `IsArchiveEntry(true)` |
-| `noarchive:` modifier | `IsArchiveEntry(false)` |
-| `archiveof:path` | `ArchiveOf(path)` |
+| Predicate                 | Maps to                                                                                              |
+| ------------------------- | ---------------------------------------------------------------------------------------------------- |
+| Plain term (no wildcards) | `NameLike("%term%")`                                                                                 |
+| Term with `*`/`?`         | `NameGlobNoCase(glob_to_sqlite(term))`; `NameGlob` with `case:`                                      |
+| `path:` modifier          | `PathLike` instead of `NameLike`; with wildcards, `PathLike(glob_to_like(term))` over the whole path |
+| `regex:` modifier         | compile regex → `PostFilter::Regex`                                                                  |
+| `file:` modifier          | `IsDir(false)`                                                                                       |
+| `folder:` modifier        | `IsDir(true)`                                                                                        |
+| `dm:`, `dc:`, `da:`       | resolve `DateExpr` → `MtimeRange`/`CtimeRange`                                                       |
+| `size:`                   | `SizeRange` or `SizeOp`                                                                              |
+| `ext:list`                | `ExtIn(list)`                                                                                        |
+| `parent:path`             | `ParentIs(path)`, trailing separators trimmed: `parent = ? COLLATE NOCASE` on `idx_files_parent`     |
+| `content:text`            | `tantivy_query = Some(text)`, strategy = `TantivyThenSqlite`                                         |
+| `fuzzy:term`              | strategy = `FuzzyFilter(term)`                                                                       |
+| `dupe:`                   | strategy = `DupeSearch(DupeKind::Name)`                                                              |
+| `count:n`                 | `plan.limit = n`                                                                                     |
+| `sort:field`              | `plan.sort = Sort { key, descending }`                                                               |
+| `len:`                    | `NameLen(op, val)`                                                                                   |
+| `depth:`                  | `Depth(op, val)`                                                                                     |
+| `attrib:`                 | `PostFilter::Attrib(flags)`                                                                          |
+| `child:`                  | `PostFilter::Child(name)`                                                                            |
+| `startwith:`              | `NameLike("text%")`; `PostFilter::StartWith` with `case:`                                            |
+| `endwith:`                | `NameLike("%text")`; `PostFilter::EndWith` with `case:`                                              |
+| TypeMacro                 | expand → `ExtIn`                                                                                     |
+| `archive:` modifier       | `IsArchiveEntry(true)`                                                                               |
+| `noarchive:` modifier     | `IsArchiveEntry(false)`                                                                              |
+| `archiveof:path`          | `ArchiveOf(path)`                                                                                    |
 
 SQL generation for archive conditions:
+
 ```sql
 -- IsArchiveEntry(true):   archive_path IS NOT NULL
 -- IsArchiveEntry(false):  archive_path IS NULL
@@ -626,23 +637,25 @@ voidtools Everything.
 
 1. Fetch candidate `FileRecord`s from SQLite matching all other `SqlCondition`s
    (no name condition is added to SQL for the fuzzy term itself).
-2. Score candidates against `<term>` using `nucleo::Matcher` in `rayon::par_iter`.
+2. Score candidates against `<term>` using `nucleo::Matcher` in
+   `rayon::par_iter`.
 3. Retain results above `config.search.fuzzy_threshold` (default 0.7).
 4. Order by score descending.
 5. Apply `limit` / `offset`.
 
 Compatible with all other query functions:
+
 - `fuzzy:config ext:toml` - only `.toml` files, fuzzy-matched against "config"
 - `fuzzy:readm size:<100kb` - small files, fuzzy-matched against "readm"
 
 ### 5.4 Execution Strategies
 
-| Strategy | When | How |
-|----------|------|-----|
-| `SqliteOnly` | No `content:`, no `fuzzy:` | Build SQL, query SQLite |
-| `TantivyThenSqlite` | `content:` present | Tantivy → path list → SQLite metadata filter |
-| `DupeSearch(kind)` | `dupe:` present | Two-pass GROUP BY → IN |
-| `FuzzyFilter(term)` | `fuzzy:` present | SQL candidates → nucleo par_iter |
+| Strategy            | When                       | How                                          |
+| ------------------- | -------------------------- | -------------------------------------------- |
+| `SqliteOnly`        | No `content:`, no `fuzzy:` | Build SQL, query SQLite                      |
+| `TantivyThenSqlite` | `content:` present         | Tantivy → path list → SQLite metadata filter |
+| `DupeSearch(kind)`  | `dupe:` present            | Two-pass GROUP BY → IN                       |
+| `FuzzyFilter(term)` | `fuzzy:` present           | SQL candidates → nucleo par_iter             |
 
 ### 5.5 Dupe Search (`query/dupes.rs`) [tested]
 
@@ -656,6 +669,7 @@ pub fn find_dupes(
 ```
 
 Two-pass query:
+
 ```sql
 -- Pass 1: find duplicated values
 SELECT <column>, COUNT(*) as c FROM files
@@ -669,9 +683,9 @@ WHERE <column> IN (values from pass 1)
 LIMIT ?;
 ```
 
-`DupeKind` variants: `Name` → `name`; `NamePart` → `REPLACE(name, extension, '')`;
-`Size` → `size_bytes`; `DateModified` → `mtime`; `DateCreated` → `ctime`;
-`Attrib` → `attrib_bitmask`.
+`DupeKind` variants: `Name` → `name`; `NamePart` →
+`REPLACE(name, extension, '')`; `Size` → `size_bytes`; `DateModified` → `mtime`;
+`DateCreated` → `ctime`; `Attrib` → `attrib_bitmask`.
 
 ### 5.6 Post-filter Application
 
@@ -716,6 +730,7 @@ pub async fn execute(
 ```
 
 Internal flow:
+
 1. Expand user macros (`config.macros`).
 2. Expand character escape macros.
 3. Expand type macros.
@@ -826,23 +841,23 @@ video: size:>1gb !<backup|temp>
 
 ### Intentional deviations from Everything
 
-| Feature | Everything | fs | Reason |
-|---------|-----------|------------|--------|
-| `content:` | Unindexed, slow | Indexed via Tantivy | Core feature |
-| `~` prefix | Fuzzy match | Not supported - use `fuzzy:` | Replaced by first-class function |
-| `/` prefix | Regex | Not supported - use `regex:` | Replaced by modifier |
-| ID3/FLAC tag functions | Supported | Not in v1 | Out of scope |
-| Image dimension functions | Supported | Not in v1 | Out of scope |
-| `frn:` / `fsi:` | NTFS-specific | Not supported | Not cross-platform |
-| `shell:` | Windows shell folders | Not supported | Windows-only |
-| `runcount:` / `dr:` | App launch tracking | Not supported | No launch tracking |
+| Feature                   | Everything            | fs                           | Reason                           |
+| ------------------------- | --------------------- | ---------------------------- | -------------------------------- |
+| `content:`                | Unindexed, slow       | Indexed via Tantivy          | Core feature                     |
+| `~` prefix                | Fuzzy match           | Not supported - use `fuzzy:` | Replaced by first-class function |
+| `/` prefix                | Regex                 | Not supported - use `regex:` | Replaced by modifier             |
+| ID3/FLAC tag functions    | Supported             | Not in v1                    | Out of scope                     |
+| Image dimension functions | Supported             | Not in v1                    | Out of scope                     |
+| `frn:` / `fsi:`           | NTFS-specific         | Not supported                | Not cross-platform               |
+| `shell:`                  | Windows shell folders | Not supported                | Windows-only                     |
+| `runcount:` / `dr:`       | App launch tracking   | Not supported                | No launch tracking               |
 
 ### Additions beyond Everything
 
-| Feature | Description |
-|---------|-------------|
-| `fuzzy:` | Nucleo SIMD fuzzy match - first-class query function |
-| `archive:` / `noarchive:` | Scope queries to inner ZIP entries or real files |
-| `archiveof:` | Find all inner files of a specific ZIP |
-| `content:` indexing | Tantivy-backed, < 100ms |
-| gRPC / REST / IPC APIs | Everything only has HTTP + SDK |
+| Feature                   | Description                                          |
+| ------------------------- | ---------------------------------------------------- |
+| `fuzzy:`                  | Nucleo SIMD fuzzy match - first-class query function |
+| `archive:` / `noarchive:` | Scope queries to inner ZIP entries or real files     |
+| `archiveof:`              | Find all inner files of a specific ZIP               |
+| `content:` indexing       | Tantivy-backed, < 100ms                              |
+| gRPC / REST / IPC APIs    | Everything only has HTTP + SDK                       |

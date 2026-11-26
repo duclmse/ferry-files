@@ -15,8 +15,9 @@ const VIDEO_EXTS: &[&str] = &[
     "tpr", "ts", "vob", "vp6", "webm", "wm", "wmp", "wmv", "wmx", "wvx",
 ];
 const PICTURE_EXTS: &[&str] = &[
-    "ani", "bmp", "gif", "ico", "jfif", "jpeg", "jpg", "pcx", "png", "psd", "tga", "tif", "tiff",
-    "webp",
+    "ani", "arw", "avif", "bmp", "cr2", "cr3", "dng", "gif", "heic", "heif", "ico", "jfif", "jpeg",
+    "jpg", "jxl", "nef", "orf", "pcx", "png", "psd", "raf", "raw", "rw2", "svg", "tga", "tif",
+    "tiff", "webp",
 ];
 const DOCUMENT_EXTS: &[&str] = &[
     "c", "chm", "cpp", "csv", "cxx", "doc", "docm", "docx", "dot", "dotm", "dotx", "h", "hpp",
@@ -34,9 +35,11 @@ const EXECUTABLE_EXTS: &[&str] = &["bat", "cmd", "exe", "msi", "ps1", "sh"];
 /// Return the list of file extensions for a type macro (lowercase, no dot).
 pub fn expand_type_macro(m: TypeMacro) -> Vec<String> {
     let exts: &[&str] = match m {
-        // The first six must stay identical to Everything's built-in filters
-        // (docs/reference/query-language.md §1.5); `source:` and `font:` are
-        // fs extensions.
+        // The first six are Everything's built-in filters
+        // (docs/reference/query-language.md §1.5), except that `pic:` also has
+        // what phones and cameras save now (HEIC, AVIF, JPEG XL, raw) and SVG,
+        // which Everything's list predates. `source:` and `font:` are fs
+        // extensions.
         TypeMacro::Audio => AUDIO_EXTS,
         TypeMacro::Video => VIDEO_EXTS,
         TypeMacro::Picture => PICTURE_EXTS,
