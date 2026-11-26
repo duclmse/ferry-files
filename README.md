@@ -22,11 +22,15 @@ with tools for EPUB books.
 - **Files**: copy, move, rename, delete, new file or folder, by menu, F5/F6, ⌘C/⌘X/⌘V (shared
   with Finder) or drag and drop. Copies merge folders, never replace a file, show progress and
   can be cancelled. A file over 4 GB isn't copied to a FAT32 disk.
-- **Search**: the Filter box filters the folder as you type and searches its subfolders when
-  you pause. On the computer the search comes from fsd's index (the fs project's search
-  service) when fsd covers the folder; elsewhere folders are walked. ⌘⇧F finds files anywhere
-  on the computer from fsd. The app carries fsd, and Settings > Search installs it as a service,
-  shows its index, and changes what it indexes.
+- **Filter and search**: the Filter box (⌘F) filters the open folder as you type, by name,
+  pattern or regular expression (with match case and whole word), and by kind, size and date;
+  Replace with (⌘R) renames what it shows, and can preserve case. On an Everything server it
+  searches the server's index under the folder, or all drives (the search button beside the
+  server in the sidebar). ⌘⇧F finds files anywhere on the
+  computer from fsd's index (the fs project's search service), in fsd's search syntax
+  (`case:`, `ww:`, `regex:`, `ext:`, `size:`, `dm:`, `|`, `!` …), with match case, whole word
+  and regular expression buttons, 100 at a time. The app carries fsd, and
+  Settings > Search installs it as a service, shows its index, and changes what it indexes.
 - **Scripts**: Lua 5.4 scripts run on the files picked (right-click, Run script). They can read
   and change files only through the app, so what they replace or delete is backed up.
   [docs/scripting.md](docs/scripting.md) is the guide.
@@ -44,7 +48,7 @@ with tools for EPUB books.
   Unedited parts keep their exact bytes.
 
 Press ? for the keyboard shortcuts. ⌘K opens the commands (`>` for actions only, `:` to find
-files with fsd).
+files with fsd, in its search syntax).
 
 ## Connecting a phone
 

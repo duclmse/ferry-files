@@ -14,6 +14,10 @@ struct Rule {
     /// `find` is a regular expression (the `regex` crate's), and `replace` may use $1, $2…
     pattern: bool,
     match_case: bool,
+    /// Only where `find` is a whole word: no letter, digit or _ just before or after.
+    whole_word: bool,
+    /// What's put in is in the case of what it replaces (see `find::keep_case`).
+    keep_case: bool,
     /// The new name before its extension; {name}, {n}, {n:3} and {date} are filled in.
     template: String,
     start: i64,
@@ -41,13 +45,45 @@ fn find_regex(r: &Rule) -> Result<Option<regex::Regex>, String> {
     regex(&source, !r.match_case).map(Some)
 }
 
-/// `name` with every match of `re` replaced. As a pattern, `with` may use $1 or $<name> for what
-/// a group matched, $& for the whole match, $` and $' for what's before and after it, and $$ for $.
-fn replace(re: &regex::Regex, name: &str, with: &str, pattern: bool) -> String {
-    if !pattern {
-        return re.replace_all(name, regex::NoExpand(with)).into_owned();
+/// `name` with every match of `re` replaced (with `r`'s whole word and case options). As a
+/// pattern, `with` may use $1 or $<name> for what a group matched, $& for the whole match, $` and
+/// $' for what's before and after it, and $$ for $.
+fn replace(re: &regex::Regex, name: &str, r: &Rule) -> String {
+    let mut out = String::with_capacity(name.len());
+    let (mut last, mut at) = (0, 0);
+    while at <= name.len() {
+        let Some(caps) = re.captures_at(name, at) else {
+            break;
+        };
+        let m = caps.get(0).expect("a match");
+        let (a, b) = (m.start(), m.end());
+        let next = a + name[a..].chars().next().map_or(1, char::len_utf8);
+        if r.whole_word && (a == b || !find::whole_word(name, a, b)) {
+            // Not one: looked for again from the next character.
+            at = next;
+            continue;
+        }
+        let put = if r.pattern {
+            expand(re, &caps, name, &r.replace)
+        } else {
+            r.replace.clone()
+        };
+        out.push_str(&name[last..a]);
+        out.push_str(&if r.keep_case {
+            find::keep_case(m.as_str(), &put)
+        } else {
+            put
+        });
+        last = b;
+        at = if a == b { next } else { b };
     }
-    re.replace_all(name, |caps: &regex::Captures| {
+    out.push_str(&name[last.min(name.len())..]);
+    out
+}
+
+/// What `with` puts in place of the match `caps`, with its $ forms filled in (see `replace`).
+fn expand(re: &regex::Regex, caps: &regex::Captures, name: &str, with: &str) -> String {
+    {
         let whole = caps.get(0).expect("a match");
         let mut out = String::new();
         let mut rest = with;
@@ -91,8 +127,7 @@ fn replace(re: &regex::Regex, name: &str, with: &str, pattern: bool) -> String {
         }
         out.push_str(rest);
         out
-    })
-    .into_owned()
+    }
 }
 
 /// "photo.jpg" as ("photo", ".jpg"); folders and names starting with a dot keep it all.
@@ -198,7 +233,7 @@ fn plan(
         .enumerate()
         .map(|(i, e)| {
             let name = match &re {
-                Some(re) => replace(re, &e.name, &r.replace, r.pattern),
+                Some(re) => replace(re, &e.name, r),
                 None => e.name.clone(),
             };
             let (stem, ext) = split_ext(&name, e.dir);
@@ -304,13 +339,17 @@ pub(super) fn replace_plan(
     items: &[Entry],
     find: &str,
     replace: &str,
-    pattern: bool,
+    o: find::FindOpts,
+    keep_case: bool,
     taken: &HashMap<String, HashSet<String>>,
 ) -> Result<Vec<(Entry, String, Option<String>)>, String> {
     let r = Rule {
         find: find.into(),
         replace: replace.into(),
-        pattern,
+        pattern: o.regex,
+        match_case: o.case,
+        whole_word: o.word,
+        keep_case,
         template: "{name}".into(),
         start: 1,
         ..Default::default()
@@ -575,8 +614,18 @@ pub(super) fn BatchRename(pane: usize, items: Vec<Entry>) -> impl IntoView {
 
 #[cfg(test)]
 mod tests {
+    use super::Rule;
+
+    fn rule(with: &str, pattern: bool) -> Rule {
+        Rule {
+            replace: with.into(),
+            pattern,
+            ..Default::default()
+        }
+    }
+
     fn rep(find: &str, with: &str, name: &str) -> String {
-        super::replace(&regex::Regex::new(find).unwrap(), name, with, true)
+        super::replace(&regex::Regex::new(find).unwrap(), name, &rule(with, true))
     }
 
     #[test]
@@ -589,7 +638,31 @@ mod tests {
         assert_eq!(rep(r"(?<y>\d{4})", "<$<y>>", "IMG_2024"), "IMG_<2024>");
         assert_eq!(rep(r"a", "$$ $5 $<no> $", "a"), "$ $5 $<no> $");
         let re = regex::Regex::new(&regex::escape("a.b")).unwrap();
-        assert_eq!(super::replace(&re, "a.b axb", "$1$", false), "$1$ axb");
+        assert_eq!(
+            super::replace(&re, "a.b axb", &rule("$1$", false)),
+            "$1$ axb"
+        );
+        // Empty matches go between the characters, as in JavaScript.
+        assert_eq!(rep(r"x*", "-", "ab"), "-a-b-");
+    }
+
+    #[test]
+    fn whole_words_and_kept_case() {
+        let re = super::regex(&regex::escape("cat"), true).unwrap();
+        let r = Rule {
+            whole_word: true,
+            keep_case: true,
+            ..rule("dog", false)
+        };
+        assert_eq!(
+            super::replace(&re, "Cat cats CAT-cat_x.jpg", &r),
+            "Dog cats DOG-cat_x.jpg"
+        );
+        let r = Rule {
+            keep_case: true,
+            ..rule("dog", false)
+        };
+        assert_eq!(super::replace(&re, "CAT Cat cat", &r), "DOG Dog dog");
     }
 
     #[test]

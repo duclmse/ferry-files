@@ -55,7 +55,7 @@ fn is_word(c: char) -> bool {
 }
 
 /// No letter, digit or _ just before `a` or just after `b`.
-fn whole_word(t: &str, a: usize, b: usize) -> bool {
+pub(super) fn whole_word(t: &str, a: usize, b: usize) -> bool {
     !t[..a].chars().next_back().is_some_and(is_word) && !t[b..].chars().next().is_some_and(is_word)
 }
 
@@ -236,7 +236,7 @@ fn expand(with: &str, group: Group) -> String {
 }
 
 /// `with` in the case of `matched`: all capitals, all small letters, or a capital first.
-fn keep_case(matched: &str, with: &str) -> String {
+pub(super) fn keep_case(matched: &str, with: &str) -> String {
     let letters: Vec<char> = matched.chars().filter(|c| c.is_alphabetic()).collect();
     let Some(&first) = letters.first() else {
         return with.to_string();

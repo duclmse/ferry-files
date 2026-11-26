@@ -433,13 +433,42 @@
   flex: none;
 }
 
-.palette-q {
-  font: inherit;
-  font-size: 15px;
-  padding: 8px 10px;
+/* The box, with the Match case, Whole word and Regular expression buttons inside it after `:`. */
+.palette-row {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  padding-right: 6px;
   border: 1px solid var(--line);
   border-radius: 8px;
   background: var(--bg, transparent);
+}
+
+.palette-row:focus-within {
+  outline: 2px solid var(--accent);
+  outline-offset: -1px;
+}
+
+.palette-opts {
+  flex: none;
+  display: flex;
+  gap: 2px;
+}
+
+.palette-more {
+  align-self: center;
+  margin: 6px 0 2px;
+}
+
+.palette-q {
+  flex: 1;
+  min-width: 0;
+  font: inherit;
+  font-size: 15px;
+  padding: 8px 10px;
+  border: 0;
+  outline: 0;
+  background: none;
   color: inherit;
 }
 

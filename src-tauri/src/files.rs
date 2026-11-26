@@ -513,7 +513,7 @@ mod tests {
     }
 
     #[test]
-    fn find_searches_subfolders_and_rename_refuses_taken_names() {
+    fn find_in_walks_subfolders_and_rename_refuses_taken_names() {
         use std::fs;
         let root = std::env::temp_dir().join(format!("ferry-find-test-{}", std::process::id()));
         fs::create_dir_all(root.join("a/b")).unwrap();
@@ -534,7 +534,6 @@ mod tests {
                 &r,
                 &super::Query::text("BOOK"),
                 hidden,
-                &Default::default(),
                 100,
                 std::time::Duration::from_secs(5),
             )
@@ -550,19 +549,17 @@ mod tests {
             &r,
             &super::Query::text("o"),
             true,
-            &Default::default(),
             2,
             std::time::Duration::from_secs(5),
         );
         assert!(!f.complete && f.entries.len() == 2);
-        // Patterns and filters.
-        let with = |q: &str, f: super::Filters| -> Vec<String> {
+        // Patterns.
+        let with = |q: &str| -> Vec<String> {
             let mut v: Vec<String> = super::find_in(
                 &mac,
                 &r,
                 &super::Query::text(q),
                 false,
-                &f,
                 100,
                 std::time::Duration::from_secs(5),
             )
@@ -573,74 +570,8 @@ mod tests {
             v.sort();
             v
         };
-        assert_eq!(
-            with("book*.epub", Default::default()),
-            ["Book one.epub", "book two.EPUB"]
-        );
-        assert_eq!(with("?otes.*", Default::default()), ["notes.txt"]);
-        assert_eq!(
-            with(
-                "",
-                super::Filters {
-                    kind: Some("book".into()),
-                    ..Default::default()
-                }
-            ),
-            ["Book one.epub", "book two.EPUB"]
-        );
-        assert_eq!(
-            with(
-                "",
-                super::Filters {
-                    kind: Some("folder".into()),
-                    ..Default::default()
-                }
-            ),
-            ["a", "b"]
-        );
-        assert_eq!(
-            with(
-                "",
-                super::Filters {
-                    min_size: Some(2),
-                    ..Default::default()
-                }
-            ),
-            Vec::<String>::new()
-        );
-        assert_eq!(
-            with(
-                "o",
-                super::Filters {
-                    after: Some(0),
-                    ..Default::default()
-                }
-            )
-            .len(),
-            3,
-            "files only, no folders"
-        );
-        // Regular expressions, any case.
-        let re = |q: &str| -> Vec<String> {
-            let mut v: Vec<String> = super::find_in(
-                &mac,
-                &r,
-                &super::Query::regex(q).unwrap(),
-                false,
-                &Default::default(),
-                100,
-                std::time::Duration::from_secs(5),
-            )
-            .entries
-            .into_iter()
-            .map(|e| e.name)
-            .collect();
-            v.sort();
-            v
-        };
-        assert_eq!(re(r"^book \w+\.epub$"), ["Book one.epub", "book two.EPUB"]);
-        assert_eq!(re(r"^.$"), ["a", "b"]);
-        assert!(super::Query::regex("(").is_err());
+        assert_eq!(with("book*.epub"), ["Book one.epub", "book two.EPUB"]);
+        assert_eq!(with("?otes.*"), ["notes.txt"]);
         // Rename.
         assert!(
             mac.rename(&format!("{r}/a/notes.txt"), "Book one.epub")

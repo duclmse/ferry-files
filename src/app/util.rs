@@ -457,7 +457,6 @@ pub(super) const SIDE_KEY: &str = "ferry-files.sidebar";
 pub(super) const WIFI_KEY: &str = "ferry-files.wifi";
 /// Transfers not finished when the app quit, to resume.
 pub(super) const JOBS_KEY: &str = "ferry-files.jobs";
-pub(super) const SEARCHES_KEY: &str = "ferry-files.searches";
 pub(super) const THEME_KEY: &str = "ferry-files.theme";
 
 /// Shows the app light, dark, or as the Mac is ("auto").
@@ -491,19 +490,45 @@ pub(super) const FOLLOW_FOLDER_KEY: &str = "ferry-files.sidebar-follow";
 pub(super) const AUTO_CONNECT_KEY: &str = "ferry-files.auto-connect";
 pub(super) const VERIFY_KEY: &str = "ferry-files.verify";
 
-/// The search's kind filter: (label, what the backend calls it).
-pub(super) const SEARCH_KINDS: &[(&str, &str)] = &[
-    ("Any kind", ""),
-    ("Folders", "folder"),
-    ("Pictures", "picture"),
-    ("Videos", "video"),
-    ("Audio", "audio"),
-    ("Documents", "document"),
-    ("Books", "book"),
-    ("Archives", "archive"),
+/// The filter's kinds: (label, the extensions of its files; "/" for folders).
+pub(super) const SEARCH_KINDS: &[(&str, &[&str])] = &[
+    ("Any kind", &[]),
+    ("Folders", &["/"]),
+    (
+        "Pictures",
+        &[
+            "jpg", "jpeg", "png", "gif", "webp", "bmp", "heic", "heif", "avif", "svg", "tif",
+            "tiff", "dng", "raw",
+        ],
+    ),
+    (
+        "Videos",
+        &["mp4", "m4v", "mov", "webm", "3gp", "mkv", "avi"],
+    ),
+    (
+        "Audio",
+        &[
+            "mp3", "m4a", "aac", "wav", "flac", "ogg", "oga", "opus", "amr",
+        ],
+    ),
+    (
+        "Documents",
+        &[
+            "pdf", "doc", "docx", "odt", "rtf", "txt", "md", "xls", "xlsx", "ods", "csv", "ppt",
+            "pptx", "odp", "pages", "numbers", "key",
+        ],
+    ),
+    (
+        "Books",
+        &["epub", "mobi", "azw", "azw3", "fb2", "cbz", "cbr"],
+    ),
+    (
+        "Archives",
+        &["zip", "7z", "rar", "tar", "gz", "tgz", "bz2", "xz", "apk"],
+    ),
 ];
 const MB: u64 = 1024 * 1024;
-/// The search's size filter: (label, at least, under).
+/// The filter's sizes: (label, at least, under).
 pub(super) const SEARCH_SIZES: &[(&str, Option<u64>, Option<u64>)] = &[
     ("Any size", None, None),
     ("Under 1 MB", None, Some(MB)),
@@ -511,7 +536,7 @@ pub(super) const SEARCH_SIZES: &[(&str, Option<u64>, Option<u64>)] = &[
     ("Over 100 MB", Some(100 * MB), None),
     ("Over 1 GB", Some(1024 * MB), None),
 ];
-/// The search's modified filter: (label, days back; negative: older than that).
+/// The filter's modified times: (label, days back; negative: older than that).
 pub(super) const SEARCH_TIMES: &[(&str, i64)] = &[
     ("Any time", 0),
     ("Today", 1),
@@ -520,7 +545,32 @@ pub(super) const SEARCH_TIMES: &[(&str, i64)] = &[
     ("Past year", 365),
     ("Over a year ago", -365),
 ];
+/// Whether `e` is of the kind, size and modified time chosen (indexes into `SEARCH_KINDS`,
+/// `SEARCH_SIZES` and `SEARCH_TIMES`). A size or time is for files only. `now` in seconds.
+pub(super) fn narrowed_to(e: &Entry, (k, s, t): (usize, usize, usize), now: i64) -> bool {
+    let exts = SEARCH_KINDS.get(k).map_or(&[][..], |x| x.1);
+    let kind_ok = match exts {
+        [] => true,
+        ["/"] => e.dir,
+        _ => !e.dir && exts.contains(&ext(&e.name).as_str()),
+    };
+    if !kind_ok || (e.dir && s + t > 0) {
+        return false;
+    }
+    let (_, min, max) = SEARCH_SIZES.get(s).copied().unwrap_or(("", None, None));
+    let days = SEARCH_TIMES.get(t).map_or(0, |x| x.1);
+    let day = 86_400;
+    min.is_none_or(|m| e.size >= m)
+        && max.is_none_or(|m| e.size < m)
+        && (days <= 0 || e.mtime >= now - days * day)
+        && (days >= 0 || e.mtime < now + days * day)
+}
 pub(super) const REGEX_KEY: &str = "ferry-files.filter-regex";
+/// A pane's filter matches case, and whole words only.
+pub(super) const CASE_KEY: &str = "ferry-files.filter-case";
+pub(super) const WORD_KEY: &str = "ferry-files.filter-word";
+/// A pane's Replace with keeps the case of what it replaces.
+pub(super) const KEEP_CASE_KEY: &str = "ferry-files.replace-keep-case";
 /// Whether a pane's filter pane shows its kind, size and time choices.
 pub(super) const OPTIONS_KEY: &str = "ferry-files.search-options";
 pub(super) const SIDE_W_KEY: &str = "ferry-files.side-w";

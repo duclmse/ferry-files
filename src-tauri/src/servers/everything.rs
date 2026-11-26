@@ -5,7 +5,7 @@
 //!
 //! Paths are the app's ("/C:/Users/me"); "/" holds the drives.
 
-use crate::device::{basename, dirname, err, Result, Search, Transport};
+use crate::device::{basename, dirname, err, Result, Transport};
 use crate::devices::connect;
 use crate::servers::web;
 use crate::*;
@@ -173,9 +173,7 @@ fn failed(e: web::Error, srv: &Server) -> String {
             format!("Everything at {base} asks for a user name and password. Add them in Settings > Connections.")
         }
         web::Error::Status(code, _) => format!("Everything at {base} answered with error {code}."),
-        web::Error::Transport(_) => {
-            format!("Can't reach Everything at {base}. Turn on its HTTP server (Tools > Options > HTTP Server) and check the address.")
-        }
+        web::Error::Transport(_) => format!("Can't reach Everything at {base}."),
     }
 }
 
@@ -366,20 +364,22 @@ impl Everything {
     }
 
     /// Names under `dir` (any depth) that Everything's index has for `text`: up to `max`, and
-    /// whether that's all of them. With `regex`, `text` is a regular expression.
+    /// whether that's all of them. With `regex`, `text` is a regular expression; with `case`,
+    /// upper and lower case are different.
     pub fn search(
         &self,
         dir: &str,
         text: &str,
         regex: bool,
+        case: bool,
         max: usize,
     ) -> Result<(Vec<Entry>, bool)> {
         let text = text.trim().replace('"', "");
-        let term = if regex {
-            format!("regex:\"{text}\"")
-        } else {
-            format!("\"{text}\"")
-        };
+        let term = format!(
+            "{}{}\"{text}\"",
+            if case { "case:" } else { "" },
+            if regex { "regex:" } else { "" }
+        );
         let query = if dir == "/" {
             term
         } else {
@@ -556,8 +556,15 @@ impl Transport for Everything {
         }
     }
 
-    fn search(&self, dir: &str, s: &Search) -> Option<Result<(Vec<Entry>, bool)>> {
-        Some(Everything::search(self, dir, s.text, s.regex, s.max))
+    fn search(
+        &self,
+        dir: &str,
+        text: &str,
+        regex: bool,
+        case: bool,
+        max: usize,
+    ) -> Option<Result<(Vec<Entry>, bool)>> {
+        Some(Everything::search(self, dir, text, regex, case, max))
     }
 }
 
@@ -566,6 +573,32 @@ fn read_only<T>() -> Result<T> {
 }
 
 /// Connects the Everything server at `server` as a drive.
+/// How many names a search of Everything's index gives at most.
+const FIND_MAX: usize = 1000;
+
+/// Searches the index of the Everything server `src` for names under `dir` (any depth). Whole
+/// words aren't asked of it, as its idea of a word may not be the app's: the app's filter keeps
+/// only the whole words among what it finds.
+#[tauri::command(rename_all = "snake_case")]
+pub(crate) async fn everything_find(
+    state: State<'_, AppState>,
+    src: String,
+    dir: String,
+    query: String,
+    regex: bool,
+    case: bool,
+) -> std::result::Result<crate::files::find::Matches, String> {
+    let dev = state.source(Some(&src))?;
+    blocking(
+        move || match dev.search(&dir, &query, regex, case, FIND_MAX) {
+            Some(Ok((entries, complete))) => Ok(crate::files::find::Matches { entries, complete }),
+            Some(Err(e)) => Err(e.to_string()),
+            None => Err("Only Everything servers can search all their drives.".into()),
+        },
+    )
+    .await
+}
+
 #[tauri::command(rename_all = "snake_case")]
 pub(crate) async fn everything_connect(
     state: State<'_, AppState>,
@@ -754,7 +787,7 @@ mod tests {
             (b"hello".to_vec(), "5:0".to_string())
         );
         assert_eq!(ev.read_range("/C:/x.md", 1, 3).unwrap(), b"ell");
-        let (found, all) = ev.search("/C:/Users", "x.md", false, 10).unwrap();
+        let (found, all) = ev.search("/C:/Users", "x.md", false, false, 10).unwrap();
         assert_eq!((found.len(), all), (1, false));
         assert!(ev.replace("/C:/x.md", b"", true).is_err());
 

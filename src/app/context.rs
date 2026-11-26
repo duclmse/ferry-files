@@ -108,11 +108,6 @@ impl Ctx {
             drop_at: RwSignal::new(None),
             side_w: stored_px(SIDE_W_KEY),
             pane_w: stored_px(PANE_W_KEY),
-            searches: RwSignal::new(
-                stored(SEARCHES_KEY)
-                    .and_then(|s| serde_json::from_str(&s).ok())
-                    .unwrap_or_default(),
-            ),
             theme: RwSignal::new(stored(THEME_KEY).unwrap_or_else(|| "auto".into())),
             epub_read: RwSignal::new(stored_flag(preview::EPUB_READ_KEY, false)),
             read_find: RwSignal::new((0, 0)),

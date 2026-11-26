@@ -237,61 +237,24 @@ impl Ctx {
         }
     }
 
-    /// Searches the pane's folder and its subfolders for names containing the search text (or
-    /// fitting it, with * and ?, or matching it with regex on), with the pane's search filters.
-    /// Searches the pane's folder and its subfolders for what the filter pane has. `remember`
-    /// adds the text to the recent searches (Enter does; searching as you type doesn't, or every
-    /// pause would be kept).
-    pub(super) fn find(self, p: Pane, remember: bool) {
+    /// On an Everything server, searches its index for the filter's text under the pane's folder
+    /// and its subfolders (all drives at "/"), and shows what it finds in place of the folder.
+    /// The filter and the kind, size and time then narrow the results as they do a folder.
+    pub(super) fn find_all(self, p: Pane) {
         let query = p.filter.get_untracked().trim().to_string();
-        let (k, s, t) = (
-            p.search_kind.get_untracked(),
-            p.search_size.get_untracked(),
-            p.search_time.get_untracked(),
-        );
-        let filtered = k + s + t > 0;
-        if query.is_empty() && !filtered {
+        let src = p.src.get_untracked();
+        if !self.read_only(src) || query.is_empty() {
             return;
         }
         self.stop_compare();
-        let day = 86_400;
-        let now = (js_sys::Date::now() / 1000.0) as i64;
-        let days = SEARCH_TIMES[t].1;
-        let filters = json!({
-            "kind": SEARCH_KINDS[k].1,
-            "min_size": SEARCH_SIZES[s].1,
-            "max_size": SEARCH_SIZES[s].2,
-            "after": (days > 0).then(|| now - days * day),
-            "before": (days < 0).then(|| now + days * day),
-        });
-        // How the status bar names it: the text, then the filters in use.
-        let mut label = vec![];
-        if !query.is_empty() {
-            label.push(if p.regex.get_untracked() {
-                format!("/{query}/")
-            } else {
-                format!("“{query}”")
-            });
-        }
-        for (i, name) in [
-            (k, SEARCH_KINDS[k].0),
-            (s, SEARCH_SIZES[s].0),
-            (t, SEARCH_TIMES[t].0),
-        ] {
-            if i > 0 {
-                label.push(name.to_lowercase());
-            }
-        }
-        let label = label.join(", ");
-        if remember && !query.is_empty() {
-            self.searches.update(|v| {
-                v.retain(|q| *q != query);
-                v.insert(0, query.clone());
-                v.truncate(10);
-                store(SEARCHES_KEY, &serde_json::to_string(v).unwrap_or_default());
-            });
-        }
-        let (src, dir) = (p.src.get_untracked(), p.cwd.get_untracked());
+        let o = p.opts.get_untracked();
+        let regex = o.regex;
+        let label = if regex {
+            format!("/{query}/")
+        } else {
+            format!("“{query}”")
+        };
+        let dir = p.cwd.get_untracked();
         p.loading.set(true);
         spawn_local(async move {
             #[derive(serde::Deserialize)]
@@ -299,15 +262,14 @@ impl Ctx {
                 entries: Vec<Entry>,
                 complete: bool,
             }
-            let args = json!({ "src": src.key(), "dir": dir, "query": query, "hidden": self.show_hidden.get_untracked(), "filters": filters, "regex": p.regex.get_untracked() });
-            match call::<Matches>("find", args).await {
+            let args = json!({ "src": src.key(), "dir": dir, "query": query, "regex": regex, "case": o.case });
+            match call::<Matches>("everything_find", args).await {
                 // Not when the folder or the text changed meanwhile: a newer search is coming.
                 Ok(m)
                     if p.cwd.get_untracked() == dir
                         && p.src.get_untracked() == src
                         && p.filter.with_untracked(|f| f.trim() == query) =>
                 {
-                    // The search text stays, and filters the results as they're the same names.
                     p.all.set(m.entries);
                     p.more.set(false);
                     p.found.set(Some((label, m.complete)));

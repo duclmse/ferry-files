@@ -21,20 +21,6 @@ pub struct Entry {
     pub hidden: bool,
 }
 
-/// A name search below a folder, as `Transport::search` is asked it.
-pub struct Search<'a> {
-    pub text: &'a str,
-    pub regex: bool,
-    /// Hidden files, and what's in hidden folders, are wanted too.
-    pub hidden: bool,
-    /// The search's filters as terms in Everything's syntax (`ext:`, `size:`, `folder:`), for
-    /// an index to narrow by. `keep` checks them too.
-    pub terms: &'a str,
-    /// Whether an entry found is one to give back: its name, the filters, hidden or not.
-    pub keep: &'a dyn Fn(&Entry) -> bool,
-    pub max: usize,
-}
-
 impl Entry {
     /// Whether it's hidden: a dot name, or marked hidden by the system.
     pub fn is_hidden(&self) -> bool {
@@ -133,10 +119,17 @@ pub trait Transport: Send + Sync {
         None
     }
     fn refresh(&self) {}
-    /// Names under `dir` (any depth) that `s` asks for, up to `s.max`, and whether that's all
-    /// of them, from an index the transport has. None when it has none (or can't answer for
-    /// `dir`), and folders are walked.
-    fn search(&self, _dir: &str, _s: &Search) -> Option<Result<(Vec<Entry>, bool)>> {
+    /// Names under `dir` (any depth) that the transport's own index has for `text` (a regular
+    /// expression with `regex`; in the same case with `case`): up to `max`, and whether that's
+    /// all of them. None when it has no index (only Everything servers do).
+    fn search(
+        &self,
+        _dir: &str,
+        _text: &str,
+        _regex: bool,
+        _case: bool,
+        _max: usize,
+    ) -> Option<Result<(Vec<Entry>, bool)>> {
         None
     }
     /// Stops the file copies under way and any started later, for letting go of the device:
@@ -344,6 +337,23 @@ impl Device {
         self.t.refresh();
     }
 
+    /// See `Transport::search`.
+    pub fn search(
+        &self,
+        dir: &str,
+        text: &str,
+        regex: bool,
+        case: bool,
+        max: usize,
+    ) -> Option<Result<(Vec<Entry>, bool)>> {
+        let dir = match norm(dir) {
+            Ok(d) => d,
+            Err(e) => return Some(Err(e)),
+        };
+        let _g = self.lock();
+        self.t.search(&dir, text, regex, case, max)
+    }
+
     /// See `Transport::stop`.
     pub fn stop(&self) {
         self.t.stop();
@@ -388,16 +398,6 @@ impl Device {
             Ok(dir) => self.t.shell(&dir).map(Ok),
             Err(e) => Some(Err(e)),
         }
-    }
-
-    /// See `Transport::search`.
-    pub fn search(&self, dir: &str, s: &Search) -> Option<Result<(Vec<Entry>, bool)>> {
-        let dir = match norm(dir) {
-            Ok(d) => d,
-            Err(e) => return Some(Err(e)),
-        };
-        let _g = self.lock();
-        self.t.search(&dir, s)
     }
 
     pub fn stat(&self, path: &str) -> Result<Option<Entry>> {

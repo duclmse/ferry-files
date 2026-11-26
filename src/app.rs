@@ -624,20 +624,22 @@ struct Pane {
     marked: RwSignal<HashSet<String>>,
     /// The folder's listing (or search results), before the filter.
     all: RwSignal<Vec<Entry>>,
-    /// Shows only names containing this (or matching it, with `regex`).
+    /// Shows only names containing this (or matching it, as `opts` say).
     filter: RwSignal<String>,
-    /// The filter and search take a regular expression.
-    regex: RwSignal<bool>,
+    /// How the filter matches names: case, whole words, a regular expression.
+    opts: RwSignal<find::FindOpts>,
+    /// Replace with puts the new text in the case of what it replaces.
+    keep_case: RwSignal<bool>,
     /// Why the filter isn't a working regular expression.
     bad_filter: RwSignal<Option<String>>,
     sort: RwSignal<Sort>,
     /// What the list is grouped by.
     group: RwSignal<Group>,
-    /// Set while the pane shows search results instead of the folder: the search and whether it
-    /// found everything.
+    /// Set while the pane shows what an Everything server's index found under the folder instead
+    /// of the folder: the search and whether it found everything.
     found: RwSignal<Option<(String, bool)>>,
-    /// The search's filters (`SEARCH_KINDS`, `SEARCH_SIZES`, `SEARCH_TIMES` indexes) and
-    /// whether their row is shown.
+    /// The filter's kind, size and modified time (`SEARCH_KINDS`, `SEARCH_SIZES`,
+    /// `SEARCH_TIMES` indexes), and whether the filter pane shows.
     search_kind: RwSignal<usize>,
     search_size: RwSignal<usize>,
     search_time: RwSignal<usize>,
@@ -1022,8 +1024,6 @@ struct Ctx {
     /// Widths the user dragged (0: the default): the sidebar, and the left pane when there are two.
     side_w: RwSignal<f64>,
     pane_w: RwSignal<f64>,
-    /// The last searches (Enter in the filter), newest first, offered as the filter is typed in.
-    searches: RwSignal<Vec<String>>,
     /// Settings: "auto", "light" or "dark".
     theme: RwSignal<String>,
     /// An EPUB in the preview shows its chapters, to read, rather than its cover.

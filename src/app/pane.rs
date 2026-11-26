@@ -758,13 +758,13 @@ pub(super) fn ListStatus(pane: Pane) -> impl IntoView {
     };
     let search = move || {
         p.found.get().map(|(q, complete)| {
-        let n = p.all.with(|a| a.len());
-        let more = if complete { "" } else { " (stopped early: open a smaller folder to see all)" };
-        view! {
-            <span class="search">{format!("{n} found for {q}{more}")}</span>
-            <button class="btn small back" title="Back to folder" aria-label="Back to folder" on:click=move |_| ctx.reload(p)><svg class="back-icon" viewBox="0 0 16 16" aria-hidden="true"><path d="M13 8H3M7.5 3.5 3 8l4.5 4.5"/></svg></button>
-        }
-    })
+            let n = p.all.with(|a| a.len());
+            let more = if complete { "" } else { " (the first ones only: add to the search to see the rest)" };
+            view! {
+                <span class="search">{format!("{n} found for {q}{more}")}</span>
+                <button class="btn small back" title="Back to folder" aria-label="Back to folder" on:click=move |_| ctx.reload(p)><svg class="back-icon" viewBox="0 0 16 16" aria-hidden="true"><path d="M13 8H3M7.5 3.5 3 8l4.5 4.5"/></svg></button>
+            }
+        })
     };
     view! {
         <div class="statusbar">

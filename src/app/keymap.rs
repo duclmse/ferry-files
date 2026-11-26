@@ -68,13 +68,13 @@ pub(super) const COMMANDS: &[Command] = &[
     ),
     c(
         "find_files",
-        "Find files on the computer by name, from fsd's index",
+        "Find files on the computer from fsd's index, in fsd's search syntax",
         &["shift+cmd+KeyF"],
         true,
     ),
     c(
         "filter",
-        "Filter, and search subfolders",
+        "Filter this folder",
         &["cmd+KeyF", "Slash"],
         false,
     ),
@@ -87,7 +87,7 @@ pub(super) const COMMANDS: &[Command] = &[
     ),
     c(
         "replace",
-        "Replace in names: the Replace with box under the search box",
+        "Replace in names: the Replace with box under the filter box",
         &["cmd+KeyR"],
         true,
     ),

@@ -1,6 +1,6 @@
 //! Everything (voidtools) servers: read-only drives on other computers, added in Settings >
 //! Connections (see `servers.rs`). They're connected like phones, so tabs, favourites,
-//! workspaces, search and copying out work on them.
+//! workspaces and copying out work on them, and the filter box searches their index.
 
 use super::*;
 

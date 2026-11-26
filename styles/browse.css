@@ -197,6 +197,14 @@ td.name .where {
   cursor: pointer;
 }
 
+/* Whole word: "ab" over a ⊔. */
+.filter-opt .word {
+  padding: 0 2px 1px;
+  border: 1.5px solid currentColor;
+  border-top: 0;
+  line-height: 1;
+}
+
 .filter-opt svg {
   width: 14px;
   height: 14px;

@@ -3,7 +3,7 @@
 use super::*;
 
 impl Pane {
-    /// Whether any search filter is set.
+    /// Whether a kind, size or modified time is chosen.
     pub(super) fn filtering(self) -> bool {
         self.search_kind.get() + self.search_size.get() + self.search_time.get() > 0
     }
@@ -19,7 +19,12 @@ impl Pane {
             marked: RwSignal::new(HashSet::new()),
             all: RwSignal::new(vec![]),
             filter: RwSignal::new(String::new()),
-            regex: RwSignal::new(stored_flag(&format!("{REGEX_KEY}.{id}"), false)),
+            opts: RwSignal::new(find::FindOpts {
+                case: stored_flag(&format!("{CASE_KEY}.{id}"), false),
+                word: stored_flag(&format!("{WORD_KEY}.{id}"), false),
+                regex: stored_flag(&format!("{REGEX_KEY}.{id}"), false),
+            }),
+            keep_case: RwSignal::new(stored_flag(&format!("{KEEP_CASE_KEY}.{id}"), false)),
             bad_filter: RwSignal::new(None),
             sort: RwSignal::new(Sort::stored(id)),
             group: RwSignal::new(Group::stored(id)),
@@ -123,28 +128,40 @@ impl Pane {
     /// Sorts and filters `all` into `entries`, dropping marks on items no longer shown.
     pub(super) fn arrange(self) {
         let f = self.filter.get_untracked();
+        let o = self.opts.get_untracked();
         let mut bad = None;
-        // What the box asks for: a pattern, or else text the name contains in any case.
+        // What the box asks for: a pattern for the whole name, text the name contains in any
+        // case (the most common, so the quickest), or else what the find options say.
         let mut re = None;
         let mut text = None;
+        let mut found = None;
         if !f.is_empty() {
-            if self.regex.get_untracked() {
+            if o.regex {
                 // A pattern that doesn't work filters nothing out, and says why.
-                match regex(&f, true) {
-                    Ok(r) => re = Some(r),
+                match regex(&f, !o.case) {
+                    Ok(_) => found = Some(f.clone()),
                     Err(e) => bad = Some(e),
                 }
             } else if f.contains('*') || f.contains('?') {
                 // A pattern, as the search takes it: * any run of characters, ? one.
-                re = regex(&glob_source(&f), true).ok();
-            } else {
+                re = regex(&glob_source(&f), !o.case).ok();
+            } else if !o.case && !o.word {
                 text = Some(f.to_lowercase());
+            } else {
+                found = Some(f.clone());
             }
         }
         if self.bad_filter.get_untracked() != bad {
             self.bad_filter.set(bad);
         }
         let diff_only = self.diff_only.get_untracked();
+        let picks = (
+            self.search_kind.get_untracked(),
+            self.search_size.get_untracked(),
+            self.search_time.get_untracked(),
+        );
+        let narrowed = picks != (0, 0, 0);
+        let now = (js_sys::Date::now() / 1000.0) as i64;
         // Filtered before sorting, and only what's kept is copied.
         let mut es: Vec<Entry> = self.cmp.with_untracked(|cmp| {
             let cmp = cmp.as_ref().filter(|_| diff_only);
@@ -152,9 +169,15 @@ impl Pane {
                 all.iter()
                     .filter(|e| re.as_ref().is_none_or(|re| re.is_match(&e.name)))
                     .filter(|e| {
+                        found.as_deref().is_none_or(|q| {
+                            find::find(&e.name, q, o, 1).is_ok_and(|m| !m.is_empty())
+                        })
+                    })
+                    .filter(|e| {
                         text.as_deref()
                             .is_none_or(|t| contains_any_case(&e.name, t))
                     })
+                    .filter(|e| !narrowed || narrowed_to(e, picks, now))
                     .filter(|e| cmp.is_none_or(|m| m.get(&e.name).is_some_and(|x| x != "same")))
                     .cloned()
                     .collect()

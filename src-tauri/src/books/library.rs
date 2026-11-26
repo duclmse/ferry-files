@@ -20,7 +20,6 @@ pub(crate) async fn library(
             &dir,
             &Query::text(".epub"),
             hidden,
-            &Default::default(),
             5000,
             std::time::Duration::from_secs(90),
         );

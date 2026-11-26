@@ -1,9 +1,26 @@
 //! The command palette (⌘K): every action the menus offer for the active pane,
 //! and the places to go (favourites, devices, recent folders, sync pairs),
 //! found by typing a few letters. Typing `>` first keeps to the actions; `:`
-//! finds files and folders on the computer by name, from fsd's index.
+//! finds files and folders on the computer from fsd's index, in fsd's search syntax.
 
 use super::*;
+
+mod query;
+
+/// The palette's `:` matches case, whole words only, or takes a regular expression.
+const CASE_KEY: &str = "ferry-files.find-files-case";
+const WORD_KEY: &str = "ferry-files.find-files-word";
+const REGEX_KEY: &str = "ferry-files.find-files-regex";
+/// How many files fsd is asked for at a time.
+const FIND_PAGE: u32 = 100;
+
+/// A page of what fsd found (`find_files`).
+#[derive(serde::Deserialize)]
+struct FoundFiles {
+    entries: Vec<Entry>,
+    /// Where the next page starts; None when there's no more.
+    next: Option<u32>,
+}
 
 const RECENT_KEY: &str = "ferry-files.recent";
 /// Recent folders kept.
@@ -315,6 +332,14 @@ pub(super) fn Palette(
     let at = RwSignal::new(0usize);
     // After `:`, what fsd found for the text (or why it couldn't look), and the text asked last.
     let found = RwSignal::new(None::<Result<Vec<Entry>, String>>);
+    // Where the next page of what fsd found starts, and whether it's being asked for.
+    let next = RwSignal::new(None::<u32>);
+    let more_busy = RwSignal::new(false);
+    let opts = RwSignal::new(crate::app::find::FindOpts {
+        case: stored_flag(CASE_KEY, false),
+        word: stored_flag(WORD_KEY, false),
+        regex: stored_flag(REGEX_KEY, false),
+    });
     let asked = StoredValue::new(String::new());
     let finding = move || query.with(|q| q.trim_start().starts_with(':'));
     // The choices that match, best first; all of them, in order, before typing. After `>` only
@@ -373,10 +398,11 @@ pub(super) fn Palette(
     let timer = StoredValue::new_local(None::<TimeoutHandle>);
     Effect::new(move |_| {
         let q = query.get();
+        let o = opts.get();
         let Some(text) = q
             .trim_start()
             .strip_prefix(':')
-            .map(|t| t.trim().to_string())
+            .map(|t| query::fsd_query(t, o))
         else {
             return;
         };
@@ -386,16 +412,19 @@ pub(super) fn Palette(
         if text.is_empty() {
             asked.set_value(String::new());
             found.set(None);
+            next.set(None);
             return;
         }
         let t = set_timeout_with_handle(
             move || {
                 asked.set_value(text.clone());
                 spawn_local(async move {
-                    let r = call::<Vec<Entry>>("find_files", json!({ "text": text })).await;
+                    let args = json!({ "text": text, "offset": 0, "max": FIND_PAGE });
+                    let r = call::<FoundFiles>("find_files", args).await;
                     // Only the last text typed counts.
                     if asked.try_with_value(|a| *a == text).unwrap_or(false) {
-                        let _ = found.try_set(Some(r));
+                        let _ = next.try_set(r.as_ref().ok().and_then(|f| f.next));
+                        let _ = found.try_set(Some(r.map(|f| f.entries)));
                         let _ = at.try_set(0);
                     }
                 });
@@ -405,6 +434,54 @@ pub(super) fn Palette(
         .ok();
         timer.set_value(t);
     });
+    // The next page of what fsd found, after what's shown.
+    let load_more = move || {
+        let (Some(offset), false) = (next.get_untracked(), more_busy.get_untracked()) else {
+            return;
+        };
+        let text = asked.get_value();
+        more_busy.set(true);
+        spawn_local(async move {
+            let args = json!({ "text": text, "offset": offset, "max": FIND_PAGE });
+            let r = call::<FoundFiles>("find_files", args).await;
+            let _ = more_busy.try_set(false);
+            if !asked.try_with_value(|a| *a == text).unwrap_or(false) {
+                return;
+            }
+            match r {
+                Ok(f) => {
+                    let _ = next.try_set(f.next);
+                    let _ = found.try_update(|fo| {
+                        if let Some(Ok(es)) = fo {
+                            es.extend(f.entries);
+                        }
+                    });
+                }
+                Err(e) => {
+                    let _ = next.try_set(None);
+                    let _ = found.try_set(Some(Err(e)));
+                }
+            }
+        });
+    };
+    // Match case, Whole word and Regular expression for `:`, kept for next time.
+    let opt_btn = move |label: &'static str,
+                        key: &'static str,
+                        f: fn(&mut crate::app::find::FindOpts) -> &mut bool,
+                        glyph: &'static str,
+                        class: &'static str| {
+        let on = move || *f(&mut opts.get());
+        view! {
+            <button class="filter-opt" class:on=on aria-pressed=move || on().to_string()
+                title=move || format!("{label}: {}", if on() { "on" } else { "off" }) aria-label=label
+                on:mousedown=|ev| ev.prevent_default()
+                on:click=move |_| opts.update(|o| {
+                    let v = f(o);
+                    *v = !*v;
+                    store(key, if *v { "1" } else { "0" });
+                })><span class=class>{glyph}</span></button>
+        }
+    };
     let input = NodeRef::<html::Input>::new();
     input.on_load(move |el| {
         request_animation_frame(move || {
@@ -469,10 +546,19 @@ pub(super) fn Palette(
     view! {
         <div class="overlay palette-overlay" on:click=move |_| ctx.panel.set(None)>
             <div class="dialog palette" role="dialog" aria-label="Commands" on:click=|e| e.stop_propagation()>
-                <input node_ref=input class="palette-q" type="text" placeholder="An action, folder or device; > for actions only, : to find files"
-                    aria-label="Search actions and places" spellcheck="false" autocomplete="off"
-                    prop:value=move || query.get() on:keydown=keys
-                    on:input=move |ev| { query.set(event_target_value(&ev)); at.set(0); }/>
+                <div class="palette-row">
+                    <input node_ref=input class="palette-q" type="text" placeholder="An action, folder or device; > for actions only, : to find files"
+                        aria-label="Search actions and places" spellcheck="false" autocomplete="off"
+                        prop:value=move || query.get() on:keydown=keys
+                        on:input=move |ev| { query.set(event_target_value(&ev)); at.set(0); }/>
+                    {move || finding().then(|| view! {
+                        <div class="palette-opts">
+                            {opt_btn("Match case", CASE_KEY, |o| &mut o.case, "Aa", "")}
+                            {opt_btn("Match whole word", WORD_KEY, |o| &mut o.word, "ab", "word")}
+                            {opt_btn("Regular expression", REGEX_KEY, |o| &mut o.regex, ".*", "")}
+                        </div>
+                    })}
+                </div>
                 <div class="palette-list" role="listbox">
                     {move || {
                         let list = shown.get();
@@ -484,7 +570,7 @@ pub(super) fn Palette(
                                     _ if query.with(|q| q.trim_start()[1..].trim().is_empty()) => "Type part of a file's name to find it on the computer.".to_string(),
                                     None => "Looking…".to_string(),
                                     Some(Err(e)) => e,
-                                    Some(Ok(_)) => "No file or folder has that in its name.".to_string(),
+                                    Some(Ok(_)) => "Nothing fits that search.".to_string(),
                                 }
                             };
                             return view! { <p class="hint">{note}</p> }.into_any();
@@ -502,9 +588,16 @@ pub(super) fn Palette(
                             }
                         }).collect_view().into_any()
                     }}
+                    {move || (finding() && next.get().is_some()).then(|| view! {
+                        <button class="btn small palette-more" disabled=move || more_busy.get()
+                            title="Show the next files fsd found" aria-label="Show the next files fsd found"
+                            on:mousedown=|ev| ev.prevent_default() on:click=move |_| load_more()>
+                            {move || if more_busy.get() { "Looking…".to_string() } else { format!("Show {FIND_PAGE} more") }}
+                        </button>
+                    })}
                 </div>
                 <p class="hint">{move || if finding() {
-                    "↑ ↓ to choose · ↵ to open · Esc to close. Files and folders on the computer, by name, from fsd's index."
+                    "↑ ↓ to choose · ↵ to open · Esc to close. Files and folders on the computer from fsd's index, in fsd's search syntax: case: ww: regex: ext: size: dm: path:, | for or, ! for not. With .* on, the whole text is a regular expression."
                 } else {
                     "↑ ↓ to choose · ↵ to run · Esc to close. > for actions only, : to find files. Actions work on the active pane and what's picked in it."
                 }}</p>
