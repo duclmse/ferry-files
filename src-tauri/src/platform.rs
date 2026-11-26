@@ -409,6 +409,105 @@ pub fn quick_look(path: &Path) -> Result<(), String> {
     open(path)
 }
 
+/// Opens the system's window about the file or folder at `path`: Finder's Get Info (through
+/// AppleScript, so macOS asks once to let the app control Finder), Explorer's Properties, or
+/// elsewhere the Properties of the file manager that answers the freedesktop FileManager1 call
+/// (Nautilus, Dolphin, Nemo, Thunar…).
+pub fn show_properties(app: &tauri::AppHandle, path: &Path) -> Result<(), String> {
+    let shown = path.display();
+    #[cfg(target_os = "macos")]
+    {
+        let _ = app;
+        let script = format!(
+            "tell application \"Finder\"\nactivate\nopen information window of \
+             (POSIX file \"{}\" as alias)\nend tell",
+            applescript_text(&path.to_string_lossy())
+        );
+        let mut c = command("osascript");
+        c.arg("-");
+        let out = run_with_input(c, &script).map_err(|e| format!("Can't ask Finder: {e}"))?;
+        if out.status.success() {
+            return Ok(());
+        }
+        let err = String::from_utf8_lossy(&out.stderr);
+        // -1743: the app isn't allowed to control Finder.
+        if err.contains("-1743") {
+            return Err(
+                "Finder didn't let the app show Get Info. Allow it in System Settings > \
+                 Privacy & Security > Automation, then try again."
+                    .into(),
+            );
+        }
+        Err(format!(
+            "Finder can't show Get Info for {shown}: {}",
+            err.trim()
+        ))
+    }
+    #[cfg(windows)]
+    {
+        use std::os::windows::ffi::OsStrExt;
+        use windows::core::PCWSTR;
+        use windows::Win32::UI::Shell::{SHObjectProperties, SHOP_FILEPATH};
+        let wide: Vec<u16> = path.as_os_str().encode_wide().chain(Some(0)).collect();
+        let (tx, rx) = std::sync::mpsc::channel();
+        // On the main thread, which has the window's message loop and COM apartment; the sheet
+        // stays open on its own after the call returns.
+        app.run_on_main_thread(move || {
+            // SAFETY: `wide` is a NUL-terminated path that lives until the call returns.
+            let ok = unsafe {
+                SHObjectProperties(None, SHOP_FILEPATH, PCWSTR(wide.as_ptr()), PCWSTR::null())
+            };
+            let _ = tx.send(ok.as_bool());
+        })
+        .map_err(|e| format!("Can't show Properties: {e}"))?;
+        match rx.recv() {
+            Ok(true) => Ok(()),
+            _ => Err(format!("Windows can't show Properties for {shown}.")),
+        }
+    }
+    #[cfg(all(unix, not(target_os = "macos")))]
+    {
+        let _ = app;
+        let out = command("dbus-send")
+            .args([
+                "--session",
+                "--print-reply",
+                "--dest=org.freedesktop.FileManager1",
+                "/org/freedesktop/FileManager1",
+                "org.freedesktop.FileManager1.ShowItemProperties",
+            ])
+            .arg(format!("array:string:{}", file_uri(path)))
+            .arg("string:")
+            .output()
+            .map_err(|e| format!("Can't ask the file manager (dbus-send): {e}"))?;
+        if out.status.success() {
+            Ok(())
+        } else {
+            Err(format!(
+                "No file manager here shows Properties for {shown}: {}",
+                String::from_utf8_lossy(&out.stderr).trim()
+            ))
+        }
+    }
+}
+
+/// `path` as a file:// URI, with everything but letters, digits and `/-._~` escaped (commas
+/// too, which dbus-send would take as a list).
+#[cfg(any(all(unix, not(target_os = "macos")), test))]
+fn file_uri(path: &Path) -> String {
+    use percent_encoding::{utf8_percent_encode, AsciiSet, NON_ALPHANUMERIC};
+    const KEEP: &AsciiSet = &NON_ALPHANUMERIC
+        .remove(b'/')
+        .remove(b'-')
+        .remove(b'.')
+        .remove(b'_')
+        .remove(b'~');
+    format!(
+        "file://{}",
+        utf8_percent_encode(&path.to_string_lossy(), KEEP)
+    )
+}
+
 /// The disks, as (name, app path), in the order of their paths (drive letters on Windows). On
 /// Windows every drive, C: too; elsewhere those other than the one the system is on (USB drives,
 /// SD cards, disk images). Network shares aren't disks: they're under Servers, with Unmount.
@@ -1395,6 +1494,10 @@ mod tests {
         );
         assert_eq!(gvfs_url("mtp:host=Phone"), None);
         assert_eq!(applescript_text(r#"a"b\c"#), r#"a\"b\\c"#);
+        assert_eq!(
+            file_uri(Path::new("/home/me/A b,c/é.txt")),
+            "file:///home/me/A%20b%2Cc/%C3%A9.txt"
+        );
         assert_eq!(powershell_text("it's"), "it''s");
     }
 

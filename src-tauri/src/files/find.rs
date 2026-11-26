@@ -50,6 +50,13 @@ pub(crate) async fn reveal(path: String) -> Result<(), String> {
     .await
 }
 
+/// Opens the system's own window about a file or folder on this computer: Get Info in Finder,
+/// Properties in File Explorer, or the file manager's Properties elsewhere.
+#[tauri::command(rename_all = "snake_case")]
+pub(crate) async fn show_properties(app: tauri::AppHandle, path: String) -> Result<(), String> {
+    blocking(move || crate::platform::show_properties(&app, &crate::platform::native(&path))).await
+}
+
 /// Shows a file in Quick Look, in its own window (elsewhere than macOS, opens it in its default
 /// app). A device file is copied first.
 #[tauri::command(rename_all = "snake_case")]

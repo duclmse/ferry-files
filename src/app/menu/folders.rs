@@ -152,6 +152,9 @@ impl Ctx {
                 v.push(item("Open in terminal", "", Act::Terminal));
             }
             copies(&mut v, true);
+            if mac && crate::os::has_properties(&cwd) {
+                v.push(item(crate::os::properties(), "", Act::Properties));
+            }
             return v;
         };
         let mut v = vec![];
@@ -197,6 +200,9 @@ impl Ctx {
             v.push(item("Open in terminal", "", Act::Terminal));
         }
         copies(&mut v, false);
+        if mac {
+            v.push(item(crate::os::properties(), "", Act::Properties));
+        }
         if e.dir {
             let fav = if self.is_fav(src, &e.path) {
                 "Remove from Favourites"
@@ -247,6 +253,7 @@ impl Ctx {
                     p.error(e);
                 }
             }),
+            Act::Properties => self.show_properties(p, path),
             Act::Terminal => self.cd_in_terminal(p, path),
             Act::CopyName => copy_text(p, base(&path)),
             Act::CopyPath => copy_text(

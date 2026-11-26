@@ -112,6 +112,8 @@ pub fn App() -> impl IntoView {
     // What was clicked last, for the book editor's and reader's shortcuts when nothing there has
     // the focus (a click on a button often leaves it on the page).
     let clicked = StoredValue::new_local(None::<web_sys::Element>);
+    // Type to select: what was typed, and when the last letter was.
+    let typed = StoredValue::new((String::new(), 0.0_f64));
     // In the preview that holds the book editor: its bar and page, and the line above them (the
     // book's name, Read and Edit).
     let in_editor = |el: &web_sys::Element| {
@@ -349,6 +351,31 @@ pub fn App() -> impl IntoView {
                 .and_then(|s| s.get_property_value("grid-template-columns").ok())
                 .map_or(1, |v| v.split_whitespace().count().max(1) as isize)
         };
+        // Type to select: letters typed less than a second apart pick the item whose name starts
+        // with them. While typing, they're all letters (a space too), not shortcuts.
+        let key = e.key();
+        let letter = (!meta && !e.ctrl_key() && !e.alt_key() && key.chars().count() == 1)
+            .then_some(key.as_str());
+        let now = js_sys::Date::now();
+        let typing_on = typed.with_value(|(s, at)| !s.is_empty() && now - at < 1000.0);
+        let type_ahead = |letter: &str| {
+            let mut so_far = if typing_on {
+                typed.with_value(|(s, _)| s.clone())
+            } else {
+                String::new()
+            };
+            so_far.push_str(letter);
+            let names: Vec<&str> = entries.iter().map(|x| x.name.as_str()).collect();
+            if let Some(i) = typed_match(&names, idx, &so_far) {
+                p.select_only(Some(entries[i].path.clone()));
+            }
+            typed.set_value((so_far, now));
+        };
+        if let Some(l) = letter.filter(|_| typing_on) {
+            e.prevent_default();
+            type_ahead(l);
+            return;
+        }
         if let Some(b) = bound {
             let done = match b.id {
                 "palette" => {
@@ -476,6 +503,11 @@ pub fn App() -> impl IntoView {
                 e.prevent_default();
                 return;
             }
+        }
+        if let Some(l) = letter.filter(|l| *l != " ") {
+            e.prevent_default();
+            type_ahead(l);
+            return;
         }
         // Moving around isn't changeable.
         match (e.key().as_str(), meta) {

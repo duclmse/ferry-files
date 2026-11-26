@@ -53,6 +53,7 @@ fn main() {
             "clear_backups",
             "eject",
             "quick_look",
+            "show_properties",
             "transfer",
             "cancel_transfer",
             "compare",

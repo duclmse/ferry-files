@@ -488,6 +488,8 @@ enum Act {
     CopyRelPath,
     /// Shows it in Finder (File Explorer, Files).
     Reveal,
+    /// Opens the system's Get Info (Properties) window for it: on the computer only.
+    Properties,
     /// Shows the terminal, in this folder.
     Terminal,
     /// A sidebar folder: opens it in the other pane.

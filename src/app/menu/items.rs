@@ -72,6 +72,10 @@ impl Ctx {
                 item(fav, "", Act::Favourite),
                 item("Refresh", "", Act::Refresh),
             ]);
+            let cwd = p.cwd.get_untracked();
+            if !device && !cwd.is_empty() && crate::os::has_properties(&cwd) {
+                v.push(item(crate::os::properties(), "", Act::Properties));
+            }
             v.push(MenuItem::Do {
                 label: "Import photos…".into(),
                 key: "",
@@ -290,6 +294,9 @@ impl Ctx {
             item("Copy name", "", Act::CopyName),
             item("Copy path", "", Act::CopyPath),
         ]);
+        if !device {
+            v.push(item(crate::os::properties(), "", Act::Properties));
+        }
         v.extend([
             MenuItem::Sep,
             self.script_menu(),

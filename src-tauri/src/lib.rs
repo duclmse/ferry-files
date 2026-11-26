@@ -245,6 +245,7 @@ pub fn run() {
             safety::space,
             files::open_file,
             files::find::reveal,
+            files::find::show_properties,
             files::find::find_files,
             settings::app_folders,
             settings::open_folder,

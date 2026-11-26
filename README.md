@@ -9,7 +9,8 @@ with tools for EPUB books.
 - **Panes**: one or two (⌘\\), each with tabs (⌘T, ⌘W; drag them between panes), shown as a
   list, thumbnails or columns. The list can show a folder tree and group items by name, kind,
   date or size. Sort, filter (⌘F), show hidden files (⌘.), type a path (⌘L). Edges resize and
-  sizes are remembered. Folders on the computer list again when fsd sees them change.
+  sizes are remembered. Typing a name's first letters picks it. Folders on the computer list
+  again when fsd sees them change, and Get Info (Properties) opens the system's window for them.
 - **Preview** beside the files:
   - pictures: zoom, turn, full screen (F), the next one read ahead;
   - video and audio streamed from the device, with full screen, a pop-out window and

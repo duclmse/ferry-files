@@ -77,11 +77,11 @@ impl Ctx {
         if self.has_shell(src) {
             v.push(item("Open in terminal", "", Act::Terminal));
         }
-        v.extend([
-            item("Copy path", "", Act::CopyPath),
-            MenuItem::Sep,
-            item(fav, "", Act::Favourite),
-        ]);
+        v.push(item("Copy path", "", Act::CopyPath));
+        if src == Src::Mac && crate::os::has_properties(path) {
+            v.push(item(crate::os::properties(), "", Act::Properties));
+        }
+        v.extend([MenuItem::Sep, item(fav, "", Act::Favourite)]);
         // The folder itself: not a device's top, a disk, or a folder the device names (Home, Storage).
         if !self.fixed_place(src, path) {
             let writable = !self.read_only(src);
@@ -173,6 +173,7 @@ impl Ctx {
                     p.error(e);
                 }
             }),
+            Act::Properties => self.show_properties(p, path),
             Act::Terminal => {
                 if p.src.get_untracked() != src {
                     self.open_place(src, path.clone());

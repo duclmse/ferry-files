@@ -789,3 +789,48 @@ mod count_tests {
         assert_eq!(super::count(1234567), "1,234,567");
     }
 }
+
+/// Type to select: the item whose name starts with `typed` (ignoring case). One letter goes to
+/// the next name after the selected one that starts with it, so pressing it again goes through
+/// them; more letters look from the selected one on. Typing one letter over and over ("bbb") goes
+/// through the names starting with it when no name starts with all of them.
+pub(super) fn typed_match(names: &[&str], at: Option<usize>, typed: &str) -> Option<usize> {
+    let typed = typed.to_lowercase();
+    let first = typed.chars().next()?;
+    let n = names.len();
+    let find = |prefix: &str, from: usize| {
+        (0..n)
+            .map(|k| (from + k) % n)
+            .find(|&i| names[i].to_lowercase().starts_with(prefix))
+    };
+    let next = at.map_or(0, |i| i + 1);
+    if typed.chars().count() == 1 {
+        return find(&typed, next);
+    }
+    find(&typed, at.unwrap_or(0)).or_else(|| {
+        typed
+            .chars()
+            .all(|c| c == first)
+            .then(|| find(&first.to_string(), next))
+            .flatten()
+    })
+}
+
+#[cfg(test)]
+mod typed_tests {
+    use super::typed_match;
+
+    #[test]
+    fn finds_by_start() {
+        let names = ["Apple", "banana", "Berry", "bread", "cherry"];
+        assert_eq!(typed_match(&names, None, "b"), Some(1));
+        assert_eq!(typed_match(&names, Some(1), "b"), Some(2));
+        assert_eq!(typed_match(&names, Some(3), "b"), Some(1));
+        assert_eq!(typed_match(&names, Some(1), "br"), Some(3));
+        assert_eq!(typed_match(&names, Some(2), "be"), Some(2));
+        assert_eq!(typed_match(&names, Some(1), "bb"), Some(2));
+        assert_eq!(typed_match(&names, Some(0), "CH"), Some(4));
+        assert_eq!(typed_match(&names, Some(0), "x"), None);
+        assert_eq!(typed_match(&[], None, "a"), None);
+    }
+}

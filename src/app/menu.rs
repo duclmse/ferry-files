@@ -61,6 +61,15 @@ impl Ctx {
         }));
     }
 
+    /// The system's Get Info (Properties) window for `path` on the computer; a problem shows in `p`.
+    pub(super) fn show_properties(self, p: Pane, path: String) {
+        spawn_local(async move {
+            if let Err(e) = call::<()>("show_properties", json!({ "path": path })).await {
+                p.error(e);
+            }
+        });
+    }
+
     pub(super) fn run(self, p: Pane, act: Act, entry: Option<Entry>) {
         match (act, entry) {
             (Act::Open, Some(e)) => self.open(p, e),
@@ -161,6 +170,9 @@ impl Ctx {
             (Act::Section(i), _) => self.toggle_section(i),
             (Act::AllSections, _) => self.set_hidden_sections(vec![]),
             (Act::FollowFolder, _) => self.set_follow_folder(!self.follow_folder.get_untracked()),
+            (Act::Properties, e) => {
+                self.show_properties(p, e.map_or_else(|| p.cwd.get_untracked(), |e| e.path))
+            }
             (Act::ShowAs(how), Some(e)) => {
                 p.peek_as.set(Some((e.path, how)));
                 p.preview.set(true);

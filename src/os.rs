@@ -106,6 +106,20 @@ pub fn file_manager() -> &'static str {
     }
 }
 
+/// The menu item that opens the system's window about a file or folder.
+pub fn properties() -> &'static str {
+    if is_mac() {
+        "Get Info"
+    } else {
+        "Properties"
+    }
+}
+
+/// Whether the computer's `path` has a Get Info (Properties) window: not Windows' list of drives.
+pub fn has_properties(path: &str) -> bool {
+    !(os() == Os::Windows && path == "/")
+}
+
 /// What Space does on a file: Quick Look on the Mac; elsewhere it opens in its app.
 pub fn quick_look() -> &'static str {
     if is_mac() {
