@@ -14,8 +14,8 @@ tauri-build = { version = "2", features = [] }
 [features]
 default = []
 # Searches of the computer from the index of fsd (the fs project's search daemon), when it runs.
-# Off unless asked for: `cargo tauri dev --features fsd`.
-fsd = ["dep:postcard", "tokio/net", "tokio/time"]
+# `cargo tauri dev` and `cargo tauri build` turn it on (`build.features` in tauri.conf.json).
+fsd = ["dep:fs-protocol", "tokio/net", "tokio/time"]
 
 [dependencies]
 tauri = { version = "2", features = [] }
@@ -80,10 +80,8 @@ idevice = { version = "0.1.68", default-features = false, features = [
     "installation_proxy",
 ] }
 tokio = { version = "1", features = ["rt", "io-util"] }
-# fsd's IPC messages (feature `fsd`).
-postcard = { version = "1", default-features = false, features = [
-    "alloc",
-], optional = true }
+# fsd's IPC protocol and client (feature `fsd`), from the fs crates in this repo.
+fs-protocol = { path = "../fs/crates/fs-protocol", optional = true }
 plist = "1.8"
 # Run script…: Lua 5.4, built from source with the app (needs a C compiler).
 mlua = { version = "0.12", features = ["lua54", "vendored"] }

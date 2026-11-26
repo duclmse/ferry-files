@@ -5,7 +5,9 @@ edition = "2021"
 
 [dependencies]
 serde    = { workspace = true }
-tokio    = { workspace = true }
+# Only what ipc_client needs, not the workspace's "full": Ferry Files depends
+# on this crate and shouldn't pull in the rest of tokio.
+tokio    = { version = "1", features = ["net", "io-util"] }
 postcard = { version = "1", features = ["alloc"] }
 
 [dev-dependencies]

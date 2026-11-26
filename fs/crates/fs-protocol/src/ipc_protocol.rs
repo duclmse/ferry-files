@@ -320,14 +320,18 @@ pub fn encode_frame(envelope: &IpcEnvelope) -> Result<Vec<u8>, postcard::Error> 
 /// Decode the payload bytes (after the 4-byte length prefix is stripped) into
 /// an `IpcEnvelope`, validating magic and version.
 pub fn decode_payload(bytes: &[u8]) -> Result<IpcEnvelope, DecodeError> {
-    let env: IpcEnvelope = postcard::from_bytes(bytes).map_err(DecodeError::Postcard)?;
-    if env.magic != MAGIC {
-        return Err(DecodeError::BadMagic(env.magic));
+    // Magic and version are checked before the message: a peer on another
+    // version may send a message this one cannot decode, and should be told
+    // VersionMismatch, not a postcard error.
+    let ((magic, version), _) =
+        postcard::take_from_bytes::<([u8; 4], u16)>(bytes).map_err(DecodeError::Postcard)?;
+    if magic != MAGIC {
+        return Err(DecodeError::BadMagic(magic));
     }
-    if env.version != PROTOCOL_VERSION {
-        return Err(DecodeError::VersionMismatch(env.version));
+    if version != PROTOCOL_VERSION {
+        return Err(DecodeError::VersionMismatch(version));
     }
-    Ok(env)
+    postcard::from_bytes(bytes).map_err(DecodeError::Postcard)
 }
 
 #[derive(Debug)]
@@ -393,8 +397,9 @@ mod tests {
         ));
     }
 
-    /// Ferry Files speaks this protocol with its own copy of the types
-    /// (`src-tauri/src/fsd/wire.rs`) and checks the same bytes; change both.
+    /// Clients built against an older fs-protocol (Ferry Files bundles one
+    /// fsd but talks to whichever is running) rely on these bytes; a change
+    /// here must bump PROTOCOL_VERSION.
     #[test]
     fn bytes_other_clients_rely_on() {
         let frame = |m| encode_frame(&IpcEnvelope::new(1, m)).unwrap();
@@ -564,6 +569,15 @@ mod tests {
         let payload = postcard::to_allocvec(&env).unwrap();
         let err = decode_payload(&payload).unwrap_err();
         assert!(matches!(err, DecodeError::VersionMismatch(99)));
+    }
+
+    #[test]
+    fn version_checked_before_message() {
+        // Version 10 with a message variant this version doesn't have.
+        let err = decode_payload(b"ZFS1\x0a\x01\x01\x7f").unwrap_err();
+        assert!(matches!(err, DecodeError::VersionMismatch(10)), "{err}");
+        let err = decode_payload(b"XXXX\x09").unwrap_err();
+        assert!(matches!(err, DecodeError::BadMagic(_)), "{err}");
     }
 
     #[test]

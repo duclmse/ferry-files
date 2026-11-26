@@ -27,7 +27,7 @@ with tools for EPUB books.
   Replace with (⌘R) renames what it shows, and can preserve case. On an Everything server it
   searches the server's index under the folder, or all drives (the search button beside the
   server in the sidebar). ⌘⇧F finds files anywhere on the
-  computer from fsd's index (the fs project's search service), in fsd's search syntax
+  computer from fsd's index (the search service of [fs](fs/), in this repo), in fsd's search syntax
   (`case:`, `ww:`, `regex:`, `ext:`, `size:`, `dm:`, `|`, `!` …), with match case, whole word
   and regular expression buttons, 100 at a time. The app carries fsd, and
   Settings > Search installs it as a service, shows its index, and changes what it indexes.
@@ -123,6 +123,12 @@ cargo run --example epub_smoke [-- adb|mtp]
   - `fsd.rs` and `fsd_service.rs`: searching with fsd, and installing and setting it up.
   - `platform.rs`: what differs between operating systems; `protocol.rs`: the `ferry://`
     scheme; `lib.rs`: the app state and the command list.
+- `fs/`: the fs project, with its history: fsd (the indexing daemon, `fs-server`), the `fs`
+  command line (`fs-cli`), the wire format and client (`fs-protocol`), and the rar2zip and
+  sftpd extensions. Its crates are members of this workspace (one `Cargo.lock`, one
+  `target/`); `cargo fs-build`, `fs-test` and `fs-clippy` build, test and lint them alone.
+  Ferry uses only `fs-protocol`, to talk to fsd. [fs/README.md](fs/README.md) and
+  [fs/CLAUDE.md](fs/CLAUDE.md) say more.
 
 ## EPUB editor limits
 

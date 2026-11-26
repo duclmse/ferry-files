@@ -1,17 +1,53 @@
 //! Finding the computer's files by name from fsd's index (the palette's `:`), and what fsd says
 //! about its index. fsd is the file-search daemon of the fs project (usually run as a service);
-//! Ferry asks it over its local socket or named pipe (`wire`). Built with the `fsd` feature.
+//! Ferry asks it over its local socket or named pipe with the fs-protocol crate's client. Built
+//! with the `fsd` feature.
 
 use crate::device::Entry;
 use crate::platform::app_path;
+use fs_protocol::ipc_client::{IpcClient, IpcClientError};
+use fs_protocol::ipc_protocol::{
+    ConfigChange, DecodeError, IpcRequest as Request, IpcResponse as Response,
+    SearchHitDto as SearchHit, PROTOCOL_VERSION,
+};
 use std::path::Path;
 use std::time::Duration;
-use wire::{Client, Request, Response, SearchHit};
 
 /// How long fsd has to answer a search.
 const TIME: Duration = Duration::from_secs(5);
 
-mod wire;
+/// A connection to fsd at the path it listens on unless its config says otherwise, whose
+/// errors are Ferry's messages.
+struct Client(IpcClient);
+
+impl Client {
+    async fn connect() -> Result<Client, IpcClientError> {
+        IpcClient::connect(&fs_protocol::default_ipc_path())
+            .await
+            .map(Client)
+    }
+
+    async fn request(&mut self, request: Request) -> Result<Response, String> {
+        self.0.request(request).await.map_err(said)
+    }
+}
+
+/// `e` in plain words. fsd's own errors read "fsd: {message} ({code})", which
+/// `plain_query_error` looks for.
+fn said(e: IpcClientError) -> String {
+    match e {
+        IpcClientError::DaemonError { code, message } => format!("fsd: {message} ({code})"),
+        IpcClientError::Decode(DecodeError::VersionMismatch(v)) => format!(
+            "fsd speaks protocol version {v} and Ferry Files version {PROTOCOL_VERSION}; update the older one"
+        ),
+        IpcClientError::Decode(DecodeError::BadMagic(_)) => {
+            "Something other than fsd answered on fsd's socket.".into()
+        }
+        IpcClientError::Decode(e) => format!("couldn't read fsd's answer: {e}"),
+        IpcClientError::FrameTooLarge(n) => format!("fsd's answer is too big ({n} bytes)"),
+        e => format!("talking to fsd: {e}"),
+    }
+}
 
 /// Up to `max` files and folders anywhere fsd indexes that fit `text`, in fsd's order, from
 /// fsd's `offset`th on: the palette's `:`. `text` is fsd's search syntax, as typed: words the name contains in any case,
@@ -68,7 +104,7 @@ async fn find_in(text: &str, offset: u32, max: u32) -> Result<Found, String> {
         .map(|h| Entry {
             path: app_path(Path::new(&h.path)),
             name: h.name,
-            hidden: h.attrib_bitmask & wire::HIDDEN != 0,
+            hidden: h.attrib_bitmask & fs_protocol::attrib::HIDDEN != 0,
             dir: h.is_dir,
             size: h.size_bytes,
             mtime: h.mtime,
@@ -158,7 +194,7 @@ pub fn reload() -> Result<Option<Vec<String>>, String> {
             let Ok(mut fsd) = Client::connect().await else {
                 return Ok(None);
             };
-            let change = wire::ConfigChange::Reload;
+            let change = ConfigChange::Reload;
             match fsd.request(Request::ConfigChange { change }).await? {
                 Response::ConfigApplied(a) => Ok(Some(a.restart)),
                 _ => Err("fsd answered something else.".to_string()),
@@ -252,6 +288,17 @@ fn plain_query_error(e: String) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn another_version_is_named() {
+        let e = said(IpcClientError::Decode(DecodeError::VersionMismatch(10)));
+        assert!(e.contains("version 10"), "{e}");
+        let e = said(IpcClientError::DaemonError {
+            code: "PARSE_ERROR".into(),
+            message: "bad".into(),
+        });
+        assert_eq!(plain_query_error(e), "That search doesn't work: bad");
+    }
 
     #[test]
     fn bad_searches_say_so() {

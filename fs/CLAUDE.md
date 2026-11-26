@@ -210,6 +210,15 @@ disk. The commit loop in `daemon.rs` runs every `commit_interval_secs`.
   `mutating` router in `api/fs.rs`.
 - The client must stay thin: `fs-cli` depends only on `fs-protocol`, never on
   `fs-server` or an extension crate. New client features go through IPC.
+  Ferry Files (`src-tauri`, feature `fsd`) is a client too and follows the
+  same rule.
+- A change to the wire format in `ipc_protocol.rs` (a variant added, moved or
+  changed, a field added) bumps `PROTOCOL_VERSION`, and Ferry Files must
+  build in the same change: `cd src-tauri && cargo test --lib --features fsd`.
+  A client meeting an fsd of another version gets `VersionMismatch` (magic
+  and version are read before the message), so add variants at the end of
+  an enum and keep `bytes_other_clients_rely_on` passing unless the version
+  moves. fs-protocol's tokio stays at `net` and `io-util`: Ferry links it.
 - SQLite writes go through `SqliteStore::write_conn()`, a single
   connection; reads use `get_conn()`. Never take `write_conn()` while
   holding it, and route new write methods through it.
