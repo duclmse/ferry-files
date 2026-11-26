@@ -46,10 +46,12 @@ pub async fn execute_plan(
 
         EvalStrategy::TantivyThenSqlite => {
             let query = plan.tantivy_query.clone().unwrap_or_default();
+            // The page is cut from these below, so they run to its end.
+            let want = limit + offset;
             let hits = tokio::task::spawn_blocking({
                 let tv = Arc::clone(&tantivy);
                 let q = query.clone();
-                move || tv.search_fulltext(&q, limit * 4, &crate::store::MetaFilters::default())
+                move || tv.search_fulltext(&q, want * 4, &crate::store::MetaFilters::default())
             })
             .await
             .map_err(|e| AppError::Query(e.to_string()))??;
@@ -57,7 +59,7 @@ pub async fn execute_plan(
             let paths: Vec<String> = hits.into_iter().map(|h| h.path).collect();
             let store2 = Arc::clone(&store);
             let conds = plan.sql_conditions.clone();
-            tokio::task::spawn_blocking(move || store2.search_by_paths(&paths, &conds, limit))
+            tokio::task::spawn_blocking(move || store2.search_by_paths(&paths, &conds, want))
                 .await
                 .map_err(|e| AppError::Query(e.to_string()))??
         }
@@ -66,7 +68,9 @@ pub async fn execute_plan(
             let kind2 = *kind;
             let conds = plan.sql_conditions.clone();
             let store2 = Arc::clone(&store);
-            tokio::task::spawn_blocking(move || store2.find_dupes(kind2, &conds, limit))
+            // The page is cut from these below, so they run to its end.
+            let want = limit + offset;
+            tokio::task::spawn_blocking(move || store2.find_dupes(kind2, &conds, want))
                 .await
                 .map_err(|e| AppError::Query(e.to_string()))??
         }

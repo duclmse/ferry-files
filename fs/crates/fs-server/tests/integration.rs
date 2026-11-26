@@ -967,6 +967,39 @@ async fn test_directory_rename_and_move_in() {
     }
 }
 
+/// A dupe search pages like any other: a later page holds the next groups' files.
+#[tokio::test]
+async fn test_dupe_search_pages() {
+    let dir = TempDir::new().unwrap();
+    let watch_dir = TempDir::new().unwrap();
+    for (i, body) in ["a", "b", "cc", "dd", "eee", "fff"].iter().enumerate() {
+        std::fs::write(watch_dir.path().join(format!("f{i}.txt")), body).unwrap();
+    }
+    let daemon = TestDaemon::start(watch_dir.path(), dir).await;
+    daemon
+        .wait_until(Duration::from_secs(30), |s| s.total_files >= 6)
+        .await;
+    let page = |offset: usize| {
+        let url = daemon.url(&format!(
+            "/search?q=sizedupe:%20file:&limit=2&offset={offset}"
+        ));
+        async move {
+            let r: SearchResponse = reqwest::get(url).await.unwrap().json().await.unwrap();
+            r.result.into_iter().map(|h| h.path).collect::<Vec<_>>()
+        }
+    };
+    let mut seen = Vec::new();
+    for offset in [0, 2, 4] {
+        let hits = page(offset).await;
+        assert_eq!(hits.len(), 2, "page at {offset}: {hits:?}");
+        seen.extend(hits);
+    }
+    seen.sort();
+    seen.dedup();
+    assert_eq!(seen.len(), 6, "{seen:?}");
+    assert!(page(6).await.is_empty());
+}
+
 /// Content search: file containing "TODO: fix this" → returned by content:TODO.
 #[tokio::test]
 async fn test_content_search() {
@@ -995,6 +1028,39 @@ async fn test_content_search() {
         "task.rs must appear in content:TODO search, got {:?}",
         resp.result.iter().map(|h| &h.path).collect::<Vec<_>>()
     );
+}
+
+/// A content search pages like any other: a later page holds the next files.
+#[tokio::test]
+async fn test_content_search_pages() {
+    let dir = TempDir::new().unwrap();
+    let watch_dir = TempDir::new().unwrap();
+    for i in 0..5 {
+        std::fs::write(watch_dir.path().join(format!("n{i}.txt")), "zebrapage here").unwrap();
+    }
+    let daemon = TestDaemon::start(watch_dir.path(), dir).await;
+    daemon
+        .wait_until(Duration::from_secs(30), |s| s.content_indexed >= 5)
+        .await;
+    wait_for_hits(&daemon, "content:zebrapage", 10, |p| p.len() == 5).await;
+    let page = |offset: usize| {
+        let url = daemon.url(&format!(
+            "/search?q=content:zebrapage&limit=2&offset={offset}"
+        ));
+        async move {
+            let r: SearchResponse = reqwest::get(url).await.unwrap().json().await.unwrap();
+            r.result.into_iter().map(|h| h.path).collect::<Vec<_>>()
+        }
+    };
+    let mut seen = Vec::new();
+    for (offset, n) in [(0, 2), (2, 2), (4, 1)] {
+        let hits = page(offset).await;
+        assert_eq!(hits.len(), n, "page at {offset}: {hits:?}");
+        seen.extend(hits);
+    }
+    seen.sort();
+    seen.dedup();
+    assert_eq!(seen.len(), 5, "{seen:?}");
 }
 
 /// ZIP inner-file indexing: archive entries are searchable.

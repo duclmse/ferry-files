@@ -52,16 +52,24 @@ pub(super) fn tokenize(input: &str) -> Vec<Token> {
                 }
             }
             _ => {
-                let start = i;
                 // `!` negates only at the start of a word; inside one it is
                 // text, which keeps virtual paths like `a.zip!/b` whole.
+                // Quotes inside a word keep spaces and operators in it and
+                // are dropped, as in Everything: `content:"a b"` is the word
+                // `content:a b`.
+                let mut word = String::new();
+                let mut quoted = false;
                 while i < chars.len()
-                    && !chars[i].is_whitespace()
-                    && !matches!(chars[i], '|' | '<' | '>')
+                    && (quoted
+                        || (!chars[i].is_whitespace() && !matches!(chars[i], '|' | '<' | '>')))
                 {
+                    if chars[i] == '"' {
+                        quoted = !quoted;
+                    } else {
+                        word.push(chars[i]);
+                    }
                     i += 1;
                 }
-                let word: String = chars[start..i].iter().collect();
                 tokens.push(Token::Word(unescape(&word)));
             }
         }
@@ -138,6 +146,23 @@ mod tests {
         assert_eq!(unescape("#x110000:"), "#x110000:");
         assert_eq!(unescape("café"), "café");
         assert_eq!(unescape("é-#233:"), "é-é");
+    }
+
+    #[test]
+    fn quotes_inside_a_word_keep_its_spaces() {
+        assert_eq!(
+            tokenize(r#"content:"+a b|c" d"#),
+            [
+                Token::Word("content:+a b|c".into()),
+                Token::Word("d".into()),
+                Token::Eof
+            ]
+        );
+        // An unclosed quote runs to the end.
+        assert_eq!(
+            tokenize(r#"path:"x y"#),
+            [Token::Word("path:x y".into()), Token::Eof]
+        );
     }
 
     #[test]

@@ -938,13 +938,18 @@ const SLOW: std::time::Duration = std::time::Duration::from_secs(1);
 /// Paths outside every watch path are dropped the same way: a watcher that
 /// is stopping, after its path was removed, may still deliver some, and they
 /// would put back entries just forgotten.
+///
+/// So are events naming a watch path itself: one that vanishes is offline,
+/// and its entries stay (`daemon::watch_paths`). The watcher reports a
+/// renamed-away root as its deletion.
 fn without_excluded(
     events: Vec<IndexEvent>,
     excl: &ExclusionEngine,
     roots: &[PathBuf],
 ) -> Vec<IndexEvent> {
     let out = |p: &Path| {
-        excl.should_exclude(p, is_hidden_name(p)) || !roots.iter().any(|r| p.starts_with(r))
+        excl.should_exclude(p, is_hidden_name(p))
+            || !roots.iter().any(|r| p.starts_with(r) && p != r.as_path())
     };
     events
         .into_iter()

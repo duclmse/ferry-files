@@ -6,7 +6,7 @@ use std::path::PathBuf;
 use std::time::Duration;
 
 use notify::EventKind;
-use notify_debouncer_full::{new_debouncer, DebounceEventResult};
+use notify_debouncer_full::{new_debouncer_opt, DebounceEventResult, NoCache};
 use tokio::sync::mpsc;
 use tokio::sync::{watch, RwLock};
 use tokio_util::sync::CancellationToken;
@@ -219,9 +219,20 @@ async fn run_notify(
         tokio::sync::mpsc::unbounded_channel::<DebounceEventResult>();
 
     let debounce_tx_clone = debounce_tx.clone();
-    let mut debouncer = new_debouncer(debounce, None, move |result: DebounceEventResult| {
-        let _ = debounce_tx_clone.send(result);
-    })
+    // No file-ID cache. The debouncer's cache (FileIdMap on macOS and
+    // Windows) walks every watch path when a watch starts and again, holding
+    // the lock the event callback needs, whenever the backend asks for a
+    // rescan: on a home folder of a million files each rescan took minutes,
+    // and changes arrived that much late. It only pairs renames, and the
+    // event batch handles an unpaired rename already: the old path goes and
+    // the new one is walked as an unseen folder (`apply_file_events`).
+    let mut debouncer = new_debouncer_opt::<_, notify::RecommendedWatcher, _>(
+        notify_debouncer_full::Config::default().with_timeout(debounce),
+        move |result: DebounceEventResult| {
+            let _ = debounce_tx_clone.send(result);
+        },
+        NoCache,
+    )
     .map_err(|e| AppError::Index(format!("debouncer create: {e}")))?;
 
     for path in roots {

@@ -54,7 +54,17 @@ pub async fn run_ipc_server(
     {
         use tokio::net::UnixListener;
 
-        // Remove stale socket file from a previous run.
+        use std::os::unix::fs::MetadataExt;
+
+        // A socket file left by a run that ended is removed; one another daemon still answers
+        // on is left alone, so that daemon keeps its clients.
+        if std::os::unix::net::UnixStream::connect(&ipc_path).is_ok() {
+            tracing::error!(
+                "ipc: another fsd is listening on {}; give this config its own api.ipc_path",
+                ipc_path.display()
+            );
+            return;
+        }
         let _ = std::fs::remove_file(&ipc_path);
 
         let listener = match UnixListener::bind(&ipc_path) {
@@ -64,6 +74,10 @@ pub async fn run_ipc_server(
                 return;
             }
         };
+        // Which file is ours, so shutting down removes only that.
+        let ours = std::fs::metadata(&ipc_path)
+            .map(|m| (m.dev(), m.ino()))
+            .ok();
         if shared {
             use std::os::unix::fs::PermissionsExt;
             // The daemon runs as root here and its umask leaves the socket
@@ -80,7 +94,10 @@ pub async fn run_ipc_server(
             tokio::select! {
                 _ = shutdown.cancelled() => {
                     tracing::debug!("ipc server shutting down");
-                    let _ = std::fs::remove_file(&ipc_path);
+                    let now = std::fs::metadata(&ipc_path).map(|m| (m.dev(), m.ino())).ok();
+                    if now.is_some() && now == ours {
+                        let _ = std::fs::remove_file(&ipc_path);
+                    }
                     break;
                 }
                 res = listener.accept() => {

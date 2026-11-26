@@ -226,6 +226,16 @@ disk. The commit loop in `daemon.rs` runs every `commit_interval_secs`.
   the directory alone. `process_event` walks or removes the subtree; keep
   that when changing event handling. FSEvents may report a deletion as a
   modification of a vanished path.
+- The notify debouncer runs without a file-ID cache (`NoCache`). Its
+  `FileIdMap` walks every watch path at start and on each rescan, holding
+  the lock the event callback needs: on a home folder that held changes back
+  for minutes. Renames arrive unpaired instead, which the point above covers.
+- Events naming a watch path itself are dropped (`without_excluded`): a
+  root that vanishes is offline and keeps its entries.
+- On Unix the IPC server won't start on a socket another fsd answers on (it
+  logs and leaves it), and on shutdown removes the socket only if it is still
+  the one it bound (same dev and inode). A second daemon needs its own
+  `[api] ipc_path`.
 - Live watcher backends (`watcher.backend`, `watcher/live/`) must report
   lost changes (`Msg::Lost`) rather than drop them; recovery runs the
   timestamp scan. notify's Windows backend drops overflows silently.

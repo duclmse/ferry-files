@@ -372,6 +372,8 @@ fn excluded_paths_drop_out_of_watcher_events() {
             },
             IndexEvent::Deleted(p("/w/data/seg.idx")),
             IndexEvent::Created(p("/elsewhere/d.txt")),
+            // A watch path renamed away: it is offline, not gone.
+            IndexEvent::Deleted(p("/w")),
         ],
         &excl,
         &[p("/w")],

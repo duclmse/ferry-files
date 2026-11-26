@@ -42,6 +42,8 @@ query error rather than evaluated with the wrong meaning.
 
 Double quotes only keep spaces and operators inside one term: `"my notes"`
 matches names containing `my notes`. Add `wfn:` to match the whole filename.
+Quotes inside a word do the same and are dropped, as in Everything:
+`path:"my notes"` and `content:"two words"` are one term each.
 
 A term containing `/` or `\` searches full paths, as if `path:` were given
 (`nopath:` turns this off).
@@ -120,7 +122,7 @@ drive.
 
 | Function | Description |
 |----------|-------------|
-| `content:<text>` | Full-text search via Tantivy |
+| `content:<text>` | Full-text search via Tantivy, in its query syntax: `content:"+a +b"` needs both words |
 | `utf8content:<text>` | Same as `content:` |
 | `ansicontent:<text>` | Same as `content:` |
 
