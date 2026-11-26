@@ -78,19 +78,6 @@ fn auth_key(a: Auth) -> &'static str {
     }
 }
 
-/// What each type is, under the form.
-fn kind_about(kind: ConnKind) -> &'static str {
-    match kind {
-        ConnKind::Sftp => "A server you can reach with ssh. Its files open like a phone's, and its terminal opens under the pane.",
-        ConnKind::Smb => "A shared folder on a Windows computer or NAS box. The system mounts it as a folder on this computer.",
-        ConnKind::Nfs => "A folder a Linux computer or NAS box exports over NFS. The system mounts it as a folder on this computer.",
-        ConnKind::Everything => "A Windows computer's disks, through the HTTP server of Everything (voidtools). Read-only.",
-        ConnKind::WebDav => "A folder shared over WebDAV: Nextcloud, ownCloud, a NAS box, or a phone app that serves files.",
-        ConnKind::Ftp => "An FTP server: a NAS box, a router, or a phone app that serves files over Wi-Fi.",
-        ConnKind::S3 => "A bucket on Amazon S3 or a service like it: Cloudflare R2, Backblaze B2, MinIO.",
-    }
-}
-
 /// The server box's example for each type.
 fn host_example(kind: ConnKind) -> &'static str {
     match kind {
@@ -176,7 +163,6 @@ fn conn_form(ctx: Ctx, editing: RwSignal<Option<Conn>>, is_new: bool) -> impl In
                     </button>
                 }).collect_view()}
             </div>
-            <p class="hint flush">{move || kind_about(kind.get())}</p>
             <div class="row2">
                 {move || text("Server", host_example(kind.get()), Signal::derive(move || get().host), |c, v| c.host = v)}
                 <label class="field port" class:hidden=move || kind.get() == ConnKind::Nfs>
@@ -237,7 +223,6 @@ fn conn_form(ctx: Ctx, editing: RwSignal<Option<Conn>>, is_new: bool) -> impl In
                         on:input=move |e| password.set(event_target_value(&e))
                         on:keydown=move |e| if e.key() == "Enter" { save() }/>
                 </label>
-                <p class="hint flush">"Kept in the system's keychain, not in the app's settings."</p>
             })}
             {move || error.get().map(|e| view! { <p class="error">{e}</p> })}
             <div class="buttons">
@@ -322,9 +307,8 @@ pub(super) fn ConnectionsSettings() -> impl IntoView {
                 view! {
                     <div class="conn-row">
                         <span class="dot" class:on=move || status.get().0 aria-hidden="true"></span>
-                        <span class="badge">{c.kind.label()}</span>
                         <div class="what">
-                            <b>{c.name()}</b>
+                            <span class="address"><span class="badge">{c.kind.label()}</span><b>{c.name()}</b></span>
                             <span class="about">{move || status.get().1}" · "{auth_label(&c)}</span>
                         </div>
                         <button class="btn icon-only" aria-expanded=move || is_open().to_string() title="Edit" aria-label="Edit"
@@ -340,7 +324,7 @@ pub(super) fn ConnectionsSettings() -> impl IntoView {
         {move || shown.with(Vec::is_empty).then(|| {
             let q = query.get();
             if q.trim().is_empty() {
-                view! { <p class="hint flush">"No connections yet. Type a server's address above, like me@server, nas/Photos or pc:8080."</p> }.into_any()
+                view! { <p class="hint flush">"No connections yet."</p> }.into_any()
             } else {
                 let label = format!("Add {}…", q.trim());
                 view! {
@@ -381,7 +365,6 @@ pub(super) fn SidebarSettings() -> impl IntoView {
     };
     view! {
         <div class="hint-row">
-            <p class="hint flush">"The sidebar's sections, top to bottom. Drag them by ⠿ (or their titles in the sidebar) to move them. Favourites and Sync pairs show only when there are some."</p>
             <button class="btn" title="Put the sections back in the usual order"
                 disabled=move || ctx.section_order.with(|o| o.iter().copied().eq(SECTIONS.iter().map(|s| s.0)))
                 on:click=move |_| ctx.set_section_order(SECTIONS.iter().map(|s| s.0).collect())>{ico(Icon::Restore)}"Reset"</button>
@@ -414,7 +397,7 @@ pub(super) fn SidebarSettings() -> impl IntoView {
         </div>
         <label class="check">
             <input type="checkbox" prop:checked=move || ctx.follow_folder.get() on:change=move |e| ctx.set_follow_folder(event_target_checked(&e))/>
-            "Show the current folder: open the sidebar's folders down to the one shown, and scroll to it"
+            "Show the current folder in the sidebar"
         </label>
     }
 }

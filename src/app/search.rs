@@ -1,5 +1,5 @@
-//! The filter pane under a pane's bar: one box that filters the folder as you type (once you
-//! pause) and searches its subfolders on Enter, the kind/size/date options, and Replace with
+//! The filter pane under a pane's bar: one box that filters the folder as you type and searches
+//! its subfolders once you pause (or on Enter), the kind/size/date options, and Replace with
 //! (⌘R, or the chevron before the box), which renames the shown items, previewing each new name
 //! in the list first.
 
@@ -7,6 +7,8 @@ use super::*;
 
 /// How long typing must pause before the list is filtered.
 const FILTER_DELAY: std::time::Duration = std::time::Duration::from_millis(180);
+/// How long it must pause before the subfolders are searched: longer, as that walks them.
+const SEARCH_DELAY: std::time::Duration = std::time::Duration::from_millis(500);
 
 /// Path → (new name, what's wrong with it).
 pub(super) type ReplaceRows = HashMap<String, (String, Option<String>)>;
@@ -141,11 +143,30 @@ pub(super) fn SearchPane(pane: Pane) -> impl IntoView {
                 .map_or(0, |m| m.values().filter(|(_, x)| x.is_some()).count())
         })
     };
-    // Typing filters once it pauses: each key would otherwise go through the whole folder.
+    // Typing filters once it pauses (each key would otherwise go through the whole folder), and
+    // searches the subfolders once it pauses longer.
     let pending = StoredValue::new_local(None::<TimeoutHandle>);
+    let searching = StoredValue::new_local(None::<TimeoutHandle>);
     let cancel = move || {
-        if let Some(h) = pending.try_update_value(Option::take).flatten() {
-            h.clear();
+        for t in [pending, searching] {
+            if let Some(h) = t.try_update_value(Option::take).flatten() {
+                h.clear();
+            }
+        }
+    };
+    // Searches for what's chosen now, or with nothing chosen, shows the folder again.
+    let search = move || {
+        if !p.filters_open.get_untracked() {
+            return;
+        }
+        let narrowed = p.search_kind.get_untracked()
+            + p.search_size.get_untracked()
+            + p.search_time.get_untracked()
+            > 0;
+        if narrowed || !p.filter.with_untracked(|f| f.trim().is_empty()) {
+            ctx.find(p, false);
+        } else if p.found.with_untracked(Option::is_some) {
+            ctx.reload(p);
         }
     };
     on_cleanup(cancel);
@@ -169,8 +190,19 @@ pub(super) fn SearchPane(pane: Pane) -> impl IntoView {
         if input.value().is_empty() {
             // Clearing shows everything right away.
             apply(&input);
-        } else if let Ok(h) = set_timeout_with_handle(move || apply(&input), FILTER_DELAY) {
+            search();
+            return;
+        }
+        let at = input.clone();
+        if let Ok(h) = set_timeout_with_handle(move || apply(&at), FILTER_DELAY) {
             let _ = pending.try_set_value(Some(h));
+        }
+        let go = move || {
+            apply(&input);
+            search();
+        };
+        if let Ok(h) = set_timeout_with_handle(go, SEARCH_DELAY) {
+            let _ = searching.try_set_value(Some(h));
         }
     };
     let toggle_options = move |_| {
@@ -183,13 +215,13 @@ pub(super) fn SearchPane(pane: Pane) -> impl IntoView {
     };
     // Some kind, size or time is chosen (shown on the options button while they're hidden).
     let narrowed = move || p.search_kind.get() + p.search_size.get() + p.search_time.get() > 0;
-    let pick = |label: &'static str, sig: RwSignal<usize>, names: Vec<&'static str>| {
+    let pick = move |label: &'static str, sig: RwSignal<usize>, names: Vec<&'static str>| {
         view! {
             // Each option says whether it's chosen, as the box's value can be set before its
             // options are in it; keys stay in the box (not the pane's shortcuts).
             <select class="search-pick" class:chosen=move || { sig.get() > 0 } aria-label=label title=label prop:value=move || sig.get().to_string()
                 on:keydown=|e| e.stop_propagation()
-                on:change=move |e| sig.set(event_target_value(&e).parse().unwrap_or(0))>
+                on:change=move |e| { sig.set(event_target_value(&e).parse().unwrap_or(0)); search() }>
                 {names.into_iter().enumerate().map(|(i, n)| view! { <option value=i.to_string() selected=move || sig.get() == i>{n}</option> }).collect_view()}
             </select>
         }
@@ -212,7 +244,7 @@ pub(super) fn SearchPane(pane: Pane) -> impl IntoView {
                 </datalist>
                 <input class="filter" type="search" list=format!("searches-{}", p.id) aria-label="Filter and search"
                     spellcheck="false" autocomplete="off"
-                    placeholder=move || if p.regex.get() { "Filter (regex); Enter searches subfolders" } else { "Filter; Enter searches subfolders" }
+                    placeholder=move || if p.regex.get() { "Filter and search subfolders (regex)" } else { "Filter and search subfolders" }
                     title=move || p.bad_filter.get().unwrap_or_else(|| {
                         if p.regex.get() { "Names matching this regular expression, any case".into() } else { "Names containing this; * and ? make a pattern, like IMG_*.jpg".into() }
                     })
@@ -223,7 +255,7 @@ pub(super) fn SearchPane(pane: Pane) -> impl IntoView {
                             if let Some(input) = ev.target().and_then(|t| t.dyn_into::<web_sys::HtmlInputElement>().ok()) {
                                 apply(&input);
                             }
-                            ctx.find(p);
+                            ctx.find(p, true);
                         }
                         "Escape" => { cancel(); ctx.close_search(p); }
                         _ => {}
@@ -233,18 +265,6 @@ pub(super) fn SearchPane(pane: Pane) -> impl IntoView {
                     on:mousedown=|ev| ev.prevent_default() on:click=toggle_regex>".*"</button>
             </div>
             <div class="tools">
-                <button class="btn icon-only small" title="Search this folder and its subfolders (Enter in the box)" aria-label="Search subfolders"
-                    on:click=move |_| ctx.find(p)>{ico(Icon::Search)}</button>
-                <button class="btn icon-only small clear" class:lit=move || { narrowed() || !p.filter.with(String::is_empty) }
-                    title="Clear the text, and back to any kind, size and time" aria-label="Clear"
-                    on:click=move |_| {
-                        cancel();
-                        p.filter.set(String::new());
-                        p.search_kind.set(0);
-                        p.search_size.set(0);
-                        p.search_time.set(0);
-                        p.arrange();
-                    }>{ico(Icon::Close)}</button>
                 <button class="btn icon-only small options" class:active=move || p.search_options.get() class:narrowed=move || { narrowed() && !p.search_options.get() }
                     aria-pressed=move || p.search_options.get().to_string() aria-label="Kind, size and time"
                     title=move || match (p.search_options.get(), narrowed()) {
@@ -252,7 +272,7 @@ pub(super) fn SearchPane(pane: Pane) -> impl IntoView {
                         (false, true) => "Show kind, size and time (some are chosen)",
                         (false, false) => "Show kind, size and time",
                     }
-                    on:click=toggle_options>{ico(Icon::Settings)}</button>
+                    on:click=toggle_options>{ico(Icon::Filter)}</button>
             </div>
             <button class="btn icon-only small close-filters" title="Close" aria-label="Close filter and search"
                 on:click=move |_| { cancel(); ctx.close_search(p); }>{ico(Icon::Close)}</button>

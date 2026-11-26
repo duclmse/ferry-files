@@ -302,10 +302,7 @@ td.name .where {
   gap: 6px;
 }
 
-/* Some kind, size or time is chosen while they're hidden. */
-/* Clear while there's something to clear, and the options button while some are chosen but
-   hidden. */
-.search-filters .clear.lit,
+/* The options button while some are chosen but hidden. */
 .search-filters .options.narrowed {
   color: var(--accent);
 }

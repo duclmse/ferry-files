@@ -67,8 +67,14 @@ pub(super) const COMMANDS: &[Command] = &[
         true,
     ),
     c(
+        "find_files",
+        "Find files on the computer by name, from fsd's index",
+        &["shift+cmd+KeyF"],
+        true,
+    ),
+    c(
         "filter",
-        "Filter; Enter searches subfolders",
+        "Filter, and search subfolders",
         &["cmd+KeyF", "Slash"],
         false,
     ),
@@ -494,8 +500,10 @@ pub(super) fn ShortcutsEditor() -> impl IntoView {
     let any_fixed = move || FIXED.iter().any(fixed_shows);
     view! {
         <div class="shortcuts">
-            <input class="key-search" type="search" placeholder="Search commands or keys" aria-label="Search commands or keys"
-                prop:value=move || query.get() on:input=move |e| query.set(event_target_value(&e))/>
+            <div class="key-search-bar">
+                <input class="key-search" type="search" placeholder="Search commands or keys" aria-label="Search commands or keys"
+                    prop:value=move || query.get() on:input=move |e| query.set(event_target_value(&e))/>
+            </div>
             {move || match dups.with(HashMap::len) {
                 0 => None,
                 1 => Some(view! { <p class="dup-warn">"One key is on more than one command, so only the first one runs. Remove it from the others."</p> }.into_any()),

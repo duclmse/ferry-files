@@ -808,8 +808,8 @@ enum Panel {
     History,
     /// The books under a folder.
     Library(Src, String),
-    /// The command palette.
-    Palette,
+    /// The command palette, with the text it starts with (":" finds files with fsd).
+    Palette(&'static str),
 }
 
 /// A side of a job: the computer, or a phone found again by its serial (by its id when it has none,

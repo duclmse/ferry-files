@@ -245,6 +245,15 @@
 }
 
 /* Keyboard shortcuts: the command, then its keys. */
+/* The search stays at the top while the list scrolls under it. */
+.shortcuts .key-search-bar {
+  position: sticky;
+  top: 0;
+  z-index: 1;
+  padding-bottom: 10px;
+  background: var(--panel);
+}
+
 .shortcuts .key-search {
   box-sizing: border-box;
   width: 100%;
@@ -506,6 +515,19 @@
   display: flex;
   flex-direction: column;
   gap: 2px;
+}
+/* The type in front of the address. */
+.conn-row .address {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  min-width: 0;
+}
+.conn-row .address b {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 .conn-row .about {
   font-size: 12px;

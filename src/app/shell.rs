@@ -347,7 +347,11 @@ pub fn App() -> impl IntoView {
         if let Some(b) = bound {
             let done = match b.id {
                 "palette" => {
-                    ctx.panel.set(Some(Panel::Palette));
+                    ctx.panel.set(Some(Panel::Palette("")));
+                    true
+                }
+                "find_files" => {
+                    ctx.panel.set(Some(Panel::Palette(":")));
                     true
                 }
                 "new_tab" => {
@@ -657,7 +661,7 @@ pub fn App() -> impl IntoView {
             Panel::Dupes(folders) => view! { <Duplicates folders=folders/> }.into_any(),
             Panel::Import(pane, from, targets) => view! { <ImportPhotos pane from targets/> }.into_any(),
             Panel::Library(src, dir) => view! { <Library src=src dir=dir/> }.into_any(),
-            Panel::Palette => view! { <Palette/> }.into_any(),
+            Panel::Palette(start) => view! { <Palette start=start/> }.into_any(),
         })}
     }
 }

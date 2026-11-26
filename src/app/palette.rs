@@ -299,7 +299,10 @@ impl Ctx {
 }
 
 #[component]
-pub(super) fn Palette() -> impl IntoView {
+pub(super) fn Palette(
+    /// The text the box starts with: ":" to find files on the computer.
+    start: &'static str,
+) -> impl IntoView {
     let ctx = expect_context::<Ctx>();
     let choices = StoredValue::new(ctx.choices());
     // What typing is matched against, per choice: the label, and the group with the label.
@@ -308,7 +311,7 @@ pub(super) fn Palette() -> impl IntoView {
             .map(|c| (lower(&c.label), lower(&format!("{} {}", c.group, c.label))))
             .collect::<Vec<_>>()
     }));
-    let query = RwSignal::new(String::new());
+    let query = RwSignal::new(start.to_string());
     let at = RwSignal::new(0usize);
     // After `:`, what fsd found for the text (or why it couldn't look), and the text asked last.
     let found = RwSignal::new(None::<Result<Vec<Entry>, String>>);
@@ -447,6 +450,18 @@ pub(super) fn Palette() -> impl IntoView {
                 // Not on to the window, which would open it again.
                 e.stop_propagation();
                 ctx.panel.set(None);
+            }
+            // ⌘⇧F while it's open goes to finding files, keeping what's typed after ":".
+            _ if chord_of(&e)
+                .and_then(|c| ctx.command_for(&c))
+                .is_some_and(|c| c.id == "find_files") =>
+            {
+                e.prevent_default();
+                e.stop_propagation();
+                if !finding() {
+                    query.set(":".into());
+                    at.set(0);
+                }
             }
             _ => {}
         }

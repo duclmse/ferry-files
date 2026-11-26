@@ -196,3 +196,12 @@ textarea {
   stroke-linecap: round;
   stroke-linejoin: round;
 }
+
+/* Delete icons are red, except on a red button. */
+.ico.del {
+  color: var(--danger);
+}
+.btn.danger.solid .ico.del,
+.btn:disabled .ico.del {
+  color: inherit;
+}

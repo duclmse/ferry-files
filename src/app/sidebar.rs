@@ -610,7 +610,7 @@ pub(super) fn ActivityBar() -> impl IntoView {
                 aria-pressed=move || ctx.side.get().to_string()
                 on:click=move |_| ctx.set_side(!ctx.side.get_untracked())>{ico(Icon::Sidebar)}</button>
             <button class="act" title=move || ctx.with_key("Commands", "palette") aria-label="Commands"
-                on:click=move |_| ctx.panel.set(Some(Panel::Palette))>{ico(Icon::Search)}</button>
+                on:click=move |_| ctx.panel.set(Some(Panel::Palette("")))>{ico(Icon::Search)}</button>
             <span class="grow"></span>
             <button class="act" title="Backups: files replaced or deleted by the app, which can be put back" aria-label="Backups"
                 on:click=move |_| ctx.panel.set(Some(Panel::Backups))>{ico(Icon::Backups)}</button>
@@ -931,13 +931,11 @@ pub(super) fn Settings() -> impl IntoView {
                     on:change=move |e| { let on = event_target_checked(&e); restore.set(on); store(RESTORE_KEY, if on { "1" } else { "0" }); }/>
                 "Bring back the tabs at launch"
             </label>
-            <p class="hint">"Opens the tabs, split and widths the app had when it quit. Tabs on a phone come back when it's connected."</p>
             <label class="check">
                 <input type="checkbox" prop:checked=stored_flag(super::workspace::LAST_TAB_CLOSES_KEY, true)
                     on:change=move |e| store(super::workspace::LAST_TAB_CLOSES_KEY, if event_target_checked(&e) { "1" } else { "0" })/>
                 "Dragging a pane's only tab to the other pane closes the pane"
             </label>
-            <p class="hint">"Otherwise the tab is copied, and both panes stay."</p>
         }
         .into_any()
     };
@@ -945,18 +943,15 @@ pub(super) fn Settings() -> impl IntoView {
         view! {
         {check(ctx.show_hidden.into(), Ctx::set_show_hidden, "Show hidden files (names starting with a dot)")}
         {check(ctx.colour_code.into(), Ctx::set_colour_code, "Colour code in the preview and the editor")}
-        <p class="hint">"Colours keywords, strings and comments in code files, by the file's extension or its first line (#!)."</p>
         {check(ctx.wrap_text.into(), Ctx::set_wrap_text, "Wrap long lines in the editor and the preview")}
         {check(ctx.line_numbers.into(), Ctx::set_line_numbers, "Line numbers in the editor")}
-        {check(ctx.verify.into(), Ctx::set_verify, "Check copies")}
-        <p class="hint">"Reads each copied file back and compares it with the original; a copy that doesn't match is removed and reported, and a move keeps its original. Copies to a phone over MTP take about twice as long. (adb copies are always checked.)"</p>
+        {check(ctx.verify.into(), Ctx::set_verify, "Check copies by reading them back")}
     }.into_any()
     };
     let phones = move || {
         view! {
         {check(ctx.auto_connect.into(), Ctx::set_auto_connect, "Connect phones when they're plugged in (adb if allowed, else MTP)")}
         {check(ctx.phone_thumbs.into(), Ctx::set_phone_thumbs, "Thumbnails of phone files")}
-        <p class="hint">{format!("Each phone thumbnail reads the whole image or EPUB over USB, once; then it's cached on {}. Files on {} always get thumbnails.", crate::os::the_computer(), crate::os::the_computer())}</p>
     }.into_any()
     };
     let video = move || {
@@ -968,30 +963,28 @@ pub(super) fn Settings() -> impl IntoView {
                 {HOLD_SPEEDS.iter().map(|s| view! { <option value=s.to_string()>{speed_label(*s)}</option> }).collect_view()}
             </select>
         </label>
-        <p class="hint">"The speed while the video is held down, or → or L is held."</p>
         <label class="check">
             <input type="checkbox" prop:checked=move || prefs.turn_controls.get()
                 on:change=move |e| prefs.set_turn_controls(event_target_checked(&e))/>
             "Turn the controls with the video"
         </label>
-        <p class="hint">"On: the controls stay along the bottom of the picture, so they're on its side when the video is. Off: they stay level under it."</p>
         <label class="row">
             "Subtitle languages"
             <input type="text" class="text" placeholder="en, vi" spellcheck="false" autocomplete="off"
                 prop:value=move || prefs.sub_langs.get()
                 on:change=move |e| prefs.set_sub_langs(event_target_value(&e).trim().to_string())/>
         </label>
-        <p class="hint">"Up to two, such as \"en, vi\" or \"English\". A video shows the subtitles in these languages, the first at the bottom and the second at the top, when their file names say the language (Movie.en.srt). If none do, the first subtitle file shows."</p>
     }.into_any()
     };
     let storage = move || {
         view! {
-        {folder("backups", "Backups", "Copies of files from before they were replaced or deleted. Kept until you clear them in Backups, which moves them to the Trash.")}
-        {folder("thumbs", "Thumbnail cache", "Made again when needed, so it's safe to clear.")}
-        {folder("opened", "Opened phone files", "Copies made to open phone files in other apps. Changes to them don't go back to the phone.")}
-        {folder("scripts", "Scripts", "Lua scripts for Run script… in the right-click menu. The example in it says what a script can do.")}
-        {move || error.get().map(|e| view! { <p class="error">{e}</p> })}
-    }.into_any()
+            {folder("backups", "Backups", "Files from before they were replaced or deleted")}
+            {folder("thumbs", "Thumbnail cache", "Safe to clear")}
+            {folder("opened", "Opened phone files", "Phone files opened in other apps")}
+            {folder("scripts", "Scripts", "Lua scripts for Run script…")}
+            {move || error.get().map(|e| view! { <p class="error">{e}</p> })}
+        }
+        .into_any()
     };
     let storage_name = format!("On {}", crate::os::this_computer());
     let sections: [(&'static str, String); 10] = [

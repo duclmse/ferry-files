@@ -239,7 +239,10 @@ impl Ctx {
 
     /// Searches the pane's folder and its subfolders for names containing the search text (or
     /// fitting it, with * and ?, or matching it with regex on), with the pane's search filters.
-    pub(super) fn find(self, p: Pane) {
+    /// Searches the pane's folder and its subfolders for what the filter pane has. `remember`
+    /// adds the text to the recent searches (Enter does; searching as you type doesn't, or every
+    /// pause would be kept).
+    pub(super) fn find(self, p: Pane, remember: bool) {
         let query = p.filter.get_untracked().trim().to_string();
         let (k, s, t) = (
             p.search_kind.get_untracked(),
@@ -280,7 +283,7 @@ impl Ctx {
             }
         }
         let label = label.join(", ");
-        if !query.is_empty() {
+        if remember && !query.is_empty() {
             self.searches.update(|v| {
                 v.retain(|q| *q != query);
                 v.insert(0, query.clone());
@@ -298,7 +301,12 @@ impl Ctx {
             }
             let args = json!({ "src": src.key(), "dir": dir, "query": query, "hidden": self.show_hidden.get_untracked(), "filters": filters, "regex": p.regex.get_untracked() });
             match call::<Matches>("find", args).await {
-                Ok(m) if p.cwd.get_untracked() == dir && p.src.get_untracked() == src => {
+                // Not when the folder or the text changed meanwhile: a newer search is coming.
+                Ok(m)
+                    if p.cwd.get_untracked() == dir
+                        && p.src.get_untracked() == src
+                        && p.filter.with_untracked(|f| f.trim() == query) =>
+                {
                     // The search text stays, and filters the results as they're the same names.
                     p.all.set(m.entries);
                     p.more.set(false);

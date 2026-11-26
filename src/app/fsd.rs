@@ -141,7 +141,7 @@ fn os_hint(s: &FsdStatus, os: Os) -> Option<&'static str> {
         Os::Mac if s.sees_protected == Some(true) => return None,
         Os::Mac => "macOS keeps background programs out of Desktop, Documents and Downloads. To search them with fsd, add the program above under System Settings > Privacy & Security > Full Disk Access.",
         Os::Windows => "It runs for the whole PC, so other people who sign in to it can search the names of the files it indexes.",
-        Os::Linux => "It runs while you're signed in (a systemd user service).",
+        Os::Linux => return None,
     })
 }
 
@@ -284,10 +284,9 @@ fn FsdForm(svc: Service) -> impl IntoView {
                         on:change=move |e| hidden.set(event_target_checked(&e))/>
                     "Leave out hidden files and folders"
                 </label>
-                <label class="stack" for="fsd-skip">"Leave out paths that match"</label>
+                <label class="stack" for="fsd-skip">"Leave out paths that match (one pattern a line)"</label>
                 <textarea id="fsd-skip" class="patterns" rows="10" spellcheck="false" autocomplete="off"
                     prop:value=move || skip.get() on:input=move |e| skip.set(event_target_value(&e))></textarea>
-                <p class="hint flush">"One pattern a line. ** stands for any folders and * for any part of a name, so **/node_modules/** leaves out every node_modules folder."</p>
                 <div class="row-buttons">
                     {move || {
                         let n = to_add.get().len();
@@ -310,7 +309,6 @@ fn FsdForm(svc: Service) -> impl IntoView {
                             load();
                         }>{ico(Icon::Restore)}</button>
                 </div>
-                <p class="hint flush">"Other settings stay as they are in the settings file."</p>
             }.into_any(),
         }}
         {move || saving.get().then(|| view! { <p class="hint">"Saving…"</p> })}
@@ -385,10 +383,6 @@ pub(super) fn SearchSettings() -> impl IntoView {
         .into_any()
     };
     view! {
-        <p class="hint flush">{format!(
-            "Searches in {}'s folders, and the palette's :, are much faster with fsd, the fs project's search service. It keeps an index of file names, and Ferry Files asks it whenever it's running.",
-            crate::os::the_computer()
-        )}</p>
         {move || match svc.status.get() {
             None => view! { <p class="hint">"Checking…"</p> }.into_any(),
             Some(Err(e)) => view! { <p class="error">{e}</p> }.into_any(),
@@ -461,7 +455,7 @@ mod tests {
         assert!(os_hint(&s, Os::Mac).unwrap().contains("Full Disk Access"));
         s.sees_protected = Some(true);
         assert!(os_hint(&s, Os::Mac).is_none());
-        assert!(os_hint(&s, Os::Linux).is_some());
+        assert!(os_hint(&s, Os::Linux).is_none());
     }
 
     #[test]

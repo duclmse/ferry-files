@@ -11,6 +11,7 @@ pub(crate) enum Icon {
     Backups,
     History,
     Settings,
+    Filter,
     Trash,
     Folder,
     File,
@@ -97,6 +98,7 @@ impl Icon {
             Icon::Settings => {
                 r#"<path d="M12.73 6.38 14.5 6.87v2.26l-1.77.49-.24.58.91 1.6-1.6 1.6-1.6-.91-.58.24-.49 1.77H6.87l-.49-1.77-.58-.24-1.6.91-1.6-1.6.91-1.6-.24-.58-1.77-.49V6.87l1.77-.49.24-.58-.91-1.6 1.6-1.6 1.6.91.58-.24.49-1.77h2.26l.49 1.77.58.24 1.6-.91 1.6 1.6-.91 1.6z"/><circle cx="8" cy="8" r="2"/>"#
             }
+            Icon::Filter => r#"<path d="M2.5 3h11L9.2 8.3v4.4l-2.4 1.2V8.3z"/>"#,
             Icon::Trash => r#"<path d="M2.5 4.5h11M6.5 4.5V3h3v1.5M4 4.5l.7 9h6.6l.7-9"/>"#,
             Icon::Folder => {
                 r#"<path d="M1.5 12.5v-9a1 1 0 0 1 1-1h3.5l1.5 2h6a1 1 0 0 1 1 1v7a1 1 0 0 1-1 1h-11a1 1 0 0 1-1-1z"/>"#
@@ -200,5 +202,10 @@ impl Icon {
 
 /// The icon, hidden from screen readers: the button's label or title says what it does.
 pub(crate) fn ico(i: Icon) -> impl IntoView {
-    view! { <svg class="ico" viewBox="0 0 16 16" aria-hidden="true" inner_html=i.paths()></svg> }
+    let class = if matches!(i, Icon::Trash) {
+        "ico del"
+    } else {
+        "ico"
+    };
+    view! { <svg class=class viewBox="0 0 16 16" aria-hidden="true" inner_html=i.paths()></svg> }
 }

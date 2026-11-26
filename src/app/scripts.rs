@@ -262,7 +262,6 @@ pub(super) fn ScriptSettings() -> impl IntoView {
         });
     };
     view! {
-        <p class="hint flush">"Lua scripts to run on the files picked (or the folder), from Run script in the right-click menu. They're found in the scripts folder and in the files and folders added here. The scripting guide says what a script can do."</p>
         <div class="script-places">
             <div class="script-place">
                 <span class="path" title=move || { let f = ctx.script_folder.get(); shown(&if f.is_empty() { own.get() } else { f }) }>
@@ -311,7 +310,6 @@ pub(super) fn ScriptSettings() -> impl IntoView {
         </div>
         {move || error.get().or_else(|| ctx.script_error.get()).map(|e| view! { <p class="error">{e}</p> })}
         <h3>"Scripts"</h3>
-        <p class="hint flush">"A script with a shortcut runs on what's picked (or the folder) when it's pressed."</p>
         {move || ctx.script_key_note.get().map(|e| view! { <p class="error">{e}</p> })}
         {move || {
             let list = ctx.scripts.get();
