@@ -543,11 +543,8 @@ fn apply() -> String {
     return match crate::fsd::reload() {
         Ok(None) => "Saved. fsd starts with them next time it runs.".into(),
         Ok(Some(later)) if later.is_empty() => "Saved. fsd follows them now.".into(),
-        Ok(Some(later)) => format!(
-            "Saved. fsd follows them now, except {}, which it reads when it starts: install it again to restart it.",
-            later.join(", ")
-        ),
-        Err(e) => format!("Saved, but fsd couldn't take them now ({e}). Install it again to restart it with them."),
+        Ok(Some(later)) => format!("Saved. Install fsd again to apply {}.", later.join(", ")),
+        Err(e) => format!("Saved, but fsd couldn't apply them ({e}). Install it again."),
     };
     #[cfg(not(feature = "fsd"))]
     "Saved. Install fsd again to restart it with them.".into()
@@ -572,7 +569,7 @@ pub(super) async fn fsd_set_settings(settings: FsdSettings) -> Result<FsdSaved, 
     blocking(move || {
         if let Some(r) = registered().filter(|r| !ours(r)) {
             return Err(format!(
-                "fsd is set up as a service with its own settings ({}), so these wouldn't be used. Change that service's settings file instead.",
+                "fsd runs as a service with its own settings ({}). Change them there.",
                 r.place
             ));
         }
@@ -636,7 +633,7 @@ pub(super) async fn fsd_install() -> Result<FsdStatus, String> {
         })?;
         if let Some(r) = registered().filter(|r| !ours(r)) {
             return Err(format!(
-                "fsd is set up as a service with its own settings already ({}). Ferry Files leaves it as it is, and searches with it when it's running.",
+                "fsd already runs as a service with its own settings ({}). Ferry Files leaves it alone and searches with it.",
                 r.place
             ));
         }

@@ -592,7 +592,7 @@ pub(super) fn Palette(
                                     },
                                     None => "Looking…".to_string(),
                                     Some(Err(e)) => e,
-                                    Some(Ok(_)) if inside.get() => "No text file holds all those words. fsd reads the text of files only when Settings > Search says to.".to_string(),
+                                    Some(Ok(_)) if inside.get() => "No text file has all those words. Check that Settings > Search reads text.".to_string(),
                                     Some(Ok(_)) => "Nothing fits that search.".to_string(),
                                 }
                             };
@@ -620,11 +620,11 @@ pub(super) fn Palette(
                     })}
                 </div>
                 <p class="hint">{move || if finding() && inside.get() {
-                    "↑ ↓ to choose · ↵ to open · Esc to close. Text files on the computer holding every word typed, in any case, from fsd's index of their text (fsd reads only text files, and the start of big ones; not PDFs or EPUBs)."
+                    "↑ ↓ to choose · ↵ to open · Esc to close. Text files with every word typed, in any case (not PDFs or EPUBs)."
                 } else if finding() {
-                    "↑ ↓ to choose · ↵ to open · Esc to close. Files and folders on the computer from fsd's index, in fsd's search syntax: case: ww: regex: ext: size: dm: path:, | for or, ! for not. With .* on, the whole text is a regular expression."
+                    "↑ ↓ to choose · ↵ to open · Esc to close. fsd's syntax: case: ww: regex: ext: size: dm: path:, | for or, ! for not."
                 } else {
-                    "↑ ↓ to choose · ↵ to run · Esc to close. > for actions only, : to find files. Actions work on the active pane and what's picked in it."
+                    "↑ ↓ to choose · ↵ to run · Esc to close. > for actions only, : to find files."
                 }}</p>
             </div>
         </div>

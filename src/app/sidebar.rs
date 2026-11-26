@@ -528,7 +528,7 @@ pub(super) fn Sidebar() -> impl IntoView {
             // Shares mounted outside the app (or before the list had them).
             {move || ctx.other_mounts().into_iter().map(|m| mounted(m.share.trim_start_matches("smb://").to_string(), m.path).into_any()).collect_view()}
             {move || (ctx.conns.with(Vec::is_empty) && ctx.smb_mounts.with(Vec::is_empty))
-                .then(|| add_row("Add an SFTP, WebDAV or FTP server, an SMB share (Windows sharing, NAS), an NFS export, an S3 bucket, a Windows computer running Everything, or another computer running fsd"))}
+                .then(|| add_row("Add a server: SFTP, SMB, NFS, WebDAV, FTP, S3, Everything or fsd"))}
         })}
     })
     };

@@ -62,11 +62,11 @@ impl Service {
 /// Where fsd can be put for the app to find it.
 fn where_to_put(os: Os) -> String {
     let put = match os {
-        Os::Mac => "Or put the fsd program in /opt/homebrew/bin, /usr/local/bin or ~/.cargo/bin (from the fs project: cargo install --path fs/crates/fs-server), then check again.",
-        Os::Windows => "Or put fsd.exe in a folder on the PATH or in %USERPROFILE%\\.cargo\\bin (from the fs project: cargo install --path fs/crates/fs-server), then check again.",
-        Os::Linux => "Or put the fsd program in ~/.local/bin, ~/.cargo/bin or /usr/local/bin (from the fs project: cargo install --path fs/crates/fs-server), then check again.",
+        Os::Mac => "Or install it (cargo install --path fs/crates/fs-server) into /opt/homebrew/bin, /usr/local/bin or ~/.cargo/bin, then check again.",
+        Os::Windows => "Or install it (cargo install --path fs/crates/fs-server) into %USERPROFILE%\\.cargo\\bin or a folder on the PATH, then check again.",
+        Os::Linux => "Or install it (cargo install --path fs/crates/fs-server) into ~/.local/bin, ~/.cargo/bin or /usr/local/bin, then check again.",
     };
-    format!("This copy of Ferry Files came without fsd: the app bundle carries it, and `cargo tauri dev` builds it. {put}")
+    format!("This copy of Ferry Files has no fsd (the app bundle and `cargo tauri dev` include it). {put}")
 }
 
 /// What fsd has, in a sentence.
@@ -116,7 +116,7 @@ fn describe(s: &FsdStatus, os: Os) -> (String, String) {
         (None, _, _) => (
             "fsd isn't installed as a service".into(),
             if os == Os::Windows {
-                "Install it to run it for this PC from startup. Windows asks for an administrator's permission.".into()
+                "Install it to run from startup. Windows asks for an administrator's permission.".into()
             } else {
                 "Install it to start it now and each time you sign in.".into()
             },
@@ -139,8 +139,8 @@ fn os_hint(s: &FsdStatus, os: Os) -> Option<&'static str> {
     Some(match os {
         // Not once fsd has shown it can look in them.
         Os::Mac if s.sees_protected == Some(true) => return None,
-        Os::Mac => "macOS keeps background programs out of Desktop, Documents and Downloads. To search them with fsd, add the program above under System Settings > Privacy & Security > Full Disk Access.",
-        Os::Windows => "It runs for the whole PC, so other people who sign in to it can search the names of the files it indexes.",
+        Os::Mac => "To search Desktop, Documents and Downloads, add the program above to System Settings > Privacy & Security > Full Disk Access.",
+        Os::Windows => "It runs for the whole PC: anyone who signs in can search the names it indexes.",
         Os::Linux => return None,
     })
 }
@@ -287,7 +287,7 @@ fn FsdForm(svc: Service) -> impl IntoView {
                         on:change=move |e| hidden.set(event_target_checked(&e))/>
                     "Leave out hidden files and folders"
                 </label>
-                <label class="check" title="For finding the words inside files (⌘⇧F, then the page button). fsd reads text and code files, up to 512 KB of each, and keeps their words in its index.">
+                <label class="check" title="Lets ⌘⇧F find words inside text and code files (the first 512 KB of each).">
                     <input type="checkbox" prop:checked=move || text.get()
                         on:change=move |e| text.set(event_target_checked(&e))/>
                     "Read the text of text and code files, to find the words in them"

@@ -537,7 +537,7 @@ pub(super) fn BatchRename(pane: usize, items: Vec<Entry>) -> impl IntoView {
         });
     };
 
-    let tokens = "{name} is the name (after Find), {n} counts up from Start ({n:3} gives 001), {date} is the date modified. The extension stays.";
+    let tokens = "{name}: the name after Find. {n}: a number from Start ({n:3} gives 001). {date}: date modified. The extension stays.";
     view! {
         <div class="overlay" on:click=move |_| if !working.get_untracked() { close() }>
             <div class="dialog wide batch-rename" on:click=|e| e.stop_propagation()

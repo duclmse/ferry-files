@@ -155,8 +155,8 @@ pub(super) fn WifiDialog() -> impl IntoView {
     };
     let connect = move |a: String| ctx.connect_wifi(a, error, working);
     let steps = [
-        "On the phone, open Settings → Developer options → Wireless debugging and turn it on. The phone and this computer must be on the same network.",
-        "The first time: tap “Pair device with pairing code” and type the address and code it shows below.",
+        "On the phone, turn on Settings → Developer options → Wireless debugging. Both must be on the same network.",
+        "First time: tap “Pair device with pairing code” and type its address and code below.",
         "Then connect with the address under “IP address & Port”.",
     ];
     view! {

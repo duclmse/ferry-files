@@ -138,7 +138,7 @@ pub(super) fn Backups() -> impl IntoView {
         <div class="overlay" on:click=move |_| close()>
             <div class="dialog wide" on:click=|e| e.stop_propagation()>
                 <h2>"Backups"</h2>
-                <p class="hint">"Copies of files from before the app replaced or deleted them. Restoring puts a copy back; a file already there is backed up first."</p>
+                <p class="hint">"Old versions of files the app replaced or deleted. Restore puts one back, backing up what's there first."</p>
                 <input class="filter-wide" type="search" placeholder="Filter by name" prop:value=move || filter.get()
                     on:input=move |ev| filter.set(event_target_value(&ev))/>
                 {move || message.get().map(|(m, ok)| view! { <p class:ok=ok class:error=!ok>{m}</p> })}
@@ -217,7 +217,7 @@ pub(super) fn History() -> impl IntoView {
         <div class="overlay" on:click=move |_| close()>
             <div class="dialog wide" on:click=|e| e.stop_propagation()>
                 <h2>"History"</h2>
-                <p class="hint">{move || format!("What was done since the app started. Renames, new items, deletes, copies and moves can be undone{}; replaced files can be put back from Backups.", match ctx.key_label("undo") { k if k.is_empty() => String::new(), k => format!(" ({k} undoes the newest)") })}</p>
+                <p class="hint">{move || format!("What was done since the app started. Renames, new items, deletes, copies and moves can be undone{}; replaced files are in Backups.", match ctx.key_label("undo") { k if k.is_empty() => String::new(), k => format!(" ({k} undoes the newest)") })}</p>
                 <div class="history">
                     {move || {
                         let h = ctx.history.get();

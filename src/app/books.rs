@@ -389,7 +389,7 @@ pub(super) fn Library(src: Src, dir: String) -> impl IntoView {
                 {move || form.get().map(|f| match f {
                     BookForm::Info => view! {
                         <div class="lib-form">
-                            <p class="hint">{format!("Set these on the {} picked books. Empty fields are left as they are. Each book is backed up before it's changed.", n_picked())}</p>
+                            <p class="hint">{format!("Sets these on the {} picked books; empty fields stay as they are. Each book is backed up first.", n_picked())}</p>
                             {field("Authors", "Ann Smith; Bob Jones (replaces the authors)", authors)}
                             {field("Language", "en", language)}
                             {field("Publisher", "", publisher)}
@@ -401,7 +401,7 @@ pub(super) fn Library(src: Src, dir: String) -> impl IntoView {
                     }.into_any(),
                     BookForm::Shrink => view! {
                         <div class="lib-form">
-                            <p class="hint">"Makes a smaller copy next to each book, named “… (smaller).epub”: big pictures are scaled down and photos saved again at the quality below. The books themselves aren't changed."</p>
+                            <p class="hint">"Saves “… (smaller).epub” next to each book, with big pictures scaled down and photos at the quality below. The books aren't changed."</p>
                             {field("Longest side of pictures (pixels)", "1600", side)}
                             {field("Photo quality (30–95)", "80", quality)}
                             <div class="actions"><span class="grow"></span>
@@ -421,7 +421,7 @@ pub(super) fn Library(src: Src, dir: String) -> impl IntoView {
                         Some(Err(e)) => view! { <p class="error">{e}</p> }.into_any(),
                         Some(Ok((all, _))) if all.is_empty() => view! { <p class="hint">"No EPUB books in this folder or its subfolders."</p> }.into_any(),
                         Some(Ok((_, complete))) => view! {
-                            {(!complete).then(|| view! { <p class="hint">"Stopped looking early: there are too many files. Open a smaller folder to see all its books."</p> })}
+                            {(!complete).then(|| view! { <p class="hint">"Too many files to look through. Open a smaller folder to see all its books."</p> })}
                             <For each=shown key=|e| (e.path.clone(), e.size, e.mtime) let:e>
                                 {
                                     let e = StoredValue::new(e);

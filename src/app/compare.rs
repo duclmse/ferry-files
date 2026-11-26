@@ -150,7 +150,7 @@ pub(super) fn CompareBar(pane: Pane) -> impl IntoView {
             let there = base(&ctx.other(p).cwd.get());
             view! {
                 <div class="compare-bar">
-                    <span class="summary" title="The stripe by each item: blue only here, green newer here, orange older here, red different. Items that are the same are faded.">{move || if ctx.comparing.get() { "Comparing…".to_string() } else { summary.clone() }}</span>
+                    <span class="summary" title="Blue: only here. Green: newer here. Orange: older here. Red: different. Faded: the same.">{move || if ctx.comparing.get() { "Comparing…".to_string() } else { summary.clone() }}</span>
                     <label class="row" title="Hide the items that are the same on both sides">
                         <input type="checkbox" prop:checked=move || p.diff_only.get()
                             on:change=move |e| { p.diff_only.set(event_target_checked(&e)); p.arrange(); }/>"Differences only"</label>

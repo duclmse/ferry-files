@@ -139,7 +139,7 @@ pub fn lasting_exe(exe: &Path) -> Result<PathBuf, String> {
     if cfg!(target_os = "macos") {
         let s = exe.to_string_lossy();
         if s.starts_with("/Volumes/") || s.contains("/AppTranslocation/") {
-            return Err("Ferry Files is running from a disk image or a temporary place, so a service can't start fsd from it later. Move Ferry Files to the Applications folder, open it from there, and install again.".into());
+            return Err("Ferry Files is running from a disk image or a temporary folder, where a service can't find fsd later. Move it to Applications, open it from there and install again.".into());
         }
     }
     if cfg!(target_os = "linux") {
@@ -433,8 +433,7 @@ pub fn show_properties(app: &tauri::AppHandle, path: &Path) -> Result<(), String
         // -1743: the app isn't allowed to control Finder.
         if err.contains("-1743") {
             return Err(
-                "Finder didn't let the app show Get Info. Allow it in System Settings > \
-                 Privacy & Security > Automation, then try again."
+                "Finder didn't allow Get Info. Turn it on in System Settings > Privacy & Security > Automation."
                     .into(),
             );
         }

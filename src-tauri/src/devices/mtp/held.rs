@@ -104,7 +104,7 @@ pub(super) fn why_not_open(bus: u32, address: u32, vendor: u16, product: u16) ->
         return Some(held_message(h));
     }
     held.iter().any(|h| h.pid == me).then(|| {
-        "Couldn't open the MTP device, and the failed tries still hold it. Unplug the phone, plug it in again, unlock it and choose File transfer.".to_string()
+        "Couldn't open the phone over MTP. Unplug it, plug it in again, unlock it and choose File transfer.".to_string()
     })
 }
 

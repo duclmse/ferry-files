@@ -82,7 +82,7 @@ pub(super) fn ImportPhotos(
         <div class="overlay" on:click=move |_| close()>
             <div class="dialog import" on:click=|e| e.stop_propagation()>
                 <h2>"Import photos"</h2>
-                <p class="hint">{move || from.with_value(|(s, d)| format!("Photos and videos in {d} on {}, and in its folders, sorted by the date each was taken. Ones imported before (same name and size) are left out.", ctx.place(*s)))}</p>
+                <p class="hint">{move || from.with_value(|(s, d)| format!("Photos and videos in {d} on {} and its folders, by date taken. Ones imported before (same name and size) are left out.", ctx.place(*s)))}</p>
                 <label class="row">"Into"
                     <select on:change=move |e| target.set(event_target_value(&e).parse().unwrap_or(0))>
                         {targets.get_value().into_iter().enumerate().map(|(i, (s, d))| view! {

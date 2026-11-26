@@ -199,9 +199,9 @@ pub(super) fn Notices(pane: Pane) -> impl IntoView {
                 let label = match (items.as_slice(), forever) {
                     // A sidebar folder on the computer: to the Trash, asked first.
                     ([e], false) if src == Src::Mac => format!("Move the folder {} and everything in it to the {trash}?", e.name),
-                    ([e], true) if e.dir => format!("Delete the folder {} and everything in it permanently? It won't go to the {trash} and no backup is kept. This can't be undone.", e.name),
-                    ([e], true) => format!("Delete {} permanently? It won't go to the {trash} and no backup is kept. This can't be undone.", e.name),
-                    (_, true) => format!("Delete {} items permanently, folders with everything in them? They won't go to the {trash} and no backup is kept. This can't be undone.", items.len()),
+                    ([e], true) if e.dir => format!("Permanently delete the folder {} and everything in it? It skips the {trash}, keeps no backup and can't be undone.", e.name),
+                    ([e], true) => format!("Permanently delete {}? It skips the {trash}, keeps no backup and can't be undone.", e.name),
+                    (_, true) => format!("Permanently delete {} items, folders with everything in them? They skip the {trash}, keep no backup and can't be undone.", items.len()),
                     ([e], false) if e.dir => format!("Delete the folder {} from {place}? Only an empty folder can be deleted.", e.name),
                     ([e], false) => format!("Delete {} from {place}? A backup is kept on {}.", e.name, crate::os::the_computer()),
                     _ => format!("Delete {} items from {place}? Files are backed up on {}; folders are deleted only when empty.", items.len(), crate::os::the_computer()),

@@ -287,9 +287,13 @@ const PIECE: u64 = 8 * 1024 * 1024;
 fn too_big(size: u64, max: u64) -> String {
     let gb = |n: u64| format!("{:.1} GB", n as f64 / 1e9);
     format!(
-        "It's {}, and the disk it would go to (FAT32) takes files up to {}. Copy it to a disk formatted exFAT or NTFS instead.",
+        "It's {}; FAT32 disks take files up to {}. Use an exFAT or NTFS disk.",
         gb(size),
-        if max == u32::MAX as u64 { "4 GB".to_string() } else { gb(max) }
+        if max == u32::MAX as u64 {
+            "4 GB".to_string()
+        } else {
+            gb(max)
+        }
     )
 }
 

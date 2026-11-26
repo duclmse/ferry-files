@@ -298,7 +298,7 @@ pub(super) fn DeviceFinder() -> impl IntoView {
                         <p class="hint">{if f.transport == "iphone" {
                             format!("{} doesn't trust {} yet. Unlock it and tap Trust; trying again every 5 seconds.", f.name, crate::os::this_computer())
                         } else {
-                            format!("{} won't share its files yet. Unlock it and allow access to its data; trying again every 5 seconds.", f.name)
+                            format!("Unlock {} and allow access to its data. Trying again every 5 seconds.", f.name)
                         }}</p>
                         <button class="btn small" on:click=move |_| ctx.stop_awaiting()>"Stop"</button>
                     </div>
@@ -414,7 +414,7 @@ pub(super) fn DeviceFinder() -> impl IntoView {
                 let ids: Vec<String> = a.iter().chain(m.iter()).map(|f| f.usb.clone()).collect();
                 let connecting = move || ctx.connecting.get().is_some_and(|u| ids.contains(&u));
                 let adb_title = if a.is_some() { "Connect with adb (USB debugging): faster, and can create files at the top level" } else { adb_off };
-                let mtp_title = if m.is_some() { "Connect with MTP (File transfer). Close Android File Transfer first: only one app can use a device's MTP at a time." } else { "Not available: set the phone's USB mode to File transfer" };
+                let mtp_title = if m.is_some() { "Connect with MTP (File transfer). Quit Android File Transfer first: only one app can use MTP at a time." } else { "Not available: set the phone's USB mode to File transfer" };
                 let (has_a, has_m) = (a.is_some(), m.is_some());
                 let tip = name.clone();
                 view! {

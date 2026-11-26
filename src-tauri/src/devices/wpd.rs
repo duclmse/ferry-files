@@ -24,8 +24,7 @@ const CACHE_TTL: Duration = Duration::from_secs(3);
 /// The device itself, whose children are the storages.
 const DEVICE: &str = "DEVICE";
 
-pub const MTP_HINT: &str = "Check that the phone is unlocked, connected with a data cable, and set to \
-\"File transfer\" (USB notification on the phone). If it still isn't found, unplug it and plug it in again.";
+pub const MTP_HINT: &str = "Unlock the phone and set it to \"File transfer\" (in its USB notification). Still not found? Use a data cable, or plug it in again.";
 
 static QUITTING: AtomicBool = AtomicBool::new(false);
 

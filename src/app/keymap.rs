@@ -524,8 +524,8 @@ pub(super) fn ShortcutsEditor() -> impl IntoView {
             </div>
             {move || match dups.with(HashMap::len) {
                 0 => None,
-                1 => Some(view! { <p class="dup-warn">"One key is on more than one command, so only the first one runs. Remove it from the others."</p> }.into_any()),
-                n => Some(view! { <p class="dup-warn">{format!("{n} keys are on more than one command, so only the first one runs. Remove them from the others.")}</p> }.into_any()),
+                1 => Some(view! { <p class="dup-warn">"One key is on several commands; only the first runs."</p> }.into_any()),
+                n => Some(view! { <p class="dup-warn">{format!("{n} keys are on several commands; only the first runs.")}</p> }.into_any()),
             }}
             <dl>
                 {COMMANDS.iter().map(|c| {

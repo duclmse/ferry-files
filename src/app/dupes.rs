@@ -221,7 +221,7 @@ pub(super) fn Duplicates(folders: Vec<(Src, String)>) -> impl IntoView {
         <div class="overlay" on:click=move |_| if !deleting.get_untracked() { close() }>
             <div class="dialog wide dupes" on:click=|e| e.stop_propagation()>
                 <h2>"Find duplicates"</h2>
-                <p class="hint">"Files with the same content, in these folders and their subfolders. Compared by size, then by their bytes."</p>
+                <p class="hint">"Files with the same content in these folders and their subfolders."</p>
                 <div class="dupe-folders">
                     {folders.get_value().into_iter().enumerate().map(|(i, (src, dir))| view! {
                         <label class="row">

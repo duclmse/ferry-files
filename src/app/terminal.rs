@@ -343,7 +343,7 @@ impl Ctx {
     pub(super) fn toggle_terminal(self, p: Pane) {
         let running = p.term_id.get_untracked().is_some();
         if !running && !p.term.get_untracked() && !self.has_shell(p.src.get_untracked()) {
-            p.error("This device has no command line. The terminal works on this computer, phones connected with adb, and SFTP servers.");
+            p.error("No terminal here. It works on this computer, adb phones and SFTP servers.");
             return;
         }
         p.term.update(|t| *t = !*t);

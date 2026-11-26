@@ -653,7 +653,7 @@ pub(super) fn FullImage(
             <span class="btn-group" role="group">
                 <button class="btn" title="Zoom out" aria-label="Zoom out" on:click=move |_| zoom_by_hand(zoom.get_untracked() / 1.25)>{ico(Icon::ZoomOut)}</button>
                 <button class="btn zoom" aria-haspopup="menu"
-                    title="Of the picture's own size. Click (or double-click the picture) for 100% or to fit. Right-click to fit the whole picture, its width, or show its actual size."
+                    title="Click for 100% or to fit; right-click for more fits."
                     on:click=move |_| fit_or_actual()
                     on:contextmenu=move |ev: web_sys::MouseEvent| {
                         ev.prevent_default();
