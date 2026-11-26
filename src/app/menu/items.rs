@@ -405,8 +405,8 @@ impl Ctx {
         }
     }
 
-    /// Delete, and on the computer Delete permanently. `what` is "3 items", or "" for one item;
-    /// `dir`: that one item is a folder.
+    /// Delete: to the Trash on the computer (Delete permanently is only a shortcut, ⌥⌘⌫).
+    /// `what` is "3 items", or "" for one item; `dir`: that one item is a folder.
     pub(super) fn delete_items(self, p: Pane, what: &str, dir: bool) -> Vec<MenuItem> {
         let enabled = !self.read_only(p.src.get_untracked());
         let mut v = vec![];
@@ -421,18 +421,6 @@ impl Ctx {
                 label,
                 key: "delete",
                 act: Act::Delete,
-                danger: true,
-                enabled,
-            });
-            let label = if what.is_empty() {
-                "Delete permanently…".to_string()
-            } else {
-                format!("Delete {what} permanently…")
-            };
-            v.push(MenuItem::Do {
-                label,
-                key: "delete_forever",
-                act: Act::DeleteForever,
                 danger: true,
                 enabled,
             });

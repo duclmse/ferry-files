@@ -82,7 +82,6 @@ impl Ctx {
             (Act::Favourite, Some(e)) => self.toggle_fav(p.src.get_untracked(), e.path),
             (Act::Favourite, None) => self.toggle_fav(p.src.get_untracked(), p.cwd.get_untracked()),
             (Act::Delete, Some(_)) => self.ask_delete(p, false),
-            (Act::DeleteForever, Some(_)) => self.ask_delete(p, true),
             (Act::NewFolder, _) => p.notice.set(Notice::NewItem { folder: true }),
             (Act::NewFile, _) => p.notice.set(Notice::NewItem { folder: false }),
             (Act::Upload, _) => self.upload(p),

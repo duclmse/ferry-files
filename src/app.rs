@@ -423,8 +423,6 @@ enum Act {
     Favourite,
     /// To the Trash on the computer; elsewhere deleted with a backup.
     Delete,
-    /// Deleted with no backup, folders with everything in them: only on the computer.
-    DeleteForever,
     Sync,
     Read,
     Check,
@@ -496,8 +494,8 @@ enum Act {
     OtherPane,
     /// A sidebar disk: ejects it.
     Eject,
-    /// A sidebar folder: deletes it, `true` permanently (asked first).
-    DeletePlace(bool),
+    /// A sidebar folder: deletes it (asked first).
+    DeletePlace,
     /// Runs a Lua script (`Ctx::scripts`' index) on what's picked (or the folder).
     Script(usize),
     /// Opens Settings > Scripts.

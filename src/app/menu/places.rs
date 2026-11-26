@@ -98,14 +98,7 @@ impl Ctx {
                 v.push(MenuItem::Do {
                     label: format!("Move to {trash}…"),
                     key: "",
-                    act: Act::DeletePlace(false),
-                    danger: true,
-                    enabled: writable,
-                });
-                v.push(MenuItem::Do {
-                    label: "Delete permanently…".into(),
-                    key: "",
-                    act: Act::DeletePlace(true),
+                    act: Act::DeletePlace,
                     danger: true,
                     enabled: writable,
                 });
@@ -113,7 +106,7 @@ impl Ctx {
                 v.push(MenuItem::Do {
                     label: "Delete folder if empty…".into(),
                     key: "",
-                    act: Act::DeletePlace(false),
+                    act: Act::DeletePlace,
                     danger: true,
                     enabled: writable,
                 });
@@ -191,7 +184,7 @@ impl Ctx {
             Act::Favourite => self.toggle_fav(src, path),
             Act::Eject => self.eject(path),
             Act::Rename => self.side_renaming.set(Some((src, path))),
-            Act::DeletePlace(forever) => {
+            Act::DeletePlace => {
                 let e = Entry {
                     name: base(&path),
                     path,
@@ -200,7 +193,7 @@ impl Ctx {
                     mtime: 0,
                     hidden: false,
                 };
-                p.notice.set(Notice::ConfirmDelete(src, vec![e], forever));
+                p.notice.set(Notice::ConfirmDelete(src, vec![e], false));
             }
             _ => {}
         }
