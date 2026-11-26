@@ -16,6 +16,13 @@ use std::time::Duration;
 use wasm_bindgen::closure::Closure;
 use wasm_bindgen::JsValue;
 
+mod resume;
+mod subtitles;
+
+pub(super) use resume::*;
+pub use subtitles::Track;
+pub(super) use subtitles::*;
+
 /// The video settings (Settings > Video), kept in the web view's storage, so a popped-out
 /// window has them too.
 #[derive(Clone, Copy)]
@@ -137,12 +144,6 @@ impl Turn {
 
 // ---- Where each video or sound was stopped ----
 
-const RESUME_KEY: &str = "ferry-files.resume";
-/// How many are remembered; the ones played longest ago are forgotten first.
-const RESUME_KEEP: usize = 300;
-/// Stopped before this, or this close to the end: it starts from the beginning next time.
-const RESUME_EDGE: f64 = 5.0;
-
 /// What a file is remembered by: its path, size and date (not the device's number, which
 /// changes from one connection to the next).
 /// What's shown full screen, if anything (WebKit names it with a prefix).
@@ -183,95 +184,6 @@ pub(super) fn enter_full_screen(el: &JsValue) -> bool {
         .unwrap_or(false);
     enabled && (call_method(el, "requestFullscreen") || call_method(el, "webkitRequestFullscreen"))
 }
-
-pub(super) fn resume_key(e: &Entry) -> String {
-    format!("{}|{}|{}", e.path, e.size, e.mtime)
-}
-
-fn resumes() -> serde_json::Map<String, serde_json::Value> {
-    stored(RESUME_KEY)
-        .and_then(|s| serde_json::from_str(&s).ok())
-        .unwrap_or_default()
-}
-
-fn resume_at(key: &str) -> Option<f64> {
-    resumes().get(key)?.get(0)?.as_f64()
-}
-
-/// Remembers where `m` is, or forgets it when it's near the start or the end.
-fn remember(key: &str, m: &web_sys::HtmlMediaElement) {
-    let (t, d) = (m.current_time(), m.duration());
-    if !d.is_finite() || d <= 0.0 {
-        return;
-    }
-    let mut all = resumes();
-    if t >= RESUME_EDGE && t < d - RESUME_EDGE {
-        all.insert(key.to_string(), json!([t, js_sys::Date::now()]));
-        if all.len() > RESUME_KEEP {
-            let mut by_age: Vec<(String, f64)> = all
-                .iter()
-                .map(|(k, v)| (k.clone(), v.get(1).and_then(|s| s.as_f64()).unwrap_or(0.0)))
-                .collect();
-            by_age.sort_by(|a, b| a.1.total_cmp(&b.1));
-            for (k, _) in by_age.into_iter().take(all.len() - RESUME_KEEP) {
-                all.remove(&k);
-            }
-        }
-    } else if all.remove(key).is_none() {
-        return;
-    }
-    store(RESUME_KEY, &serde_json::Value::Object(all).to_string());
-}
-
-/// Remembering where a video or sound is as it plays: now and then, when it's paused, and when
-/// it's closed. Returns the handlers for `loadedmetadata` (going on from where it was stopped,
-/// or from `start`), `timeupdate`, `pause` and `ended`.
-#[derive(Clone, Copy)]
-struct Resume {
-    key: StoredValue<String>,
-    last: StoredValue<f64>,
-}
-
-impl Resume {
-    fn new(key: String, el: StoredValue<Option<web_sys::HtmlMediaElement>, LocalStorage>) -> Self {
-        let r = Resume {
-            key: StoredValue::new(key),
-            last: StoredValue::new(0.0),
-        };
-        let key = r.key;
-        on_cleanup(move || {
-            if let (Some(Some(m)), Some(k)) = (el.try_get_value(), key.try_get_value()) {
-                remember(&k, &m);
-            }
-        });
-        r
-    }
-
-    /// Once the length is known: on from `start`, or from where it was stopped. Says where.
-    fn restore(&self, m: &web_sys::HtmlMediaElement, start: Option<f64>) -> Option<f64> {
-        let at = start.or_else(|| resume_at(&self.key.get_value()))?;
-        let d = m.duration();
-        let at = if d.is_finite() { at.min(d - 1.0) } else { at };
-        (at > 0.0).then(|| {
-            m.set_current_time(at);
-            self.last.set_value(at);
-            at
-        })
-    }
-
-    fn tick(&self, m: &web_sys::HtmlMediaElement) {
-        if (m.current_time() - self.last.get_value()).abs() >= 5.0 {
-            self.save(m);
-        }
-    }
-
-    fn save(&self, m: &web_sys::HtmlMediaElement) {
-        self.last.set_value(m.current_time());
-        remember(&self.key.get_value(), m);
-    }
-}
-
-// ---- The keys (keymap.rs) for the preview's video or sound ----
 
 #[derive(Clone, Copy, PartialEq)]
 pub(super) enum MediaKey {
@@ -419,177 +331,6 @@ pub struct Popped {
 }
 
 // ---- Subtitles ----
-
-/// A subtitle file loaded for a video: its name, and its cues as WebVTT (the backend turns
-/// .srt and .sub files into that).
-#[derive(Clone, PartialEq, Serialize, Deserialize)]
-pub struct Track {
-    name: String,
-    vtt: String,
-}
-
-/// The extensions of subtitle files.
-const SUB_EXTS: &[&str] = &["srt", "sub", "vtt"];
-
-fn is_subtitle(path: &str) -> bool {
-    path.rsplit_once('.')
-        .is_some_and(|(_, ext)| SUB_EXTS.iter().any(|e| ext.eq_ignore_ascii_case(e)))
-}
-
-/// How many subtitles show at once.
-const SHOWN_MAX: usize = 2;
-
-/// Languages by their two-letter code, with the other ways file names (and Settings) give them.
-const LANGS: &[(&str, &[&str])] = &[
-    ("en", &["eng", "english"]),
-    ("vi", &["vie", "vietnamese"]),
-    ("fr", &["fre", "fra", "french", "francais"]),
-    ("de", &["ger", "deu", "german", "deutsch"]),
-    ("es", &["spa", "spanish", "espanol"]),
-    ("it", &["ita", "italian"]),
-    ("pt", &["por", "portuguese"]),
-    ("ru", &["rus", "russian"]),
-    ("ja", &["jpn", "japanese", "jp"]),
-    ("zh", &["chi", "zho", "chinese", "chs", "cht"]),
-    ("ko", &["kor", "korean"]),
-    ("ar", &["ara", "arabic"]),
-    ("hi", &["hin", "hindi"]),
-    ("th", &["tha", "thai"]),
-    ("id", &["ind", "indonesian"]),
-    ("nl", &["dut", "nld", "dutch"]),
-    ("pl", &["pol", "polish"]),
-    ("tr", &["tur", "turkish"]),
-    ("sv", &["swe", "swedish"]),
-    ("uk", &["ukr", "ukrainian"]),
-];
-
-/// A language as its two-letter code where it's known ("English", "eng", "en-US": "en"), else
-/// as it's written, in lower case. None when it's not a language's (a year, a word).
-fn lang_code(s: &str) -> Option<String> {
-    let s = s.trim().to_lowercase();
-    let base = s.split('-').next().unwrap_or("");
-    if let Some((code, _)) = LANGS
-        .iter()
-        .find(|(c, other)| *c == base || other.contains(&base))
-    {
-        return Some(code.to_string());
-    }
-    (matches!(base.len(), 2 | 3) && base.chars().all(|c| c.is_ascii_alphabetic()))
-        .then(|| base.to_string())
-}
-
-/// The language a subtitle file's name gives after the video's name: "Movie.en.srt",
-/// "Movie_English.srt", "Movie.en.forced.srt".
-fn track_lang(name: &str) -> Option<String> {
-    let stem = name.rsplit_once('.').map_or(name, |(s, _)| s);
-    let parts: Vec<&str> = stem.split(['.', '_', ' ']).collect();
-    // The first part is the video's name.
-    parts.iter().skip(1).rev().take(2).find_map(|p| {
-        let code = lang_code(p)?;
-        // A short word that isn't a known language counts only as the last part.
-        (LANGS.iter().any(|(c, _)| *c == code) || Some(p) == parts.last()).then_some(code)
-    })
-}
-
-/// The languages typed in Settings ("en, vi"), up to `SHOWN_MAX`.
-fn pref_langs(s: &str) -> Vec<String> {
-    s.split([',', ' ', ';'])
-        .filter_map(lang_code)
-        .take(SHOWN_MAX)
-        .collect()
-}
-
-/// Which of the subtitle files `names` show at first: one in each of the languages `prefs`, in
-/// that order; none of them there, the first file.
-fn default_shown(names: &[String], prefs: &[String]) -> Vec<usize> {
-    let langs: Vec<Option<String>> = names.iter().map(|n| track_lang(n)).collect();
-    let mut out = vec![];
-    for p in prefs {
-        if let Some(i) =
-            (0..names.len()).find(|i| langs[*i].as_ref() == Some(p) && !out.contains(i))
-        {
-            out.push(i);
-        }
-    }
-    if out.is_empty() && !names.is_empty() {
-        out.push(0);
-    }
-    out
-}
-
-/// The cues of `vtt` placed at the top of the picture (the second subtitles shown), unless a
-/// cue says where it goes.
-fn at_top(vtt: &str) -> String {
-    let mut out = String::with_capacity(vtt.len() + vtt.len() / 8);
-    for line in vtt.lines() {
-        out.push_str(line);
-        if line.contains("-->") && !line.contains("line:") {
-            out.push_str(" line:0");
-        }
-        out.push('\n');
-    }
-    out
-}
-
-#[derive(Deserialize)]
-struct SubFile {
-    path: String,
-}
-
-/// Reads the subtitle file at `path` on `src`.
-async fn fetch_track(src: Src, path: String) -> Result<Track, String> {
-    let vtt = call::<String>("subtitle", json!({ "src": src.key(), "path": path })).await?;
-    let name = path.rsplit('/').next().unwrap_or(&path).to_string();
-    Ok(Track { name, vtt })
-}
-
-type DropHandler = Rc<dyn Fn(Src, Vec<String>)>;
-
-thread_local! {
-    /// What each player does with subtitle files dropped on it: (player, handler).
-    static DROPS: RefCell<Vec<(u64, DropHandler)>> = const { RefCell::new(Vec::new()) };
-}
-
-/// Hands the subtitle files among `paths` (on `src`) to the player `el` is in. False when it
-/// isn't in one, or none of them are subtitles.
-pub(super) fn drop_on_player(el: &web_sys::Element, src: Src, paths: Vec<String>) -> bool {
-    let Some(id) = el
-        .closest(".vplayer[data-player]")
-        .ok()
-        .flatten()
-        .and_then(|p| p.get_attribute("data-player")?.parse::<u64>().ok())
-    else {
-        return false;
-    };
-    let subs: Vec<String> = paths.into_iter().filter(|p| is_subtitle(p)).collect();
-    let Some(f) = DROPS.with(|d| {
-        d.borrow()
-            .iter()
-            .find(|(i, _)| *i == id)
-            .map(|(_, f)| f.clone())
-    }) else {
-        return false;
-    };
-    if subs.is_empty() {
-        return false;
-    }
-    f(src, subs);
-    true
-}
-
-fn next_player() -> u64 {
-    NEXT_PLAYER.with(|n| {
-        n.set(n.get() + 1);
-        n.get()
-    })
-}
-
-/// Shows `t`'s cues on `track` ("showing"), or hides them ("disabled").
-fn track_mode(track: &web_sys::Element, mode: &str) {
-    if let Ok(t) = js_sys::Reflect::get(track, &"track".into()) {
-        let _ = js_sys::Reflect::set(&t, &"mode".into(), &mode.into());
-    }
-}
 
 /// The video, turned and scaled to fill its room, with its controls under it.
 ///
@@ -1510,54 +1251,5 @@ pub fn PopOut(video: Popped) -> impl IntoView {
                 None => view! { <VideoPlayer url=video.url key=video.key title=video.title info turn autoplay=video.playing tracks=video.tracks shown=video.shown/> }.into_any(),
             }}
         </div>
-    }
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn knows_subtitle_files() {
-        assert!(is_subtitle("/a/Movie.en.SRT"));
-        assert!(is_subtitle("b.sub"));
-        assert!(is_subtitle("c.vtt"));
-        assert!(!is_subtitle("d.mp4"));
-        assert!(!is_subtitle("srt"));
-    }
-
-    #[test]
-    fn finds_languages_in_names() {
-        assert_eq!(track_lang("Movie.en.srt").as_deref(), Some("en"));
-        assert_eq!(track_lang("Movie_English.srt").as_deref(), Some("en"));
-        assert_eq!(track_lang("Movie.vie.forced.srt").as_deref(), Some("vi"));
-        assert_eq!(track_lang("Movie.pt-BR.srt").as_deref(), Some("pt"));
-        assert_eq!(track_lang("Movie.srt"), None);
-        assert_eq!(track_lang("Movie.2020.srt"), None);
-        assert_eq!(pref_langs("English, vi, fr"), ["en", "vi"]);
-    }
-
-    #[test]
-    fn shows_the_languages_picked_first() {
-        let names: Vec<String> = ["Movie.en.srt", "Movie.fr.srt", "Movie.vi.srt"]
-            .map(String::from)
-            .to_vec();
-        assert_eq!(default_shown(&names, &["vi".into(), "en".into()]), [2, 0]);
-        assert_eq!(default_shown(&names, &["de".into(), "fr".into()]), [1]);
-        assert_eq!(default_shown(&names, &["de".into()]), [0]);
-        assert_eq!(default_shown(&names, &[]), [0]);
-        assert!(default_shown(&[], &["en".into()]).is_empty());
-    }
-
-    #[test]
-    fn puts_the_second_subtitles_at_the_top() {
-        assert_eq!(
-            at_top("WEBVTT\n\n00:01.000 --> 00:02.000\nHi\n"),
-            "WEBVTT\n\n00:01.000 --> 00:02.000 line:0\nHi\n"
-        );
-        assert_eq!(
-            at_top("00:01.000 --> 00:02.000 line:3\n"),
-            "00:01.000 --> 00:02.000 line:3\n"
-        );
     }
 }
