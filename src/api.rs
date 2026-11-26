@@ -192,6 +192,67 @@ pub async fn call<T: DeserializeOwned>(cmd: &str, args: serde_json::Value) -> Re
     }
 }
 
+/// fsd, the fs project's search service, as Settings > Search shows it (`fsd_service.rs`).
+#[derive(Clone, Debug, PartialEq, Deserialize)]
+pub struct FsdStatus {
+    /// The fsd program found, an app path.
+    pub exe: Option<String>,
+    /// Where fsd is registered as a service, when it is.
+    pub service: Option<String>,
+    /// Whether that service is Ferry's own, started with `config`.
+    pub ours: bool,
+    /// Ferry's settings for fsd, an app path.
+    pub config: String,
+    /// "off" (not answering), "indexing", "ready", or "unknown" in a build without fsd searches.
+    pub state: String,
+    /// The folders fsd indexes, and how many files and folders it has.
+    pub roots: Vec<String>,
+    pub entries: u64,
+    /// Whether fsd can look inside the folders the system keeps background programs out of
+    /// (Desktop, Documents and Downloads on macOS): None when it can't tell yet.
+    #[serde(default)]
+    pub sees_protected: Option<bool>,
+    /// Why fsd's answer couldn't be read.
+    pub problem: Option<String>,
+}
+
+impl FsdStatus {
+    /// Whether it's on its way somewhere, so worth asking again soon: indexing, or Ferry's
+    /// service started but not answering yet.
+    pub fn changing(&self) -> bool {
+        self.state == "indexing" || (self.ours && self.state == "off")
+    }
+
+    pub fn running(&self) -> bool {
+        matches!(self.state.as_str(), "indexing" | "ready")
+    }
+}
+
+/// The settings of fsd's that Settings > Search changes (`fsd_service.rs`).
+#[derive(Clone, Debug, PartialEq, Deserialize, Serialize)]
+pub struct FsdSettings {
+    /// The folders it indexes, app paths.
+    pub folders: Vec<String>,
+    /// Patterns of paths it leaves out.
+    pub skip: Vec<String>,
+    /// Whether it leaves out hidden files and folders.
+    pub hidden: bool,
+}
+
+#[derive(Clone, Debug, PartialEq, Deserialize)]
+pub struct FsdShown {
+    pub settings: FsdSettings,
+    /// The patterns fsd's settings start with, for putting back ones taken out.
+    pub usual: Vec<String>,
+}
+
+#[derive(Clone, Debug, PartialEq, Deserialize)]
+pub struct FsdSaved {
+    pub settings: FsdSettings,
+    /// What happened to them: whether fsd follows them now.
+    pub note: String,
+}
+
 #[derive(Clone, Debug, PartialEq, Deserialize)]
 pub struct Entry {
     pub name: String,

@@ -165,6 +165,100 @@ async fn find_in(text: &str, max: u32) -> Result<Vec<Entry>, String> {
         .collect())
 }
 
+/// How far fsd's index is, for Settings > Search.
+pub struct Index {
+    /// False until fsd has crawled its folders once.
+    pub crawled: bool,
+    /// The folders it indexes, app paths.
+    pub roots: Vec<String>,
+    /// Files and folders in the index.
+    pub entries: u64,
+    /// Whether fsd can look inside the folders the system keeps it out of until it's let in
+    /// (`platform::protected_dirs`): true when it has found something in one, or indexes none
+    /// of them; false when it has crawled them and found nothing; None while it's still
+    /// crawling and hasn't found anything yet.
+    pub sees_protected: Option<bool>,
+}
+
+/// What fsd says about its index; None when it isn't running.
+pub fn index() -> Result<Option<Index>, String> {
+    let rt = tokio::runtime::Builder::new_current_thread()
+        .enable_all()
+        .build()
+        .map_err(|e| e.to_string())?;
+    rt.block_on(async {
+        let ask = async {
+            let Ok(mut fsd) = Client::connect().await else {
+                return Ok(None);
+            };
+            let r = match fsd.request(Request::Roots).await? {
+                Response::Roots(r) => r,
+                _ => return Err("fsd answered something else.".to_string()),
+            };
+            let seen = sees_inside(&mut fsd, &r.roots).await?;
+            Ok(Some(Index {
+                crawled: r.crawled,
+                roots: r.roots.iter().map(|p| app_path(Path::new(p))).collect(),
+                entries: r.status.iter().map(|s| s.entries).sum(),
+                sees_protected: if seen || r.crawled { Some(seen) } else { None },
+            }))
+        };
+        match tokio::time::timeout(Duration::from_secs(3), ask).await {
+            Ok(r) => r,
+            Err(_) => Err("fsd took too long to answer.".into()),
+        }
+    })
+}
+
+/// Whether fsd has anything inside one of the protected folders it indexes (under `roots`),
+/// or indexes none of them.
+async fn sees_inside(fsd: &mut Client, roots: &[String]) -> Result<bool, String> {
+    let sep = std::path::MAIN_SEPARATOR;
+    let mut covered = 0;
+    for dir in crate::platform::protected_dirs() {
+        let dir = dir.to_string_lossy().into_owned();
+        if !roots.iter().any(|r| covers(r, &dir)) {
+            continue;
+        }
+        covered += 1;
+        let Some(scope) = scope_term(&dir) else {
+            continue;
+        };
+        let inside = format!("{dir}{sep}");
+        // The term matches the path anywhere in a path, so look for one that starts with it.
+        let (hits, _) = page(fsd, &scope, 0, 20).await?;
+        if hits.iter().any(|h| starts_with(&h.path, &inside)) {
+            return Ok(true);
+        }
+    }
+    Ok(covered == 0)
+}
+
+/// Asks a running fsd to follow its settings file as it is now. None when it isn't running;
+/// otherwise the settings it takes only when it restarts.
+pub fn reload() -> Result<Option<Vec<String>>, String> {
+    let rt = tokio::runtime::Builder::new_current_thread()
+        .enable_all()
+        .build()
+        .map_err(|e| e.to_string())?;
+    rt.block_on(async {
+        let ask = async {
+            let Ok(mut fsd) = Client::connect().await else {
+                return Ok(None);
+            };
+            let change = wire::ConfigChange::Reload;
+            match fsd.request(Request::ConfigChange { change }).await? {
+                Response::ConfigApplied(a) => Ok(Some(a.restart)),
+                _ => Err("fsd answered something else.".to_string()),
+            }
+        };
+        match tokio::time::timeout(Duration::from_secs(5), ask).await {
+            Ok(r) => r,
+            Err(_) => Err("fsd took too long to answer.".into()),
+        }
+    })
+}
+
 async fn page(
     fsd: &mut Client,
     query: &str,

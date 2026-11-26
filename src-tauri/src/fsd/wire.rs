@@ -55,6 +55,42 @@ pub enum Request {
         path: String,
         forget: bool,
     },
+    /// Never sent; fs's is `Subscribe { kinds: Vec<NoticeKind> }`.
+    Subscribe,
+    ConfigGet {
+        key: Option<String>,
+    },
+    /// Changes fsd's settings file and the running fsd. Answered with `ConfigApplied`.
+    ConfigChange {
+        change: ConfigChange,
+    },
+}
+
+#[allow(dead_code)]
+#[derive(Serialize, Deserialize)]
+pub enum ConfigChange {
+    Set {
+        key: String,
+        value: String,
+    },
+    Unset {
+        key: String,
+    },
+    Replace {
+        text: String,
+    },
+    /// Applies the file as it is now, after it was edited by hand.
+    Reload,
+}
+
+/// What a config change did: fsd follows the file now, except for what `restart` names.
+#[allow(dead_code)]
+#[derive(Serialize, Deserialize)]
+pub struct ConfigApplied {
+    /// Settings fsd reads only when it starts, which differ from what it started with.
+    pub restart: Vec<String>,
+    pub reloaded: Vec<String>,
+    pub problems: Vec<String>,
 }
 
 #[allow(dead_code)]
@@ -77,6 +113,14 @@ pub enum Response {
         output: String,
     },
     Roots(RootsResponse),
+    Subscribed,
+    /// Never asked for (Ferry doesn't subscribe); fs's carries a `Notice`.
+    Notice,
+    Config {
+        text: String,
+        from_file: bool,
+    },
+    ConfigApplied(ConfigApplied),
 }
 
 #[allow(dead_code)]
@@ -240,6 +284,17 @@ mod tests {
             })),
             b"\x0c\0\0\0ZFS1\x09\x01\x00\x00\x01a\x02\x03"
         );
+        assert_eq!(
+            frame(Message::Request(Request::ConfigChange {
+                change: ConfigChange::Reload
+            })),
+            b"\x09\0\0\0ZFS1\x09\x01\x00\x0a\x03"
+        );
+        let applied = b"ZFS1\x09\x01\x01\x0a\x01\x05store\x00\x00";
+        match unframe(applied).unwrap().message {
+            Message::Response(Response::ConfigApplied(a)) => assert_eq!(a.restart, ["store"]),
+            _ => panic!("not a ConfigApplied answer"),
+        }
         let answer = b"\x0d\0\0\0ZFS1\x09\x01\x01\x06\x01\x01C\x01\x00";
         match unframe(&answer[4..]).unwrap().message {
             Message::Response(Response::Roots(r)) => {

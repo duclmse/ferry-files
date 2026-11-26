@@ -715,3 +715,45 @@
 .dialog .actions .hint {
   margin: 0;
 }
+
+/* Settings > Search: the patterns fsd leaves out, one a line. */
+.dialog label.stack {
+  font-size: 13px;
+}
+
+.dialog textarea.patterns {
+  width: 100%;
+  box-sizing: border-box;
+  padding: 6px 8px;
+  border: 1px solid var(--line);
+  border-radius: 7px;
+  background: var(--bg);
+  color: var(--ink);
+  font-family: var(--mono, ui-monospace, monospace);
+  font-size: 12px;
+  line-height: 1.4;
+  /* The dialog is a column that scrolls: without this the box shrinks to a line or two. */
+  flex: none;
+  height: calc(10 * 1.4em + 14px);
+  min-height: calc(4 * 1.4em + 14px);
+  resize: vertical;
+}
+
+/* Inside the edge: Settings' scrolling body cuts off what's drawn outside it. */
+.dialog textarea.patterns:focus {
+  outline: 2px solid var(--accent);
+  outline-offset: -1px;
+}
+
+/* A heading with its buttons at the end of the line. */
+.dialog .section-head {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-top: 10px;
+}
+
+.dialog .section-head h3 {
+  flex: 1;
+  margin: 0;
+}

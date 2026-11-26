@@ -4,7 +4,7 @@
   "version": "0.1.0",
   "identifier": "dev.ferryfiles.desktop",
   "build": {
-    "beforeDevCommand": "trunk serve",
+    "beforeDevCommand": "cargo build -p fs-server --bin fsd && trunk serve",
     "devUrl": "http://localhost:1420",
     "beforeBuildCommand": "trunk build --release",
     "frontendDist": "../dist",

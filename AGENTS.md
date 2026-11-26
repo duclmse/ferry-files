@@ -19,6 +19,8 @@ cargo check --target x86_64-pc-windows-gnu      # in src-tauri: Windows type-che
 
 fsd searches are the `fsd` cargo feature. `cargo tauri dev` and `cargo tauri build` turn it on (`build.features` in `tauri.conf.json`); plain `cargo build` and `cargo test --lib` leave it off, so add `--features fsd` there to build and test them. Keep both ways building without warnings.
 
+The bundle carries fsd as `ferry-fsd`, built by the bundle step (`beforeBundleCommand` in each `tauri.<os>.conf.json`, `cargo install … --root src-tauri/libs/fsd`) and added with `macOS.files`, the Linux packages' `files`, and a Windows resource folder, none of which tauri-build checks, so plain `cargo build` needs no fsd. Don't make it an `externalBin`: tauri-build would then refuse to build without it. Settings > Search (`fsd_service.rs`, `app/fsd.rs`) installs it with fsd's own `install-service`, and only ever changes the service it installed: the one started with Ferry's config in `platform::fsd_dir()`.
+
 Rust code is formatted with rustfmt (`rustfmt.toml`, for both crates): run `cargo fmt` in the root and in `src-tauri`. The pre-commit hook in `.githooks/` formats the staged Rust files; turn it on once per clone with `git config core.hooksPath .githooks`.
 
 Keep builds free of warnings. If an `rtk` hook filters command output, use `rtk proxy cargo …` to see the raw compiler output.

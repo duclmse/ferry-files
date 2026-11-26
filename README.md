@@ -61,7 +61,11 @@ own files and disks, with tools for EPUB books in particular.
   to unmount, not with the disks.
 - **Fast search of the computer**: when fsd (the search daemon of the fs
   project) is running and indexes the folder, a search under it (Enter in the Filter field) comes from fsd's index
-  instead of walking every folder. Otherwise folders are walked as before.
+  instead of walking every folder. Otherwise folders are walked as before. The app carries
+  fsd, and Settings > Search installs it as a service (a LaunchAgent, a systemd user unit, or
+  a Windows service) that indexes the home folder by name, and shows how far its index is.
+  It also changes the folders fsd indexes and what it leaves out, and a running fsd follows
+  the change without a restart.
 - **Terminal** in a pane, on this computer, an adb phone or an SFTP server.
 - **Editor view**: a folder tree beside text files in tabs.
 - **Books**: list every EPUB under a folder. Check them, change their info, or
@@ -146,6 +150,12 @@ leave it off, so add `--features fsd` there. CI builds the app without them (ove
 `build.features`) and tests them separately. They need no fs sources: `fsd/wire.rs`
 carries its own copy of fsd's protocol. Without the feature, searches walk the folders and
 the palette's `:` says fsd isn't in this build.
+
+The bundle carries fsd itself (`fs/crates/fs-server`, with the local socket only), as
+`ferry-fsd`. The bundle step builds it with `cargo install --root src-tauri/libs/fsd`
+(`beforeBundleCommand` in `tauri.<os>.conf.json`) and adds it next to the app. Plain `cargo
+build` needs nothing for it; `cargo tauri dev` builds the workspace's fsd, which a development
+build finds next to itself in `target/debug`.
 
 Tests against a real phone use scratch files only and clean up after
 themselves:

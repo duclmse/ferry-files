@@ -2566,6 +2566,8 @@ dependencies = [
  "tauri-plugin-dialog",
  "tauri-plugin-opener",
  "tokio",
+ "toml 0.8.2",
+ "toml_edit 0.25.21+spec-1.1.0",
  "trash",
  "ureq",
  "webpki-roots",

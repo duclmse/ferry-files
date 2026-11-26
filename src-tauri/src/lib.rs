@@ -5,6 +5,7 @@ mod dupes;
 mod files;
 #[cfg(feature = "fsd")]
 mod fsd;
+mod fsd_service;
 mod idle;
 mod import;
 pub mod local;
@@ -248,6 +249,11 @@ pub fn run() {
             settings::app_folders,
             settings::open_folder,
             settings::clear_cache,
+            fsd_service::fsd_status,
+            fsd_service::fsd_install,
+            fsd_service::fsd_uninstall,
+            fsd_service::fsd_settings,
+            fsd_service::fsd_set_settings,
             scripts::scripts,
             scripts::run_script,
             scripts::stop_script,

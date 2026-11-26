@@ -994,11 +994,12 @@ pub(super) fn Settings() -> impl IntoView {
     }.into_any()
     };
     let storage_name = format!("On {}", crate::os::this_computer());
-    let sections: [(&'static str, String); 9] = [
+    let sections: [(&'static str, String); 10] = [
         ("general", "General".into()),
         ("sidebar", "Sidebar".into()),
         ("connections", "Connections".into()),
         ("files", "Files".into()),
+        ("search", "Search".into()),
         ("phones", "Phones".into()),
         ("video", "Video".into()),
         ("keys", "Keyboard".into()),
@@ -1024,6 +1025,7 @@ pub(super) fn Settings() -> impl IntoView {
                             "sidebar" => view! { <SidebarSettings/> }.into_any(),
                             "connections" => view! { <ConnectionsSettings/> }.into_any(),
                             "files" => files(),
+                            "search" => view! { <super::fsd::SearchSettings/> }.into_any(),
                             "phones" => phones(),
                             "video" => video(),
                             "keys" => view! { <ShortcutsEditor/> }.into_any(),

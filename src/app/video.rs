@@ -20,7 +20,7 @@ mod resume;
 mod subtitles;
 
 pub(super) use resume::*;
-pub use subtitles::Track;
+use subtitles::Track;
 pub(super) use subtitles::*;
 
 /// The video settings (Settings > Video), kept in the web view's storage, so a popped-out

@@ -18,6 +18,8 @@ pub(super) fn app_folder(which: &str) -> Result<std::path::PathBuf, String> {
         "thumbs" => Ok(preview::thumbs::cache_dir()),
         "opened" => Ok(opened_dir()),
         "scripts" => Ok(crate::platform::scripts_dir()),
+        // The fsd service's settings, index and logs (Settings > Search).
+        "fsd" => Ok(crate::platform::fsd_dir()),
         other => Err(format!("Unknown folder {other:?}.")),
     }
 }

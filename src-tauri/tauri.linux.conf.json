@@ -9,11 +9,25 @@
     },
     "linux": {
       "deb": {
-        "depends": ["libmtp9t64 | libmtp9"]
+        "depends": ["libmtp9t64 | libmtp9"],
+        "files": {
+          "/usr/bin/ferry-fsd": "libs/fsd/bin/fsd"
+        }
       },
       "rpm": {
-        "depends": ["libmtp"]
+        "depends": ["libmtp"],
+        "files": {
+          "/usr/bin/ferry-fsd": "libs/fsd/bin/fsd"
+        }
+      },
+      "appimage": {
+        "files": {
+          "/usr/bin/ferry-fsd": "libs/fsd/bin/fsd"
+        }
       }
     }
+  },
+  "build": {
+    "beforeBundleCommand": "cargo install --locked --quiet --path fs/crates/fs-server --bin fsd --no-default-features --features ipc --root src-tauri/libs/fsd --target-dir target/ferry-fsd"
   }
 }

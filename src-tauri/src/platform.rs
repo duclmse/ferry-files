@@ -108,6 +108,123 @@ pub fn scripts_dir() -> PathBuf {
         .join("scripts")
 }
 
+/// Where the settings, index and logs of the fsd service Ferry installs are: with the app's
+/// local data, since an index is big and made again from the files.
+pub fn fsd_dir() -> PathBuf {
+    dirs::data_local_dir()
+        .unwrap_or_else(std::env::temp_dir)
+        .join("ferry-files")
+        .join("fsd")
+}
+
+/// Folders the system keeps background programs such as fsd out of until they're let in: on
+/// macOS, Desktop, Documents and Downloads, which need Full Disk Access (or a prompt fsd can't
+/// show). The computer's paths.
+pub fn protected_dirs() -> Vec<PathBuf> {
+    if !cfg!(target_os = "macos") {
+        return vec![];
+    }
+    let home = dirs::home_dir().unwrap_or_default();
+    ["Desktop", "Documents", "Downloads"]
+        .map(|d| home.join(d))
+        .into()
+}
+
+/// A place a service can start `exe` from each time, since it's registered by its path. An
+/// AppImage's programs are only there while it runs, so on Linux one from inside it is copied
+/// to `fsd_dir()` (installing again copies it again). A Mac app opened from a disk image, or
+/// moved aside by macOS because it came from the internet, isn't kept either: it has to be
+/// moved to Applications first.
+pub fn lasting_exe(exe: &Path) -> Result<PathBuf, String> {
+    if cfg!(target_os = "macos") {
+        let s = exe.to_string_lossy();
+        if s.starts_with("/Volumes/") || s.contains("/AppTranslocation/") {
+            return Err("Ferry Files is running from a disk image or a temporary place, so a service can't start fsd from it later. Move Ferry Files to the Applications folder, open it from there, and install again.".into());
+        }
+    }
+    if cfg!(target_os = "linux") {
+        if let Some(mount) =
+            std::env::var_os("APPDIR").filter(|_| std::env::var_os("APPIMAGE").is_some())
+        {
+            if exe.starts_with(&mount) {
+                let dir = fsd_dir();
+                let to = dir.join(exe.file_name().unwrap_or(OsStr::new("ferry-fsd")));
+                std::fs::create_dir_all(&dir)
+                    .map_err(|e| format!("Can't create {}: {e}", dir.display()))?;
+                // Into a new file and then over the old one, which a running fsd may be using.
+                let new = to.with_extension("new");
+                std::fs::copy(exe, &new)
+                    .and_then(|_| std::fs::rename(&new, &to))
+                    .map_err(|e| format!("Can't copy fsd to {}: {e}", dir.display()))?;
+                return Ok(to);
+            }
+        }
+    }
+    Ok(exe.to_path_buf())
+}
+
+/// Runs a program that changes the system's services, and gives what it wrote to stderr when it
+/// fails. On Windows services belong to the whole PC, so it runs with an administrator's
+/// permission (Windows asks); elsewhere it runs as the user.
+pub fn run_for_service(program: &Path, args: &[String]) -> Result<(), String> {
+    #[cfg(windows)]
+    {
+        // Start-Process -Verb RunAs can't capture the output, so cmd sends stderr to a file.
+        let err_file = std::env::temp_dir().join(format!("ferry-fsd-{}.txt", std::process::id()));
+        let mut line = format!("\"{}\"", program.display());
+        for a in args {
+            line.push_str(&format!(" \"{a}\""));
+        }
+        line.push_str(&format!(" 2> \"{}\"", err_file.display()));
+        let ps = |s: &str| format!("'{}'", s.replace('\'', "''"));
+        let script = format!(
+            "$p = Start-Process -FilePath 'cmd.exe' -ArgumentList {} -Verb RunAs -WindowStyle Hidden -Wait -PassThru; exit $p.ExitCode",
+            ps(&format!("/c \"{line}\""))
+        );
+        let out = command("powershell")
+            .args(["-NoProfile", "-NonInteractive", "-Command", &script])
+            .output()
+            .map_err(|e| format!("Can't run PowerShell: {e}"))?;
+        let written = std::fs::read_to_string(&err_file).unwrap_or_default();
+        let _ = std::fs::remove_file(&err_file);
+        if out.status.success() {
+            return Ok(());
+        }
+        let ps_err = String::from_utf8_lossy(&out.stderr);
+        if ps_err.contains("canceled") || ps_err.contains("cancelled") {
+            return Err(
+                "Windows didn't get an administrator's permission, so nothing changed.".into(),
+            );
+        }
+        let said = if written.trim().is_empty() {
+            ps_err.trim().to_string()
+        } else {
+            written.trim().to_string()
+        };
+        Err(if said.is_empty() {
+            format!("it stopped with code {}", out.status.code().unwrap_or(-1))
+        } else {
+            said
+        })
+    }
+    #[cfg(not(windows))]
+    {
+        let out = command(program)
+            .args(args)
+            .output()
+            .map_err(|e| format!("Can't run {}: {e}", program.display()))?;
+        if out.status.success() {
+            return Ok(());
+        }
+        let said = String::from_utf8_lossy(&out.stderr).trim().to_string();
+        Err(if said.is_empty() {
+            format!("it stopped with code {}", out.status.code().unwrap_or(-1))
+        } else {
+            said
+        })
+    }
+}
+
 /// The thumbnail Windows shows for the file in Explorer (pictures, videos, PDFs, documents and
 /// whatever else has a thumbnail handler), about `px` on its longest side. None when there's
 /// none: Windows' generic icons aren't used.

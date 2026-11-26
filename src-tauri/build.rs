@@ -1,4 +1,10 @@
 fn main() {
+    // The Windows bundle carries fsd as the resource folder libs/fsd/bin, which the bundle step
+    // fills (`beforeBundleCommand` in tauri.windows.conf.json). tauri-build copies resources
+    // here too, and stops at a missing folder but not an empty one, so a plain build makes it.
+    if std::env::var("TARGET").is_ok_and(|t| t.contains("windows")) {
+        let _ = std::fs::create_dir_all("libs/fsd/bin");
+    }
     // Declaring the app's commands makes them need a permission, granted to the main window
     // in capabilities/default.json.
     tauri_build::try_build(tauri_build::Attributes::new().app_manifest(
@@ -66,6 +72,11 @@ fn main() {
             "app_folders",
             "open_folder",
             "clear_cache",
+            "fsd_status",
+            "fsd_install",
+            "fsd_uninstall",
+            "fsd_settings",
+            "fsd_set_settings",
             "scripts",
             "run_script",
             "stop_script",

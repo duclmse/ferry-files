@@ -18,7 +18,11 @@
     "resources": {
       "libs/pdfium/pdfium.dll": "pdfium.dll",
       "libs/pdfium/PDFium-LICENSE.txt": "licenses/PDFium-LICENSE.txt",
-      "libs/pdfium/PDFium-third-party-LICENSES.txt": "licenses/PDFium-third-party-LICENSES.txt"
+      "libs/pdfium/PDFium-third-party-LICENSES.txt": "licenses/PDFium-third-party-LICENSES.txt",
+      "libs/fsd/bin/": "ferry-fsd/"
     }
+  },
+  "build": {
+    "beforeBundleCommand": "cargo install --locked --quiet --path fs/crates/fs-server --bin fsd --no-default-features --features ipc --root src-tauri/libs/fsd --target-dir target/ferry-fsd"
   }
 }

@@ -49,7 +49,12 @@ pub fn computer() -> &'static str {
 
 /// For sentences: "the Mac", "this PC" or "this computer".
 pub fn the_computer() -> &'static str {
-    match os() {
+    the_computer_on(os())
+}
+
+/// `the_computer` for a given system.
+pub fn the_computer_on(os: Os) -> &'static str {
+    match os {
         Os::Mac => "the Mac",
         Os::Windows => "this PC",
         Os::Linux => "this computer",

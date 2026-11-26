@@ -27,6 +27,7 @@ mod everything;
 mod files;
 mod filetype;
 mod find;
+mod fsd;
 mod icons;
 mod import;
 mod keymap;

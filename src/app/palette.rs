@@ -1,7 +1,7 @@
-//! The command palette (⌘K): every action the menus offer for the active pane, and the places to
-//! go (favourites, devices, recent folders, sync pairs), found by typing a few letters. Typing `>`
-//! first keeps to the actions; `:` finds files and folders on the computer by name, from fsd's
-//! index.
+//! The command palette (⌘K): every action the menus offer for the active pane,
+//! and the places to go (favourites, devices, recent folders, sync pairs),
+//! found by typing a few letters. Typing `>` first keeps to the actions; `:`
+//! finds files and folders on the computer by name, from fsd's index.
 
 use super::*;
 
