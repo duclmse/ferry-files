@@ -445,7 +445,7 @@
   white-space: nowrap;
 }
 
-.preview .meta .peek-as {
+.preview .meta > .peek-as {
   flex: none;
   display: flex;
   gap: 6px;

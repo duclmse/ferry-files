@@ -42,15 +42,20 @@ impl PeekAs {
     }
 }
 
-/// Under a file shown another way: back to how its type shows, or another way.
+/// "Open as…" at the end of the line above what's shown; `now`, the way it's shown when that
+/// isn't how its type shows.
 fn peek_as_buttons(
-    now: PeekAs,
+    now: Option<PeekAs>,
     zip: bool,
     set: impl Fn(Option<PeekAs>) + Clone + Send + Sync + 'static,
 ) -> impl IntoView {
+    let pick = move |h| set(Some(h));
     view! {
         <div class="peek-as">
-            <OpenAs now=now zip small=true pick=move |h| set(Some(h))/>
+            {match now {
+                Some(now) => view! { <OpenAs now zip small=true pick/> }.into_any(),
+                None => view! { <OpenAs zip small=true pick/> }.into_any(),
+            }}
         </div>
     }
 }
@@ -254,20 +259,21 @@ pub(super) fn Preview(
                     let facts = Signal::derive(facts);
                     // The name and facts as a view, for the line above what's shown. An EPUB puts
                     // its own buttons at the end of it, so it takes the line (None here after).
-                    let path = e.path.clone();
                     let mut line = Some(view! {
                         <span class="head">
                             <b class="name" title=e.path.clone()>{e.name.clone()}</b>
                             <span class="measures">{move || measures.get()}</span>
                         </span>
                         <span class="sub" title=move || facts.get()>{move || facts.get()}</span>
-                        {forced.map(|now| peek_as_buttons(now, true, move |how| p.peek_as.set(how.map(|h| (path.clone(), h)))))}
                     }.into_any());
                     let thumb = |e: &Entry| view! { <div class="pic"><Thumbnail src=src entry=e.clone()/></div> };
                     // The pane's columns show what's in a ZIP already: not in a preview of its own.
                     let columns = Signal::derive(move || !alone && p.view.get() == ViewMode::Columns);
                     // Set when the body is text, which puts the wrap and line-number toggles in the line.
                     let mut text = false;
+                    // Set when the preview can't tell how to show it: "Open as…" goes under its
+                    // icon then, not in the line.
+                    let mut unknown = e.dir;
                     let body = match (forced, media(&e)) {
                         (Some(PeekAs::Text), _) => { text = true; view! { <TextPeek src entry=e.clone()/> }.into_any() }
                         (Some(PeekAs::Hex), _) => view! { <HexPeek src entry=e.clone()/> }.into_any(),
@@ -292,20 +298,22 @@ pub(super) fn Preview(
                         _ if e.dir => thumb(&e).into_any(),
                         // A type the preview doesn't know: offer to look inside anyway.
                         _ => {
+                            unknown = true;
                             let path = e.path.clone();
                             view! {
                                 {thumb(&e)}
-                                <div class="viewer-bar">
-                                    <OpenAs zip=true pick=move |h| p.peek_as.set(Some((path.clone(), h)))/>
-                                </div>
+                                <OpenAs zip=true pick=move |h| p.peek_as.set(Some((path.clone(), h)))/>
                             }.into_any()
                         }
                     };
+                    let path = e.path.clone();
+                    let open_as = (!unknown).then(|| peek_as_buttons(forced, true, move |how| p.peek_as.set(how.map(|h| (path.clone(), h)))));
                     match line {
                         Some(line) => view! {
                             <div class="meta">
                                 <div class="info">{line}</div>
                                 {text.then(text_tools)}
+                                {open_as}
                             </div>
                             <div class="view">{body}</div>
                         }.into_any(),

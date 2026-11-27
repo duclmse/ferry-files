@@ -200,7 +200,7 @@ pub(super) fn Zipped(
     // ‹ › and the picture's sides go through the pictures (or videos, or sounds) in its folder.
     let step = Callback::new(move |d| super::views::step_zipped(p, d));
     // Whether the body is text (as the match below picks it), for the wrap and line-number toggles.
-    let text_e = e.clone();
+    let (text_e, known_e) = (e.clone(), e.clone());
     let body = move || {
         let (e, url, inner, cover) = (e.clone(), url.clone(), inner.clone(), cover.clone());
         if size > UNPACK_MAX && !stored {
@@ -220,12 +220,8 @@ pub(super) fn Zipped(
             _ if has_ext(&e, PDF_EXTS) => view! { <PdfView pane=p src entry=e url inner/> }.into_any(),
             _ if has_ext(&e, &["epub"]) => view! { <ZippedCover url=cover/> }.into_any(),
             _ if is_text(&e) => view! { <TextPeek src entry=e inner/> }.into_any(),
-            _ => view! {
-                <div class="viewer-bar">
-                    <OpenAs pick=move |h| forced.set(Some(h))/>
-                </div>
-            }
-            .into_any(),
+            // A type the preview doesn't know: "Open as…" under it.
+            _ => view! { <OpenAs pick=move |h| forced.set(Some(h))/> }.into_any(),
         }
     };
     let text = Memo::new(move |_| {
@@ -242,6 +238,16 @@ pub(super) fn Zipped(
             }
         }
     });
+    // Whether the preview can tell how to show it (as the match above picks it): "Open as…" goes
+    // at the end of the line then, and in the middle of the view when it can't.
+    let known = Memo::new(move |_| {
+        !(size > UNPACK_MAX && !stored)
+            && (forced.get().is_some()
+                || media(&known_e).is_some()
+                || has_ext(&known_e, PDF_EXTS)
+                || has_ext(&known_e, &["epub"])
+                || is_text(&known_e))
+    });
     let folder = match name.rfind('/') {
         Some(at) => format!("{}/{}", zip.name, &name[..at]),
         None => zip.name.clone(),
@@ -256,9 +262,9 @@ pub(super) fn Zipped(
                     <span class="measures">{move || measures.get()}</span>
                 </span>
                 <span class="sub" title=move || facts.get()>{move || facts.get()}</span>
-                {move || forced.get().map(|now| peek_as_buttons(now, false, move |how| forced.set(how)))}
             </div>
             {move || text.get().then(text_tools)}
+            {move || known.get().then(|| peek_as_buttons(forced.get(), false, move |how| forced.set(how)))}
         </div>
         <div class="view">{body}</div>
     }
