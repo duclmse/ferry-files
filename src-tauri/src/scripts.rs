@@ -637,6 +637,19 @@ fn media_kind(name: &str) -> Option<&'static str> {
         .map(|(k, _)| k)
 }
 
+/// The file at `path`, for reading as a ZIP: an error for the script when it's a folder or isn't
+/// there.
+fn zip_file(d: &Device, path: &str) -> mlua::Result<Entry> {
+    let e = d
+        .stat(path)
+        .map_err(fail)?
+        .ok_or_else(|| fail(format!("No such file: {path}")))?;
+    if e.dir {
+        return Err(fail(format!("{path} is a folder, not a ZIP.")));
+    }
+    Ok(e)
+}
+
 /// A device error as the script's error, which it can catch with pcall.
 fn fail(e: impl std::fmt::Display) -> mlua::Error {
     mlua::Error::runtime(e.to_string())
@@ -897,6 +910,53 @@ fn api(
     })?;
     t.set("colour", colour.clone())?;
     t.set("color", colour)?;
+    // A ZIP's directory and the files packed in it, read a range at a time: never the whole ZIP.
+    let d = dev.clone();
+    t.set(
+        "zip",
+        func(lua, move |lua, path: String| {
+            let e = zip_file(&d, &path)?;
+            let l = crate::preview::archive::list(e.size, &mut |at, len| {
+                stopped(stop)?;
+                d.read_range(&path, at, len).map_err(|e| e.to_string())
+            })
+            .map_err(|e| fail(format!("{path}: {e}")))?;
+            let items = lua.create_table()?;
+            for (i, p) in l.items.iter().enumerate() {
+                let r = lua.create_table()?;
+                r.set("name", p.name.as_str())?;
+                r.set("size", p.size)?;
+                r.set("dir", p.dir)?;
+                r.set("stored", p.stored)?;
+                items.raw_set(i + 1, r)?;
+            }
+            Ok((items, l.total))
+        })?,
+    )?;
+    let d = dev.clone();
+    t.set(
+        "unzip",
+        func(
+            lua,
+            move |lua, (path, name, start, count): (String, String, Option<u64>, Option<u64>)| {
+                let e = zip_file(&d, &path)?;
+                let name = name.trim_start_matches('/');
+                let (data, size) = crate::preview::archive::unpack_part(
+                    e.size,
+                    &mut |at, len| {
+                        stopped(stop)?;
+                        d.read_range(&path, at, len).map_err(|e| e.to_string())
+                    },
+                    name,
+                    start.unwrap_or(0),
+                    count.unwrap_or(u64::MAX),
+                    READ_MAX,
+                )
+                .map_err(|e| fail(format!("{path}: {e}")))?;
+                Ok((lua.create_string(&data)?, size))
+            },
+        )?,
+    )?;
     let (d, pt) = (dev.clone(), pretend.clone());
     t.set(
         "exists",
@@ -1380,6 +1440,67 @@ print('skipped: ' .. e)",
         assert_eq!(
             r.output.last().unwrap(),
             "Moved 3 grayscale pictures to Grayscale."
+        );
+    }
+
+    #[test]
+    fn scripts_read_whats_in_a_zip_a_range_at_a_time() {
+        use std::io::Write;
+        let (_s, dir) = scratch("zip");
+        let dev = Arc::new(Device::new(Box::new(crate::local::Local)));
+        let mut buf = std::io::Cursor::new(Vec::new());
+        {
+            let mut z = zip::ZipWriter::new(&mut buf);
+            let o = |how| zip::write::SimpleFileOptions::default().compression_method(how);
+            z.add_directory("ch1/", o(zip::CompressionMethod::Stored))
+                .unwrap();
+            z.start_file("ch1/stored.txt", o(zip::CompressionMethod::Stored))
+                .unwrap();
+            z.write_all(b"plain text").unwrap();
+            z.start_file("ch1/packed.txt", o(zip::CompressionMethod::Deflated))
+                .unwrap();
+            z.write_all(&b"abc".repeat(100)).unwrap();
+            z.finish().unwrap();
+        }
+        let a = device::join(&dir, "a.cbz");
+        dev.write(&a, buf.get_ref(), None, true).unwrap();
+        let code = r#"
+            local zip = ferry.items[1]
+            local items, total = ferry.zip(zip)
+            print(total)
+            for _, e in ipairs(items) do print(e.name, e.size, e.dir, e.stored) end
+            print(ferry.unzip(zip, "ch1/stored.txt"))
+            print(ferry.unzip(zip, "/ch1/stored.txt", 6))
+            print(ferry.unzip(zip, "ch1/packed.txt", 298, 10))
+            print(#ferry.unzip(zip, "ch1/packed.txt"))
+            print(pcall(ferry.unzip, zip, "nope.txt"))
+            print(pcall(ferry.zip, ferry.dir))
+        "#;
+        let stop = Box::leak(Box::new(AtomicBool::new(false)));
+        let r = run(dev, &dir, &[a.clone()], "zip", code, stop);
+        assert_eq!(r.error, None);
+        assert_eq!(
+            r.output[..8],
+            [
+                "3",
+                "ch1/\t0\ttrue\ttrue",
+                "ch1/stored.txt\t10\tfalse\ttrue",
+                "ch1/packed.txt\t300\tfalse\tfalse",
+                "plain text\t10",
+                "text\t10",
+                "bc\t300",
+                "300",
+            ]
+        );
+        assert!(
+            r.output[8].starts_with("false\t") && r.output[8].contains("nope.txt: not in the ZIP."),
+            "{}",
+            r.output[8]
+        );
+        assert!(
+            r.output[9].contains("is a folder, not a ZIP."),
+            "{}",
+            r.output[9]
         );
     }
 

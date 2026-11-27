@@ -126,6 +126,39 @@ An item is a table:
 | `size`  | Bytes (0 for a folder).                                |
 | `mtime` | When it was last changed, in seconds since 1970 (UTC). |
 
+### Inside a ZIP
+
+A ZIP (or CBZ, EPUB, APK, JAR…) can be read without unpacking it. Only the parts asked for are
+read, never the whole ZIP, so these are quick on a phone or a server too. Nothing in the ZIP is
+changed: to change a ZIP, `ferry.read` it and `ferry.write` a new one.
+
+| Function                                | What it does                                                                                                                                                                                                                                                       |
+| --------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| `ferry.zip(path)`                       | What's packed in the ZIP at `path`: a list of tables with `name` (its full name in the ZIP, `ch1/003.jpg`; folders end in `/`), `size` (bytes, unpacked), `dir`, and `stored` (`true` when packed without compression). Then how many items it has in all: the list has the first 5000. |
+| `ferry.unzip(path, name)`               | The file `name` packed in the ZIP, unpacked, as a Lua string, and its size. Up to 64 MB.                                                                                                                                                                            |
+| `ferry.unzip(path, name, start, count)` | `count` bytes from byte `start` (0 is the first) of the file packed in the ZIP, and its size. `count` can be left out for the rest of it; less comes back near the end, and `""` past it. A file packed without compression is read in place; a compressed one is unpacked up to there. Up to 64 MB at a time. |
+
+```lua
+-- The CBZs with fewer than 10 pictures in them.
+for _, e in ipairs(ferry.list(ferry.dir)) do
+  if e.name:lower():match("%.cbz$") then
+    local items, total = ferry.zip(e.path)
+    local pics = 0
+    for _, i in ipairs(items) do
+      local ext = i.name:lower():match("%.(%w+)$")
+      if ext == "jpg" or ext == "jpeg" or ext == "png" or ext == "webp" then pics = pics + 1 end
+    end
+    if pics < 10 then print(e.name, pics) end
+  end
+end
+
+-- An EPUB's mimetype, and the first 4 bytes of a picture packed in a ZIP.
+print(ferry.unzip(ferry.items[1], "mimetype"))
+print(ferry.unzip(ferry.items[2], "pages/001.png", 0, 4) == "\137PNG")
+```
+
+`ferry.media` and `ferry.colour` take paths on the device, not names in a ZIP.
+
 ### Reading and writing files
 
 | Function                   | What it does                                                                                                    |

@@ -232,6 +232,60 @@ pub fn unpack_each<T>(
     Ok(with(&mut get))
 }
 
+/// Up to `len` bytes from `start` of the file `name` packed in the ZIP, and how big the file is
+/// unpacked. One stored as it is is read in place; a compressed one is unpacked up to there, the
+/// part before `start` let go of as it goes. Refused when the bytes asked for are more than `max`.
+pub fn unpack_part(
+    size: u64,
+    read: &mut Read,
+    name: &str,
+    start: u64,
+    len: u64,
+    max: u64,
+) -> Result<(Vec<u8>, u64), String> {
+    use std::io::Read as _;
+    let r = Ranged {
+        read,
+        size,
+        at: 0,
+        block: (0, Vec::new()),
+    };
+    let mut zip =
+        zip::ZipArchive::new(r).map_err(|e| format!("Not a ZIP file, or a damaged one ({e})."))?;
+    let i = zip
+        .index_for_name(name)
+        .ok_or_else(|| format!("{name}: not in the ZIP."))?;
+    let (full, span) = {
+        let f = zip.by_index_raw(i).map_err(|e| format!("{name}: {e}"))?;
+        if f.is_dir() {
+            return Err(format!("{name}: a folder in the ZIP, not a file."));
+        }
+        let stored = f.compression() == zip::CompressionMethod::Stored && !f.encrypted();
+        (f.size(), f.data_start().filter(|_| stored))
+    };
+    let want = len.min(full.saturating_sub(start));
+    if want > max {
+        return Err(format!(
+            "{name}: that's {} MB, more than the {} MB read at once.",
+            want.div_ceil(1024 * 1024),
+            max / 1024 / 1024
+        ));
+    }
+    if want == 0 {
+        return Ok((Vec::new(), full));
+    }
+    if let Some(at) = span {
+        let r = zip.into_inner();
+        return Ok(((r.read)(at + start, want)?, full));
+    }
+    let mut f = zip.by_index(i).map_err(|e| format!("{name}: {e}"))?;
+    let bad = |e: std::io::Error| format!("{name}: {e}");
+    std::io::copy(&mut (&mut f).take(start), &mut std::io::sink()).map_err(bad)?;
+    let mut out = Vec::with_capacity(want as usize);
+    (&mut f).take(want).read_to_end(&mut out).map_err(bad)?;
+    Ok((out, full))
+}
+
 #[cfg(test)]
 mod tests {
     use std::io::{Cursor, Write};
@@ -283,6 +337,57 @@ mod tests {
 
         let mut read = |_: u64, _: u64| Ok(b"not a zip at all, just some text".to_vec());
         assert!(super::list(32, &mut read).is_err());
+    }
+
+    #[test]
+    fn reads_part_of_a_packed_file() {
+        let mut buf = Cursor::new(Vec::new());
+        let text: Vec<u8> = (0..200_000u32).map(|i| (i % 251) as u8).collect();
+        {
+            let mut z = zip::ZipWriter::new(&mut buf);
+            for (name, how) in [
+                ("stored.bin", zip::CompressionMethod::Stored),
+                ("packed.bin", zip::CompressionMethod::Deflated),
+            ] {
+                let o = zip::write::SimpleFileOptions::default().compression_method(how);
+                z.start_file(name, o).unwrap();
+                z.write_all(&text).unwrap();
+            }
+            z.add_directory("d/", zip::write::SimpleFileOptions::default())
+                .unwrap();
+            z.finish().unwrap();
+        }
+        let file = buf.into_inner();
+        let mut read = |at: u64, len: u64| {
+            let from = (at as usize).min(file.len());
+            let to = (at.saturating_add(len) as usize).min(file.len());
+            Ok(file[from..to].to_vec())
+        };
+        let size = file.len() as u64;
+        for name in ["stored.bin", "packed.bin"] {
+            let (got, full) =
+                super::unpack_part(size, &mut read, name, 150_000, 10, 1 << 20).unwrap();
+            assert_eq!(
+                (got.as_slice(), full),
+                (&text[150_000..150_010], 200_000),
+                "{name}"
+            );
+            // Past the end: what's left, then nothing.
+            let (got, _) =
+                super::unpack_part(size, &mut read, name, 199_995, 100, 1 << 20).unwrap();
+            assert_eq!(got, &text[199_995..]);
+            let (got, _) =
+                super::unpack_part(size, &mut read, name, 300_000, 100, 1 << 20).unwrap();
+            assert!(got.is_empty());
+        }
+        // More than max, a folder, and a name that isn't there are refused.
+        assert!(
+            super::unpack_part(size, &mut read, "packed.bin", 0, u64::MAX, 1000)
+                .unwrap_err()
+                .contains("more than")
+        );
+        assert!(super::unpack_part(size, &mut read, "d/", 0, 10, 1000).is_err());
+        assert!(super::unpack_part(size, &mut read, "nope", 0, 10, 1000).is_err());
     }
 
     #[test]
