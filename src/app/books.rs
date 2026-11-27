@@ -42,9 +42,10 @@ impl Ctx {
     }
 }
 
-/// Runs `f` on each book in turn, showing "Checking 3 of 10: name" in `busy`, until done or stopped.
+/// Runs `f` on each book in turn, showing "Checking 3 of 10: name" and how far along it is (a
+/// percentage) in `busy`, until done or stopped.
 pub(super) async fn for_each_book<F, Fut>(
-    busy: RwSignal<Option<String>>,
+    busy: RwSignal<Option<(String, f64)>>,
     stop: StoredValue<bool>,
     verb: &str,
     books: Vec<Entry>,
@@ -61,7 +62,10 @@ where
         if stop.try_get_value().unwrap_or(true) {
             break;
         }
-        busy.try_set(Some(format!("{verb} {} of {n}: {}", k + 1, e.name)));
+        busy.try_set(Some((
+            format!("{verb} {} of {n}: {}", k + 1, e.name),
+            k as f64 * 100.0 / n as f64,
+        )));
         f(e).await;
         done += 1;
     }
@@ -96,7 +100,7 @@ pub(super) fn Library(src: Src, dir: String) -> impl IntoView {
     let shown_issues = RwSignal::new(None::<String>);
     let picked = RwSignal::new(std::collections::HashSet::<String>::new());
     let filter = RwSignal::new(String::new());
-    let busy = RwSignal::new(None::<String>);
+    let busy = RwSignal::new(None::<(String, f64)>);
     let stop = StoredValue::new(false);
     let form = RwSignal::new(None::<BookForm>);
     let message = RwSignal::new(None::<(String, bool)>);
@@ -410,8 +414,9 @@ pub(super) fn Library(src: Src, dir: String) -> impl IntoView {
                         </div>
                     }.into_any(),
                 })}
-                {move || busy.get().map(|b| view! {
-                    <div class="lib-busy"><span class="text">{b}</span>
+                {move || busy.get().map(|(b, pct)| view! {
+                    <div class="lib-busy"><span class="spin"></span><span class="text">{b}</span>
+                        {super::transfer::meter(pct, "Done so far")}
                         <button class="btn small" on:click=move |_| stop.set_value(true)>{ico(Icon::Stop)}"Stop"</button></div>
                 })}
                 {move || message.get().map(|(m, ok)| view! { <p class:ok=ok class:error=!ok>{m}</p> })}

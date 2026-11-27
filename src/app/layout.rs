@@ -20,7 +20,8 @@ pub(crate) enum Target {
 
 /// A handle dragged sideways to change `size`, which is saved to `key` (unless empty) when the
 /// drag ends.
-/// Double-click sets it back to 0 (the default). The size stays between `min` and `max`, and,
+/// Double-click sets it back to 0 (the default); with `half`, a double-click when it's already
+/// the default makes it half of the grip's container instead. The size stays between `min` and `max`, and,
 /// when `room` is set, leaves that much of the grip's container free on the side it grows to
 /// (the right, or for `Target::Next` the left).
 #[component]
@@ -32,6 +33,7 @@ pub(crate) fn Grip(
     #[prop(optional)] room: Option<f64>,
     #[prop(default = Target::Prev)] target: Target,
     #[prop(default = "grip")] class: &'static str,
+    #[prop(optional)] half: bool,
 ) -> impl IntoView {
     let el = NodeRef::<html::Div>::new();
     let listeners = StoredValue::new_local(None::<(WindowListenerHandle, WindowListenerHandle)>);
@@ -102,15 +104,31 @@ pub(crate) fn Grip(
             let _ = b.class_list().add_1("resizing");
         }
     };
+    // Half the container, leaving `room` on the other side; None when it can't be measured.
+    let halved = move || {
+        let outer = el.get_untracked()?.parent_element()?;
+        let w = outer.get_bounding_client_rect().width();
+        let most = room.map_or(max, |r| max.min(w - r));
+        Some((w / 2.0).clamp(min, most.max(min)).round())
+    };
+    let title = if half {
+        "Drag to resize · double-click for the default, again for half"
+    } else {
+        "Drag to resize · double-click for the default"
+    };
     view! {
         <div class=class node_ref=el role="separator" aria-orientation="vertical"
-            title="Drag to resize · double-click for the default"
+            title=title
             on:mousedown=down
             on:click=|ev| ev.stop_propagation()
             on:dblclick=move |ev| {
                 ev.stop_propagation();
-                size.set(0.0);
-                save("0");
+                let w = match halved() {
+                    Some(w) if half && size.get_untracked() == 0.0 => w,
+                    _ => 0.0,
+                };
+                size.set(w);
+                save(&w.to_string());
             }></div>
     }
 }

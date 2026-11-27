@@ -554,6 +554,15 @@ enum Notice {
         name: String,
         trial: bool,
     },
+    /// Work on several items under way, `done` of `total` (see `Ctx::working`). Its Stop
+    /// button sets `stopping`, and the work stops after the item it's on.
+    Working {
+        id: u32,
+        text: String,
+        done: usize,
+        total: usize,
+        stopping: bool,
+    },
     /// What a script did (or, in a trial, would do), which can be run again on `items`.
     ScriptDone {
         script: crate::api::ScriptInfo,

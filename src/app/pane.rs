@@ -316,6 +316,24 @@ pub(super) fn Notices(pane: Pane) -> impl IntoView {
                 }.into_any()
             }
             Notice::ScriptRunning { name, trial } => super::scripts::running(ctx, name, trial),
+            Notice::Working { id, text, done, total, stopping } => {
+                let count = if total > 1 { format!(" · {} of {total}", (done + 1).min(total)) } else { String::new() };
+                let stop = move |_| {
+                    if let Notice::Working { id: i, text, done, total, .. } = p.notice.get_untracked() {
+                        if i == id {
+                            p.notice.set(Notice::Working { id, text, done, total, stopping: true });
+                        }
+                    }
+                };
+                view! {
+                    <div class="notice working"><span class="spin"></span>
+                        <span class="text">{format!("{text}{count}…")}</span>
+                        {(total > 1).then(|| super::transfer::meter(done as f64 * 100.0 / total as f64, "Done so far"))}
+                        <button class="btn" disabled=stopping title="Stop after the item it's on now" on:click=stop>
+                            {ico(Icon::Stop)}{if stopping { "Stopping…" } else { "Stop" }}</button>
+                    </div>
+                }.into_any()
+            }
             Notice::ScriptDone { script, items, report, trial } => super::scripts::done(ctx, p, script, items, report, trial),
             Notice::NewItem { folder } => {
                 name.set(String::new());
@@ -354,31 +372,9 @@ pub(super) fn split_name(name: &str, dir: bool) -> AnyView {
     }
 }
 
-/// A name shown whole while it fits its box (a tile's two lines), else as `split_name`.
-fn fit_name(name: &str, dir: bool) -> AnyView {
-    let cut = RwSignal::new(false);
-    let el = NodeRef::<html::Span>::new();
-    el.on_load(move |s| {
-        request_animation_frame(move || {
-            if let Some(b) = s.parent_element() {
-                if b.scroll_height() > b.client_height() + 1 {
-                    cut.set(true);
-                }
-            }
-        })
-    });
-    let name = name.to_string();
-    view! { <span class="fit" node_ref=el>{move || if cut.get() { split_name(&name, dir) } else { name.clone().into_any() }}</span> }.into_any()
-}
-
-/// `split`: as `split_name`; `fit`: as `fit_name`.
+/// `split`: as `split_name`.
 #[component]
-pub(super) fn Name(
-    pane: Pane,
-    entry: Entry,
-    #[prop(optional)] split: bool,
-    #[prop(optional)] fit: bool,
-) -> impl IntoView {
+pub(super) fn Name(pane: Pane, entry: Entry, #[prop(optional)] split: bool) -> impl IntoView {
     let p = pane;
     let path = entry.path.clone();
     let e = StoredValue::new(entry);
@@ -400,8 +396,6 @@ pub(super) fn Name(
                 </span>
             }
             .into_any()
-        } else if fit {
-            e.with_value(|e| fit_name(&e.name, e.dir))
         } else if split {
             e.with_value(|e| split_name(&e.name, e.dir))
         } else {
@@ -506,7 +500,7 @@ pub(super) fn PaneView(pane: Pane) -> impl IntoView {
                             }}
                         </div>
                         {move || p.preview.get().then(|| view! {
-                            <Grip size=p.preview_w key=format!("ferry-files.preview-w.{}", p.id) min=PREVIEW_MIN target=Target::Next room=200.0/>
+                            <Grip size=p.preview_w key=format!("ferry-files.preview-w.{}", p.id) min=PREVIEW_MIN target=Target::Next room=200.0 half=true/>
                             <Preview pane=p/>
                         })}
                     </div>
@@ -778,12 +772,41 @@ pub(super) fn ListStatus(pane: Pane) -> impl IntoView {
             }
         })
     };
+    // Work under way for this pane: a copy or move reporting here, else a delete in its notice.
+    let progress = move || {
+        let job = ctx.jobs.with(|js| {
+            js.iter()
+                .find(|j| j.pane == p.id && matches!(j.state, JobState::Running))
+                .map(|j| {
+                    (
+                        super::transfer::job_verb(&j.work),
+                        super::transfer::job_pct(j),
+                    )
+                })
+        });
+        let work = move || {
+            p.notice.with(|n| match n {
+                Notice::Working { done, total, .. } if *total > 1 => {
+                    Some(("Deleting", *done as f64 * 100.0 / *total as f64))
+                }
+                _ => None,
+            })
+        };
+        job.or_else(work).map(|(verb, pct)| {
+            view! {
+                <span class="progress" title=format!("{verb}: {pct:.0}% done")>
+                    {super::transfer::meter(pct, verb)}<span>{format!("{pct:.0}%")}</span>
+                </span>
+            }
+        })
+    };
     view! {
         <div class="statusbar">
             {search}
             <span class="summary">{summary}</span>
             <span class="sel">{selection}</span>
             <span class="spacer"></span>
+            {progress}
             <span class="free">{move || ctx.free_text(p)}</span>
             <span>{place}</span>
             <ViewSeg pane=p/>

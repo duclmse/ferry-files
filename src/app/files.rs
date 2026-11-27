@@ -149,13 +149,18 @@ impl Ctx {
     /// As `delete`, for items on `src` (a sidebar folder's side), reported in pane `p`. Panes
     /// inside what's deleted go to the folder it was in.
     pub(super) fn delete_on(self, p: Pane, src: Src, items: Vec<Entry>, forever: bool) {
-        p.notice.set(Notice::None);
         let trash = crate::os::trash();
+        let work = Working::start(p, "Deleting");
         spawn_local(async move {
             let (mut done, mut trashed, mut backups) = (0, 0, 0);
             let mut error = None;
             let mut gone = vec![];
+            let mut stopped = false;
             for e in &items {
+                if !work.step(format!("Deleting {}", e.name), done, items.len()) {
+                    stopped = true;
+                    break;
+                }
                 let args = json!({ "src": src.key(), "path": e.path });
                 if forever {
                     match call::<()>("remove_forever", args).await {
@@ -244,7 +249,15 @@ impl Ctx {
             } else {
                 format!("Moved {trashed} to the {trash}; {fell_back} more had no {trash} on their disk and were deleted.{note}")
             };
+            work.end();
             match error {
+                None if stopped && done == 0 => p
+                    .notice
+                    .set(Notice::Ok("Stopped: nothing was deleted.".into())),
+                None if stopped => p.notice.set(Notice::Ok(format!(
+                    "{ok} Stopped there: {} not deleted.",
+                    items.len() - done
+                ))),
                 None => p.notice.set(Notice::Ok(ok)),
                 Some(err) if done == 0 => p.error(err),
                 Some(err) => p.error(format!("Deleted {done} of {}, then: {err}", items.len())),
@@ -337,5 +350,61 @@ impl Ctx {
                 Err(e) => p.error(e),
             }
         });
+    }
+}
+
+/// Progress in a pane's notice while work goes through several items: "Deleting x · 3 of 10",
+/// with a bar and a Stop button. Left alone once the notice shows something else.
+#[derive(Clone, Copy)]
+pub(super) struct Working {
+    p: Pane,
+    id: u32,
+}
+
+impl Working {
+    pub(super) fn start(p: Pane, text: &str) -> Self {
+        static NEXT: std::sync::atomic::AtomicU32 = std::sync::atomic::AtomicU32::new(1);
+        let id = NEXT.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+        p.notice.set(Notice::Working {
+            id,
+            text: text.into(),
+            done: 0,
+            total: 0,
+            stopping: false,
+        });
+        Self { p, id }
+    }
+
+    fn ours(self) -> Option<bool> {
+        self.p.notice.try_with_untracked(|n| match n {
+            Notice::Working { id, stopping, .. } if *id == self.id => Some(*stopping),
+            _ => None,
+        })?
+    }
+
+    /// Shows `text` before the next item, `done` of `total` so far. False once Stop is pressed.
+    pub(super) fn step(self, text: String, done: usize, total: usize) -> bool {
+        match self.ours() {
+            Some(true) => false,
+            Some(false) => {
+                self.p.notice.set(Notice::Working {
+                    id: self.id,
+                    text,
+                    done,
+                    total,
+                    stopping: false,
+                });
+                true
+            }
+            // Something else is shown now: carry on without showing progress.
+            None => true,
+        }
+    }
+
+    /// Takes the progress away, if it's still shown.
+    pub(super) fn end(self) {
+        if self.ours().is_some() {
+            self.p.notice.set(Notice::None);
+        }
     }
 }

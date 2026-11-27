@@ -363,12 +363,26 @@ pub(super) fn FullImage(
         per_px.track();
         measure();
     });
+    // The stage's size, for fits that follow it (as wide as the preview) when the picture's own
+    // size on screen stays the same.
+    let stage_size = RwSignal::new((0, 0));
     let watcher = StoredValue::new_local(None::<(web_sys::ResizeObserver, Closure<dyn Fn()>)>);
     Effect::new(move |_| {
-        let Some(img) = img_ref.get() else { return };
-        let cb = Closure::<dyn Fn()>::new(measure);
+        let (Some(img), Some(st)) = (img_ref.get(), stage.get()) else {
+            return;
+        };
+        let cb = Closure::<dyn Fn()>::new(move || {
+            measure();
+            if let Some(st) = stage.try_get_untracked().flatten() {
+                let now = (st.client_width(), st.client_height());
+                if stage_size.try_get_untracked() != Some(now) {
+                    let _ = stage_size.try_set(now);
+                }
+            }
+        });
         if let Ok(ro) = web_sys::ResizeObserver::new(cb.as_ref().unchecked_ref()) {
             ro.observe(&img);
+            ro.observe(&st);
             if let Some((old, _)) = watcher.try_update_value(|w| w.replace((ro, cb))).flatten() {
                 old.disconnect();
             }
@@ -465,8 +479,13 @@ pub(super) fn FullImage(
     };
     // The zoom for `fit_mode`, applied again when the picture or the preview's size changes,
     // until the picture is zoomed by hand. A picture bigger than the preview starts at its top
-    // left.
+    // left; when only the preview's size changed, it keeps showing the same place.
+    let last_fit = StoredValue::new(None::<((u32, u32), i32, PicFit)>);
     let apply_fit = move |m: PicFit| {
+        let key = (natural.get_untracked(), turn.get_untracked(), m);
+        let again = last_fit.get_value() == Some(key);
+        last_fit.set_value(Some(key));
+        let (before, (px, py)) = (zoom.get_untracked(), pan.get_untracked());
         let z = match m {
             PicFit::Whole => 1.0,
             PicFit::Actual => 1.0 / base(),
@@ -475,11 +494,17 @@ pub(super) fn FullImage(
             }
         };
         set_zoom(z);
-        move_to((f64::INFINITY, f64::INFINITY));
+        if again {
+            let k = zoom.get_untracked() / before;
+            move_to((px * k, py * k));
+        } else {
+            move_to((f64::INFINITY, f64::INFINITY));
+        }
     };
     Effect::new(move || {
         let m = fit_mode.get();
         fit.track();
+        stage_size.track();
         natural.track();
         turn.get();
         if !manual.get_value() {
@@ -490,6 +515,7 @@ pub(super) fn FullImage(
         fit_menu.set(None);
         store(PIC_FIT_KEY, m.key());
         manual.set_value(false);
+        last_fit.set_value(None);
         fit_mode.set(m);
         apply_fit(m);
     };
@@ -639,6 +665,13 @@ pub(super) fn FullImage(
                             on:dblclick=|e: web_sys::MouseEvent| e.stop_propagation()
                             on:click=move |e: web_sys::MouseEvent| {
                                 e.stop_propagation();
+                                // A click leaves the focus with the picture, not this side, so
+                                // ← → afterwards don't mark the side as having it.
+                                if e.detail() > 0 {
+                                    if let Some(v) = viewer.get_untracked() {
+                                        let _ = v.focus();
+                                    }
+                                }
                                 if !dragged.get_value() {
                                     go.run(d)
                                 }
@@ -682,7 +715,9 @@ pub(super) fn FullImage(
                         on:keydown=move |ev: web_sys::KeyboardEvent| if ev.key() == "Escape" { ev.stop_propagation(); fit_menu.set(None) }>
                         {PicFit::ALL.into_iter().map(|m| view! {
                             <button role="menuitemradio" aria-checked=(now == m).to_string() class:on=now == m
-                                on:click=move |_| pick_fit(m)>{m.label()}</button>
+                                on:click=move |_| pick_fit(m)>
+                                <span class="tick" class:on=now == m>{ico(Icon::Check)}</span><span>{m.label()}</span>
+                            </button>
                         }).collect_view()}
                     </div>
                 }

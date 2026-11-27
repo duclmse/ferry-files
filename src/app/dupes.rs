@@ -31,7 +31,8 @@ pub(super) fn Duplicates(folders: Vec<(Src, String)>) -> impl IntoView {
     let chosen = RwSignal::new(HashSet::<(usize, String)>::new());
     let message = RwSignal::new(None::<(String, bool)>);
     let confirming = RwSignal::new(false);
-    let deleting = RwSignal::new(false);
+    // While deleting: (deleted so far, how many).
+    let deleting = RwSignal::new(None::<(usize, usize)>);
 
     let search = move || {
         let picked: Vec<(Src, String)> = folders.with_value(|f| {
@@ -142,12 +143,13 @@ pub(super) fn Duplicates(folders: Vec<(Src, String)>) -> impl IntoView {
         }
         let picked: Vec<(usize, String)> = chosen.get_untracked().into_iter().collect();
         let list = folders.get_value();
-        deleting.set(true);
+        deleting.set(Some((0, picked.len())));
         spawn_local(async move {
             let mut gone: Vec<(usize, String)> = vec![];
             let mut undo: HashMap<Src, Vec<(String, bool, Option<String>)>> = HashMap::new();
             let mut error = None;
-            for (at, path) in &picked {
+            for (k, (at, path)) in picked.iter().enumerate() {
+                deleting.set(Some((k, picked.len())));
                 let src = list[*at].0;
                 match call::<Option<String>>("remove", json!({ "src": src.key(), "path": path }))
                     .await
@@ -164,7 +166,7 @@ pub(super) fn Duplicates(folders: Vec<(Src, String)>) -> impl IntoView {
                     }
                 }
             }
-            deleting.set(false);
+            deleting.set(None);
             for (src, items) in undo {
                 let what = if items.len() == 1 {
                     base(&items[0].0)
@@ -218,7 +220,7 @@ pub(super) fn Duplicates(folders: Vec<(Src, String)>) -> impl IntoView {
     };
 
     view! {
-        <div class="overlay" on:click=move |_| if !deleting.get_untracked() { close() }>
+        <div class="overlay" on:click=move |_| if deleting.get_untracked().is_none() { close() }>
             <div class="dialog wide dupes" on:click=|e| e.stop_propagation()>
                 <h2>"Find duplicates"</h2>
                 <p class="hint">"Files with the same content in these folders and their subfolders."</p>
@@ -309,9 +311,10 @@ pub(super) fn Duplicates(folders: Vec<(Src, String)>) -> impl IntoView {
                             }.into_any()
                         } else {
                             view! {
-                                <button class="btn danger" disabled=move || n == 0 || deleting.get() || all_of_one()
+                                {move || deleting.get().map(|(k, of)| super::transfer::meter(k as f64 * 100.0 / of.max(1) as f64, "Deleted so far"))}
+                                <button class="btn danger" disabled=move || n == 0 || deleting.get().is_some() || all_of_one()
                                     title=move || if all_of_one() { "Every copy in a group is picked: keep at least one" } else { "Delete the picked files (backed up first)" }
-                                    on:click=move |_| confirming.set(true)>{ico(Icon::Trash)}{move || if deleting.get() { "Deleting…".to_string() } else { format!("Delete {n}…") }}</button>
+                                    on:click=move |_| confirming.set(true)>{ico(Icon::Trash)}{move || if let Some((k, of)) = deleting.get() { format!("Deleting {} of {of}…", k + 1) } else { format!("Delete {n}…") }}</button>
                                 <button class="btn primary" on:click=move |_| close()>"Done"</button>
                             }.into_any()
                         }

@@ -676,6 +676,36 @@ fn job_title(w: &Work) -> String {
     }
 }
 
+/// What a running job is doing, as a word: "Copying".
+pub(super) fn job_verb(w: &Work) -> &'static str {
+    match w {
+        Work::Copy { moving: true, .. } => "Moving",
+        Work::Copy { replace: true, .. } => "Replacing",
+        Work::Copy { .. } => "Copying",
+        Work::Sync { .. } => "Syncing",
+        Work::Import { .. } => "Importing",
+    }
+}
+
+/// How far a job has got, by bytes, as a percentage.
+pub(super) fn job_pct(j: &Job) -> f64 {
+    match &j.progress {
+        Some(pr) if pr.bytes_total > 0 => pr.bytes_done as f64 * 100.0 / pr.bytes_total as f64,
+        _ => 0.0,
+    }
+}
+
+/// A progress bar, `pct` of the way along, read out as a percentage.
+pub(super) fn meter(pct: f64, what: &str) -> impl IntoView {
+    let pct = pct.clamp(0.0, 100.0);
+    view! {
+        <div class="meter" role="progressbar" aria-label=what.to_string() aria-valuemin="0" aria-valuemax="100"
+            aria-valuenow=format!("{pct:.0}")>
+            <div style=format!("width:{pct:.1}%")></div>
+        </div>
+    }
+}
+
 /// The transfer queue below the panes: the running job with its progress, then the waiting ones,
 /// and the ones to retry.
 #[component]
@@ -691,27 +721,20 @@ pub(super) fn TransferBar() -> impl IntoView {
                         let title = job_title(&j.work);
                         match j.state {
                             JobState::Running => {
-                                let verb = match &j.work {
-                                    Work::Copy { moving: true, .. } => "Moving",
-                                    Work::Copy { replace: true, .. } => "Replacing",
-                                    Work::Copy { .. } => "Copying",
-                                    Work::Sync { .. } => "Syncing",
-                                    Work::Import { .. } => "Importing",
-                                };
-                                let (text, pct) = match &j.progress {
-                                    None => (format!("{verb}: looking at what to copy…"), 0.0),
+                                let (verb, pct) = (job_verb(&j.work), job_pct(&j));
+                                let text = match &j.progress {
+                                    None => format!("{verb}: looking at what to copy…"),
                                     Some(pr) => {
-                                        let pct = if pr.bytes_total > 0 { pr.bytes_done as f64 * 100.0 / pr.bytes_total as f64 } else { 0.0 };
                                         let now = if pr.current.is_empty() { String::new() } else { format!(" {}", pr.current) };
-                                        (format!("{verb}{now} · {} of {} files · {} of {}", pr.files_done, pr.files_total,
-                                            human_size(pr.bytes_done), human_size(pr.bytes_total)), pct)
+                                        format!("{verb}{now} · {} of {} files · {} of {}", pr.files_done, pr.files_total,
+                                            human_size(pr.bytes_done), human_size(pr.bytes_total))
                                     }
                                 };
                                 view! {
                                     <div class="transfer">
                                         <span class="spin"></span>
                                         <span class="text" title=title>{text}</span>
-                                        <div class="meter"><div style=format!("width:{pct:.1}%")></div></div>
+                                        {meter(pct, verb)}
                                         <button class="btn icon-only" title="Cancel: stops after the file being copied now" aria-label="Cancel"
                                             on:click=move |_| ctx.cancel_job(id)>{ico(Icon::Stop)}</button>
                                     </div>

@@ -23,6 +23,20 @@
   color: var(--ink);
 }
 
+/* A copy, move or delete under way for this pane. */
+.statusbar .progress {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  flex: none;
+  color: var(--ink);
+  font-variant-numeric: tabular-nums;
+}
+
+.statusbar .progress .meter {
+  width: 90px;
+}
+
 .statusbar .unsaved {
   color: var(--accent);
   font-weight: 600;
@@ -959,6 +973,17 @@ td.name input.rename {
   opacity: 1;
 }
 
+/* Each side is as tall as the picture, so its own focus ring would be a long line down the
+   picture. The ring goes round its arrow instead. */
+.preview .pic.stage .pic-edge:focus-visible {
+  outline: none;
+}
+
+.preview .pic.stage .pic-edge:focus-visible svg {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
+}
+
 .preview .pic.stage .pic-edge svg {
   box-sizing: content-box;
   padding: 6px;
@@ -1802,6 +1827,25 @@ td.name input.rename {
   font-weight: 600;
 }
 
+/* A tick before the one picked (the picture's fits). */
+.open-as-list button:has(.tick) {
+  gap: 6px;
+}
+
+.menu.open-as-list button .tick {
+  flex: none;
+  display: inline-flex;
+  visibility: hidden;
+}
+
+.menu.open-as-list button .tick.on {
+  visibility: visible;
+}
+
+.open-as-list .tick + span {
+  flex: 1;
+}
+
 /* Under a list opened from a button: a click anywhere else closes it. */
 .menu-backdrop {
   position: fixed;
@@ -1881,36 +1925,6 @@ td.name .stem {
 }
 
 td.name .ext {
-  flex: none;
-}
-
-.tile .label:has(.split) {
-  display: block;
-}
-
-.tile .label .split {
-  display: flex;
-  justify-content: center;
-  align-items: flex-end;
-}
-
-/* An unseen copy of the extension before the stem, as wide as the one after it, so the cut
-   name stays in the middle of the tile. */
-.tile .label .split::before {
-  content: attr(data-ext);
-  flex: none;
-  visibility: hidden;
-}
-
-.tile .label .stem {
-  min-width: 0;
-  display: -webkit-box;
-  -webkit-line-clamp: 2;
-  -webkit-box-orient: vertical;
-  overflow: hidden;
-}
-
-.tile .label .ext {
   flex: none;
 }
 

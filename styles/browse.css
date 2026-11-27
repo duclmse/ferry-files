@@ -48,20 +48,6 @@ tbody tr.drop td,
   white-space: nowrap;
 }
 
-.transfer .meter {
-  width: 160px;
-  height: 6px;
-  border-radius: 3px;
-  background: var(--line);
-  overflow: hidden;
-  flex: none;
-}
-
-.transfer .meter div {
-  height: 100%;
-  background: var(--accent);
-  transition: width 0.2s;
-}
 
 /* Sortable list headings and the Kind column. */
 th .sort {
