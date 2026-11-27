@@ -517,6 +517,15 @@ enum MenuItem {
         label: String,
         items: Vec<MenuItem>,
     },
+    /// A row that does `act`, with a button at its end that does `alt` instead (a script's
+    /// Try). `alt_label` says what the button does ("Try script"), for its title and the palette.
+    Pair {
+        label: String,
+        act: Act,
+        alt: Act,
+        alt_icon: Icon,
+        alt_label: &'static str,
+    },
     Sep,
 }
 

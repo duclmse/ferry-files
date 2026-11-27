@@ -23,8 +23,8 @@ The pane lists its folder again when the script changed something.
 
 ### Trying a script first
 
-**Try script ▸**, next to **Run script ▸**, runs a script without changing
-anything. Each change it asks for (writing, making, copying, moving, renaming or
+The eye button at the end of each script's row in **Run script ▸** tries it:
+it runs the script without changing anything. Each change it asks for (writing, making, copying, moving, renaming or
 deleting) is checked as it would be, then becomes a line of its output instead:
 `Would move a.jpg to Grayscale/a.jpg`. A change that would fail fails the same
 way. When it ends, ▶ runs it for real.
@@ -88,7 +88,7 @@ adding `/` by hand.
 | `ferry.dir`    | The pane's folder.                                                     |
 | `ferry.items`  | The paths picked, in the pane's order. Empty when nothing was picked.  |
 | `ferry.device` | Where the files are: the computer's name, the phone's or the server's. |
-| `ferry.trial`  | `true` when run with **Try script ▸**, which changes nothing.          |
+| `ferry.trial`  | `true` when tried (the eye button in **Run script ▸**): nothing changes. |
 
 ### Looking
 
@@ -338,7 +338,7 @@ print(#lines .. " items listed")
 
 The full version of this one, with settings at its top (the smallest size kept,
 whether sounds count, whether to go into folders inside, and a list-only mode,
-which **Try script ▸** turns on),
+which trying it turns on),
 is in the app's source as `docs/scripts/delete non-media and small media.lua`.
 
 ```lua

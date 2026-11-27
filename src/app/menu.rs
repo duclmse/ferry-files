@@ -257,6 +257,23 @@ fn rows(ctx: Ctx, items: Vec<MenuItem>, run: Callback<Act>) -> AnyView {
                 }
                 .into_any()
             }
+            MenuItem::Pair { label, act, alt, alt_icon, alt_label } => {
+                let (label, own) = match label.split_once('\t') {
+                    Some((l, k)) => (l.to_string(), k.to_string()),
+                    None => (label, String::new()),
+                };
+                let title = format!("{alt_label}: {label}");
+                view! {
+                    <div class="pair">
+                        <button role="menuitem" on:click=move |_| run.run(act)>
+                            <span>{label}</span><span class="key">{own}</span>
+                        </button>
+                        <button role="menuitem" class="alt" title=title.clone() aria-label=title
+                            on:click=move |_| run.run(alt)>{ico(alt_icon)}</button>
+                    </div>
+                }
+                .into_any()
+            }
             MenuItem::Sub { label, items } => {
                 let left = RwSignal::new(false);
                 let enter = move |ev: web_sys::MouseEvent| {

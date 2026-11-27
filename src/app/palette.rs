@@ -143,6 +143,19 @@ fn from_menu_in(
                 from_menu_in(group, &label, items, entry, out);
                 continue;
             }
+            // Both halves, the end button's under its own name: "Try script: Tidy".
+            MenuItem::Pair {
+                label,
+                act,
+                alt,
+                alt_label,
+                ..
+            } => {
+                let alt_item = item(label.clone(), "", alt);
+                from_menu_in(group, under, vec![item(label, "", act)], entry, out);
+                from_menu_in(group, alt_label, vec![alt_item], entry, out);
+                continue;
+            }
             _ => continue,
         };
         let checked = label.starts_with('✓');

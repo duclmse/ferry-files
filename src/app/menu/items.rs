@@ -364,35 +364,29 @@ impl Ctx {
         }
     }
 
-    /// Run script ▸: the scripts (Settings > Scripts), then a way to add some; and Try script ▸,
-    /// the same scripts run without changing anything.
+    /// Run script ▸: the scripts (Settings > Scripts), each with a Try button at its end that
+    /// runs it without changing anything, then a way to add some.
     pub(super) fn script_menus(self) -> Vec<MenuItem> {
         // A tab before its shortcut puts the shortcut where the menu shows them.
-        let list = |act: fn(usize) -> Act, keys: bool| -> Vec<MenuItem> {
-            self.scripts.with_untracked(|v| {
-                v.iter()
-                    .enumerate()
-                    .map(|(i, s)| {
-                        let key = if keys {
-                            untrack(|| self.script_key_label(&s.path))
+        let mut run: Vec<MenuItem> = self.scripts.with_untracked(|v| {
+            v.iter()
+                .enumerate()
+                .map(|(i, s)| {
+                    let key = untrack(|| self.script_key_label(&s.path));
+                    MenuItem::Pair {
+                        label: if key.is_empty() {
+                            s.name.clone()
                         } else {
-                            String::new()
-                        };
-                        item(
-                            if key.is_empty() {
-                                s.name.clone()
-                            } else {
-                                format!("{}\t{key}", s.name)
-                            },
-                            "",
-                            act(i),
-                        )
-                    })
-                    .collect()
-            })
-        };
-        let mut run = list(Act::Script, true);
-        let tries = list(Act::TryScript, false);
+                            format!("{}\t{key}", s.name)
+                        },
+                        act: Act::Script(i),
+                        alt: Act::TryScript(i),
+                        alt_icon: Icon::Eye,
+                        alt_label: "Try script",
+                    }
+                })
+                .collect()
+        });
         if run.is_empty() {
             run.push(MenuItem::Do {
                 label: "No scripts yet".into(),
@@ -405,17 +399,10 @@ impl Ctx {
         run.extend([MenuItem::Sep, item("Scripts…", "", Act::ScriptSettings)]);
         // Found again for the next time, in case the scripts folder changed.
         self.load_scripts();
-        let mut v = vec![MenuItem::Sub {
+        vec![MenuItem::Sub {
             label: "Run script".into(),
             items: run,
-        }];
-        if !tries.is_empty() {
-            v.push(MenuItem::Sub {
-                label: "Try script".into(),
-                items: tries,
-            });
-        }
-        v
+        }]
     }
 
     /// Delete: to the Trash on the computer (Delete permanently is only a shortcut, ⌥⌘⌫).

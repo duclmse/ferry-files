@@ -12,7 +12,8 @@
 -- page with one colour panel stays. Pictures ferry.colour can't read (HEIC, AVIF, JPEG XL,
 -- camera raw) stay, and are counted.
 --
--- Try script ▸ in the right-click menu lists what it would move, and moves nothing.
+-- Trying it (the eye button at the end of its row in Run script ▸) lists what it would move,
+-- and moves nothing.
 
 -- The new folder's name, in the pane's folder.
 local TO = "Grayscale"

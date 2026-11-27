@@ -150,6 +150,23 @@
   font-size: 11px;
 }
 
+/* A row with a button at its end that does the same another way (a script's Try). */
+.menu .pair {
+  display: flex;
+  gap: 2px;
+}
+
+.menu .pair > button:first-child {
+  flex: 1;
+}
+
+.menu .pair > .alt {
+  width: 28px;
+  padding: 0;
+  justify-content: center;
+  color: var(--muted);
+}
+
 .menu .sep {
   height: 1px;
   margin: 4px 6px;
