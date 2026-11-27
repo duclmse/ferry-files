@@ -487,3 +487,49 @@ fn about_is_the_first_comment() {
     assert_eq!(about("-- Lists sizes.\nprint(1)"), "Lists sizes.");
     assert_eq!(about("print(1)"), "");
 }
+
+#[test]
+fn scripts_read_json_toml_yaml_and_xml() {
+    let (_s, dir) = scratch("config");
+    let dev = Arc::new(Device::new(Box::new(crate::local::Local)));
+    let code = r#"
+        local j = ferry.json('{"name": "x", "list": [1, null, 3], "n": null}')
+        print(j.name, #j.list, j.list[2] == ferry.null, j.n == ferry.null)
+        print(ferry.json("null"), math.type(ferry.json("2")), ferry.json("2.5"))
+        local t = ferry.toml('[server]\nport = 8080\nhosts = ["a", "b"]\n')
+        print(t.server.port, t.server.hosts[2])
+        local a, b = ferry.yaml("x: 1\n---\n- y\n- ~\n")
+        print(a.x, b[1], b[2] == ferry.null)
+        local x = ferry.xml('<conf v="2"><name>A &amp; B</name><empty/></conf>')
+        print(x.tag, x.attr.v, #x, x[1].tag, x[1][1], x[2].tag, #x[2])
+        print(pcall(ferry.yaml, "a: 1\na: 2\n"))
+        print(pcall(ferry.json, "{"))
+        print(pcall(ferry.xml, "<a><b></a>"))
+    "#;
+    let r = run(dev, &dir, &[], "t", code, &NEVER);
+    assert_eq!(r.error, None);
+    assert_eq!(
+        r.output[..5],
+        [
+            "x\t3\ttrue\ttrue",
+            "nil\tinteger\t2.5",
+            "8080\tb",
+            "1\ty\ttrue",
+            "conf\t2\t2\tname\tA & B\tempty\t0",
+        ]
+    );
+    assert_eq!(
+        r.output[5],
+        "false\tYAML line 2: the key \"a\" is there twice"
+    );
+    assert!(
+        r.output[6].starts_with("false\tJSON line 1: "),
+        "{}",
+        r.output[6]
+    );
+    assert!(
+        r.output[7].starts_with("false\tXML line 1: "),
+        "{}",
+        r.output[7]
+    );
+}

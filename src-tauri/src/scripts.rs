@@ -11,6 +11,7 @@ use mlua::{HookTriggers, IntoLuaMulti, Lua, LuaOptions, StdLib, Table, Value, Vm
 use std::sync::atomic::{AtomicBool, Ordering};
 
 mod api;
+mod config;
 mod files;
 #[cfg(test)]
 mod tests;

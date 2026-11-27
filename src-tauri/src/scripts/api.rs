@@ -49,7 +49,6 @@ pub(super) fn fail(e: impl std::fmt::Display) -> mlua::Error {
     mlua::Error::runtime(e.to_string())
 }
 
-/// Counts what a script changed.
 /// The `ferry` table.
 pub(super) fn api(
     lua: &Lua,
@@ -352,6 +351,38 @@ pub(super) fn api(
     t.set(
         "dirname",
         func(lua, |_, path: String| Ok(device::dirname(&path)))?,
+    )?;
+    // Config files: text in, tables out. A null inside is ferry.null.
+    t.set("null", config::null())?;
+    t.set(
+        "json",
+        func(lua, |lua, text: mlua::LuaString| {
+            let d = config::json(&text.to_str()?).map_err(|e| fail(format!("JSON {e}")))?;
+            config::to_lua(lua, d)
+        })?,
+    )?;
+    t.set(
+        "toml",
+        func(lua, |lua, text: mlua::LuaString| {
+            let d = config::toml(&text.to_str()?).map_err(|e| fail(format!("TOML {e}")))?;
+            config::to_lua(lua, d)
+        })?,
+    )?;
+    t.set(
+        "yaml",
+        func(lua, |lua, text: mlua::LuaString| {
+            let docs = config::yaml(&text.to_str()?).map_err(|e| fail(format!("YAML {e}")))?;
+            docs.into_iter()
+                .map(|d| config::to_lua(lua, d))
+                .collect::<mlua::Result<mlua::MultiValue>>()
+        })?,
+    )?;
+    t.set(
+        "xml",
+        func(lua, |lua, text: mlua::LuaString| {
+            let d = config::xml(&text.to_str()?).map_err(|e| fail(format!("XML {e}")))?;
+            config::xml_lua(lua, d)
+        })?,
     )?;
     // Failures come back as (false, message), which LIFT turns into errors that are plain
     // strings, raised where the script called: printable, and joinable with `..`.

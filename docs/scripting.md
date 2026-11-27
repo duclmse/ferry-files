@@ -168,6 +168,47 @@ print(ferry.unzip(ferry.items[2], "pages/001.png", 0, 4) == "\137PNG")
 | `ferry.write(path, text)`  | Writes the file, making it or replacing it. A file it replaces is backed up first.                              |
 | `ferry.append(path, text)` | Adds `text` to the end of the file (made when it isn't there). The old version is backed up. Files up to 64 MB. |
 
+### Config files
+
+These turn the text of a config file into Lua tables, to read settings from it. They only read:
+to change a config, write its text with `ferry.write`.
+
+| Function           | What it does                                                                                                                                                                         |
+| ------------------ | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| `ferry.json(text)` | JSON: objects become tables with keys, arrays become lists (from 1), numbers become Lua integers when they're whole.                                                                 |
+| `ferry.toml(text)` | TOML: tables and `[[arrays of tables]]` become tables and lists. Dates and times stay text, as written (`"1979-05-27T07:32:00Z"`).                                                      |
+| `ferry.yaml(text)` | YAML, as YAML 1.2 reads it (see below). A file with several documents split by `---` gives each one: `local a, b = ferry.yaml(text)`.                                                  |
+| `ferry.xml(text)`  | XML: the root element as a table, `{tag = "name", attr = {...}, ...}`, with what's inside it at 1, 2, …: elements as tables like it, and text as strings. Comments and spaces between tags are left out. |
+| `ferry.null`       | What a `null` inside a list or map becomes, so the entry isn't lost: `if v == ferry.null then`. A file that's only `null` gives `nil`.                                                  |
+
+```lua
+local cfg = ferry.json(ferry.read(ferry.join(ferry.dir, "settings.json")))
+print(cfg.theme, #cfg.recent)
+
+local compose = ferry.yaml(ferry.read(ferry.join(ferry.dir, "docker-compose.yml")))
+for name, s in pairs(compose.services) do print(name, s.image) end
+
+-- The title in an EPUB, from its OPF.
+local opf = ferry.xml(ferry.unzip(ferry.items[1], "OEBPS/content.opf"))
+for _, el in ipairs(opf) do
+  if el.tag == "metadata" then
+    for _, m in ipairs(el) do
+      if m.tag == "dc:title" then print(m[1]) end
+    end
+  end
+end
+```
+
+YAML is read the way docker-compose files, CI workflows and app settings are written: maps and
+lists by indentation and in brackets (`[a, b]`, `{x: 1}`), plain, `'single'` and `"double"`
+quoted text, `|` and `>` text over several lines, and comments. Plain values that are numbers,
+`true`/`false` or `null` (or `~`) become those, and the rest stay text, so `yes`, `no` and `on`
+are text, as in YAML 1.2. Quoted values are always text, and keys are always text. Anchors and
+aliases (`&a`, `*a`), tags (`!!str`) and `? ` keys aren't read: a file with them gives an error
+naming the line, as does a mistake in a file.
+
+An error says which line: `YAML line 4: the key "port" is there twice`.
+
 ### Folders
 
 | Function                  | What it does                                                                                     |
