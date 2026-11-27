@@ -78,6 +78,7 @@
     "allow-scripts",
     "allow-run-script",
     "allow-stop-script",
+    "allow-script-answer",
     "allow-pick-scripts",
     "allow-new-script",
     "allow-script-guide",

@@ -81,6 +81,7 @@ fn main() {
             "scripts",
             "run_script",
             "stop_script",
+            "script_answer",
             "pick_scripts",
             "new_script",
             "script_guide",

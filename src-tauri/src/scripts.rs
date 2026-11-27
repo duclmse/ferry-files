@@ -233,6 +233,70 @@ pub(super) struct ScriptProgress {
     changed: u32,
 }
 
+/// Puts a script's question to the user (`text`; with `confirm`, to answer yes or no; else to
+/// type an answer, starting from `default`) and waits: Some(answer), None when they cancel or
+/// say no. An error when the script is stopped meanwhile.
+pub(super) type Asker =
+    Arc<dyn Fn(String, Option<String>, bool) -> Result<Option<String>, String> + Send + Sync>;
+
+/// A script's question, sent as the "script_ask" event.
+#[derive(Serialize, Clone)]
+struct Question {
+    id: u32,
+    text: String,
+    default: Option<String>,
+    confirm: bool,
+}
+
+/// The question waiting for an answer, and where `script_answer` sends it.
+static WAITING: Mutex<Option<(u32, std::sync::mpsc::Sender<Option<String>>)>> = Mutex::new(None);
+
+/// The user's answer to the script's question `id`: None for Cancel (or No).
+#[tauri::command(rename_all = "snake_case")]
+pub(super) fn script_answer(id: u32, answer: Option<String>) {
+    let mut w = WAITING.lock().unwrap_or_else(|e| e.into_inner());
+    if w.as_ref().is_some_and(|(at, _)| *at == id) {
+        if let Some((_, tx)) = w.take() {
+            let _ = tx.send(answer);
+        }
+    }
+}
+
+/// Asks through the window: the question as an event, then waits for `script_answer`, or Stop.
+fn asker(app: AppHandle) -> Asker {
+    use tauri::Emitter;
+    Arc::new(move |text, default, confirm| {
+        static NEXT: AtomicU32 = AtomicU32::new(1);
+        let id = NEXT.fetch_add(1, Ordering::Relaxed);
+        let (tx, rx) = std::sync::mpsc::channel();
+        *WAITING.lock().unwrap_or_else(|e| e.into_inner()) = Some((id, tx));
+        let _ = app.emit(
+            "script_ask",
+            Question {
+                id,
+                text,
+                default,
+                confirm,
+            },
+        );
+        let got = loop {
+            match rx.recv_timeout(std::time::Duration::from_millis(100)) {
+                Ok(a) => break Ok(a),
+                Err(std::sync::mpsc::RecvTimeoutError::Timeout) if STOP.load(Ordering::SeqCst) => {
+                    break Err("Stopped.".to_string())
+                }
+                Err(std::sync::mpsc::RecvTimeoutError::Timeout) => {}
+                Err(_) => break Ok(None),
+            }
+        };
+        let mut w = WAITING.lock().unwrap_or_else(|e| e.into_inner());
+        if w.as_ref().is_some_and(|(at, _)| *at == id) {
+            *w = None;
+        }
+        got
+    })
+}
+
 /// How often a running script's new lines are sent.
 const TICK: std::time::Duration = std::time::Duration::from_millis(250);
 
@@ -266,6 +330,7 @@ pub(super) async fn run_script(
             return Err("A script is already running. Stop it first.".into());
         }
         STOP.store(false, Ordering::SeqCst);
+        let ask = asker(app.clone());
         let tick = move |p: ScriptProgress| {
             let _ = app.emit("script", p);
         };
@@ -278,6 +343,7 @@ pub(super) async fn run_script(
             &STOP,
             trial.unwrap_or(false),
             &tick,
+            ask,
         );
         RUNNING.store(false, Ordering::SeqCst);
         Ok(r)
@@ -329,6 +395,7 @@ fn run(
     stop: &'static AtomicBool,
     trial: bool,
     tick: &(dyn Fn(ScriptProgress) + Sync),
+    ask: Asker,
 ) -> ScriptReport {
     let output = Arc::new(Out::default());
     let changed = Arc::new(std::sync::atomic::AtomicU32::new(0));
@@ -350,7 +417,9 @@ fn run(
                 }
             }
         });
-        let r = lua_run(dev, dir, items, name, code, stop, trial, &output, &changed);
+        let r = lua_run(
+            dev, dir, items, name, code, stop, trial, &output, &changed, ask,
+        );
         done.store(true, Ordering::Relaxed);
         r
     });
@@ -373,6 +442,7 @@ fn lua_run(
     trial: bool,
     output: &Arc<Out>,
     changed: &Changed,
+    ask: Asker,
 ) -> mlua::Result<()> {
     {
         let libs = StdLib::STRING | StdLib::TABLE | StdLib::MATH | StdLib::UTF8 | StdLib::COROUTINE;
@@ -397,7 +467,7 @@ fn lua_run(
                 changed: changed.clone(),
             })
         });
-        let ferry = api(&lua, dev, dir, items, changed, stop, pretend)?;
+        let ferry = api(&lua, dev, dir, items, changed, stop, pretend, ask)?;
         let g = lua.globals();
         g.set("ferry", ferry)?;
         let out = output.clone();

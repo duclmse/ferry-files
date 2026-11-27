@@ -258,6 +258,7 @@ pub fn run() {
             scripts::scripts,
             scripts::run_script,
             scripts::stop_script,
+            scripts::script_answer,
             scripts::pick_scripts,
             scripts::new_script,
             scripts::script_guide,

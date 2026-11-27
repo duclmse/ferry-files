@@ -130,7 +130,8 @@ An item is a table:
 
 A ZIP (or CBZ, EPUB, APK, JAR…) can be read without unpacking it. Only the parts asked for are
 read, never the whole ZIP, so these are quick on a phone or a server too. Nothing in the ZIP is
-changed: to change a ZIP, `ferry.read` it and `ferry.write` a new one.
+changed: to change a ZIP, `ferry.read` it and `ferry.write` a new one. `ferry.pack` (in
+"Making a ZIP", below) makes a new ZIP from files and folders.
 
 | Function                                | What it does                                                                                                                                                                                                                                                       |
 | --------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
@@ -230,6 +231,38 @@ These work on files and folders alike, on the device the pane shows.
 
 Big files are fine for `copy` and `move`: they go through a file on the
 computer, not memory.
+
+### Making a ZIP
+
+| Function               | What it does |
+| ---------------------- | ------------ |
+| `ferry.pack(from, to)` | Packs `from`, a file or a folder with everything in it, into a new ZIP at `to`, and returns how many files went in. `from` can also be a list of paths. Each goes in under its own name: packing folder `Photos` gives `Photos/a.jpg`, `Photos/trip/b.jpg`… Fails when something is already at `to`. |
+
+The ZIP is made in a file on the computer, a file at a time, then written to `to`, so it works
+the same on a phone or a server and big folders needn't fit in memory. Pictures, videos, sounds
+and other ZIPs are stored as they are (packing them again saves next to nothing); the rest is
+compressed. Each file keeps the date it was last changed (as UTC). In a trial, `ferry.pack`
+checks that `from` is there and `to` isn't, says `Would pack Photos into Photos.zip`, and
+returns 0.
+
+### Asking
+
+A script can ask a question in the pane's notice, and waits until it's answered. **Stop** ends
+it while it waits.
+
+| Function                   | What it does |
+| -------------------------- | ------------ |
+| `ferry.confirm(text)`      | Asks `text` with **Yes** and **No**: `true` for Yes, `false` for No. |
+| `ferry.ask(text)`          | Asks for an answer to type, with **OK** and **Cancel**: what was typed (Enter is OK), or `nil` for Cancel (or Esc). |
+| `ferry.ask(text, default)` | The same, with `default` in the box to start with. |
+
+```lua
+if not ferry.confirm("Rename " .. #ferry.items .. " files?") then return end
+local prefix = ferry.ask("Start each name with:", "IMG_")
+if not prefix then return end
+```
+
+A trial asks too, so it goes the way the real run would.
 
 ### Paths
 
@@ -352,6 +385,23 @@ for _, e in ipairs(ferry.list(ferry.dir)) do
       print("deleted " .. e.name)
     end
   end
+end
+```
+
+### Pack folders into ZIPs, then delete them
+
+`docs/scripts/zip folders.lua` in the app's source packs each folder picked into a ZIP next to it.
+It asks once whether to delete the folders afterwards, asks for another name when a ZIP is
+already there, and deletes a folder only when its ZIP has as many files in it as were packed.
+In short:
+
+```lua
+-- Packs each folder picked into name.zip, then deletes it (files backed up first).
+local delete = ferry.confirm("Delete the folders once packed?")
+for _, path in ipairs(ferry.items) do
+  local n = ferry.pack(path, path .. ".zip")
+  print("packed " .. ferry.basename(path) .. " (" .. n .. " files)")
+  if delete then ferry.remove(path, true) end
 end
 ```
 

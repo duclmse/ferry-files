@@ -49,7 +49,17 @@ pub(super) fn fail(e: impl std::fmt::Display) -> mlua::Error {
     mlua::Error::runtime(e.to_string())
 }
 
-/// The `ferry` table.
+/// A path, or a list of them, as paths.
+fn paths(v: Value, what: &str) -> mlua::Result<Vec<String>> {
+    match v {
+        Value::String(s) => Ok(vec![s.to_str()?.to_string()]),
+        Value::Table(t) => t.sequence_values::<String>().collect(),
+        _ => Err(fail(format!("{what} takes a path, or a list of paths."))),
+    }
+}
+
+/// The `ferry` table. `ask` puts a script's question to the user.
+#[allow(clippy::too_many_arguments)]
 pub(super) fn api(
     lua: &Lua,
     dev: Arc<Device>,
@@ -58,6 +68,7 @@ pub(super) fn api(
     changed: &Changed,
     stop: &'static AtomicBool,
     pretend: Option<Arc<Pretend>>,
+    ask: Asker,
 ) -> mlua::Result<Table> {
     let t = lua.create_table()?;
     t.set("dir", dir)?;
@@ -318,6 +329,32 @@ pub(super) fn api(
             let to = d.rename(&path, &new_name).map_err(fail)?;
             c.fetch_add(1, Ordering::Relaxed);
             Ok(to)
+        })?,
+    )?;
+    let (d, c, pt) = (dev.clone(), changed.clone(), pretend.clone());
+    t.set(
+        "pack",
+        func(lua, move |_, (from, to): (Value, String)| {
+            let from = paths(from, "ferry.pack")?;
+            if let Some(p) = &pt {
+                p.act(Would::Pack(from.clone(), to))?;
+                return Ok(0);
+            }
+            pack(&d, &from, &to, stop, &c).map_err(fail)
+        })?,
+    )?;
+    // Questions for the user, answered in the pane's notice; the script waits meanwhile.
+    let a = ask.clone();
+    t.set(
+        "ask",
+        func(lua, move |_, (text, default): (String, Option<String>)| {
+            a(text, default, false).map_err(fail)
+        })?,
+    )?;
+    t.set(
+        "confirm",
+        func(lua, move |_, text: String| {
+            Ok(ask(text, None, true).map_err(fail)?.is_some())
         })?,
     )?;
     let (d, c, pt) = (dev, changed.clone(), pretend);

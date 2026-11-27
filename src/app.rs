@@ -1007,6 +1007,8 @@ struct Ctx {
     /// What the script running has printed so far (the last lines kept), and how many items
     /// it has changed.
     script_live: RwSignal<(Vec<String>, u32)>,
+    /// The running script's question waiting for an answer.
+    script_ask: RwSignal<Option<crate::api::ScriptQuestion>>,
     /// The sidebar's folders open down to the one the active pane shows, which is scrolled to.
     follow_folder: RwSignal<bool>,
     /// The sidebar's sections, top to bottom (keys of `SECTIONS`).

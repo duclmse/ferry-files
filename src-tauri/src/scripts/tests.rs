@@ -11,7 +11,31 @@ fn run(
     code: &str,
     stop: &'static AtomicBool,
 ) -> ScriptReport {
-    super::run(dev, dir, items, name, code, stop, false, &|_| {})
+    super::run(dev, dir, items, name, code, stop, false, &|_| {}, quiet())
+}
+
+/// No one to ask: every question is cancelled.
+fn quiet() -> Asker {
+    Arc::new(|_, _, _| Ok(None))
+}
+
+/// Answers the script's questions with `answers`, in turn (then cancels), and notes each
+/// question as "ask: text [default]" or "confirm: text".
+fn answering(answers: &[Option<&str>], asked: Arc<Mutex<Vec<String>>>) -> Asker {
+    let left = Mutex::new(
+        answers
+            .iter()
+            .map(|a| a.map(String::from))
+            .collect::<std::collections::VecDeque<_>>(),
+    );
+    Arc::new(move |text, default, confirm| {
+        asked.lock().unwrap().push(if confirm {
+            format!("confirm: {text}")
+        } else {
+            format!("ask: {text} [{}]", default.unwrap_or_default())
+        });
+        Ok(left.lock().unwrap().pop_front().flatten())
+    })
 }
 
 /// A scratch folder on this computer, removed afterwards.
@@ -278,7 +302,17 @@ fn the_grayscale_script_moves_gray_pictures_three_levels_down() {
         .unwrap();
     let code = include_str!("../../../docs/scripts/move grayscale pictures.lua");
     // Tried first: it says what it would move, and moves nothing.
-    let r = super::run(dev.clone(), &dir, &[], "t", code, &NEVER, true, &|_| {});
+    let r = super::run(
+        dev.clone(),
+        &dir,
+        &[],
+        "t",
+        code,
+        &NEVER,
+        true,
+        &|_| {},
+        quiet(),
+    );
     assert_eq!(r.error, None, "{:?}", r.output);
     assert!(r
         .output
@@ -396,6 +430,7 @@ fn a_trial_tells_its_changes_and_makes_none() {
         &NEVER,
         true,
         &|_| {},
+        quiet(),
     );
     assert_eq!(r.error, None, "{:?}", r.output);
     let sub_a = device::join(&dir, "sub/a.txt");
@@ -443,7 +478,7 @@ fn what_a_script_prints_comes_while_it_runs() {
         end
         print("second")
     "#;
-    let r = super::run(dev, &dir, &[], "t", code, &NEVER, false, &tick);
+    let r = super::run(dev, &dir, &[], "t", code, &NEVER, false, &tick, quiet());
     assert_eq!(r.error, None);
     assert_eq!(r.output, ["first", "second"]);
     let got = got.into_inner().unwrap();
@@ -569,7 +604,17 @@ fn the_cbz_script_names_each_from_its_info_yaml() {
     cbz("f.cbz", Some(("info.yaml", "title: Alone\n")));
     let code = include_str!("../../../docs/scripts/rename cbz from info.yaml.lua");
     // Tried first: the names it would give, and nothing renamed.
-    let r = super::run(dev.clone(), &dir, &[], "t", code, &NEVER, true, &|_| {});
+    let r = super::run(
+        dev.clone(),
+        &dir,
+        &[],
+        "t",
+        code,
+        &NEVER,
+        true,
+        &|_| {},
+        quiet(),
+    );
     assert_eq!(r.error, None, "{:?}", r.output);
     assert!(dev.stat(&device::join(&dir, "a.cbz")).unwrap().is_some());
     let r = run(dev.clone(), &dir, &[], "t", code, &NEVER);
@@ -605,4 +650,188 @@ fn the_cbz_script_names_each_from_its_info_yaml() {
         out.ends_with("Renamed 3 of 6 CBZs, 3 kept as they are."),
         "{out}"
     );
+}
+
+#[test]
+fn scripts_ask_and_confirm_and_wait_for_the_answer() {
+    let (_s, dir) = scratch("ask");
+    let dev = Arc::new(Device::new(Box::new(crate::local::Local)));
+    let asked = Arc::new(Mutex::new(vec![]));
+    let code = r#"
+        print(ferry.ask("Name?", "x.txt"))
+        print(ferry.confirm("Sure?"))
+        print(ferry.confirm("Really?"))
+        print(ferry.ask("Again?"))
+    "#;
+    let ask = answering(&[Some("y.txt"), Some("yes"), None], asked.clone());
+    let r = super::run(dev, &dir, &[], "t", code, &NEVER, false, &|_| {}, ask);
+    assert_eq!(r.error, None);
+    assert_eq!(r.output, ["y.txt", "true", "false", "nil"]);
+    assert_eq!(
+        *asked.lock().unwrap(),
+        [
+            "ask: Name? [x.txt]",
+            "confirm: Sure?",
+            "confirm: Really?",
+            "ask: Again? []"
+        ]
+    );
+}
+
+/// The names in the ZIP at `path`, sorted.
+fn zip_names(path: &str) -> Vec<String> {
+    let f = std::fs::File::open(crate::platform::native(path)).unwrap();
+    let z = zip::ZipArchive::new(f).unwrap();
+    let mut names: Vec<String> = z.file_names().map(|n| n.unwrap().to_string()).collect();
+    names.sort();
+    names
+}
+
+#[test]
+fn the_zip_folders_script_packs_then_deletes_each_folder() {
+    let (_s, dir) = scratch("zip-folders");
+    let dev = Arc::new(Device::new(Box::new(crate::local::Local)));
+    let at = |p: &str| device::join(&dir, p);
+    dev.mkdir(&at("a")).unwrap();
+    dev.mkdir(&at("a/sub")).unwrap();
+    dev.mkdir(&at("a/empty")).unwrap();
+    dev.write(&at("a/one.txt"), b"one one one", None, true)
+        .unwrap();
+    dev.write(&at("a/sub/two.jpg"), b"\xff\xd8 not really", None, true)
+        .unwrap();
+    dev.mkdir(&at("b")).unwrap();
+    dev.write(&at("b/three.txt"), b"3", None, true).unwrap();
+    // b.zip is taken: the script asks for another name.
+    dev.write(&at("b.zip"), b"someone else's", None, true)
+        .unwrap();
+    dev.write(&at("loose.txt"), b"not a folder", None, true)
+        .unwrap();
+    let code = include_str!("../../../docs/scripts/zip folders.lua");
+    let items = [at("a"), at("b"), at("loose.txt")];
+
+    // Tried: it asks the same, says what it would do, and changes nothing.
+    let asked = Arc::new(Mutex::new(vec![]));
+    let ask = answering(&[Some("yes"), Some("b packed")], asked.clone());
+    let r = super::run(
+        dev.clone(),
+        &dir,
+        &items,
+        "t",
+        code,
+        &NEVER,
+        true,
+        &|_| {},
+        ask,
+    );
+    assert_eq!(r.error, None, "{:?}", r.output);
+    assert_eq!(
+        r.output,
+        [
+            "Would pack a into a.zip",
+            "Would delete a and everything in it",
+            "Would pack b into b packed.zip",
+            "Would delete b and everything in it",
+            "Would pack 2 of 2, then delete them.",
+        ]
+    );
+    assert!(dev.stat(&at("a")).unwrap().is_some());
+    assert!(dev.stat(&at("a.zip")).unwrap().is_none());
+
+    let asked = Arc::new(Mutex::new(vec![]));
+    let ask = answering(&[Some("yes"), Some("b packed")], asked.clone());
+    let r = super::run(
+        dev.clone(),
+        &dir,
+        &items,
+        "t",
+        code,
+        &NEVER,
+        false,
+        &|_| {},
+        ask,
+    );
+    assert_eq!(r.error, None, "{:?}", r.output);
+    let asked = asked.lock().unwrap().clone();
+    assert_eq!(asked.len(), 2, "{asked:?}");
+    assert!(asked[0].starts_with("confirm: Delete 2 folders once packed?"));
+    assert!(
+        asked[1].starts_with("ask: b.zip is already there."),
+        "{asked:?}"
+    );
+    assert!(asked[1].ends_with("[b (2).zip]"), "{asked:?}");
+    assert_eq!(
+        r.output.last().unwrap(),
+        "Packed 2 of 2, deleted 2, kept 0."
+    );
+    assert_eq!(
+        zip_names(&at("a.zip")),
+        ["a/", "a/empty/", "a/one.txt", "a/sub/", "a/sub/two.jpg"]
+    );
+    assert_eq!(zip_names(&at("b packed.zip")), ["b/", "b/three.txt"]);
+    // What's packed reads back as it was.
+    let (one, _) = crate::preview::archive::unpack_part(
+        dev.stat(&at("a.zip")).unwrap().unwrap().size,
+        &mut |s, n| {
+            dev.read_range(&at("a.zip"), s, n)
+                .map_err(|e| e.to_string())
+        },
+        "a/one.txt",
+        0,
+        u64::MAX,
+        READ_MAX,
+    )
+    .unwrap();
+    assert_eq!(one, b"one one one");
+    assert!(dev.stat(&at("a")).unwrap().is_none());
+    assert!(dev.stat(&at("b")).unwrap().is_none());
+    assert_eq!(dev.read(&at("b.zip")).unwrap().0, b"someone else's");
+    assert!(dev.stat(&at("loose.txt")).unwrap().is_some());
+}
+
+#[test]
+fn zip_folders_keeps_the_folders_when_told_no() {
+    let (_s, dir) = scratch("zip-keep");
+    let dev = Arc::new(Device::new(Box::new(crate::local::Local)));
+    let at = |p: &str| device::join(&dir, p);
+    dev.mkdir(&at("a")).unwrap();
+    dev.write(&at("a/one.txt"), b"1", None, true).unwrap();
+    let code = include_str!("../../../docs/scripts/zip folders.lua");
+    let ask = answering(&[None], Arc::new(Mutex::new(vec![])));
+    let r = super::run(
+        dev.clone(),
+        &dir,
+        &[at("a")],
+        "t",
+        code,
+        &NEVER,
+        false,
+        &|_| {},
+        ask,
+    );
+    assert_eq!(r.error, None, "{:?}", r.output);
+    assert_eq!(zip_names(&at("a.zip")), ["a/", "a/one.txt"]);
+    assert!(dev.stat(&at("a/one.txt")).unwrap().is_some());
+    assert_eq!(
+        r.output.last().unwrap(),
+        "Packed 1 of 1, deleted 0, kept 1."
+    );
+}
+
+#[test]
+fn zip_dates_are_the_files_own() {
+    // 2024-02-29 13:45:30 UTC.
+    let d = zip_time(1_709_214_330);
+    assert_eq!(
+        (
+            d.year(),
+            d.month(),
+            d.day(),
+            d.hour(),
+            d.minute(),
+            d.second()
+        ),
+        (2024, 2, 29, 13, 45, 30)
+    );
+    // Before 1980 a ZIP can't say: its first day instead.
+    assert_eq!(zip_time(0).year(), 1980);
 }

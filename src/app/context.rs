@@ -58,6 +58,7 @@ impl Ctx {
             script_capturing: RwSignal::new(None),
             script_key_note: RwSignal::new(None),
             script_live: RwSignal::new((vec![], 0)),
+            script_ask: RwSignal::new(None),
             section_order: RwSignal::new(sidebar::section_order(
                 &stored(SECTION_ORDER_KEY)
                     .and_then(|s| serde_json::from_str::<Vec<String>>(&s).ok())

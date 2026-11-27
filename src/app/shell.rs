@@ -594,6 +594,9 @@ pub fn App() -> impl IntoView {
             *changed = s.changed;
         })
     });
+    crate::api::listen("script_ask", move |q: crate::api::ScriptQuestion| {
+        ctx.script_ask.set(Some(q))
+    });
     crate::api::listen("dupes", move |d: DupeProgress| {
         ctx.dupe_progress.set(Some((d.job, d.text)))
     });

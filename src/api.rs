@@ -86,6 +86,16 @@ pub struct ScriptProgress {
     pub changed: u32,
 }
 
+/// A question a running script asks (`ferry.ask`, or with `confirm` `ferry.confirm`), sent by
+/// the backend; answered with `script_answer`.
+#[derive(Clone, Debug, PartialEq, Deserialize)]
+pub struct ScriptQuestion {
+    pub id: u32,
+    pub text: String,
+    pub default: Option<String>,
+    pub confirm: bool,
+}
+
 #[derive(Clone, Debug, PartialEq, Deserialize)]
 pub struct TransferReport {
     pub copied: u32,

@@ -107,6 +107,7 @@ impl Ctx {
     /// says what it would change.
     pub(super) fn run_script(self, p: Pane, script: ScriptInfo, items: Vec<String>, trial: bool) {
         self.script_live.set((vec![], 0));
+        self.script_ask.set(None);
         p.notice.set(Notice::ScriptRunning {
             name: script.name.clone(),
             trial,
@@ -115,7 +116,9 @@ impl Ctx {
         let again = items.clone();
         spawn_local(async move {
             let args = json!({ "src": src.key(), "dir": dir, "items": items, "script": script.path, "trial": trial });
-            match call::<ScriptReport>("run_script", args).await {
+            let got = call::<ScriptReport>("run_script", args).await;
+            self.script_ask.set(None);
+            match got {
                 Ok(report) => {
                     if report.changed > 0 && !trial {
                         self.reload(p);
@@ -166,6 +169,7 @@ pub(super) fn running(ctx: Ctx, name: String, trial: bool) -> AnyView {
     view! {
         <div class="notice script-done">
             <span class="text">{head}{changed}</span>
+            {move || ctx.script_ask.get().map(|q| question(ctx, q))}
             <button class="btn" title="Stop the script" aria-label="Stop the script"
                 on:click=move |_| spawn_local(async move { let _ = call::<()>("stop_script", json!({})).await; })>{ico(Icon::Stop)}"Stop"</button>
             <pre class="script-out" node_ref=out hidden=move || ctx.script_live.with(|l| l.0.is_empty())>
@@ -174,6 +178,55 @@ pub(super) fn running(ctx: Ctx, name: String, trial: bool) -> AnyView {
         </div>
     }
     .into_any()
+}
+
+/// The running script's question: Yes and No, or a box to type the answer in with OK and
+/// Cancel. The script waits until it's answered (or stopped).
+fn question(ctx: Ctx, q: crate::api::ScriptQuestion) -> impl IntoView {
+    let id = q.id;
+    let answer = move |a: Option<String>| {
+        ctx.script_ask.set(None);
+        spawn_local(async move {
+            let _ = call::<()>("script_answer", json!({ "id": id, "answer": a })).await;
+        });
+    };
+    let typed = RwSignal::new(q.default.clone().unwrap_or_default());
+    let input = NodeRef::<leptos::html::Input>::new();
+    input.on_load(move |el| {
+        request_animation_frame(move || {
+            let _ = el.focus();
+            el.select();
+        })
+    });
+    let yes = NodeRef::<leptos::html::Button>::new();
+    yes.on_load(move |el| {
+        request_animation_frame(move || {
+            let _ = el.focus();
+        })
+    });
+    view! {
+        <div class="script-ask" role="group" aria-label="The script asks">
+            <span class="ask-text">{q.text.clone()}</span>
+            {if q.confirm {
+                view! {
+                    <button class="btn primary" node_ref=yes on:click=move |_| answer(Some("yes".into()))>"Yes"</button>
+                    <button class="btn" on:click=move |_| answer(None)>"No"</button>
+                }.into_any()
+            } else {
+                view! {
+                    <input node_ref=input aria-label="Answer" prop:value=move || typed.get()
+                        on:input=move |ev| typed.set(event_target_value(&ev))
+                        on:keydown=move |ev| match ev.key().as_str() {
+                            "Enter" => answer(Some(typed.get_untracked())),
+                            "Escape" => { ev.stop_propagation(); answer(None) }
+                            _ => {}
+                        }/>
+                    <button class="btn primary" on:click=move |_| answer(Some(typed.get_untracked()))>"OK"</button>
+                    <button class="btn" on:click=move |_| answer(None)>"Cancel"</button>
+                }.into_any()
+            }}
+        </div>
+    }
 }
 
 /// What a script printed, why it stopped (when it didn't end by itself), and how much it

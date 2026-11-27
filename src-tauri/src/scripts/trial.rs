@@ -12,6 +12,7 @@ pub(super) enum Would {
     Move(String, String),
     Rename(String, String),
     Remove(String, bool),
+    Pack(Vec<String>, String),
 }
 
 /// A trial's changes, none of them made: what would be at a path (true: a folder), and what
@@ -157,6 +158,17 @@ impl Pretend {
                     self.shown(&p),
                     device::basename(&to)
                 )
+            }
+            Would::Pack(from, to) => {
+                for f in &from {
+                    self.there(t, f)?.ok_or_else(|| missing(f))?;
+                }
+                if self.there(t, &to)?.is_some() {
+                    return Err(format!("{to} is already there. Not replaced."));
+                }
+                t.made.insert(to.clone(), false);
+                let what: Vec<&str> = from.iter().map(|f| self.shown(f)).collect();
+                format!("Would pack {} into {}", what.join(", "), self.shown(&to))
             }
             Would::Remove(p, all) => {
                 let dir = self.there(t, &p)?.ok_or_else(|| missing(&p))?;

@@ -339,6 +339,30 @@
   color: var(--danger);
 }
 
+/* A running script's question (ferry.ask, ferry.confirm), on a row of its own. */
+.notice .script-ask {
+  flex-basis: 100%;
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
+  padding: 8px;
+  border: 1px solid var(--accent);
+  border-radius: 6px;
+  background: var(--bg);
+}
+
+.notice .script-ask .ask-text {
+  flex: 1 1 240px;
+  color: var(--ink);
+  font-weight: 600;
+  white-space: pre-wrap;
+}
+
+.notice .script-ask input {
+  flex: 1 1 200px;
+}
+
 .notice input {
   height: 28px;
   padding: 0 8px;
