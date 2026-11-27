@@ -451,6 +451,13 @@
   gap: 6px;
 }
 
+/* Under a file shown another way than its type says. */
+.preview > .peek-as {
+  flex: none;
+  display: flex;
+  justify-content: center;
+}
+
 .preview .pic {
   width: min(100%, 320px);
   height: 280px;

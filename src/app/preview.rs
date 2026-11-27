@@ -42,8 +42,8 @@ impl PeekAs {
     }
 }
 
-/// "Open as…" at the end of the line above what's shown; `now`, the way it's shown when that
-/// isn't how its type shows.
+/// "Open as…": at the end of the line above what's shown, or under it when it's shown as `now`
+/// (one of the ways "Open as…" lists) instead of how its type shows.
 fn peek_as_buttons(
     now: Option<PeekAs>,
     zip: bool,
@@ -308,14 +308,17 @@ pub(super) fn Preview(
                     };
                     let path = e.path.clone();
                     let open_as = (!unknown).then(|| peek_as_buttons(forced, true, move |how| p.peek_as.set(how.map(|h| (path.clone(), h)))));
+                    // Shown another way: "Open as…" under it; otherwise at the end of the line.
+                    let (in_line, below) = if forced.is_some() { (None, open_as) } else { (open_as, None) };
                     match line {
                         Some(line) => view! {
                             <div class="meta">
                                 <div class="info">{line}</div>
                                 {text.then(text_tools)}
-                                {open_as}
+                                {in_line}
                             </div>
                             <div class="view">{body}</div>
+                            {below}
                         }.into_any(),
                         // The EPUB drew the line itself.
                         None => body,

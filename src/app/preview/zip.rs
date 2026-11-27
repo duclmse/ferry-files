@@ -239,7 +239,8 @@ pub(super) fn Zipped(
         }
     });
     // Whether the preview can tell how to show it (as the match above picks it): "Open as…" goes
-    // at the end of the line then, and in the middle of the view when it can't.
+    // at the end of the line then (under the view when it's shown another way), and in the
+    // middle of the view when it can't.
     let known = Memo::new(move |_| {
         !(size > UNPACK_MAX && !stored)
             && (forced.get().is_some()
@@ -264,9 +265,11 @@ pub(super) fn Zipped(
                 <span class="sub" title=move || facts.get()>{move || facts.get()}</span>
             </div>
             {move || text.get().then(text_tools)}
-            {move || known.get().then(|| peek_as_buttons(forced.get(), false, move |how| forced.set(how)))}
+            {move || (known.get() && forced.get().is_none()).then(|| peek_as_buttons(None, false, move |how| forced.set(how)))}
         </div>
         <div class="view">{body}</div>
+        // Shown another way: "Open as…" under it.
+        {move || forced.get().map(|now| peek_as_buttons(Some(now), false, move |how| forced.set(how)))}
     }
 }
 
