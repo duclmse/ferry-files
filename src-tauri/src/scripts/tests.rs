@@ -533,3 +533,76 @@ fn scripts_read_json_toml_yaml_and_xml() {
         r.output[7]
     );
 }
+
+#[test]
+fn the_cbz_script_names_each_from_its_info_yaml() {
+    use std::io::Write;
+    let (_s, dir) = scratch("cbz-names");
+    let dev = Arc::new(Device::new(Box::new(crate::local::Local)));
+    let cbz = |name: &str, info: Option<(&str, &str)>| {
+        let mut buf = std::io::Cursor::new(Vec::new());
+        {
+            let mut z = zip::ZipWriter::new(&mut buf);
+            let o = zip::write::SimpleFileOptions::default();
+            z.start_file("001.jpg", o).unwrap();
+            z.write_all(b"x").unwrap();
+            if let Some((at, text)) = info {
+                z.start_file(at, o).unwrap();
+                z.write_all(text.as_bytes()).unwrap();
+            }
+            z.finish().unwrap();
+        }
+        dev.write(&device::join(&dir, name), buf.get_ref(), None, true)
+            .unwrap();
+    };
+    cbz(
+        "a.cbz",
+        Some(("info.yaml", "Title: \"Night: Part 1\"\nAuthor: Kim\n")),
+    );
+    cbz(
+        "b.cbz",
+        Some(("x/Info.YAML", "title: Two\nauthors:\n  - A\n  - B/C\n")),
+    );
+    cbz("c.cbz", Some(("info.yaml", "title: Alone\n")));
+    cbz("d.cbz", None);
+    cbz("e.cbz", Some(("info.yaml", "title: [broken\n")));
+    cbz("f.cbz", Some(("info.yaml", "title: Alone\n")));
+    let code = include_str!("../../../docs/scripts/rename cbz from info.yaml.lua");
+    // Tried first: the names it would give, and nothing renamed.
+    let r = super::run(dev.clone(), &dir, &[], "t", code, &NEVER, true, &|_| {});
+    assert_eq!(r.error, None, "{:?}", r.output);
+    assert!(dev.stat(&device::join(&dir, "a.cbz")).unwrap().is_some());
+    let r = run(dev.clone(), &dir, &[], "t", code, &NEVER);
+    assert_eq!(r.error, None, "{:?}", r.output);
+    let mut names: Vec<String> = dev
+        .listdir(&dir)
+        .unwrap()
+        .into_iter()
+        .map(|e| e.name)
+        .collect();
+    names.sort();
+    assert_eq!(
+        names,
+        [
+            "Alone.cbz",
+            "[A, B_C] Two.cbz",
+            "[Kim] Night - Part 1.cbz",
+            "d.cbz",
+            "e.cbz",
+            "f.cbz",
+        ],
+        "{:?}",
+        r.output
+    );
+    let out = r.output.join("\n");
+    assert!(out.contains("d.cbz: kept, no info.yaml in it"), "{out}");
+    assert!(out.contains("e.cbz: kept, YAML line 1"), "{out}");
+    assert!(
+        out.contains("f.cbz: kept, Alone.cbz is already there"),
+        "{out}"
+    );
+    assert!(
+        out.ends_with("Renamed 3 of 6 CBZs, 3 kept as they are."),
+        "{out}"
+    );
+}
