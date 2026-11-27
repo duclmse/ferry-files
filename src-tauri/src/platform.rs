@@ -533,6 +533,31 @@ pub fn drives() -> Vec<(String, String)> {
     out
 }
 
+/// The drives inside this PC, as native paths ("C:\\"), for fsd to index by default: fixed
+/// drives other than ones on USB, FireWire or an SD card (`external_drive`), which come and go.
+/// Network drives aren't fixed. Only on Windows; empty elsewhere.
+pub fn fixed_drives() -> Vec<PathBuf> {
+    #[cfg(windows)]
+    {
+        use windows::Win32::Storage::FileSystem::GetDriveTypeW;
+        // GetDriveTypeW's documented return value for a fixed disk.
+        const DRIVE_FIXED: u32 = 3;
+        (b'A'..=b'Z')
+            .map(|c| format!("{}:", c as char))
+            .filter(|d| {
+                let root: Vec<u16> = format!("{d}\\").encode_utf16().chain([0]).collect();
+                let kind = unsafe { GetDriveTypeW(windows::core::PCWSTR(root.as_ptr())) };
+                kind == DRIVE_FIXED && !external_drive(d)
+            })
+            .map(|d| PathBuf::from(format!("{d}\\")))
+            .collect()
+    }
+    #[cfg(not(windows))]
+    {
+        vec![]
+    }
+}
+
 /// Whether the disk at app path `path` (one of `drives()`) can be ejected: on Windows a
 /// removable or optical drive, or a disk on USB, FireWire or an SD card reader (not one inside
 /// the computer); elsewhere every disk `drives()` lists.

@@ -221,15 +221,15 @@ const USUAL_SKIP: &[&str] = &[
     "**/.terraform/**",
 ];
 
-/// Ferry's settings for fsd: the home folder, by name only (no file contents until Settings >
+/// Ferry's settings for fsd: `roots` (`usual_roots`), by name only (no file contents until Settings >
 /// Search turns on reading text, nothing inside zips), over the local socket or pipe alone, without the web and gRPC APIs.
-fn config_text(home: &Path, dir: &Path) -> String {
+fn config_text(roots: &[PathBuf], dir: &Path) -> String {
     let path = |p: &Path| toml_str(&p.to_string_lossy());
     format!(
         "# fsd's settings, written by Ferry Files for its fsd service (Settings > Search).\n\
          # After changing them, install the service again there to restart fsd with them.\n\
          \n\
-         watch_paths = [{home}]\n\
+         watch_paths = [{roots}]\n\
          data_dir = {data}\n\
          log_dir = {logs}\n\
          \n\
@@ -244,7 +244,7 @@ fn config_text(home: &Path, dir: &Path) -> String {
          [api]\n\
          rest_enabled = false\n\
          grpc_enabled = false\n",
-        home = path(home),
+        roots = roots.iter().map(|r| path(r)).collect::<Vec<_>>().join(", "),
         skip = USUAL_SKIP
             .iter()
             .map(|p| format!("    {},\n", toml_str(p)))
@@ -254,16 +254,27 @@ fn config_text(home: &Path, dir: &Path) -> String {
     )
 }
 
+/// What fsd indexes until the user picks: on Windows every drive inside the PC (the service
+/// runs for the whole PC), elsewhere the home folder.
+fn usual_roots() -> Result<Vec<PathBuf>, String> {
+    let drives = crate::platform::fixed_drives();
+    if !drives.is_empty() {
+        return Ok(drives);
+    }
+    let home = dirs::home_dir().ok_or("Can't tell where your home folder is.")?;
+    Ok(vec![home])
+}
+
 /// Writes Ferry's settings for fsd, unless they're there already: the user may have changed
 /// them.
 fn write_config(config: &Path) -> Result<(), String> {
     if config.exists() {
         return Ok(());
     }
-    let home = dirs::home_dir().ok_or("Can't tell where your home folder is.")?;
+    let roots = usual_roots()?;
     let dir = fsd_dir();
     std::fs::create_dir_all(&dir).map_err(|e| format!("Can't create {}: {e}", dir.display()))?;
-    std::fs::write(config, config_text(&home, &dir))
+    std::fs::write(config, config_text(&roots, &dir))
         .map_err(|e| format!("Can't write {}: {e}", config.display()))
 }
 
@@ -352,8 +363,7 @@ fn config_now() -> Result<String, String> {
     match std::fs::read_to_string(&config) {
         Ok(text) => Ok(text),
         Err(e) if e.kind() == std::io::ErrorKind::NotFound => {
-            let home = dirs::home_dir().ok_or("Can't tell where your home folder is.")?;
-            Ok(config_text(&home, &fsd_dir()))
+            Ok(config_text(&usual_roots()?, &fsd_dir()))
         }
         Err(e) => Err(format!("Can't read {}: {e}", config.display())),
     }
@@ -738,7 +748,7 @@ mod tests {
     #[test]
     fn config_has_the_home_folder_and_no_web_api() {
         let text = config_text(
-            Path::new("/Users/me"),
+            &["/Users/me".into()],
             Path::new("/Users/me/Library/Application Support/ferry-files/fsd"),
         );
         let parsed: toml::Value = toml::from_str(&text).expect("valid TOML");
@@ -753,6 +763,19 @@ mod tests {
     }
 
     #[test]
+    fn config_lists_each_drive() {
+        let text = config_text(&[r"C:\".into(), r"D:\".into()], Path::new("/tmp/f"));
+        let parsed: toml::Value = toml::from_str(&text).expect("valid TOML");
+        let roots: Vec<_> = parsed["watch_paths"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .map(|r| r.as_str().unwrap())
+            .collect();
+        assert_eq!(roots, [r"C:\", r"D:\"]);
+    }
+
+    #[test]
     fn fsd_errors_lose_the_command_name() {
         assert_eq!(
             plain("install-service: `launchctl bootstrap` failed: boom\n".into()),
@@ -763,7 +786,7 @@ mod tests {
 
     #[test]
     fn settings_change_and_the_rest_stays() {
-        let text = config_text(Path::new("/Users/me"), Path::new("/tmp/f"));
+        let text = config_text(&["/Users/me".into()], Path::new("/tmp/f"));
         let s = settings_in(&text).unwrap();
         assert_eq!(s.folders, ["/Users/me"]);
         assert_eq!(s.skip, USUAL_SKIP);
@@ -807,7 +830,7 @@ mod tests {
 
     #[test]
     fn reading_text_turns_on_and_off() {
-        let text = config_text(Path::new("/Users/me"), Path::new("/tmp/f"));
+        let text = config_text(&["/Users/me".into()], Path::new("/tmp/f"));
         let mut s = settings_in(&text).unwrap();
         assert!(!s.text);
         s.text = true;
