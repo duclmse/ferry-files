@@ -60,10 +60,15 @@
 }
 
 /* Context menu */
+:root {
+  --menu-max: 320px;
+}
+
 .menu {
   position: fixed;
   z-index: 50;
   min-width: 210px;
+  max-width: min(var(--menu-max), calc(100vw - 8px));
   padding: 5px;
   background: var(--panel);
   border: 1px solid var(--line);
@@ -121,6 +126,14 @@
 
 .menu button span:first-child {
   flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.menu button .key {
+  flex: none;
 }
 
 .menu button:hover:not(:disabled) {
@@ -158,6 +171,7 @@
 
 .menu .pair > button:first-child {
   flex: 1;
+  min-width: 0;
 }
 
 .menu .pair > .alt {

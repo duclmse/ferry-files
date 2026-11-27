@@ -28,7 +28,7 @@ impl Ctx {
                 p.select_only(Some(e.path.clone()));
             }
         }
-        let (x, y) = menu_at(ev, 240.0, self.menu_items(p, entry.as_ref()).len());
+        let (x, y) = menu_at(ev, MENU_MAX, self.menu_items(p, entry.as_ref()).len());
         self.menu.set(Some(Menu {
             x,
             y,
@@ -237,6 +237,15 @@ pub(super) fn ContextMenu() -> impl IntoView {
     }
 }
 
+/// The widest a menu gets (`--menu-max` in styles/views.css): longer labels are cut with an
+/// ellipsis, and show whole in their title.
+pub(super) const MENU_MAX: f64 = 320.0;
+
+/// The label's title when it may be too long to show whole.
+fn long_title(label: &str) -> Option<String> {
+    (label.chars().count() > 32).then(|| label.to_string())
+}
+
 /// A menu's rows. A submenu opens beside its row while the pointer (or the focus) is on it, on
 /// the left when there's no room on the right.
 fn rows(ctx: Ctx, items: Vec<MenuItem>, run: Callback<Act>) -> AnyView {
@@ -250,9 +259,10 @@ fn rows(ctx: Ctx, items: Vec<MenuItem>, run: Callback<Act>) -> AnyView {
                     Some((l, k)) => (l.to_string(), Some(k.to_string())),
                     None => (label, None),
                 };
+                let tip = long_title(&label);
                 view! {
                     <button role="menuitem" class:danger=danger disabled=!enabled on:click=move |_| run.run(act)>
-                        <span>{label}</span><span class="key">{move || own.clone().unwrap_or_else(|| ctx.key_label(key))}</span>
+                        <span title=tip>{label}</span><span class="key">{move || own.clone().unwrap_or_else(|| ctx.key_label(key))}</span>
                     </button>
                 }
                 .into_any()
@@ -262,11 +272,12 @@ fn rows(ctx: Ctx, items: Vec<MenuItem>, run: Callback<Act>) -> AnyView {
                     Some((l, k)) => (l.to_string(), k.to_string()),
                     None => (label, String::new()),
                 };
+                let tip = long_title(&label);
                 let title = format!("{alt_label}: {label}");
                 view! {
                     <div class="pair">
                         <button role="menuitem" on:click=move |_| run.run(act)>
-                            <span>{label}</span><span class="key">{own}</span>
+                            <span title=tip>{label}</span><span class="key">{own}</span>
                         </button>
                         <button role="menuitem" class="alt" title=title.clone() aria-label=title
                             on:click=move |_| run.run(alt)>{ico(alt_icon)}</button>
@@ -275,16 +286,17 @@ fn rows(ctx: Ctx, items: Vec<MenuItem>, run: Callback<Act>) -> AnyView {
                 .into_any()
             }
             MenuItem::Sub { label, items } => {
+                let tip = long_title(&label);
                 let left = RwSignal::new(false);
                 let enter = move |ev: web_sys::MouseEvent| {
                     let Some(row) = ev.current_target().and_then(|t| t.dyn_into::<web_sys::Element>().ok()) else { return };
                     let r = row.get_bounding_client_rect();
                     let vw = window().inner_width().ok().and_then(|v| v.as_f64()).unwrap_or(800.0);
-                    left.set(r.right() + 220.0 > vw);
+                    left.set(r.right() + MENU_MAX > vw);
                 };
                 view! {
                     <div class="sub" class:left=left on:mouseenter=enter>
-                        <button role="menuitem" aria-haspopup="menu"><span>{label}</span><span class="key">"›"</span></button>
+                        <button role="menuitem" aria-haspopup="menu"><span title=tip>{label}</span><span class="key">"›"</span></button>
                         <div class="menu submenu" role="menu">{rows(ctx, items, run)}</div>
                     </div>
                 }

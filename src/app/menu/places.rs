@@ -8,7 +8,7 @@ impl Ctx {
         ev.prevent_default();
         ev.stop_propagation();
         let p = self.act();
-        let (x, y) = menu_at(ev, 220.0, self.place_items(src, &path).len());
+        let (x, y) = menu_at(ev, super::MENU_MAX, self.place_items(src, &path).len());
         self.menu.set(Some(Menu {
             x,
             y,

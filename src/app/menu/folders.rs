@@ -91,7 +91,11 @@ impl Ctx {
         ev.prevent_default();
         ev.stop_propagation();
         self.active.set(p.id);
-        let (x, y) = menu_at(ev, 240.0, self.tree_items(p, entry.as_ref()).len());
+        let (x, y) = menu_at(
+            ev,
+            super::MENU_MAX,
+            self.tree_items(p, entry.as_ref()).len(),
+        );
         self.menu.set(Some(Menu {
             x,
             y,
