@@ -78,6 +78,7 @@ fn main() {
             "fsd_uninstall",
             "fsd_settings",
             "fsd_set_settings",
+            "fsd_allow",
             "scripts",
             "run_script",
             "stop_script",

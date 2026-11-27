@@ -255,6 +255,7 @@ pub fn run() {
             fsd_service::fsd_uninstall,
             fsd_service::fsd_settings,
             fsd_service::fsd_set_settings,
+            fsd_service::fsd_allow,
             scripts::scripts,
             scripts::run_script,
             scripts::stop_script,

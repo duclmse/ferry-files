@@ -391,6 +391,21 @@ pub fn open_url(url: &str) -> Result<(), String> {
     tauri_plugin_opener::open_url(url, None::<&str>).map_err(|e| format!("Can't open {url}: {e}"))
 }
 
+/// Opens System Settings at Privacy & Security > Full Disk Access, where the user lets a
+/// program into every folder: macOS has no way for a program to ask for that itself. Only on
+/// macOS.
+pub fn open_full_disk_access() -> Result<(), String> {
+    if !cfg!(target_os = "macos") {
+        return Err("Only macOS has Full Disk Access.".into());
+    }
+    open_url("x-apple.systempreferences:com.apple.preference.security?Privacy_AllFiles").map_err(
+        |_| {
+            "Couldn't open System Settings. Open it at Privacy & Security > Full Disk Access."
+                .into()
+        },
+    )
+}
+
 /// Shows a file in Quick Look (`qlmanage -p`) on macOS. Other systems have no such preview, so
 /// the file opens in its default app instead.
 pub fn quick_look(path: &Path) -> Result<(), String> {

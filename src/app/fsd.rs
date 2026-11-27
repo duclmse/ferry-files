@@ -139,7 +139,7 @@ fn os_hint(s: &FsdStatus, os: Os) -> Option<&'static str> {
     Some(match os {
         // Not once fsd has shown it can look in them.
         Os::Mac if s.sees_protected == Some(true) => return None,
-        Os::Mac => "To search Desktop, Documents and Downloads, add the program above to System Settings > Privacy & Security > Full Disk Access.",
+        Os::Mac => "fsd stays out of Desktop, Documents and Downloads until it has Full Disk Access, so macOS doesn't ask about them. To search them: open Full Disk Access (the lock button), turn on the program above or drag it in from Finder, then install fsd again to restart it.",
         Os::Windows => "It runs for the whole PC: anyone who signs in can search the names it indexes.",
         Os::Linux => return None,
     })
@@ -346,6 +346,13 @@ pub(super) fn SearchSettings() -> impl IntoView {
             }
         })
     };
+    let allow = move || {
+        spawn_local(async move {
+            if let Err(e) = call::<()>("fsd_allow", json!({})).await {
+                let _ = svc.error.try_set(Some(e));
+            }
+        })
+    };
     let shown = move |s: FsdStatus| {
         let (title, about) = describe(&s, crate::os::os());
         let installed = s.service.is_some();
@@ -386,7 +393,18 @@ pub(super) fn SearchSettings() -> impl IntoView {
                         disabled=move || svc.busy.get() on:click=move |_| svc.act("fsd_uninstall")>{ico(Icon::Trash)}</button>
                 })}
             </div>
-            {os_hint(&s, crate::os::os()).map(|h| view! { <p class="hint">{h}</p> })}
+            {os_hint(&s, crate::os::os()).map(|h| {
+                let mac = crate::os::os() == Os::Mac;
+                view! {
+                    <div class="os-hint">
+                        <p class="hint">{h}</p>
+                        {mac.then(|| view! {
+                            <button class="btn icon-only" title="Open Full Disk Access in System Settings, and show fsd in Finder"
+                                aria-label="Open Full Disk Access" on:click=move |_| allow()>{ico(Icon::Lock)}</button>
+                        })}
+                    </div>
+                }
+            })}
         }
         .into_any()
     };

@@ -678,9 +678,55 @@ pub(super) async fn fsd_uninstall() -> Result<FsdStatus, String> {
     .await
 }
 
+/// Where to let Ferry's fsd into Desktop, Documents and Downloads, on macOS: System Settings at
+/// Full Disk Access, and the program the service runs, shown in Finder to drag into its list.
+/// fsd stays out of those folders until then instead of having macOS ask.
+#[tauri::command(rename_all = "snake_case")]
+pub(super) async fn fsd_allow() -> Result<(), String> {
+    blocking(|| {
+        crate::platform::open_full_disk_access()?;
+        let exe = registered()
+            .filter(ours)
+            .and_then(|r| service_program(&r.text))
+            .or_else(fsd_exe);
+        if let Some(exe) = exe {
+            tauri_plugin_opener::reveal_item_in_dir(&exe)
+                .map_err(|e| format!("Can't show {} in Finder: {e}", exe.display()))?;
+        }
+        Ok(())
+    })
+    .await
+}
+
+/// The program a launchd service runs: the first of its ProgramArguments.
+fn service_program(plist: &str) -> Option<PathBuf> {
+    let args = &plist[plist.find("<key>ProgramArguments</key>")?..];
+    let start = args.find("<string>")? + "<string>".len();
+    let end = start + args[start..].find("</string>")?;
+    let exe = args[start..end]
+        .replace("&lt;", "<")
+        .replace("&gt;", ">")
+        .replace("&quot;", "\"")
+        .replace("&apos;", "'")
+        .replace("&amp;", "&");
+    Some(PathBuf::from(exe))
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn a_launchd_service_s_program_is_its_first_argument() {
+        let plist = "<dict>\n\t<key>Label</key><string>fs.fsd</string>\n\t<key>ProgramArguments</key>\n\t<array>\n\t\t<string>/Applications/Ferry &amp; Co.app/Contents/MacOS/ferry-fsd</string>\n\t\t<string>--config</string>\n\t</array>\n</dict>";
+        assert_eq!(
+            service_program(plist),
+            Some(PathBuf::from(
+                "/Applications/Ferry & Co.app/Contents/MacOS/ferry-fsd"
+            ))
+        );
+        assert_eq!(service_program("<dict></dict>"), None);
+    }
 
     #[test]
     fn toml_strings_are_escaped() {

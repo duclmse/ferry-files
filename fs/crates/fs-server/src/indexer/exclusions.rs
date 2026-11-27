@@ -1,6 +1,6 @@
 use std::path::{Path, PathBuf};
 
-use std::sync::{Arc, Mutex};
+use std::sync::{Arc, Mutex, OnceLock};
 
 use globset::{Glob, GlobSet, GlobSetBuilder};
 
@@ -18,6 +18,8 @@ pub struct ExclusionEngine {
     /// Watch paths' own patterns (`[[watch]] exclude`), each applied only
     /// under its path.
     roots: Vec<(PathBuf, GlobSet)>,
+    /// Folders macOS keeps fsd out of (`kept_out`).
+    kept_out: Vec<PathBuf>,
 }
 
 fn glob_set(patterns: &[String]) -> Result<GlobSet> {
@@ -76,6 +78,7 @@ impl ExclusionEngine {
             exclude_hidden: cfg.exclude_hidden,
             own: Vec::new(),
             roots: Vec::new(),
+            kept_out: Vec::new(),
         })
     }
 
@@ -84,6 +87,7 @@ impl ExclusionEngine {
     pub fn for_config(cfg: &Config) -> Result<Self> {
         let mut engine = Self::new(&cfg.exclusions)?;
         engine.own = resolve_own(&own_dirs(cfg));
+        engine.kept_out = kept_out().to_vec();
         for r in cfg.watch.iter().filter(|r| !r.exclude.is_empty()) {
             engine.roots.push((r.path.clone(), glob_set(&r.exclude)?));
         }
@@ -121,6 +125,7 @@ impl ExclusionEngine {
     pub fn should_exclude(&self, path: &Path, is_hidden: bool) -> bool {
         (self.exclude_hidden && is_hidden)
             || self.own.iter().any(|d| path.starts_with(d))
+            || self.kept_out.iter().any(|d| path.starts_with(d))
             || self.set.is_match(path)
             || self
                 .roots
@@ -129,9 +134,57 @@ impl ExclusionEngine {
     }
 }
 
+/// On macOS without Full Disk Access: Desktop, Documents and Downloads.
+/// Reading in them has macOS ask the user to let fsd in (or refuse it
+/// quietly), so fsd stays out of them, and the user gives it Full Disk
+/// Access in System Settings instead. Checked once per start, so fsd is
+/// restarted after that: a crawl is what would index them.
+pub fn kept_out() -> &'static [PathBuf] {
+    static DIRS: OnceLock<Vec<PathBuf>> = OnceLock::new();
+    DIRS.get_or_init(|| {
+        if !cfg!(target_os = "macos") {
+            return Vec::new();
+        }
+        let Some(home) = std::env::var_os("HOME").map(PathBuf::from) else {
+            return Vec::new();
+        };
+        if full_disk_access(&home) {
+            return Vec::new();
+        }
+        resolve_own(&["Desktop", "Documents", "Downloads"].map(|d| home.join(d)))
+    })
+}
+
+/// Whether fsd may read the user's TCC database, which only a program with
+/// Full Disk Access may: refused, macOS shows no prompt, so this tells
+/// without asking. Any answer but "not permitted" counts as access, since
+/// it tells nothing about it.
+fn full_disk_access(home: &Path) -> bool {
+    let db = home.join("Library/Application Support/com.apple.TCC/TCC.db");
+    match std::fs::File::open(db) {
+        Ok(_) => true,
+        Err(e) => e.kind() != std::io::ErrorKind::PermissionDenied,
+    }
+}
+
 /// Logs each of fsd's own folders that lies under a watch path, once per
-/// start: it is left out of the index.
+/// start: it is left out of the index. So is each folder macOS keeps fsd
+/// out of (`kept_out`).
 pub fn log_own_dirs_under(cfg: &Config) {
+    for dir in kept_out() {
+        if cfg
+            .watch_paths
+            .iter()
+            .any(|r| dir.starts_with(r) || r.starts_with(dir))
+        {
+            tracing::warn!(
+                "fsd has no Full Disk Access, so {} is not indexed: give it \
+                 Full Disk Access in System Settings > Privacy & Security, \
+                 then restart it",
+                dir.display()
+            );
+        }
+    }
     for dir in resolve_own(&own_dirs(cfg)) {
         if let Some(root) = cfg.watch_paths.iter().find(|r| dir.starts_with(r)) {
             tracing::info!(
@@ -258,6 +311,22 @@ mod tests {
         assert!(eng.should_exclude(Path::new("/p/target/debug/x"), false));
         assert!(!eng.should_exclude(Path::new("/p/target"), false));
         assert!(!eng.should_exclude(Path::new("/p/targets/x"), false));
+    }
+
+    #[test]
+    fn folders_kept_out_are_left_out_with_all_under_them() {
+        let mut eng = make_engine(&[], false);
+        eng.kept_out = vec![PathBuf::from("/Users/me/Documents")];
+        assert!(eng.should_exclude(Path::new("/Users/me/Documents"), false));
+        assert!(eng.should_exclude(Path::new("/Users/me/Documents/a/b.txt"), false));
+        assert!(!eng.should_exclude(Path::new("/Users/me/Documents2/b.txt"), false));
+        assert!(!eng.should_exclude(Path::new("/Users/me/projects"), false));
+    }
+
+    #[test]
+    fn full_disk_access_counts_only_a_refusal_as_none() {
+        let home = tempfile::TempDir::new().unwrap();
+        assert!(full_disk_access(home.path()), "no database tells nothing");
     }
 
     fn config(patterns: &[&str], data_dir: &str) -> Config {

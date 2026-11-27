@@ -6,9 +6,10 @@
 # Paths must be absolute: "~" is not expanded.
 #
 # macOS hides Desktop, Documents, Downloads and parts of ~/Library from
-# processes it has not been told to trust, and a daemon started by launchd
-# cannot show the prompt, so those folders come back empty or missing. Give
-# the fsd binary Full Disk Access (System Settings > Privacy & Security).
+# processes it has not been told to trust. Without Full Disk Access fsd stays
+# out of Desktop, Documents and Downloads, so macOS has nothing to ask about.
+# To index them, give the fsd binary Full Disk Access (System Settings >
+# Privacy & Security), then restart fsd.
 #
 # Stop the daemon with Ctrl+C or SIGTERM (launchctl bootout), not kill -9: the
 # memory store writes index.bin on a clean shutdown, and without it the next

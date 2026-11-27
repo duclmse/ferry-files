@@ -82,6 +82,7 @@ pub(crate) enum Icon {
     FolderPlus,
     /// A folder with an arrow round to it: use another folder.
     FolderSwap,
+    Lock,
 }
 
 impl Icon {
@@ -202,6 +203,9 @@ impl Icon {
             }
             Icon::Contents => r#"<path d="M2.5 3.5h11M5.5 6.5h8M5.5 9.5h8M2.5 12.5h11"/>"#,
             Icon::Night => r#"<path d="M13.5 9.5A5.75 5.75 0 1 1 6.5 2.5a4.5 4.5 0 0 0 7 7z"/>"#,
+            Icon::Lock => {
+                r#"<rect x="3" y="7" width="10" height="7" rx="1.5"/><path d="M5.5 7V5a2.5 2.5 0 0 1 5 0v2M8 10v1.5"/>"#
+            }
             Icon::Info => r#"<circle cx="8" cy="8" r="6"/><path d="M8 7.5v4M8 5v.5"/>"#,
             Icon::LineNumbers => {
                 r#"<path d="M2.5 3.5l1-.75V6.5M2 9.5h2l-2 3h2M7 4h7M7 8h7M7 12h7"/>"#

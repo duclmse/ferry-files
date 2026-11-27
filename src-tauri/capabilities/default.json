@@ -75,6 +75,7 @@
     "allow-fsd-uninstall",
     "allow-fsd-settings",
     "allow-fsd-set-settings",
+    "allow-fsd-allow",
     "allow-scripts",
     "allow-run-script",
     "allow-stop-script",
