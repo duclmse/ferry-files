@@ -8,11 +8,15 @@ use crate::device::{basename, dirname, err, Result, Transport};
 use crate::devices::connect;
 use crate::servers::web;
 use crate::*;
-use hmac::{Hmac, KeyInit, Mac};
-use percent_encoding::{utf8_percent_encode, AsciiSet, NON_ALPHANUMERIC};
 use sha2::{Digest, Sha256};
 use std::io::Read;
 use std::time::Duration;
+
+mod answers;
+mod sign;
+
+use answers::*;
+use sign::*;
 
 /// Most keys a folder rename copies.
 const RENAME_MAX: usize = 1000;
@@ -22,27 +26,6 @@ const SINGLE_MAX: u64 = 5 * 1024 * 1024 * 1024;
 
 /// How big the parts are: 512 MiB (S3 allows 5 MiB to 5 GiB, and 10,000 parts).
 const PART_SIZE: u64 = 512 * 1024 * 1024;
-
-/// What stays as it is in an encoded name: letters, digits and - _ . ~
-const UNRESERVED: &AsciiSet = &NON_ALPHANUMERIC
-    .remove(b'-')
-    .remove(b'_')
-    .remove(b'.')
-    .remove(b'~');
-/// The same, and "/", for a path.
-const PATH: &AsciiSet = &UNRESERVED.remove(b'/');
-
-fn encode(s: &str) -> String {
-    utf8_percent_encode(s, UNRESERVED).to_string()
-}
-
-fn encode_path(s: &str) -> String {
-    utf8_percent_encode(s, PATH).to_string()
-}
-
-fn sha256_hex(data: &[u8]) -> String {
-    hex::encode(Sha256::digest(data))
-}
 
 /// What a request sends: bytes, or a byte range of a file on this computer, read as it's sent.
 enum Body<'a> {
@@ -89,68 +72,6 @@ fn file_sha256(from: &std::path::Path, r: std::ops::Range<u64>) -> Res<String> {
     Ok(hex::encode(h.finalize()))
 }
 
-fn hmac(key: &[u8], data: &str) -> Vec<u8> {
-    let mut m = Hmac::<Sha256>::new_from_slice(key).expect("HMAC takes keys of any size");
-    m.update(data.as_bytes());
-    m.finalize().into_bytes().to_vec()
-}
-
-/// The sorted, encoded query string ("a=1&b=2"), the same for the address and the signature.
-fn canonical_query(params: &[(&str, String)]) -> String {
-    let mut pairs: Vec<(String, String)> =
-        params.iter().map(|(k, v)| (encode(k), encode(v))).collect();
-    pairs.sort();
-    pairs
-        .iter()
-        .map(|(k, v)| format!("{k}={v}"))
-        .collect::<Vec<_>>()
-        .join("&")
-}
-
-/// What a request is signed with.
-struct Keys<'a> {
-    access: &'a str,
-    secret: &'a str,
-    region: &'a str,
-}
-
-/// The Authorization header's value. `headers` are (lowercase name, value) and must hold every
-/// header to sign (host, x-amz-content-sha256, x-amz-date, and any others); `uri` and `query`
-/// are already encoded.
-fn authorization(
-    method: &str,
-    uri: &str,
-    query: &str,
-    headers: &[(String, String)],
-    payload_hash: &str,
-    keys: &Keys,
-    amz_date: &str,
-) -> String {
-    let mut sorted: Vec<(&str, &str)> = headers
-        .iter()
-        .map(|(k, v)| (k.as_str(), v.trim()))
-        .collect();
-    sorted.sort();
-    let canon_headers: String = sorted.iter().map(|(k, v)| format!("{k}:{v}\n")).collect();
-    let signed = sorted.iter().map(|(k, _)| *k).collect::<Vec<_>>().join(";");
-    let request = format!("{method}\n{uri}\n{query}\n{canon_headers}\n{signed}\n{payload_hash}");
-    let day = &amz_date[..8];
-    let scope = format!("{day}/{}/s3/aws4_request", keys.region);
-    let to_sign = format!(
-        "AWS4-HMAC-SHA256\n{amz_date}\n{scope}\n{}",
-        sha256_hex(request.as_bytes())
-    );
-    let k = hmac(format!("AWS4{}", keys.secret).as_bytes(), day);
-    let k = hmac(&k, keys.region);
-    let k = hmac(&k, "s3");
-    let k = hmac(&k, "aws4_request");
-    let signature = hex::encode(hmac(&k, &to_sign));
-    format!(
-        "AWS4-HMAC-SHA256 Credential={}/{scope}, SignedHeaders={signed}, Signature={signature}",
-        keys.access
-    )
-}
-
 /// A failed request: the HTTP status (0 when there was no answer) and what to tell the user.
 #[derive(Debug)]
 struct Fail {
@@ -165,140 +86,6 @@ impl From<Fail> for DevError {
 }
 
 type Res<T> = std::result::Result<T, Fail>;
-
-/// The text of each element that has some, with its path ("ListBucketResult/Contents/Key").
-fn leaves(xml: &str) -> std::result::Result<Vec<(String, String)>, String> {
-    use crate::books::xml::{tokenize, Kind};
-    let mut stack: Vec<String> = vec![];
-    let mut out = vec![];
-    for t in tokenize(xml)? {
-        match t.kind {
-            Kind::Open => stack.push(t.local().to_string()),
-            Kind::Close => {
-                stack.pop();
-            }
-            Kind::Text | Kind::CData => {
-                let raw = &xml[t.start..t.end];
-                if !stack.is_empty() && !raw.trim().is_empty() {
-                    let text = if t.kind == Kind::CData {
-                        raw[9..raw.len() - 3].to_string()
-                    } else {
-                        crate::books::xml::unescape(raw)
-                    };
-                    out.push((stack.join("/"), text));
-                }
-            }
-            _ => {}
-        }
-    }
-    Ok(out)
-}
-
-/// One key in a listing.
-#[derive(Debug, Default, PartialEq)]
-struct Obj {
-    key: String,
-    size: u64,
-    mtime: i64,
-    etag: String,
-}
-
-/// One page of a ListObjectsV2 answer.
-#[derive(Debug, Default, PartialEq)]
-struct Page {
-    files: Vec<Obj>,
-    /// Folders ("a/b/").
-    prefixes: Vec<String>,
-    next: Option<String>,
-}
-
-fn parse_list(xml: &str) -> std::result::Result<Page, String> {
-    let mut page = Page::default();
-    let mut truncated = false;
-    let mut token = None;
-    for (path, text) in leaves(xml)? {
-        match path.as_str() {
-            "ListBucketResult/Contents/Key" => page.files.push(Obj {
-                key: text,
-                ..Obj::default()
-            }),
-            "ListBucketResult/Contents/Size" => {
-                if let Some(o) = page.files.last_mut() {
-                    o.size = text.trim().parse().unwrap_or(0);
-                }
-            }
-            "ListBucketResult/Contents/LastModified" => {
-                if let Some(o) = page.files.last_mut() {
-                    o.mtime = chrono::DateTime::parse_from_rfc3339(text.trim())
-                        .map_or(0, |d| d.timestamp());
-                }
-            }
-            "ListBucketResult/Contents/ETag" => {
-                if let Some(o) = page.files.last_mut() {
-                    o.etag = text.trim_matches('"').to_string();
-                }
-            }
-            "ListBucketResult/CommonPrefixes/Prefix" => page.prefixes.push(text),
-            "ListBucketResult/IsTruncated" => truncated = text.trim() == "true",
-            "ListBucketResult/NextContinuationToken" => token = Some(text),
-            _ => {}
-        }
-    }
-    if !xml.contains("ListBucketResult") {
-        return Err("The answer wasn't a list of files. Is the address an S3 server?".into());
-    }
-    page.next = if truncated { token } else { None };
-    Ok(page)
-}
-
-/// What to tell the user about an S3 error answer.
-fn explain(status: u16, body: &str, bucket: &str) -> String {
-    let fields = leaves(body).unwrap_or_default();
-    let field = |name: &str| {
-        fields
-            .iter()
-            .find(|(p, _)| p == name)
-            .map(|(_, v)| v.as_str())
-            .unwrap_or("")
-    };
-    let (code, message) = (field("Error/Code"), field("Error/Message"));
-    match code {
-        "InvalidAccessKeyId" | "SignatureDoesNotMatch" => {
-            "The access key or the secret key is wrong. Check them in Settings > Connections."
-                .into()
-        }
-        "NoSuchBucket" => format!("The bucket {bucket} doesn't exist at this address."),
-        "AccessDenied" => {
-            "Access denied. This key may not be allowed to do that in the bucket.".into()
-        }
-        "NoSuchKey" => "That file doesn't exist.".into(),
-        "RequestTimeTooSkewed" => {
-            "This computer's clock is too far off for S3. Set the time and try again.".into()
-        }
-        "AuthorizationHeaderMalformed"
-        | "PermanentRedirect"
-        | "IllegalLocationConstraintException" => {
-            let hint = message
-                .split_once("expecting '")
-                .and_then(|(_, r)| r.split_once('\''))
-                .map(|(r, _)| r);
-            match hint {
-                Some(r) => format!("The region is wrong. This bucket is in {r}."),
-                None => "The region is wrong for this bucket. Check it in Settings > Connections."
-                    .into(),
-            }
-        }
-        "" => match status {
-            301 | 307 => "The region or the address is wrong for this bucket.".into(),
-            403 => "Access denied. The keys may be wrong, or not allowed to do that in the bucket."
-                .into(),
-            404 => "Not found.".into(),
-            _ => format!("S3 answered with error {status}."),
-        },
-        _ if !message.is_empty() => format!("S3 says: {message}"),
-        _ => format!("S3 answered with error {status} ({code})."),
-    }
-}
 
 fn agent() -> ureq::Agent {
     web::config()
